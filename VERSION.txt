@@ -1,7 +1,7 @@
-SPPG Finance Legacy UI v7.1
-- AI tab removed from navigation
-- Bulk Upload Lokal label removed from Input page
-- Audit category/vendor/paid fields editable
-- Debt can be paid by current vendor/category filter
-- Reports table has compact mode and reduced width
-- Category learner prefers manually edited backup/history categories
+SPPG Finance Legacy UI v7.2
+- Restore JSON preserves category exactly from backup/manual/GPT.
+- Category learner uses backup/history but does not overwrite existing category.
+- Category dropdown includes categories discovered from backup.
+- Tabs aligned horizontally to the right and scroll only if needed.
+- Dashboard charts use sanitized compact data and non-stacked bars.
+- Report table compacted to fit desktop width better.

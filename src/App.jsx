@@ -117,17 +117,17 @@ const categorizeByDesc = (desc) => {
 };
 
 const normalizeCategory = (cat, desc, type) => {
-  let c = String(cat || "").trim();
-  if (!c) c = categorizeByDesc(desc);
-  const l = c.toLowerCase();
-  if (type === "income" && !l.includes("pemasukan")) {
-    return categorizeByDesc(desc).startsWith("Pemasukan") ? categorizeByDesc(desc) : "Pemasukan: Insentif Sewa";
-  }
-  if (l === "operasional (kebersihan)") return "Operasional (Kebersihan/APD)";
-  if (l === "operasional (gaji)") return "Operasional (Gaji/Admin)";
-  if (l === "bahan baku (sayur)") return "Bahan Baku (Sayur/Buah)";
-  if (l === "bahan baku (sembako)") return "Bahan Baku (Sembako/Bumbu)";
-  return c;
+  const manualCategory = String(cat || "").trim();
+
+  // PENTING:
+  // Kategori dari backup/manual/GPT yang sudah dikirim JANGAN ditimpa lagi.
+  // Backup lama memang memakai kategori seperti:
+  // "Bahan Baku", "Bahan Baku (Lauk/Sayur/Sembako/Packaging)",
+  // "Operasional (Gaji/Listrik/Transport)", dll.
+  // Itu dianggap kamus/manual truth.
+  if (manualCategory) return manualCategory;
+
+  return categorizeByDesc(desc);
 };
 
 const normalizeTx = (t) => {
@@ -585,7 +585,7 @@ function SmartCateringAccountant() {
     const file = e.target.files?.[0]; if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      const txs = (data.transactions || []).map(normalizeTx);
+      const txs = (data.transactions || []).map(t => normalizeTx({ ...t, source: t.source || "restore_backup" }));
       setInitialCapital(safeNumber(data.initialCapital));
       setActualBalance(safeNumber(data.actualBalance));
       setPaidPeriods(data.paidPeriods || {});
@@ -970,12 +970,33 @@ function SmartCateringAccountant() {
     return { gross: shareGross, fee, net, calculatedNet, isManual: manualVal !== undefined && manualVal !== "" };
   };
 
+  const categoryOptions = useMemo(() => {
+    const fromData = transactions.map(t => safeString(t.category).trim()).filter(Boolean);
+    return Array.from(new Set([...fromData, ...CATEGORIES])).sort((a, b) => a.localeCompare(b, "id-ID"));
+  }, [transactions]);
+
+  const dashboardChartData = useMemo(() => {
+    return analytics.sortedPeriods.slice(-12).map((p) => ({
+      ...p,
+      periodLabel: String(p.period || "").length > 18 ? String(p.period).slice(0, 18) + "…" : String(p.period || ""),
+      incSewa: Number.isFinite(Number(p.incSewa)) ? Number(p.incSewa) : 0,
+      surplusBahan: Number.isFinite(Number(p.surplusBahan)) ? Number(p.surplusBahan) : 0,
+      surplusOps: Number.isFinite(Number(p.surplusOps)) ? Number(p.surplusOps) : 0,
+      totalRevenue: Number.isFinite(Number(p.totalRevenue)) ? Number(p.totalRevenue) : 0,
+      totalExpense: Number.isFinite(Number(p.totalExpense)) ? Number(p.totalExpense) : 0,
+      netProfit: Number.isFinite(Number(p.netProfit)) ? Number(p.netProfit) : 0,
+      cashFlow: Number.isFinite(Number(p.cashFlow)) ? Number(p.cashFlow) : 0
+    }));
+  }, [analytics.sortedPeriods]);
+
   const auditRows = useMemo(() => transactions.map(t => {
+    const currentCategory = safeString(t.category).trim();
     const recommended = learnCategoryFromHistory(t.desc, t.type);
-    const mismatch = recommended !== t.category && !(t.category || "").includes("Pemasukan");
-    const outstanding = Math.max(0, t.amount - safeNumber(t.paidAmount));
+    const isGeneric = !currentCategory || currentCategory === "Lainnya (Ops)" || currentCategory === "Bahan Baku";
+    const mismatch = isGeneric && recommended && recommended !== currentCategory;
+    const outstanding = Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount));
     return { ...t, recommended, mismatch, outstanding };
-  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || t.classificationConfidence < 0.75), [transactions, categoryMemory]);
+  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || safeNumber(t.classificationConfidence) < 0.75), [transactions, categoryMemory]);
 
   const debtRows = useMemo(() => transactions
     .map(t => ({ ...t, outstanding: Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount)) }))
@@ -1073,29 +1094,32 @@ function SmartCateringAccountant() {
               <Card>
                 <CardHeader><CardTitle><TrendingUp className="green-icon"/> Grafik Profitabilitas</CardTitle><CardDescription>Performa mingguan/bulanan</CardDescription></CardHeader>
                 <CardContent className="chart">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={analytics.sortedPeriods}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="period" />
-                      <YAxis tickFormatter={(val) => `${Math.round(val/1000)}k`} />
-                      <RechartsTooltip formatter={(val) => formatIDR(val)} />
-                      <Legend />
-                      <Bar dataKey="surplusBahan" name="Sisa Bahan" stackId="a" fill="#10b981" />
-                      <Bar dataKey="surplusOps" name="Sisa Ops" stackId="a" fill="#f59e0b" />
-                      <Bar dataKey="incSewa" name="Insentif" stackId="a" fill="#3b82f6" />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {dashboardChartData.length === 0 ? (
+                    <div className="chart-empty">Belum ada data periode untuk grafik.</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dashboardChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="periodLabel" interval={0} tick={{ fontSize: 10 }} />
+                        <YAxis tickFormatter={(val) => `${Math.round(Number(val || 0)/1000)}k`} width={54} />
+                        <RechartsTooltip formatter={(val) => formatIDR(Number(val || 0))} />
+                        <Legend />
+                        <Bar dataKey="netProfit" name="Profit Bersih" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="cashFlow" name="Arus Kas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader><CardTitle><ArrowRightLeft className="blue-icon"/> Tren Arus Kas (Cashflow)</CardTitle><CardDescription>Uang Masuk vs Uang Keluar</CardDescription></CardHeader>
                 <CardContent className="chart">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={analytics.sortedPeriods}>
+                    <AreaChart data={dashboardChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="period" />
-                      <YAxis tickFormatter={(val) => `${Math.round(val/1000)}k`} />
-                      <RechartsTooltip formatter={(val) => formatIDR(val)} />
+                      <XAxis dataKey="periodLabel" interval={0} tick={{ fontSize: 10 }} />
+                      <YAxis tickFormatter={(val) => `${Math.round(Number(val || 0)/1000)}k`} width={54} />
+                      <RechartsTooltip formatter={(val) => formatIDR(Number(val || 0))} />
                       <Legend />
                       <Area type="monotone" dataKey="totalRevenue" name="Uang Masuk" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.12} />
                       <Area type="monotone" dataKey="totalExpense" name="Uang Keluar" stroke="#ef4444" fill="#ef4444" fillOpacity={0.12} />
@@ -1161,7 +1185,7 @@ function SmartCateringAccountant() {
                     const selectedCat=e.target.value; const autoType=selectedCat.includes("Pemasukan")?"income":"expense";
                     setNewTrans({...newTrans,category:selectedCat,type:autoType});
                   }}>
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <label className="checkbox"><input type="checkbox" checked={newTrans.isDebt} onChange={e=>setNewTrans({...newTrans,isDebt:e.target.checked})} /> Tandai sbg Hutang</label>
                   <Button onClick={handleAddTrans} className="full dark"><Save size={16}/> Simpan</Button>
@@ -1378,7 +1402,7 @@ function SmartCateringAccountant() {
               <CardContent>
                 <div className="audit-summary"><span><Database size={16}/> Source GPT/Firebase: {transactions.filter(t=>String(t.source).includes("chatgpt")).length} transaksi</span><span><AlertTriangle size={16}/> Perlu cek: {auditRows.length}</span></div>
                 <div className="scroll-table">
-                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Editable</TableHead><TableHead>Rekomendasi dari Backup</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Dibayar</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason || `Source: ${t.source || '-'}`}</small></TableCell><TableCell><select className="select audit-select" value={t.category} onChange={e=>applyRecommendedCategory(t.id, e.target.value)}>{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}<button className="detail-btn" onClick={()=>applyRecommendedCategory(t.id, t.recommended)}><Check size={10}/> Pakai ini</button></TableCell><TableCell><Input value={t.orderBy || ''} onChange={e=>quickUpdateTransaction(t.id,{orderBy:e.target.value})}/></TableCell><TableCell className="right"><Input className="right" value={formatNumberInput(t.paidAmount)} onChange={e=>quickUpdateTransaction(t.id,{paidAmount:parseIDRInput(e.target.value), isDebt: parseIDRInput(e.target.value) < t.amount, paymentStatus: parseIDRInput(e.target.value) >= t.amount ? 'paid' : 'unpaid'})}/></TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={8} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
+                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Editable</TableHead><TableHead>Rekomendasi dari Backup</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Dibayar</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason || `Source: ${t.source || '-'}`}</small></TableCell><TableCell><select className="select audit-select" value={t.category} onChange={e=>applyRecommendedCategory(t.id, e.target.value)}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}<button className="detail-btn" onClick={()=>applyRecommendedCategory(t.id, t.recommended)}><Check size={10}/> Pakai ini</button></TableCell><TableCell><Input value={t.orderBy || ''} onChange={e=>quickUpdateTransaction(t.id,{orderBy:e.target.value})}/></TableCell><TableCell className="right"><Input className="right" value={formatNumberInput(t.paidAmount)} onChange={e=>quickUpdateTransaction(t.id,{paidAmount:parseIDRInput(e.target.value), isDebt: parseIDRInput(e.target.value) < t.amount, paymentStatus: parseIDRInput(e.target.value) >= t.amount ? 'paid' : 'unpaid'})}/></TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={8} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
                 </div>
               </CardContent>
             </Card>
@@ -1389,7 +1413,7 @@ function SmartCateringAccountant() {
 
         {editCapitalOpen && <Modal title="Ubah Modal Awal" onClose={()=>setEditCapitalOpen(false)}><p className="muted">Saldo Buku dihitung dari Modal Awal + Masuk - Keluar.</p><Input value={formatNumberInput(tempCapital)} onChange={e=>setTempCapital(parseIDRInput(e.target.value))}/><Button className="full dark" onClick={async()=>{setInitialCapital(tempCapital); setEditCapitalOpen(false); if(db) await saveMeta({initialCapital:tempCapital});}}>Simpan Modal Awal</Button></Modal>}
 
-        {editOpen && currentEdit && <Modal title="Edit Transaksi" wide onClose={()=>setEditOpen(false)}><div className="edit-grid"><label>Tanggal<Input type="date" value={currentEdit.date} onChange={e=>setCurrentEdit({...currentEdit,date:e.target.value})}/></label><label>Ket<Input value={currentEdit.desc} onChange={e=>setCurrentEdit({...currentEdit,desc:e.target.value})}/></label><label>Vendor<Input value={currentEdit.orderBy||""} onChange={e=>setCurrentEdit({...currentEdit,orderBy:e.target.value})}/></label><label>Total<Input type="number" value={currentEdit.amount} onChange={e=>setCurrentEdit({...currentEdit,amount:safeNumber(e.target.value)})}/></label><label>Qty<Input type="number" value={currentEdit.qty||""} onChange={e=>setCurrentEdit({...currentEdit,qty:e.target.value})}/></label><label>Satuan<Input value={currentEdit.unit||""} onChange={e=>setCurrentEdit({...currentEdit,unit:e.target.value})}/></label><label>Harga/Unit<Input type="number" value={currentEdit.unitPrice||""} onChange={e=>setCurrentEdit({...currentEdit,unitPrice:e.target.value})}/></label><label>Kategori<select className="select" value={currentEdit.category} onChange={e=>setCurrentEdit({...currentEdit,category:e.target.value})}>{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label className="checkbox"><input type="checkbox" checked={currentEdit.isDebt} onChange={e=>setCurrentEdit({...currentEdit,isDebt:e.target.checked})}/> Hutang?</label></div><Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button></Modal>}
+        {editOpen && currentEdit && <Modal title="Edit Transaksi" wide onClose={()=>setEditOpen(false)}><div className="edit-grid"><label>Tanggal<Input type="date" value={currentEdit.date} onChange={e=>setCurrentEdit({...currentEdit,date:e.target.value})}/></label><label>Ket<Input value={currentEdit.desc} onChange={e=>setCurrentEdit({...currentEdit,desc:e.target.value})}/></label><label>Vendor<Input value={currentEdit.orderBy||""} onChange={e=>setCurrentEdit({...currentEdit,orderBy:e.target.value})}/></label><label>Total<Input type="number" value={currentEdit.amount} onChange={e=>setCurrentEdit({...currentEdit,amount:safeNumber(e.target.value)})}/></label><label>Qty<Input type="number" value={currentEdit.qty||""} onChange={e=>setCurrentEdit({...currentEdit,qty:e.target.value})}/></label><label>Satuan<Input value={currentEdit.unit||""} onChange={e=>setCurrentEdit({...currentEdit,unit:e.target.value})}/></label><label>Harga/Unit<Input type="number" value={currentEdit.unitPrice||""} onChange={e=>setCurrentEdit({...currentEdit,unitPrice:e.target.value})}/></label><label>Kategori<select className="select" value={currentEdit.category} onChange={e=>setCurrentEdit({...currentEdit,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label className="checkbox"><input type="checkbox" checked={currentEdit.isDebt} onChange={e=>setCurrentEdit({...currentEdit,isDebt:e.target.checked})}/> Hutang?</label></div><Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button></Modal>}
 
         {detailOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}><div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead className="right">Jumlah</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{selectedDetail.data.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.category}</small><small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small></TableCell><TableCell className={`right strong ${t.type==="income"?"green-text":"red-text"}`}>{formatIDR(t.amount)}</TableCell><TableCell><button onClick={()=>{setDetailOpen(false);openEdit(t);}}><Edit2 size={13}/></button></TableCell></TableRow>)}</TableBody></Table></div></Modal>}
 

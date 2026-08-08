@@ -1,25 +1,25 @@
-# SPPG Finance Legacy UI Railway v7.1
+# SPPG Finance Legacy UI Railway v7.2
 
-Versi ini dibuat supaya Git pasti melihat perubahan saat Anda copy ke repo.
-
-Ciri v7.1:
-- `package.json` version = `7.1.0`
-- Ada file `VERSION.txt`
-- Tab AI dihapus dari navigasi.
-- Tulisan tab kecil "Bulk Upload Lokal" di halaman Input dihapus.
-- Audit bisa edit kategori/vendor/paid langsung.
-- Hutang bisa dilunasi sesuai filter vendor/kategori.
-- Kategori lokal belajar dari transaksi manual/backup yang sudah diedit.
-- Laporan lebih compact supaya tidak terlalu geser kanan-kiri.
+Perbaikan utama:
+- Restore JSON tidak lagi mengubah kategori backup.
+- Kategori dari backup/manual/GPT dianggap data benar.
+- Sistem belajar kategori dari histori, tetapi hanya dipakai untuk transaksi baru/kosong.
+- Dropdown kategori otomatis memuat kategori lama dari backup.
+- Tab dibuat sejajar horizontal ke kanan.
+- Grafik dashboard diperbaiki: data disanitasi dan bar tidak distack.
+- Laporan dibuat lebih compact agar fit.
 
 Deploy:
 ```bash
-rsync -av --delete --exclude=".git" sppg-finance-legacy-ui-railway-v7_1/ sppg-finance-railway-ready/
+cd "/Users/zaetjd/Library/CloudStorage/GoogleDrive-jack7bear@gmail.com/My Drive/akuntan gpt"
+unzip -o "SPPG_Finance_Legacy_UI_Railway_v7_2.zip"
+rsync -av --delete --exclude=".git" sppg-finance-legacy-ui-railway-v7_2/ sppg-finance-railway-ready/
 cd sppg-finance-railway-ready
+rm -rf node_modules dist
 npm install
 npm run build
 git status -sb
 git add .
-git commit -m "Improve legacy finance app v7.1"
+git commit -m "Fix restore categories layout and dashboard charts v7.2"
 git push
 ```
