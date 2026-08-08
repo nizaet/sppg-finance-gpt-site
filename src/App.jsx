@@ -1,494 +1,1311 @@
 
-import React, {useEffect, useMemo, useState} from "react";
-import {createRoot} from "react-dom/client";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  initializeApp
-} from "firebase/app";
-import {
-  getAuth, signInAnonymously, onAuthStateChanged
-} from "firebase/auth";
-import {
-  getFirestore, collection, doc, getDoc, setDoc, getDocs, writeBatch,
-  serverTimestamp, query, orderBy, deleteDoc
-} from "firebase/firestore";
-import {
-  Database, Cloud, CloudOff, Upload, Download, Send, ShieldAlert, Wallet,
-  ReceiptText, CreditCard, Package, RefreshCw, Trash2, CheckCircle2, Search,
-  FileJson, LayoutDashboard, Bot
+  Utensils, FileSpreadsheet, Upload, Download, RotateCcw, RefreshCcw, CloudUpload,
+  LayoutDashboard, Plus, CreditCard, FileText, Users, Package, BrainCircuit, ShieldAlert,
+  Wallet, Landmark, TrendingUp, ArrowRightLeft, Eye, Edit2, Trash2, Search, Save,
+  ArrowDownCircle, ArrowUpCircle, Sparkles, Loader2, X, CheckCircle2, Printer,
+  PieChart as PieChartIcon, History, DollarSign, Eraser, ChefHat, Lightbulb,
+  RefreshCw, Database, AlertTriangle, Check, ClipboardPaste
 } from "lucide-react";
-import {ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend} from "recharts";
-import {classify, buildMemory, groupOf, parseDailyText} from "./classifier";
-import "./styles.css";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
+  ResponsiveContainer, PieChart as RePieChart, Pie, Cell, AreaChart, Area
+} from "recharts";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy,
+  onSnapshot, deleteDoc, writeBatch, serverTimestamp
+} from "firebase/firestore";
 
-const money = n => new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n)||0);
-const num = v => Number(v)||0;
-const cleanDate = v => {
-  if(!v) return new Date().toISOString().slice(0,10);
-  if(typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  if(v?.seconds) return new Date(v.seconds*1000).toISOString().slice(0,10);
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? new Date().toISOString().slice(0,10) : d.toISOString().slice(0,10);
+const CATEGORIES = [
+  "Pemasukan: Insentif Sewa",
+  "Pemasukan: Dana Operasional",
+  "Pemasukan: Dana Bahan Baku",
+  "Bahan Baku (Lauk)",
+  "Bahan Baku (Sayur)",
+  "Bahan Baku (Sayur/Buah)",
+  "Bahan Baku (Sembako)",
+  "Bahan Baku (Sembako/Bumbu)",
+  "Packaging",
+  "Operasional (Utilitas)",
+  "Operasional (Gaji)",
+  "Operasional (Gaji/Admin)",
+  "Operasional (Transport)",
+  "Operasional (Kebersihan)",
+  "Operasional (Kebersihan/APD)",
+  "Belanja Modal (Capex)",
+  "Beban Profit (Non-Reimburse)",
+  "Pembagian Dividen",
+  "Lainnya (Ops)"
+];
+
+const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
-const id = () => crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
-function firebaseConfigFromEnv() {
-  if (typeof window !== "undefined" && window.__firebase_config) {
-    try { return JSON.parse(window.__firebase_config); } catch {}
+const siteId = import.meta.env.VITE_SITE_ID || "sppg-maja-gpt-site";
+const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
+const db = app ? getFirestore(app) : null;
+
+const formatIDR = (num) => {
+  const n = Number(num) || 0;
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
+};
+
+const formatNumberInput = (num) => new Intl.NumberFormat("id-ID").format(Number(num) || 0);
+const parseIDRInput = (val) => {
+  const clean = String(val ?? "").replace(/\D/g, "");
+  return clean ? parseInt(clean, 10) : 0;
+};
+const safeNumber = (val) => {
+  if (val === null || val === undefined || val === "") return 0;
+  if (typeof val === "number") return Number.isFinite(val) ? val : 0;
+  return Number(String(val).replace(/[^\d.-]/g, "")) || 0;
+};
+const safeString = (val) => {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "object") return normalizeDate(val);
+  return String(val);
+};
+const normalizeDate = (dateStr) => {
+  if (!dateStr) return new Date().toISOString().split("T")[0];
+  if (typeof dateStr === "object") {
+    if (dateStr.seconds) return new Date(dateStr.seconds * 1000).toISOString().split("T")[0];
+    try { return new Date(dateStr).toISOString().split("T")[0]; } catch { return new Date().toISOString().split("T")[0]; }
   }
-  const cfg = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID
-  };
-  return cfg.apiKey && cfg.projectId ? cfg : null;
-}
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) return String(dateStr);
+  const d = new Date(dateStr);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  return new Date().toISOString().split("T")[0];
+};
+const generateId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+};
 
-function normalizeTx(t, memory) {
-  const base = {
-    id: String(t.id ?? id()),
-    date: cleanDate(t.date),
-    desc: String(t.desc || "").trim(),
-    amount: num(t.amount) || (num(t.qty) * num(t.unitPrice)),
-    qty: num(t.qty) || 1,
-    unit: String(t.unit || ""),
-    unitPrice: num(t.unitPrice),
-    type: t.type === "income" ? "income" : "expense",
-    category: String(t.category || ""),
-    orderBy: String(t.orderBy || t.vendor || "-"),
-    isDebt: Boolean(t.isDebt),
+const parseMoney = (str) => safeNumber(str);
+
+const categorizeByDesc = (desc) => {
+  const d = String(desc || "").toLowerCase();
+  if (!d) return "Lainnya (Ops)";
+  if (d.match(/(dividen|bagi hasil|shareholder)/)) return "Pembagian Dividen";
+  if (d.match(/(apron|kursi|bonus|sppi|thr|tunjangan)/)) return "Beban Profit (Non-Reimburse)";
+  if (d.match(/(gaji|upah|tip|fee|helper|chef|karyawan|tukang masak|relawan|petty|kas kecil|akuntan|ahli gizi|admin)/)) return "Operasional (Gaji/Admin)";
+  if (d.match(/(insentif|sewa gedung|sewa alat|jasa masak|upah masak|6 juta|6jt)/)) return "Pemasukan: Insentif Sewa";
+  if (d.match(/(dana operasional|biaya ops|reimburse ops|ganti uang lelah)/)) return "Pemasukan: Dana Operasional";
+  if (d.match(/(dana bahan|porsi|paket makan|makan bergizi|mbg|dana makan|pembelian bahan)/)) return "Pemasukan: Dana Bahan Baku";
+  if (d.match(/(ayam|sapi|telur|daging|ikan|dori|udang|cumi|bebek|protein|tahu|tempe)/)) return "Bahan Baku (Lauk)";
+  if (d.match(/(bawang|cabe|cabai|tomat|wortel|sayur|buah|jeruk|apel|kentang|tauge|bayam|jagung|buncis|sereh|jahe|lengkuas|daun bawang)/)) return "Bahan Baku (Sayur/Buah)";
+  if (d.match(/(beras|minyak|tepung|gula|garam|kecap|saus|santan|bumbu|msg|penyedap|kacang|knorr|totole|cuka|lada)/)) return "Bahan Baku (Sembako/Bumbu)";
+  if (d.match(/(box nasi|dus|mika|cup|sendok plastik|kertas nasi|plastik wrap|paper)/)) return "Packaging";
+  if (d.match(/(listrik|token|air|gas|internet|pulsa|wifi|lpg)/)) return "Operasional (Utilitas)";
+  if (d.match(/(sabun|spon|spons|sunlight|mama lemon|sapu|pel|pembersih|plastik sampah|kebersihan|masker|sarung tangan|glove|tisu|tissue|hair net|tali rafia|rapia)/)) return "Operasional (Kebersihan/APD)";
+  if (d.match(/(bensin|parkir|tol|sewa mobil|ongkir|grab|gojek|lalamove|driver|transport)/)) return "Operasional (Transport)";
+  if (d.match(/(beli alat|beli panci|beli kompor|beli mobil|renovasi|bangunan|tanah|aset|kulkas|freezer|mesin|rak stainless)/)) return "Belanja Modal (Capex)";
+  return "Lainnya (Ops)";
+};
+
+const normalizeCategory = (cat, desc, type) => {
+  let c = String(cat || "").trim();
+  if (!c) c = categorizeByDesc(desc);
+  const l = c.toLowerCase();
+  if (type === "income" && !l.includes("pemasukan")) {
+    return categorizeByDesc(desc).startsWith("Pemasukan") ? categorizeByDesc(desc) : "Pemasukan: Insentif Sewa";
+  }
+  if (l === "operasional (kebersihan)") return "Operasional (Kebersihan/APD)";
+  if (l === "operasional (gaji)") return "Operasional (Gaji/Admin)";
+  if (l === "bahan baku (sayur)") return "Bahan Baku (Sayur/Buah)";
+  if (l === "bahan baku (sembako)") return "Bahan Baku (Sembako/Bumbu)";
+  return c;
+};
+
+const normalizeTx = (t) => {
+  const date = normalizeDate(t.date);
+  const desc = safeString(t.desc || t.description || t.name).trim();
+  let type = t.type === "income" ? "income" : "expense";
+  let category = normalizeCategory(t.category, desc, type);
+  if (category.includes("Pemasukan")) type = "income";
+  const qty = safeNumber(t.qty) || 1;
+  const unitPrice = safeNumber(t.unitPrice);
+  const amount = safeNumber(t.amount) || (qty * unitPrice);
+  const isDebt = Boolean(t.isDebt) || String(t.paymentStatus || "").toLowerCase() === "unpaid";
+  const paymentStatus = t.paymentStatus || (isDebt ? "unpaid" : "paid");
+  const paidAmount = paymentStatus === "paid"
+    ? (t.paidAmount !== undefined ? safeNumber(t.paidAmount) : amount)
+    : safeNumber(t.paidAmount);
+  return {
+    id: String(t.id || generateId()).replace(/[/.#[\]]/g, "_"),
+    date,
+    desc,
+    amount,
+    qty,
+    unit: safeString(t.unit || ""),
+    unitPrice,
+    type,
     status: t.status || "done",
-    paymentStatus: t.paymentStatus || (t.isDebt ? "unpaid" : "paid"),
-    paidAmount: t.paidAmount !== undefined ? num(t.paidAmount) : (t.isDebt ? 0 : num(t.amount)),
-    createdAtClient: t.createdAtClient || new Date().toISOString(),
-    source: t.source || "legacy"
+    category,
+    orderBy: safeString(t.orderBy || t.vendor || "-") || "-",
+    isDebt: paymentStatus !== "paid" && Math.max(0, amount - paidAmount) > 0,
+    paymentStatus,
+    paidAmount,
+    paidDate: safeString(t.paidDate || ""),
+    source: safeString(t.source || "legacy"),
+    classificationConfidence: safeNumber(t.classificationConfidence),
+    classificationReason: safeString(t.classificationReason || ""),
+    note: safeString(t.note || "")
   };
-  const c = classify(base, memory);
-  if (!base.category || base.type === "income" || c.confidence >= .93) {
-    base.category = c.category;
+};
+
+const getTransactionGroup = (t) => {
+  const cat = String(t.category || "").toLowerCase();
+  const descLower = String(t.desc || "").toLowerCase();
+  if (t.type === "income") {
+    if (cat.includes("sewa") || cat.includes("insentif")) return "sewa";
+    if (cat.includes("operasional") || cat.includes("biaya") || cat.includes("ops")) return "ops";
+    return "bahan";
   }
-  base.classification = c;
-  return base;
+  if (cat.includes("pembagian dividen")) return "dividen";
+  if (cat.includes("beban profit") || cat.includes("non-reimburse")) return "beban";
+  if (cat.includes("modal") || cat.includes("capex")) return "modal";
+  if (cat.includes("bahan") || cat.includes("packaging")) return "bahan";
+  if (cat.includes("operasional") || cat.includes("gaji") || cat.includes("transport") || cat.includes("utilitas") || cat.includes("kebersihan")) return "ops";
+  if (descLower.includes("dividen")) return "dividen";
+  if (descLower.includes("bonus")) return "beban";
+  return "ops";
+};
+
+const getWeekRange = (dateStr) => {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "Invalid Range";
+  const day = d.getDay();
+  const start = new Date(d.getTime() - day * 86400000);
+  const end = new Date(start.getTime() + 6 * 86400000);
+  const short = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+  return `${start.getDate()} ${short[start.getMonth()]} - ${end.getDate()} ${short[end.getMonth()]}`;
+};
+
+const getPeriodKey = (dateStr, filterType) => {
+  if (!dateStr) return "Unknown";
+  if (filterType === "daily") return dateStr;
+  if (filterType === "monthly") {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return "Unknown Month";
+    return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  return getWeekRange(dateStr);
+};
+
+const parseBulkText = (text, defaultType = "expense") => {
+  const rows = [];
+  for (const raw of String(text || "").split(/\n+/)) {
+    let line = raw.trim();
+    if (!line) continue;
+
+    const isDebt = /(hutang|bon|belum lunas)/i.test(line);
+    const isPaid = /(lunas|paid|terbayar)/i.test(line);
+    let type = /(insentif|dana operasional|dana bahan|pemasukan|masuk)/i.test(line) ? "income" : defaultType;
+
+    let date = new Date().toISOString().split("T")[0];
+    const dateMatch = line.match(/(\d{4}-\d{2}-\d{2})/);
+    if (dateMatch) {
+      date = dateMatch[1];
+      line = line.replace(dateMatch[1], "").trim();
+    }
+
+    let qty = 1, unit = "", unitPrice = 0, amount = 0, desc = line;
+    const pattern = line.match(/^(.+?)\s+([\d.,]+)\s*([a-zA-ZÀ-ÿ/]+)?\s*[xX*@]\s*([\d.,]+)/);
+    if (pattern) {
+      desc = pattern[1].trim();
+      qty = safeNumber(pattern[2]);
+      unit = pattern[3] || "";
+      unitPrice = safeNumber(pattern[4]);
+      amount = qty * unitPrice;
+    } else {
+      const m = line.match(/^(.+?)\s+([\d.,]{4,})(?:\s|$)/);
+      if (m) {
+        desc = m[1].trim();
+        amount = safeNumber(m[2]);
+        unitPrice = amount;
+      }
+    }
+
+    desc = desc.replace(/\b(hutang|bon|belum lunas|lunas|paid|koperasi)\b/gi, "").trim();
+    const vendor = /koperasi/i.test(raw) ? "Koperasi" : "-";
+    const category = normalizeCategory(categorizeByDesc(desc), desc, type);
+    if (category.includes("Pemasukan")) type = "income";
+    rows.push(normalizeTx({
+      date, desc, qty, unit, unitPrice, amount, type, category, orderBy: vendor,
+      isDebt: type === "expense" && isDebt && !isPaid,
+      paymentStatus: type === "expense" && isDebt && !isPaid ? "unpaid" : "paid",
+      paidAmount: type === "expense" && isDebt && !isPaid ? 0 : amount,
+      source: "site_bulk"
+    }));
+  }
+  return rows;
+};
+
+function Button({ children, className = "", variant = "default", size = "md", ...props }) {
+  return <button className={`btn ${variant} ${size} ${className}`} {...props}>{children}</button>;
 }
+function Card({ children, className = "" }) { return <div className={`card ${className}`}>{children}</div>; }
+function CardHeader({ children, className = "" }) { return <div className={`card-header ${className}`}>{children}</div>; }
+function CardTitle({ children, className = "" }) { return <h3 className={`card-title ${className}`}>{children}</h3>; }
+function CardDescription({ children }) { return <p className="card-desc">{children}</p>; }
+function CardContent({ children, className = "" }) { return <div className={`card-content ${className}`}>{children}</div>; }
+function Badge({ children, className = "", variant = "default" }) { return <span className={`badge ${variant} ${className}`}>{children}</span>; }
+function Input(props) { return <input {...props} className={`input ${props.className || ""}`} />; }
+function Textarea(props) { return <textarea {...props} className={`textarea ${props.className || ""}`} />; }
+function Table({ children, className = "" }) { return <table className={`table ${className}`}>{children}</table>; }
+function TableHeader({ children, className = "" }) { return <thead className={className}>{children}</thead>; }
+function TableBody({ children }) { return <tbody>{children}</tbody>; }
+function TableFooter({ children }) { return <tfoot>{children}</tfoot>; }
+function TableRow({ children, className = "" }) { return <tr className={className}>{children}</tr>; }
+function TableHead({ children, className = "" }) { return <th className={className}>{children}</th>; }
+function TableCell({ children, className = "", colSpan }) { return <td colSpan={colSpan} className={className}>{children}</td>; }
 
-function App() {
-  const [firebaseState, setFirebaseState] = useState({ready:false, db:null, user:null, mode:"local", error:null});
-  const [ledger, setLedger] = useState({initialCapital:0, actualBalance:0, transactions:[], inventory:[], shareholders:[], paidPeriods:{}});
-  const [active, setActive] = useState("dashboard");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("Memuat aplikasi…");
-  const [dailyText, setDailyText] = useState("");
-  const [dailyDefaults, setDailyDefaults] = useState({date:new Date().toISOString().slice(0,10), vendor:"-", type:"expense"});
-  const [search, setSearch] = useState("");
+function SmartCateringAccountant() {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const fileInputRef = useRef(null);
+  const csvInputRef = useRef(null);
 
-  const siteId = import.meta.env.VITE_SITE_ID || (typeof window !== "undefined" && window.__app_id) || "sppg-maja-gpt-site";
+  const [initialCapital, setInitialCapital] = useState(50000000);
+  const [actualBalance, setActualBalance] = useState(0);
+  const [transactions, setTransactions] = useState([]);
+  const [inventory, setInventory] = useState([]);
+  const [shareholders, setShareholders] = useState([]);
+  const [paidPeriods, setPaidPeriods] = useState({});
+  const [lastSaved, setLastSaved] = useState("Memeriksa sinkronisasi...");
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [periodFilter, setPeriodFilter] = useState("weekly");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [selectedDetail, setSelectedDetail] = useState(null);
+  const [detailViewType, setDetailViewType] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [currentEdit, setCurrentEdit] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmData, setConfirmData] = useState({ title: "", msg: "", action: null });
+  const [editCapitalOpen, setEditCapitalOpen] = useState(false);
+  const [tempCapital, setTempCapital] = useState(0);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [backupList, setBackupList] = useState([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [editInventoryOpen, setEditInventoryOpen] = useState(false);
+  const [currentEditInventory, setCurrentEditInventory] = useState(null);
+  const [aiAnalysisResult, setAiAnalysisResult] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkIncomeText, setBulkIncomeText] = useState("");
+  const [bulkExpenseText, setBulkExpenseText] = useState("");
+  const [bulkInventoryText, setBulkInventoryText] = useState("");
+  const [newItem, setNewItem] = useState({ name: "", qty: "", unit: "", valuePerUnit: "" });
+  const [newTrans, setNewTrans] = useState({
+    date: new Date().toISOString().split("T")[0],
+    desc: "", amount: "", unitPrice: "", qty: "", unit: "",
+    type: "expense", status: "done", category: "Bahan Baku (Lauk)", orderBy: "-", isDebt: false
+  });
+  const [divCalcStart, setDivCalcStart] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]);
+  const [divCalcEnd, setDivCalcEnd] = useState(new Date().toISOString().split("T")[0]);
+  const [dividendConfig, setDividendConfig] = useState({
+    sourceInsentifPct: 80,
+    targetProfitBahanPct: 10,
+    distributionDate: new Date().toISOString().split("T")[0],
+    periodLabel: new Date().toLocaleString("id-ID", { month: "long", year: "numeric" }),
+    customAmount: 0,
+    mode: "auto"
+  });
+  const [manualDistributions, setManualDistributions] = useState({});
+  const [menuPlanner, setMenuPlanner] = useState({ pax: 100, budget: 15000 });
+  const [menuResult, setMenuResult] = useState(null);
 
-  useEffect(()=> {
-    const cfg = firebaseConfigFromEnv();
-    if (!cfg) {
-      setFirebaseState(s=>({...s,ready:true,mode:"local",error:"Firebase config belum diisi"}));
-      loadBaselineLocal();
+  const paths = useMemo(() => ({
+    meta: () => doc(db, "gpt_sites", siteId, "ledger", "meta"),
+    transactions: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "transactions"),
+    inventory: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "inventory"),
+    shareholders: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "shareholders"),
+    backups: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups")
+  }), []);
+
+  useEffect(() => {
+    if (!db) {
+      setIsDataLoaded(true);
+      setLastSaved("Firebase config belum tersedia");
       return;
     }
-    try {
-      const app = initializeApp(cfg);
-      const auth = getAuth(app);
-      const db = getFirestore(app);
-      signInAnonymously(auth).catch(err => setFirebaseState({ready:true, db, user:null, mode:"error", error:err.message}));
-      return onAuthStateChanged(auth, (u)=>{
-        setFirebaseState({ready:true, db, user:u, mode:u?"firebase":"error", error:u?null:"auth gagal"});
-      });
-    } catch(err) {
-      setFirebaseState({ready:true, db:null, user:null, mode:"local", error:err.message});
-      loadBaselineLocal();
-    }
-  }, []);
 
-  useEffect(()=> {
-    if (firebaseState.mode === "firebase" && firebaseState.db && firebaseState.user) {
-      loadFromFirebase(firebaseState.db);
-    }
-  }, [firebaseState.mode, firebaseState.user]);
+    let unsubTx = null, unsubInv = null, unsubSh = null;
+    const start = async () => {
+      try {
+        const metaSnap = await getDoc(paths.meta());
+        if (metaSnap.exists()) {
+          const meta = metaSnap.data();
+          setInitialCapital(safeNumber(meta.initialCapital));
+          setActualBalance(safeNumber(meta.actualBalance));
+          setPaidPeriods(meta.paidPeriods || {});
+        }
 
-  async function loadBaselineLocal() {
-    setBusy(true);
-    try {
-      const r = await fetch("/data/baseline.json");
-      const raw = await r.json();
-      const mem = buildMemory(raw.transactions || []);
-      const txs = (raw.transactions || []).map(t=>normalizeTx(t, mem));
-      setLedger({...raw, transactions: txs, inventory: raw.inventory || [], shareholders: raw.shareholders || [], paidPeriods: raw.paidPeriods || {}});
-      setMsg("Mode lokal: baseline JSON aktif");
-    } catch(err) {
-      setMsg("Gagal load baseline: " + err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+        unsubTx = onSnapshot(query(paths.transactions(), orderBy("date", "desc")), snap => {
+          const rows = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
+          setTransactions(rows);
+          setIsDataLoaded(true);
+          setLastSaved(`Firebase aktif · ${rows.length} transaksi dimuat`);
+        }, err => {
+          console.error(err);
+          setLastSaved("Gagal membaca transaksi: " + err.message);
+          setIsDataLoaded(true);
+        });
 
-  const paths = {
-    meta: () => doc(firebaseState.db, "gpt_sites", siteId, "ledger", "meta"),
-    transactions: () => collection(firebaseState.db, "gpt_sites", siteId, "ledger", "meta", "transactions"),
-    inventory: () => collection(firebaseState.db, "gpt_sites", siteId, "ledger", "meta", "inventory"),
-    shareholders: () => collection(firebaseState.db, "gpt_sites", siteId, "ledger", "meta", "shareholders"),
-    backups: () => collection(firebaseState.db, "gpt_sites", siteId, "ledger", "meta", "backups")
+        unsubInv = onSnapshot(paths.inventory(), snap => {
+          setInventory(snap.docs.map(d => ({ id: d.id, ...d.data(), qty: safeNumber(d.data().qty), valuePerUnit: safeNumber(d.data().valuePerUnit) })));
+        });
+
+        unsubSh = onSnapshot(paths.shareholders(), snap => {
+          setShareholders(snap.docs.map(d => ({ id: d.id, ...d.data(), pct: safeNumber(d.data().pct), mgmtFee: safeNumber(d.data().mgmtFee) })));
+        });
+      } catch (err) {
+        console.error(err);
+        setLastSaved("Gagal init Firebase: " + err.message);
+        setIsDataLoaded(true);
+      }
+    };
+    start();
+    return () => {
+      if (unsubTx) unsubTx();
+      if (unsubInv) unsubInv();
+      if (unsubSh) unsubSh();
+    };
+  }, [paths]);
+
+  const saveMeta = async (patch = {}) => {
+    if (!db) return;
+    await setDoc(paths.meta(), {
+      initialCapital,
+      actualBalance,
+      paidPeriods,
+      schemaVersion: 6,
+      lastUpdated: new Date().toISOString(),
+      updatedAt: serverTimestamp(),
+      ...patch
+    }, { merge: true });
   };
 
-  async function loadFromFirebase(db) {
-    setBusy(true);
-    try {
-      const metaRef = doc(db, "gpt_sites", siteId, "ledger", "meta");
-      const metaSnap = await getDoc(metaRef);
-      if (!metaSnap.exists()) {
-        await loadBaselineLocal();
-        setMsg("Firebase kosong. Klik 'Upload baseline ke Firebase' untuk inisialisasi.");
-        return;
-      }
-      const txSnap = await getDocs(query(collection(db, "gpt_sites", siteId, "ledger", "meta", "transactions"), orderBy("date", "desc")));
-      const invSnap = await getDocs(collection(db, "gpt_sites", siteId, "ledger", "meta", "inventory"));
-      const shSnap = await getDocs(collection(db, "gpt_sites", siteId, "ledger", "meta", "shareholders"));
-      const meta = metaSnap.data();
-      const rawTx = txSnap.docs.map(d=>({id:d.id, ...d.data()}));
-      const mem = buildMemory(rawTx);
-      const txs = rawTx.map(t=>normalizeTx(t, mem));
-      setLedger({
-        initialCapital: num(meta.initialCapital),
-        actualBalance: num(meta.actualBalance),
-        paidPeriods: meta.paidPeriods || {},
-        lastUpdated: meta.lastUpdated || null,
-        transactions: txs,
-        inventory: invSnap.docs.map(d=>({id:d.id, ...d.data()})),
-        shareholders: shSnap.docs.map(d=>({id:d.id, ...d.data()}))
-      });
-      setMsg(`Firebase aktif: ${txs.length} transaksi dimuat`);
-    } catch(err) {
-      setMsg("Gagal load Firebase: " + err.message);
-      await loadBaselineLocal();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function batchWriteDocs(colRef, items, transform=x=>x) {
-    const db = firebaseState.db;
-    for (let i=0; i<items.length; i+=450) {
+  const batchWriteDocs = async (colRef, items, transform = x => x) => {
+    if (!db) return;
+    for (let i = 0; i < items.length; i += 450) {
       const batch = writeBatch(db);
-      for (const item of items.slice(i,i+450)) {
-        const docId = String(item.id || id()).replace(/[/.#\[\]]/g, "_");
-        batch.set(doc(colRef, docId), transform({...item, id: docId}), {merge:true});
+      for (const item of items.slice(i, i + 450)) {
+        const docId = String(item.id || generateId()).replace(/[/.#[\]]/g, "_");
+        batch.set(doc(colRef, docId), transform({ ...item, id: docId }), { merge: true });
       }
       await batch.commit();
     }
-  }
+  };
 
-  async function uploadCurrentToFirebase() {
-    if (firebaseState.mode !== "firebase") return alert("Firebase belum aktif.");
-    setBusy(true);
-    try {
-      await setDoc(paths.meta(), {
-        initialCapital: num(ledger.initialCapital),
-        actualBalance: num(ledger.actualBalance),
-        paidPeriods: ledger.paidPeriods || {},
-        schemaVersion: 5,
-        lastUpdated: new Date().toISOString(),
+  const addTransactions = async (rows, source = "manual") => {
+    const txs = rows.map(r => normalizeTx({ ...r, id: r.id || generateId(), source }));
+    setTransactions(prev => [...txs, ...prev]);
+    if (db) {
+      await batchWriteDocs(paths.transactions(), txs, x => ({ ...x, updatedAt: serverTimestamp() }));
+      await saveMeta();
+    }
+    setLastSaved(`${txs.length} transaksi masuk Firebase`);
+  };
+
+  const handleAddTrans = async () => {
+    if (!newTrans.desc) return;
+    let cat = newTrans.category || categorizeByDesc(newTrans.desc);
+    let type = cat.includes("Pemasukan") ? "income" : newTrans.type;
+    let finalAmount = safeNumber(newTrans.amount) || (safeNumber(newTrans.qty) * safeNumber(newTrans.unitPrice));
+    if (!finalAmount) return alert("Nilai transaksi belum valid.");
+    await addTransactions([{
+      ...newTrans,
+      category: cat,
+      type,
+      amount: finalAmount,
+      paymentStatus: newTrans.isDebt ? "unpaid" : "paid",
+      paidAmount: newTrans.isDebt ? 0 : finalAmount,
+      source: "site_manual"
+    }], "site_manual");
+    setNewTrans({ ...newTrans, desc: "", amount: "", unitPrice: "", qty: "", unit: "", isDebt: false, type: "expense" });
+  };
+
+  const handleDeleteTrans = async (id) => {
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    if (db) await deleteDoc(doc(paths.transactions(), String(id)));
+  };
+
+  const openEdit = (t) => { setCurrentEdit({ ...t }); setEditOpen(true); };
+
+  const saveEdit = async () => {
+    const finalAmount = safeNumber(currentEdit.qty) && safeNumber(currentEdit.unitPrice)
+      ? safeNumber(currentEdit.qty) * safeNumber(currentEdit.unitPrice)
+      : safeNumber(currentEdit.amount);
+    const updated = normalizeTx({
+      ...currentEdit,
+      amount: finalAmount,
+      paymentStatus: currentEdit.isDebt ? "unpaid" : "paid",
+      paidAmount: currentEdit.isDebt ? safeNumber(currentEdit.paidAmount) : finalAmount
+    });
+    setTransactions(prev => prev.map(t => t.id === updated.id ? updated : t));
+    if (db) await setDoc(doc(paths.transactions(), updated.id), { ...updated, updatedAt: serverTimestamp() }, { merge: true });
+    setEditOpen(false);
+  };
+
+  const handlePayDebt = (id) => {
+    const t = transactions.find(x => x.id === id);
+    if (!t) return;
+    confirmAction("Konfirmasi Pelunasan", "Yakin tandai LUNAS?", async () => {
+      const patch = {
+        isDebt: false,
+        paymentStatus: "paid",
+        paidAmount: safeNumber(t.amount),
+        paidDate: new Date().toISOString().split("T")[0],
+        status: "done",
         updatedAt: serverTimestamp()
-      }, {merge:true});
-      await batchWriteDocs(paths.transactions(), ledger.transactions, x=>({...x, updatedAt: serverTimestamp()}));
-      await batchWriteDocs(paths.inventory(), ledger.inventory || [], x=>({...x, updatedAt: serverTimestamp()}));
-      await batchWriteDocs(paths.shareholders(), ledger.shareholders || [], x=>({...x, updatedAt: serverTimestamp()}));
-      setMsg(`Baseline/ledger terkirim ke Firebase: ${ledger.transactions.length} transaksi`);
-    } catch(err) {
-      alert("Gagal upload Firebase: " + err.message);
-      setMsg("Gagal upload Firebase");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addTransactions(rows, source="manual") {
-    const mem = buildMemory(ledger.transactions);
-    const txs = rows.map(r=>normalizeTx({...r, id:r.id || id(), source}, mem));
-    setLedger(prev=>({...prev, transactions:[...prev.transactions, ...txs]}));
-    if (firebaseState.mode === "firebase") {
-      await batchWriteDocs(paths.transactions(), txs, x=>({...x, updatedAt: serverTimestamp()}));
-      await setDoc(paths.meta(), {lastUpdated:new Date().toISOString(), updatedAt:serverTimestamp()}, {merge:true});
-      setMsg(`${txs.length} transaksi masuk ke Firebase`);
-    } else {
-      setMsg(`${txs.length} transaksi masuk lokal`);
-    }
-  }
-
-  async function saveBackupPoint() {
-    if (firebaseState.mode !== "firebase") return exportJSON();
-    setBusy(true);
-    try {
-      const payload = {
-        createdAt: serverTimestamp(),
-        createdAtClient: new Date().toISOString(),
-        counts: {transactions: ledger.transactions.length, inventory: ledger.inventory.length},
-        initialCapital: ledger.initialCapital,
-        actualBalance: ledger.actualBalance
       };
-      const b = doc(paths.backups(), new Date().toISOString().replace(/[^\d]/g,"").slice(0,14));
-      await setDoc(b, payload);
-      setMsg("Titik backup metadata dibuat. Backup penuh tetap lewat Export JSON.");
-    } catch(err) {
-      alert("Gagal backup: " + err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+      setTransactions(prev => prev.map(x => x.id === id ? { ...x, ...patch } : x));
+      if (db) await setDoc(doc(paths.transactions(), String(id)), patch, { merge: true });
+    });
+  };
 
-  function exportJSON() {
-    const payload = {...ledger, lastUpdated:new Date().toISOString(), schemaVersion:5};
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const handlePayAllDebts = () => {
+    const debtList = transactions.filter(t => t.type === "expense" && Math.max(0, t.amount - safeNumber(t.paidAmount)) > 0);
+    if (!debtList.length) return alert("Tidak ada hutang yang perlu dibayar.");
+    confirmAction("Lunasi SEMUA Hutang?", `Anda akan melunasi ${debtList.length} transaksi. Total: ${formatIDR(analytics.totalDebt)}.`, async () => {
+      const today = new Date().toISOString().split("T")[0];
+      const updates = debtList.map(t => ({ ...t, isDebt: false, paymentStatus: "paid", paidAmount: t.amount, paidDate: today }));
+      setTransactions(prev => prev.map(t => updates.find(u => u.id === t.id) || t));
+      if (db) await batchWriteDocs(paths.transactions(), updates, x => ({ ...x, updatedAt: serverTimestamp() }));
+    });
+  };
+
+  const handleResetData = () => {
+    confirmAction("Reset Data Lokal", "Data di layar akan dikosongkan. Firebase tidak dihapus massal otomatis.", () => {
+      setTransactions([]);
+      setInventory([]);
+    });
+  };
+
+  const handleExportJSON = () => {
+    const payload = { initialCapital, actualBalance, transactions, inventory, shareholders, paidPeriods, schemaVersion: 6, lastUpdated: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `SmartCatering_Backup_GPTSite_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `SmartCatering_Backup_${new Date().toISOString().split("T")[0]}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-  }
+  };
 
-  async function importJSONFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setBusy(true);
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
     try {
-      const raw = JSON.parse(await file.text());
-      const mem = buildMemory(raw.transactions || []);
-      const txs = (raw.transactions || []).map(t=>normalizeTx(t, mem));
-      setLedger({...raw, transactions:txs, inventory: raw.inventory||[], shareholders: raw.shareholders||[], paidPeriods: raw.paidPeriods||{}});
-      setMsg(`JSON dimuat: ${txs.length} transaksi. Klik upload Firebase jika mau sinkron.`);
-    } catch(err) {
-      alert("JSON gagal dibaca: " + err.message);
-    } finally {
-      setBusy(false);
-      e.target.value = "";
-    }
-  }
-
-  async function handleDailyProcess() {
-    const parsed = parseDailyText(dailyText, dailyDefaults);
-    if (!parsed.length) return alert("Tidak ada baris valid.");
-    await addTransactions(parsed, "chat_or_daily_text");
-    setDailyText("");
-  }
-
-  async function payDebt(t) {
-    const patch = {paymentStatus:"paid", paidAmount:t.amount, isDebt:false, paidDate:new Date().toISOString().slice(0,10), updatedAtClient:new Date().toISOString()};
-    setLedger(prev=>({...prev, transactions:prev.transactions.map(x=>x.id===t.id?{...x,...patch}:x)}));
-    if (firebaseState.mode === "firebase") {
-      await setDoc(doc(paths.transactions(), String(t.id)), patch, {merge:true});
-      setMsg("Hutang ditandai lunas di Firebase");
-    }
-  }
-
-  async function deleteTx(t) {
-    if (!confirm("Hapus transaksi ini?")) return;
-    setLedger(prev=>({...prev, transactions:prev.transactions.filter(x=>x.id!==t.id)}));
-    if (firebaseState.mode === "firebase") {
-      await deleteDoc(doc(paths.transactions(), String(t.id)));
-      setMsg("Transaksi dihapus dari Firebase");
-    }
-  }
-
-  const mem = useMemo(()=>buildMemory(ledger.transactions), [ledger.transactions]);
-  const enriched = useMemo(()=>ledger.transactions.map(t=>{
-    const s = classify(t, mem);
-    return {...t, suggestion:s, needsReview: s.confidence < .80 || (t.category && s.category !== t.category && s.confidence >= .93)};
-  }), [ledger.transactions, mem]);
-
-  const stats = useMemo(()=>{
-    const s = {income:0,expenseAccrual:0,cashPaid:0,debt:0,incSewa:0,incOps:0,incBahan:0,bahan:0,ops:0,capex:0,bebanProfit:0,dividen:0,review:0,monthly:{}};
-    for (const t of enriched) {
-      const g = groupOf(t.category, t.type);
-      if (t.type === "income") {
-        s.income += t.amount; s[g] = (s[g]||0)+t.amount;
-      } else {
-        s.expenseAccrual += t.amount;
-        s.cashPaid += Math.min(t.amount, num(t.paidAmount));
-        s.debt += Math.max(0, t.amount - num(t.paidAmount));
-        s[g] = (s[g]||0)+t.amount;
+      const data = JSON.parse(await file.text());
+      const txs = (data.transactions || []).map(normalizeTx);
+      setInitialCapital(safeNumber(data.initialCapital));
+      setActualBalance(safeNumber(data.actualBalance));
+      setPaidPeriods(data.paidPeriods || {});
+      setTransactions(txs);
+      setInventory((data.inventory || []).map(i => ({ ...i, id: i.id || generateId(), qty: safeNumber(i.qty), valuePerUnit: safeNumber(i.valuePerUnit) })));
+      setShareholders(data.shareholders || []);
+      if (db) {
+        await saveMeta({ initialCapital: safeNumber(data.initialCapital), actualBalance: safeNumber(data.actualBalance), paidPeriods: data.paidPeriods || {} });
+        await batchWriteDocs(paths.transactions(), txs, x => ({ ...x, updatedAt: serverTimestamp() }));
+        await batchWriteDocs(paths.inventory(), data.inventory || [], x => ({ ...x, updatedAt: serverTimestamp() }));
+        await batchWriteDocs(paths.shareholders(), data.shareholders || [], x => ({ ...x, updatedAt: serverTimestamp() }));
       }
-      if (t.needsReview) s.review++;
-      const m = (t.date||"").slice(0,7) || "unknown";
-      s.monthly[m] ||= {month:m, income:0, expense:0, cash:0};
-      if (t.type === "income") s.monthly[m].income += t.amount; else {s.monthly[m].expense += t.amount; s.monthly[m].cash += Math.min(t.amount, num(t.paidAmount));}
+      alert(`Restore sukses: ${txs.length} transaksi.`);
+    } catch (err) { alert("Gagal membaca file JSON: " + err.message); }
+    e.target.value = "";
+  };
+
+  const handleImportCSV = (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      const lines = String(ev.target.result || "").split(/\r?\n/).filter(Boolean);
+      const rows = [];
+      let start = /tanggal|date/i.test(lines[0] || "") ? 1 : 0;
+      for (let i = start; i < lines.length; i++) {
+        const cols = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(x => x.trim().replace(/^"|"$/g, ""));
+        if (cols.length < 3) continue;
+        const date = normalizeDate(cols[0]);
+        const desc = cols[1];
+        const amount = parseMoney(cols[4] || cols[2]);
+        const category = cols[2] && cols.length >= 10 ? cols[2] : categorizeByDesc(desc);
+        const typeStr = cols[3] || "";
+        const type = /masuk|income|pemasukan/i.test(typeStr) || category.includes("Pemasukan") ? "income" : "expense";
+        rows.push(normalizeTx({
+          date, desc, category, type, amount,
+          qty: cols[5] || 1, unit: cols[6] || "", unitPrice: cols[7] || amount,
+          orderBy: cols[8] || "-", isDebt: /ya|true|1|hutang/i.test(cols[9] || "")
+        }));
+      }
+      await addTransactions(rows, "csv_import");
+      alert(`Import CSV berhasil: ${rows.length} transaksi.`);
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleExportTransactionsCSV = () => {
+    let csv = "\uFEFFTanggal,Deskripsi,Kategori,Tipe,Jumlah_Total,Qty,Satuan,Harga_Satuan,Vendor,Status_Hutang,Payment_Status,Paid_Amount,Source,ID_Sistem\n";
+    for (const t of transactions) {
+      csv += [
+        t.date,
+        `"${String(t.desc || "").replace(/"/g, '""')}"`,
+        `"${String(t.category || "").replace(/"/g, '""')}"`,
+        t.type === "income" ? "Pemasukan" : "Pengeluaran",
+        t.amount,
+        t.qty || "",
+        `"${String(t.unit || "").replace(/"/g, '""')}"`,
+        t.unitPrice || "",
+        `"${String(t.orderBy || "").replace(/"/g, '""')}"`,
+        t.isDebt ? "YA" : "TIDAK",
+        t.paymentStatus || "",
+        t.paidAmount || 0,
+        t.source || "",
+        t.id
+      ].join(",") + "\n";
     }
-    s.inventoryValue = (ledger.inventory||[]).reduce((a,b)=>a+num(b.qty)*num(b.valuePerUnit),0);
-    s.realBalance = num(ledger.actualBalance) || (num(ledger.initialCapital) + s.income - s.cashPaid);
-    s.netWorth = s.realBalance + s.inventoryValue - s.debt;
-    s.months = Object.values(s.monthly).sort((a,b)=>a.month.localeCompare(b.month));
-    return s;
-  }, [enriched, ledger.inventory, ledger.actualBalance, ledger.initialCapital]);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `Database_Transaksi_SPPG_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
-  const filtered = enriched.filter(t => `${t.date} ${t.desc} ${t.category} ${t.orderBy}`.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const handleExportInventoryCSV = () => {
+    let csv = "\uFEFFNama Barang,Stok,Satuan,Harga/Unit,Total Nilai\n";
+    csv += inventory.map(i => `"${String(i.name || "").replace(/"/g, '""')}",${i.qty},"${String(i.unit || "").replace(/"/g, '""')}",${i.valuePerUnit},${safeNumber(i.qty) * safeNumber(i.valuePerUnit)}`).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `Stok_Gudang_SPPG_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
-  const nav = [
-    ["dashboard","Dashboard",LayoutDashboard],
-    ["transactions","Transaksi",ReceiptText],
-    ["debts","Hutang",CreditCard],
-    ["inventory","Gudang",Package],
-    ["audit","Audit Data",ShieldAlert]
-  ];
+  const handleSaveToCloud = async () => {
+    setIsSaving(true);
+    try {
+      if (db) {
+        await saveMeta();
+        await setDoc(doc(paths.backups(), new Date().toISOString().replace(/[^\d]/g, "").slice(0,14)), {
+          createdAt: serverTimestamp(),
+          createdAtClient: new Date().toISOString(),
+          counts: { transactions: transactions.length, inventory: inventory.length },
+          initialCapital,
+          actualBalance
+        }, { merge: true });
+      }
+      setLastSaved(`Titik Backup dibuat: ${new Date().toLocaleTimeString("id-ID")}`);
+      alert("✅ Titik backup cloud berhasil dibuat.");
+    } catch (error) {
+      alert("❌ Gagal membuat backup: " + error.message);
+    } finally { setIsSaving(false); }
+  };
 
-  return <div className="app">
-    <header className="topbar">
-      <div>
-        <h1>SPPG MAJA — Finance Control</h1>
-        <p>Ledger v4 · accrual + cash basis · audit kategori · data terpisah dari aplikasi</p>
-      </div>
-      <div className="topactions">
-        <span className="status"><Database size={14}/>{firebaseState.mode === "firebase" ? `Firebase aktif · ${ledger.transactions.length} transaksi` : msg}</span>
-        <button className="btn ghost" onClick={()=>firebaseState.mode==="firebase"?loadFromFirebase(firebaseState.db):loadBaselineLocal()} disabled={busy}><RefreshCw size={15}/> Refresh</button>
-        <label className="btn ghost"><Upload size={15}/> Import JSON<input type="file" accept=".json" hidden onChange={importJSONFile}/></label>
-        <button className="btn" onClick={exportJSON}><Download size={15}/> Export</button>
-      </div>
-    </header>
+  const openBackupDialog = async () => {
+    setBackupOpen(true);
+    setIsLoadingBackups(true);
+    try {
+      if (!db) return;
+      const q = query(paths.backups(), orderBy("createdAtClient", "desc"));
+      const snap = await getDocs(q);
+      setBackupList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) { console.error(err); }
+    finally { setIsLoadingBackups(false); }
+  };
 
-    <nav className="nav">{nav.map(([k,label,Icon])=><button key={k} onClick={()=>setActive(k)} className={active===k?"active":""}><Icon size={16}/>{label}{k==="audit"&&stats.review?<b>{stats.review}</b>:null}</button>)}</nav>
+  const loadBackup = () => {
+    alert("Backup ini hanya titik metadata. Backup penuh gunakan Restore JSON.");
+  };
 
-    <main>
-      {active==="dashboard" && <section>
-        <div className="grid kpis">
-          <KPI title="Saldo Real" value={money(stats.realBalance)} note="saldo kas/rekening terhitung" />
-          <KPI title="Net Worth" value={money(stats.netWorth)} note="saldo + gudang − hutang" />
-          <KPI title="Hutang Outstanding" value={money(stats.debt)} note="belum mengurangi kas" danger={stats.debt>0}/>
-          <KPI title="Perlu Audit" value={stats.review} note="kategori/type perlu dicek" danger={stats.review>0}/>
-        </div>
-        <div className="grid two">
-          <Card title="Ringkasan Akuntansi">
-            <Rows rows={[
-              ["Pemasukan total", money(stats.income)],
-              ["Belanja diakui/accrual", money(stats.expenseAccrual)],
-              ["Kas sudah keluar", money(stats.cashPaid)],
-              ["Nilai stok gudang", money(stats.inventoryValue)],
-              ["Pemasukan Insentif", money(stats.incSewa)],
-              ["Pemasukan Ops", money(stats.incOps)],
-              ["Pemasukan Bahan", money(stats.incBahan)],
-            ]}/>
-          </Card>
-          <Card title="Komposisi Belanja">
-            <Rows rows={[
-              ["Bahan baku + packaging", money(stats.bahan)],
-              ["Operasional", money(stats.ops)],
-              ["Capex", money(stats.capex)],
-              ["Beban profit", money(stats.bebanProfit)],
-              ["Dividen", money(stats.dividen)],
-            ]}/>
-          </Card>
-        </div>
-        <Card title="Tren Bulanan">
-          <div className="chart">
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={stats.months}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                <XAxis dataKey="month"/>
-                <YAxis tickFormatter={v=>`${Math.round(v/1000000)}jt`}/>
-                <Tooltip formatter={v=>money(v)}/>
-                <Legend/>
-                <Bar dataKey="income" name="Pemasukan"/>
-                <Bar dataKey="expense" name="Belanja/Accrual"/>
-                <Bar dataKey="cash" name="Kas Keluar"/>
-              </BarChart>
-            </ResponsiveContainer>
+  const confirmAction = (title, msg, action) => {
+    setConfirmData({ title, msg, action });
+    setConfirmOpen(true);
+  };
+
+  const togglePeriodPaid = async (period) => {
+    const next = { ...paidPeriods, [period]: !paidPeriods[period] };
+    setPaidPeriods(next);
+    if (db) await saveMeta({ paidPeriods: next });
+  };
+
+  const openEditInventory = (item) => { setCurrentEditInventory({ ...item }); setEditInventoryOpen(true); };
+  const saveEditInventory = async () => {
+    const item = { ...currentEditInventory, qty: safeNumber(currentEditInventory.qty), valuePerUnit: safeNumber(currentEditInventory.valuePerUnit) };
+    setInventory(prev => prev.map(i => i.id === item.id ? item : i));
+    if (db) await setDoc(doc(paths.inventory(), String(item.id)), { ...item, updatedAt: serverTimestamp() }, { merge: true });
+    setEditInventoryOpen(false);
+  };
+
+  const addInventoryItem = async () => {
+    if (!newItem.name) return;
+    const item = { ...newItem, id: generateId(), qty: safeNumber(newItem.qty), valuePerUnit: safeNumber(newItem.valuePerUnit) };
+    setInventory(prev => [...prev, item]);
+    if (db) await setDoc(doc(paths.inventory(), item.id), { ...item, updatedAt: serverTimestamp() }, { merge: true });
+    setNewItem({ name: "", qty: "", unit: "", valuePerUnit: "" });
+  };
+
+  const removeInventoryItem = async (id) => {
+    setInventory(prev => prev.filter(i => i.id !== id));
+    if (db) await deleteDoc(doc(paths.inventory(), String(id)));
+  };
+
+  const addShareholder = async (name, pct, fee) => {
+    if (!name || !pct) return;
+    const item = { id: generateId(), name, pct: safeNumber(pct), mgmtFee: safeNumber(fee) };
+    setShareholders(prev => [...prev, item]);
+    if (db) await setDoc(doc(paths.shareholders(), item.id), item, { merge: true });
+  };
+
+  const removeShareholder = async (id) => {
+    setShareholders(prev => prev.filter(s => s.id !== id));
+    if (db) await deleteDoc(doc(paths.shareholders(), String(id)));
+  };
+
+  const processBulkWithLocalParser = async (text, type) => {
+    setIsBulkProcessing(true);
+    setBulkStatus("Membaca format transaksi...");
+    const rows = parseBulkText(text, type);
+    if (!rows.length) {
+      setBulkStatus("Tidak ada baris valid.");
+      setIsBulkProcessing(false);
+      return;
+    }
+    await addTransactions(rows, `bulk_${type}`);
+    setBulkStatus(`Selesai! ${rows.length} transaksi masuk.`);
+    if (type === "income") setBulkIncomeText(""); else setBulkExpenseText("");
+    setIsBulkProcessing(false);
+  };
+
+  const processInventoryBulkLocal = async (text) => {
+    setIsBulkProcessing(true);
+    const items = String(text || "").split(/\n+/).map(line => {
+      const m = line.trim().match(/^(.+?)\s+([\d.,]+)\s*([a-zA-ZÀ-ÿ/]+)?(?:\s*[@xX]\s*([\d.,]+))?/);
+      if (!m) return null;
+      return { id: generateId(), name: m[1].trim(), qty: safeNumber(m[2]), unit: m[3] || "", valuePerUnit: safeNumber(m[4]) };
+    }).filter(Boolean);
+    setInventory(prev => [...prev, ...items]);
+    if (db) await batchWriteDocs(paths.inventory(), items, x => ({ ...x, updatedAt: serverTimestamp() }));
+    setBulkInventoryText("");
+    setBulkStatus(`Berhasil menambah ${items.length} item stok.`);
+    setIsBulkProcessing(false);
+  };
+
+  const handleViewDetail = (periodData, type) => {
+    setDetailViewType(type);
+    const titles = {
+      sewa: `Rincian Insentif - ${periodData.period}`,
+      bahan: `Rincian Bahan Baku - ${periodData.period}`,
+      ops: `Rincian Operasional - ${periodData.period}`,
+      modal: `Rincian Modal (Capex) - ${periodData.period}`,
+      beban: `Rincian Beban Profit - ${periodData.period}`,
+      dividen: `Rincian Dividen - ${periodData.period}`
+    };
+    const filtered = periodData.transactions.filter(t => getTransactionGroup(t) === type);
+    setSelectedDetail({ title: titles[type] || "Rincian", data: filtered });
+    setDetailOpen(true);
+  };
+
+  const handleDistributeDividend = async () => {
+    if (!shareholders.length) return alert("Belum ada shareholder.");
+    if (calculatedDividendPool.total <= 0) return alert("Tidak ada dana untuk dibagikan pada periode ini.");
+    const periodName = `${new Date(divCalcStart).toLocaleDateString("id-ID", { month: "short" })} - ${new Date(divCalcEnd).toLocaleDateString("id-ID", { month: "short", year: "2-digit" })}`;
+    confirmAction("Konfirmasi Pembagian Dividen", `Total dividen akan dibagikan ke ${shareholders.length} orang. Lanjutkan?`, async () => {
+      const divs = shareholders.map(s => {
+        const { net } = getShareData(s);
+        return normalizeTx({
+          date: dividendConfig.distributionDate,
+          desc: `Dividen: ${s.name} (${s.pct}%) - ${periodName}`,
+          category: "Pembagian Dividen",
+          type: "expense",
+          amount: net,
+          qty: 1,
+          unit: "BagiHasil",
+          unitPrice: net,
+          isDebt: false,
+          paymentStatus: "paid",
+          paidAmount: net,
+          source: "site_dividend"
+        });
+      });
+      await addTransactions(divs, "site_dividend");
+      setManualDistributions({});
+      alert("✅ Dividen berhasil dicatat.");
+    });
+  };
+
+  const handlePrintReport = () => window.print();
+  const handlePrintInvestorReport = () => window.print();
+
+  const generateRealAiAnalysis = () => {
+    setIsAnalyzing(true);
+    setTimeout(() => {
+      const result = [];
+      if (analytics.totalDebt > 0) result.push({ type: "warn", title: "Hutang aktif", msg: `Outstanding hutang tercatat ${formatIDR(analytics.totalDebt)}. Prioritaskan vendor dengan nilai terbesar.` });
+      if (analytics.pendingFunds > 0) result.push({ type: "warn", title: "Dana belum cair", msg: `Ada talangan/pending ${formatIDR(analytics.pendingFunds)} pada periode tertentu.` });
+      if (analytics.netWorth > 0) result.push({ type: "good", title: "Net worth positif", msg: `Kekayaan bersih tercatat ${formatIDR(analytics.netWorth)}.` });
+      if (!result.length) result.push({ type: "info", title: "Data belum cukup", msg: "Tambahkan transaksi untuk analisis yang lebih tajam." });
+      setAiAnalysisResult(result);
+      setIsAnalyzing(false);
+    }, 500);
+  };
+
+  const generateMenuPlan = () => {
+    const total = safeNumber(menuPlanner.pax) * safeNumber(menuPlanner.budget);
+    setMenuResult({
+      menu: ["Menu utama: nasi, lauk protein, sayur, buah", "Distribusi disesuaikan dengan stok gudang"],
+      shoppingList: [
+        { item: "Protein/lauk", qty: `${Math.ceil(menuPlanner.pax * 0.08)} kg`, estCost: total * 0.45 },
+        { item: "Sayur/buah", qty: `${Math.ceil(menuPlanner.pax * 0.12)} kg`, estCost: total * 0.25 },
+        { item: "Bumbu/kemasan", qty: "sesuai kebutuhan", estCost: total * 0.15 }
+      ],
+      totalEstCost: total * 0.85
+    });
+  };
+
+  const analytics = useMemo(() => {
+    const groupedData = {};
+    const debtByVendor = {};
+    let totalDebt = 0, grandTotalRevenue = 0, grandTotalExpense = 0, grandTotalCapex = 0, grandTotalProfitBurden = 0, grandTotalDividend = 0, cashPaid = 0;
+    let filteredTransactions = transactions;
+    if (periodFilter === "custom" && customStartDate && customEndDate) {
+      filteredTransactions = transactions.filter(t => t.date >= customStartDate && t.date <= customEndDate);
+    }
+
+    filteredTransactions.forEach(t => {
+      const safeDate = normalizeDate(t.date);
+      const timeKey = periodFilter === "custom" ? "Periode Terpilih" : getPeriodKey(safeDate, periodFilter);
+      groupedData[timeKey] ||= {
+        period: timeKey, incSewa: 0, incOps: 0, incBahan: 0, expBahan: 0, expOps: 0,
+        expCapex: 0, expProfitBurden: 0, expDividend: 0, netProfit: 0, transactions: [], firstDate: safeDate
+      };
+      if (safeDate < groupedData[timeKey].firstDate) groupedData[timeKey].firstDate = safeDate;
+      groupedData[timeKey].transactions.push(t);
+      const group = getTransactionGroup(t);
+
+      if (t.type === "income") {
+        grandTotalRevenue += safeNumber(t.amount);
+        if (group === "sewa") groupedData[timeKey].incSewa += t.amount;
+        else if (group === "ops") groupedData[timeKey].incOps += t.amount;
+        else groupedData[timeKey].incBahan += t.amount;
+      } else {
+        grandTotalExpense += safeNumber(t.amount);
+        const paid = Math.min(t.amount, safeNumber(t.paidAmount));
+        cashPaid += paid;
+        const outstanding = Math.max(0, safeNumber(t.amount) - paid);
+        if (outstanding > 0) {
+          totalDebt += outstanding;
+          const vendor = safeString(t.orderBy || "Lainnya") || "Lainnya";
+          debtByVendor[vendor] = (debtByVendor[vendor] || 0) + outstanding;
+        }
+        if (group === "dividen") { groupedData[timeKey].expDividend += t.amount; grandTotalDividend += t.amount; }
+        else if (group === "beban") { groupedData[timeKey].expProfitBurden += t.amount; grandTotalProfitBurden += t.amount; }
+        else if (group === "modal") { groupedData[timeKey].expCapex += t.amount; grandTotalCapex += t.amount; }
+        else if (group === "bahan") groupedData[timeKey].expBahan += t.amount;
+        else groupedData[timeKey].expOps += t.amount;
+      }
+    });
+
+    Object.values(groupedData).forEach(d => {
+      d.surplusBahan = d.incBahan - d.expBahan;
+      d.surplusOps = d.incOps - d.expOps;
+      d.netProfit = d.incSewa + d.surplusBahan + d.surplusOps - d.expProfitBurden;
+      d.totalExpense = d.expBahan + d.expOps + d.expProfitBurden + d.expDividend + d.expCapex;
+      d.totalRevenue = d.incSewa + d.incOps + d.incBahan;
+      d.cashFlow = d.totalRevenue - d.totalExpense;
+      const isEarly = d.firstDate && new Date(d.firstDate) < new Date("2025-11-05");
+      const isManuallyPaid = paidPeriods[d.period] === true;
+      d.isPending = !isManuallyPaid && !isEarly && ((d.incOps === 0 && d.expOps > 0) || (d.incBahan === 0 && d.expBahan > 0));
+    });
+
+    const sortedPeriods = Object.values(groupedData).sort((a,b) => a.firstDate.localeCompare(b.firstDate));
+    const expensesNonCapex = grandTotalExpense - grandTotalCapex;
+    const systemBalance = (initialCapital - grandTotalCapex) + (grandTotalRevenue - expensesNonCapex);
+    const realBalance = actualBalance || (initialCapital + grandTotalRevenue - cashPaid);
+    const discrepancy = systemBalance - realBalance;
+    const inventoryValue = inventory.reduce((a,b) => a + safeNumber(b.qty) * safeNumber(b.valuePerUnit), 0);
+    const totalAssets = realBalance + inventoryValue;
+    const debtRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
+    const pendingFunds = sortedPeriods.filter(p => p.isPending).reduce((a,b) => a + b.expBahan + b.expOps, 0);
+    const pieData = [
+      { name: "Bahan Baku", value: sortedPeriods.reduce((a,b) => a + b.expBahan, 0), color: "#10b981" },
+      { name: "Operasional", value: sortedPeriods.reduce((a,b) => a + b.expOps, 0), color: "#f59e0b" },
+      { name: "Capex", value: grandTotalCapex, color: "#6366f1" },
+      { name: "Beban Profit", value: grandTotalProfitBurden, color: "#ef4444" }
+    ].filter(x => x.value > 0);
+    return { totalDebt, systemBalance, realBalance, discrepancy, debtByVendor, sortedPeriods, grandTotalRevenue, grandTotalExpense, grandTotalCapex, grandTotalProfitBurden, grandTotalDividend, debtRatio, totalAssets, inventoryValue, pendingFunds, netWorth: totalAssets - totalDebt, pieData, cashPaid };
+  }, [transactions, inventory, initialCapital, periodFilter, customStartDate, customEndDate, actualBalance, paidPeriods]);
+
+  const calculatedDividendPool = useMemo(() => {
+    const rangeTxs = transactions.filter(t => t.date >= divCalcStart && t.date <= divCalcEnd);
+    let rangeInsentif = 0, rangeExpenseBahan = 0, rangeCapex = 0, rangeProfitBurden = 0;
+    rangeTxs.forEach(t => {
+      const group = getTransactionGroup(t);
+      if (t.type === "income" && group === "sewa") rangeInsentif += t.amount;
+      if (t.type === "expense" && group === "bahan") rangeExpenseBahan += t.amount;
+      if (t.type === "expense" && group === "modal") rangeCapex += t.amount;
+      if (t.type === "expense" && group === "beban") rangeProfitBurden += t.amount;
+    });
+    const targetInsentif = rangeInsentif * (dividendConfig.sourceInsentifPct / 100);
+    const targetBahan = rangeExpenseBahan * (dividendConfig.targetProfitBahanPct / 100);
+    const deductions = rangeCapex + rangeProfitBurden + analytics.totalDebt;
+    const bahanNet = Math.max(0, targetBahan - deductions);
+    const autoTotal = targetInsentif + bahanNet;
+    const finalTotal = dividendConfig.mode === "manual" ? dividendConfig.customAmount : autoTotal;
+    const ratio = dividendConfig.mode === "manual" && autoTotal > 0 ? finalTotal / autoTotal : 1;
+    return {
+      total: finalTotal,
+      autoTotal,
+      insentifPart: targetInsentif * ratio,
+      bahanNet: bahanNet * ratio,
+      rangeInsentif,
+      rangeExpenseBahan,
+      deductions,
+      rangeCapex,
+      rangeProfitBurden
+    };
+  }, [transactions, divCalcStart, divCalcEnd, dividendConfig, analytics.totalDebt]);
+
+  const getShareData = (s) => {
+    const shareGross = calculatedDividendPool.total * (safeNumber(s.pct) / 100);
+    const grossInsentifShare = calculatedDividendPool.insentifPart * (safeNumber(s.pct) / 100);
+    const fee = grossInsentifShare * (safeNumber(s.mgmtFee) / 100);
+    const calculatedNet = Math.floor(shareGross - fee);
+    const manualVal = manualDistributions[s.id];
+    const net = manualVal !== undefined && manualVal !== "" ? parseIDRInput(String(manualVal)) : calculatedNet;
+    return { gross: shareGross, fee, net, calculatedNet, isManual: manualVal !== undefined && manualVal !== "" };
+  };
+
+  const auditRows = useMemo(() => transactions.map(t => {
+    const recommended = normalizeCategory(categorizeByDesc(t.desc), t.desc, t.type);
+    const mismatch = recommended !== t.category && !(t.category || "").includes("Pemasukan");
+    const outstanding = Math.max(0, t.amount - safeNumber(t.paidAmount));
+    return { ...t, recommended, mismatch, outstanding };
+  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || t.classificationConfidence < 0.75), [transactions]);
+
+  const getTabClass = (id) => activeTab === id ? "active" : "";
+
+  return (
+    <div className="app-shell">
+      <div className="page">
+        <div className="legacy-header">
+          <div>
+            <h1><Utensils className="orange" /> Laporan Keuangan SPPG MAJA BARU</h1>
+            <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa)</p>
           </div>
-        </Card>
-      </section>}
-
-      {active==="input" && <section className="grid two">
-        <Card title="Input Harian / Paket dari ChatGPT">
-          <p className="muted">Format cepat: <code>Nama item qty satuan x harga vendor/status</code>. Bisa juga tab/semicolon: <code>desc;qty;unit;unitPrice;amount;vendor;hutang</code>.</p>
-          <div className="formrow">
-            <label>Tanggal default<input type="date" value={dailyDefaults.date} onChange={e=>setDailyDefaults({...dailyDefaults,date:e.target.value})}/></label>
-            <label>Vendor default<input value={dailyDefaults.vendor} onChange={e=>setDailyDefaults({...dailyDefaults,vendor:e.target.value})}/></label>
-            <label>Tipe<select value={dailyDefaults.type} onChange={e=>setDailyDefaults({...dailyDefaults,type:e.target.value})}><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
+          <div className="header-actions">
+            <Button variant="green" size="sm" onClick={handleExportTransactionsCSV}><FileSpreadsheet size={16}/> Export Excel DB</Button>
+            <Button variant="blue" size="sm" onClick={() => csvInputRef.current?.click()}><Upload size={16}/> Import CSV DB</Button>
+            <input type="file" ref={csvInputRef} hidden accept=".csv" onChange={handleImportCSV} />
+            <span className="divider" />
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}><Upload size={16}/> Restore JSON</Button>
+            <input type="file" ref={fileInputRef} hidden accept=".json" onChange={handleImportFile} />
+            <Button variant="outline" size="sm" onClick={openBackupDialog}><RotateCcw size={16}/> Cloud Restore</Button>
+            <Button variant="outline" size="sm" onClick={handleExportJSON}><Download size={16}/> Backup PC</Button>
+            <Button variant="outline" size="sm" className="danger-text" onClick={handleResetData}><RefreshCcw size={16}/> Reset</Button>
+            <div className="save-block">
+              <span>{lastSaved}</span>
+              <Button onClick={handleSaveToCloud} disabled={isSaving || !isDataLoaded} size="sm" className="dark">
+                {isSaving ? <Loader2 className="spin" size={14}/> : <CloudUpload size={14}/>} Buat Titik Backup
+              </Button>
+            </div>
           </div>
-          <textarea value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={`Contoh:
-Ayam Fillet 185 kg x 45000 Hutang Koperasi
-Mama Lemon 60 pouch x 8900 Hutang Koperasi
-INSENTIF 1 unit x 6000000`} />
-          <button className="btn wide" onClick={handleDailyProcess} disabled={busy}><Send size={16}/> Klasifikasi & Simpan ke Firebase</button>
-        </Card>
-        <Card title="Preview Cara Saya Akan Input dari Chat">
-          <p className="muted">Untuk tes otomatis dari chat, kirim data harian ke percakapan ini. Saya akan balas paket yang bisa langsung dipaste di kotak kiri, atau setelah endpoint tersedia saya bisa dorong ke cloud.</p>
-          <Rows rows={[
-            ["Ayam/Tahu/Tempe/Telur/Ikan", "Bahan Baku (Lauk)"],
-            ["Sayur/Buah/Bumbu basah", "Bahan Baku (Sayur/Buah)"],
-            ["Beras/Minyak/Tepung/Bumbu kering", "Bahan Baku (Sembako/Bumbu)"],
-            ["Box/Mika/Cup/Sendok", "Packaging"],
-            ["Tisu/Mama Lemon/Sarung tangan/Hair net", "Operasional (Kebersihan/APD)"],
-            ["Apron/bonus/non-reimburse", "Beban Profit"],
-            ["Kompor/Kulkas/Tabung/Renovasi", "Capex"],
-          ]}/>
-        </Card>
-      </section>}
+        </div>
 
-      {active==="transactions" && <Card title={`Transaksi (${filtered.length}/${ledger.transactions.length})`}>
-        <div className="toolbar"><label className="search"><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari transaksi/vendor/kategori"/></label></div>
-        <Table rows={filtered.slice(0,1000)} onDelete={deleteTx}/>
-      </Card>}
+        <div className="tabs-list">
+          <button className={getTabClass("dashboard")} onClick={() => setActiveTab("dashboard")}><LayoutDashboard size={16}/> Dash</button>
+          <button className={getTabClass("input")} onClick={() => setActiveTab("input")}><Plus size={16}/> Input</button>
+          <button className={getTabClass("debts")} onClick={() => setActiveTab("debts")}><CreditCard size={16}/> Hutang</button>
+          <button className={getTabClass("reports")} onClick={() => setActiveTab("reports")}><FileText size={16}/> Laporan</button>
+          <button className={getTabClass("dividend")} onClick={() => setActiveTab("dividend")}><Users size={16}/> Dividen</button>
+          <button className={getTabClass("inventory")} onClick={() => setActiveTab("inventory")}><Package size={16}/> Gudang</button>
+          <button className={getTabClass("analysis")} onClick={() => setActiveTab("analysis")}><BrainCircuit size={16}/> AI</button>
+          <button className={getTabClass("audit")} onClick={() => setActiveTab("audit")}><ShieldAlert size={16}/> Audit</button>
+        </div>
 
-      {active==="debts" && <Card title="Hutang Belum Lunas">
-        <Debt rows={enriched.filter(t=>t.type==="expense" && t.amount > num(t.paidAmount))} onPay={payDebt}/>
-      </Card>}
+        {activeTab === "dashboard" && (
+          <section className="space">
+            <Card className="finance-card">
+              <CardHeader><CardTitle><Wallet/> POSISI KEUANGAN (REAL TIME)</CardTitle></CardHeader>
+              <CardContent>
+                <div className="finance-grid">
+                  <div>
+                    <label>KEKAYAAN BERSIH (NET WORTH)</label>
+                    <div className="big green">{formatIDR(analytics.netWorth)}</div>
+                    <small>(Saldo Real + Aset Gudang) - Hutang</small>
+                  </div>
+                  <div>
+                    <label className="yellow">SALDO REAL (REKENING)</label>
+                    <div className="money-input"><Landmark size={16}/><Input value={formatNumberInput(analytics.realBalance)} onChange={(e) => setActualBalance(parseIDRInput(e.target.value))} /></div>
+                  </div>
+                  <div>
+                    <label className="muted-line">Saldo Buku (System) <button onClick={() => { setTempCapital(initialCapital); setEditCapitalOpen(true); }}>Edit Modal Awal</button></label>
+                    <div className="book">{formatIDR(analytics.systemBalance)}</div>
+                    <small>(Modal Awal: {formatIDR(initialCapital)})</small>
+                    <small className="red">Selisih: {formatIDR(analytics.discrepancy)}</small>
+                    {analytics.grandTotalDividend > 0 && <small className="pink">Dividen Dibagikan: -{formatIDR(analytics.grandTotalDividend)}</small>}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-      {active==="inventory" && <Card title={`Gudang (${ledger.inventory.length} item)`}>
-        <Inventory ledger={ledger} setLedger={setLedger}/>
-      </Card>}
+            <div className="grid-two">
+              <Card>
+                <CardHeader><CardTitle><TrendingUp className="green-icon"/> Grafik Profitabilitas</CardTitle><CardDescription>Performa mingguan/bulanan</CardDescription></CardHeader>
+                <CardContent className="chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={analytics.sortedPeriods}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="period" />
+                      <YAxis tickFormatter={(val) => `${Math.round(val/1000)}k`} />
+                      <RechartsTooltip formatter={(val) => formatIDR(val)} />
+                      <Legend />
+                      <Bar dataKey="surplusBahan" name="Sisa Bahan" stackId="a" fill="#10b981" />
+                      <Bar dataKey="surplusOps" name="Sisa Ops" stackId="a" fill="#f59e0b" />
+                      <Bar dataKey="incSewa" name="Insentif" stackId="a" fill="#3b82f6" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle><ArrowRightLeft className="blue-icon"/> Tren Arus Kas (Cashflow)</CardTitle><CardDescription>Uang Masuk vs Uang Keluar</CardDescription></CardHeader>
+                <CardContent className="chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={analytics.sortedPeriods}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="period" />
+                      <YAxis tickFormatter={(val) => `${Math.round(val/1000)}k`} />
+                      <RechartsTooltip formatter={(val) => formatIDR(val)} />
+                      <Legend />
+                      <Area type="monotone" dataKey="totalRevenue" name="Uang Masuk" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.12} />
+                      <Area type="monotone" dataKey="totalExpense" name="Uang Keluar" stroke="#ef4444" fill="#ef4444" fillOpacity={0.12} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle>Ringkasan Kategori Operasional</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Kategori</TableHead><TableHead className="right">Total</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      <TableRow><TableCell className="green-text strong">Bahan Baku</TableCell><TableCell className="right">{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.expBahan,0))}</TableCell></TableRow>
+                      <TableRow><TableCell className="orange-text strong">Operasional</TableCell><TableCell className="right">{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.expOps,0))}</TableCell></TableRow>
+                      <TableRow><TableCell className="indigo-text strong">Capex (Modal)</TableCell><TableCell className="right">{formatIDR(analytics.grandTotalCapex)}</TableCell></TableRow>
+                      <TableRow><TableCell className="red-text strong">Beban Profit</TableCell><TableCell className="right">{formatIDR(analytics.grandTotalProfitBurden)}</TableCell></TableRow>
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle>Komposisi Biaya Operasional</CardTitle></CardHeader>
+                <CardContent className="chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RePieChart>
+                      <Pie data={analytics.pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={82} paddingAngle={5} dataKey="value">
+                        {analytics.pieData.map((entry, idx) => <Cell key={idx} fill={entry.color} />)}
+                      </Pie>
+                      <RechartsTooltip formatter={(val) => formatIDR(val)} />
+                      <Legend />
+                    </RePieChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+        )}
 
-      {active==="audit" && <Card title="Audit Klasifikasi">
-        <Audit rows={enriched.filter(t=>t.needsReview)} />
-      </Card>}
+        {activeTab === "input" && (
+          <section className="space">
+            <div className="subtabs">
+              <span className="subtab active">Input & Tracking</span>
+              <span className="subtab">Bulk Upload Lokal</span>
+            </div>
+            <div className="grid-three">
+              <Card className="left-form red-border-top">
+                <CardHeader><CardTitle>Input Transaksi</CardTitle></CardHeader>
+                <CardContent className="form-stack">
+                  <Input type="date" value={newTrans.date} onChange={(e)=>setNewTrans({...newTrans, date:e.target.value})} />
+                  <div className="two-buttons">
+                    <Button variant={newTrans.type==="expense" ? "red" : "outline"} onClick={()=>setNewTrans({...newTrans,type:"expense"})}><ArrowDownCircle size={16}/> Keluar</Button>
+                    <Button variant={newTrans.type==="income" ? "green" : "outline"} onClick={()=>setNewTrans({...newTrans,type:"income"})}><ArrowUpCircle size={16}/> Masuk</Button>
+                  </div>
+                  <Input placeholder="Deskripsi (Cth: Beli Ayam)" value={newTrans.desc} onChange={(e)=>{
+                    const val=e.target.value; const autoCat=categorizeByDesc(val); const autoType=autoCat.includes("Pemasukan")?"income":"expense";
+                    setNewTrans({...newTrans,desc:val,category:autoCat,type:autoType});
+                  }} />
+                  <div className="three-cols">
+                    <Input type="number" placeholder="Qty" value={newTrans.qty} onChange={(e)=>setNewTrans({...newTrans,qty:e.target.value})} />
+                    <Input placeholder="Satuan" value={newTrans.unit} onChange={(e)=>setNewTrans({...newTrans,unit:e.target.value})} />
+                    <Input type="number" placeholder="Harga" value={newTrans.unitPrice} onChange={(e)=>setNewTrans({...newTrans,unitPrice:e.target.value})} />
+                  </div>
+                  <Input type="number" value={newTrans.amount} onChange={(e)=>setNewTrans({...newTrans,amount:e.target.value})} placeholder="Total (Rp)" />
+                  <label className="label">Kategori (Auto/Manual)</label>
+                  <select className="select" value={newTrans.category} onChange={e=>{
+                    const selectedCat=e.target.value; const autoType=selectedCat.includes("Pemasukan")?"income":"expense";
+                    setNewTrans({...newTrans,category:selectedCat,type:autoType});
+                  }}>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <label className="checkbox"><input type="checkbox" checked={newTrans.isDebt} onChange={e=>setNewTrans({...newTrans,isDebt:e.target.checked})} /> Tandai sbg Hutang</label>
+                  <Button onClick={handleAddTrans} className="full dark"><Save size={16}/> Simpan</Button>
+                </CardContent>
+              </Card>
+              <Card className="tracking">
+                <CardHeader>
+                  <CardTitle className="between"><span>Tracking Harga & Hutang</span><span className="searchbox"><Search size={16}/><Input placeholder="Cari barang atau hutang..." value={globalSearch} onChange={e=>setGlobalSearch(e.target.value)} /></span></CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="scroll-table">
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Item</TableHead><TableHead className="right">Total</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {transactions.filter(t=>safeString(t.desc).toLowerCase().includes(globalSearch.toLowerCase())).slice(0,250).map(t=>(
+                          <TableRow key={t.id} className={t.isDebt ? "debt-row" : ""}>
+                            <TableCell className="small">{t.date}</TableCell>
+                            <TableCell className="item-cell"><b>{t.desc}</b><small>{t.category}</small>{t.qty && t.unitPrice ? <small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small> : null}</TableCell>
+                            <TableCell className={`right strong ${t.type==="income" ? "green-text" : "red-text"}`}>{formatIDR(t.amount)}</TableCell>
+                            <TableCell><div className="row-actions">{t.isDebt && <Badge variant="destructive">Hutang</Badge>}<button onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button onClick={()=>handleDeleteTrans(t.id)}><Trash2 size={13}/></button></div></TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-      {active==="backup" && <section className="grid two">
-        <Card title="Backup JSON">
-          <p className="muted">Backup penuh tetap paling aman dalam bentuk JSON karena data sudah besar. Firestore dipakai untuk transaksi per dokumen.</p>
-          <button className="btn wide" onClick={exportJSON}><Download size={16}/> Download Backup JSON</button>
-          <button className="btn wide secondary" onClick={saveBackupPoint}><FileJson size={16}/> Buat Titik Backup Metadata</button>
-        </Card>
-        <Card title="Restore JSON">
-          <p className="muted">Restore membaca JSON ke layar dulu. Setelah benar, klik Upload ke Firebase.</p>
-          <label className="btn wide secondary"><Upload size={16}/> Restore dari JSON<input hidden type="file" accept=".json" onChange={importJSONFile}/></label>
-        </Card>
-      </section>}
-    </main>
-  </div>
+            <div className="grid-two">
+              <Card className="red-border-top">
+                <CardHeader><CardTitle className="red-text"><Sparkles size={18}/> Paste Belanja</CardTitle><CardDescription>Parser lokal untuk format chat. AI tetap lewat Custom GPT.</CardDescription></CardHeader>
+                <CardContent>
+                  <Textarea placeholder="Mama Lemon 60 pouch x 8900 hutang Koperasi" value={bulkExpenseText} onChange={e=>setBulkExpenseText(e.target.value)} />
+                  <Button onClick={()=>processBulkWithLocalParser(bulkExpenseText,"expense")} disabled={isBulkProcessing} className="full red">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Belanja"}</Button>
+                  {bulkStatus && <div className="bulk-status">{bulkStatus}</div>}
+                </CardContent>
+              </Card>
+              <Card className="green-border-top">
+                <CardHeader><CardTitle className="green-text"><Sparkles size={18}/> Paste Pemasukan</CardTitle><CardDescription>Contoh: INSENTIF 6000000 lunas</CardDescription></CardHeader>
+                <CardContent>
+                  <Textarea placeholder="INSENTIF 6000000 lunas" value={bulkIncomeText} onChange={e=>setBulkIncomeText(e.target.value)} />
+                  <Button onClick={()=>processBulkWithLocalParser(bulkIncomeText,"income")} disabled={isBulkProcessing} className="full green">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Pemasukan"}</Button>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+        )}
+
+        {activeTab === "debts" && (
+          <section className="grid-three">
+            <Card className="debt-summary">
+              <CardHeader><CardTitle>Rincian Hutang per Vendor</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="vendor-list">
+                  {Object.entries(analytics.debtByVendor).length ? Object.entries(analytics.debtByVendor).map(([vendor, amount]) => <li key={vendor}><span>{vendor}</span><b>{formatIDR(amount)}</b></li>) : <p className="empty">Tidak ada hutang tercatat.</p>}
+                </ul>
+              </CardContent>
+            </Card>
+            <Card className="debt-table-card">
+              <CardHeader className="orange-bg"><CardTitle><CreditCard size={20}/> Daftar Tagihan Belum Lunas</CardTitle></CardHeader>
+              <CardContent className="no-pad">
+                <div className="debt-total"><span>Total Hutang: {formatIDR(analytics.totalDebt)}</span>{analytics.totalDebt > 0 && <Button size="sm" variant="red" onClick={handlePayAllDebts}>Lunasi SEMUA Hutang</Button>}</div>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Rp</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {transactions.filter(t=>Math.max(0,t.amount-safeNumber(t.paidAmount))>0).length ? transactions.filter(t=>Math.max(0,t.amount-safeNumber(t.paidAmount))>0).map(t=>(
+                      <TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}</TableCell><TableCell>{t.orderBy}</TableCell><TableCell className="right strong orange-text">{formatIDR(t.amount-safeNumber(t.paidAmount))}</TableCell><TableCell><Button size="sm" variant="green" onClick={()=>handlePayDebt(t.id)}>Lunas</Button><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>
+                    )) : <TableRow><TableCell colSpan={5} className="center empty">Hore! Tidak ada hutang.</TableCell></TableRow>}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {activeTab === "reports" && (
+          <section className="space">
+            <div className="filterbar">
+              <div className="periods">
+                <Button variant={periodFilter==="weekly"?"default":"ghost"} onClick={()=>{setPeriodFilter("weekly");setCustomStartDate("");setCustomEndDate("");}}>Mingguan</Button>
+                <Button variant={periodFilter==="monthly"?"default":"ghost"} onClick={()=>{setPeriodFilter("monthly");setCustomStartDate("");setCustomEndDate("");}}>Bulanan</Button>
+                <Button variant={periodFilter==="custom"?"default":"ghost"} onClick={()=>setPeriodFilter("custom")}>Custom Tanggal</Button>
+              </div>
+              {periodFilter==="custom" && <div className="date-range"><Input type="date" value={customStartDate} onChange={e=>setCustomStartDate(e.target.value)}/><span>s/d</span><Input type="date" value={customEndDate} onChange={e=>setCustomEndDate(e.target.value)}/></div>}
+              <Button variant="outline" onClick={handlePrintReport}><Printer size={16}/> Cetak Laporan (Print/PDF)</Button>
+            </div>
+            <Card className="report-card">
+              <CardHeader><CardTitle><FileText/> Laporan Laba Rugi Komplit</CardTitle><CardDescription>Rincian Insentif, Bahan, dan Operasional dalam satu tabel.</CardDescription></CardHeader>
+              <CardContent>
+                <div className="wide-table">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Periode</TableHead><TableHead className="center blue-soft">INSENTIF (SEWA)</TableHead><TableHead className="center green-soft">BAHAN BAKU</TableHead><TableHead className="center orange-soft">OPERASIONAL</TableHead><TableHead className="center purple-soft">MODAL, BEBAN & DIVIDEN</TableHead><TableHead className="right">PROFIT BERSIH</TableHead><TableHead className="right emerald-soft">ARUS KAS BERSIH</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {analytics.sortedPeriods.map((p,idx)=>(
+                        <TableRow key={idx}>
+                          <TableCell className="period-cell">{p.period}{p.isPending && <button className="pending" onClick={()=>confirmAction("Tandai Sudah Cair?",`Apakah periode ${p.period} sudah lunas/cair?`,()=>togglePeriodPaid(p.period))}>BELUM CAIR ⚠️</button>}{paidPeriods[p.period] && <button className="paid" onClick={()=>togglePeriodPaid(p.period)}>LUNAS <CheckCircle2 size={9}/></button>}</TableCell>
+                          <TableCell className="center blue-text strong bigcell">{p.incSewa ? formatIDR(p.incSewa) : "-"}{p.incSewa>0 && <button className="detail-btn" onClick={()=>handleViewDetail(p,"sewa")}><Eye size={10}/> Rincian</button>}</TableCell>
+                          <TableCell className="mini-report"><div><span>Dana:</span><b className="green-text">{formatIDR(p.incBahan)}</b></div><div><span>Blj:</span><b className="red-text">-{formatIDR(p.expBahan)}</b></div><div><span>Sisa:</span><b className={p.surplusBahan<0?"red-text":"green-text"}>{formatIDR(p.surplusBahan)}</b></div><button className="detail-btn" onClick={()=>handleViewDetail(p,"bahan")}><Eye size={10}/> Rincian Belanja</button></TableCell>
+                          <TableCell className="mini-report"><div><span>Dana:</span><b className="orange-text">{formatIDR(p.incOps)}</b></div><div><span>Blj:</span><b className="red-text">-{formatIDR(p.expOps)}</b></div><div><span>Sisa:</span><b className={p.surplusOps<0?"red-text":"green-text"}>{formatIDR(p.surplusOps)}</b></div><button className="detail-btn" onClick={()=>handleViewDetail(p,"ops")}><Eye size={10}/> Rincian Ops</button></TableCell>
+                          <TableCell className="mini-report"><div><b className="purple-text">Capex</b><span>-{formatIDR(p.expCapex)}</span></div><button className="detail-btn purple-text" onClick={()=>handleViewDetail(p,"modal")}><Eye size={10}/> Rincian</button><div><b className="red-text">Beban Profit</b><span>-{formatIDR(p.expProfitBurden)}</span></div><button className="detail-btn red-text" onClick={()=>handleViewDetail(p,"beban")}><Eye size={10}/> Rincian</button><div><b className="pink-text">Dividen</b><span>-{formatIDR(p.expDividend)}</span></div><button className="detail-btn pink-text" onClick={()=>handleViewDetail(p,"dividen")}><Eye size={10}/> Rincian</button></TableCell>
+                          <TableCell className={`right strong xlarge ${p.netProfit<0?"red-text":"blue-text"}`}>{formatIDR(p.netProfit)}</TableCell>
+                          <TableCell className={`right strong xlarge emerald-soft ${p.cashFlow<0?"red-text":"emerald-text"}`}>{formatIDR(p.cashFlow)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                    <TableFooter><TableRow className="footer-dark"><TableCell>TOTAL</TableCell><TableCell className="center">{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.incSewa,0))}</TableCell><TableCell className="right">Sisa: {formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.surplusBahan,0))}</TableCell><TableCell className="right">Sisa: {formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.surplusOps,0))}</TableCell><TableCell className="center"><div>C: {formatIDR(analytics.grandTotalCapex)}</div><div>B: {formatIDR(analytics.grandTotalProfitBurden)}</div><div>D: {formatIDR(analytics.grandTotalDividend)}</div></TableCell><TableCell className="right">{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.netProfit,0))}</TableCell><TableCell className="right">{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.cashFlow,0))}</TableCell></TableRow></TableFooter>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {activeTab === "dividend" && (
+          <section className="grid-two">
+            <Card className="green-border-top">
+              <CardHeader><CardTitle className="green-text"><Users size={20}/> Manajemen Shareholder</CardTitle><CardDescription>Tambah penerima dividen, persentase, dan fee.</CardDescription></CardHeader>
+              <CardContent>
+                <div className="share-add">
+                  <label>Nama Investor<Input id="newShName" placeholder="Contoh: Pak Budi" /></label>
+                  <label>Pct (%)<Input id="newShPct" type="number" /></label>
+                  <label>Fee (%)<Input id="newShFee" type="number" /></label>
+                  <Button onClick={()=>{
+                    const n=document.getElementById("newShName").value; const p=document.getElementById("newShPct").value; const f=document.getElementById("newShFee").value;
+                    addShareholder(n,p,f); document.getElementById("newShName").value=""; document.getElementById("newShPct").value=""; document.getElementById("newShFee").value="";
+                  }}><Plus size={16}/></Button>
+                </div>
+                <div className="boxed-table">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Nama</TableHead><TableHead className="right">Saham</TableHead><TableHead className="right">Fee</TableHead><TableHead></TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {shareholders.length ? shareholders.map(s=><TableRow key={s.id}><TableCell className="strong">{s.name}</TableCell><TableCell className="right">{s.pct}%</TableCell><TableCell className="right red-text">{s.mgmtFee||0}%</TableCell><TableCell><button onClick={()=>removeShareholder(s.id)}><Trash2 size={13}/></button></TableCell></TableRow>) : <TableRow><TableCell colSpan={4} className="center empty">Belum ada investor</TableCell></TableRow>}
+                      {shareholders.length > 0 && <TableRow className="subtotal"><TableCell>TOTAL</TableCell><TableCell className={shareholders.reduce((a,b)=>a+b.pct,0)!==100?"right red-text":"right green-text"}>{shareholders.reduce((a,b)=>a+b.pct,0)}%</TableCell><TableCell></TableCell><TableCell></TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+                <h4 className="history-title"><History size={16}/> Riwayat Pembagian Dividen</h4>
+                <div className="boxed-table small-box">
+                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead className="right">Jumlah</TableHead></TableRow></TableHeader><TableBody>{transactions.filter(t=>t.category==="Pembagian Dividen").map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}</TableCell><TableCell className="right red-text strong">-{formatIDR(t.amount)}</TableCell></TableRow>)}{transactions.filter(t=>t.category==="Pembagian Dividen").length===0 && <TableRow><TableCell colSpan={3} className="center empty">Belum ada riwayat pembagian</TableCell></TableRow>}</TableBody></Table>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="blue-border-top">
+              <CardHeader><CardTitle className="blue-text"><PieChartIcon size={20}/> Kalkulator Dividen (Periode Custom)</CardTitle><CardDescription>Pilih tanggal untuk menghitung profit sesuai periode.</CardDescription></CardHeader>
+              <CardContent className="form-stack">
+                <div className="blue-panel">
+                  <label>Periode Perhitungan Dividen</label>
+                  <div className="date-range"><Input type="date" value={divCalcStart} onChange={e=>setDivCalcStart(e.target.value)}/><span>s/d</span><Input type="date" value={divCalcEnd} onChange={e=>setDivCalcEnd(e.target.value)}/></div>
+                </div>
+                <div className="formula-box">
+                  <div className="line-control"><span>Dari Total Insentif ({formatIDR(calculatedDividendPool.rangeInsentif)})</span><Input type="number" value={dividendConfig.sourceInsentifPct} onChange={e=>setDividendConfig({...dividendConfig,sourceInsentifPct:safeNumber(e.target.value)})}/><span>%</span></div>
+                  <div className="right small blue-text strong">Subtotal: {formatIDR(calculatedDividendPool.insentifPart)}</div>
+                  <hr/>
+                  <div className="line-control"><span>Target Profit dari Belanja Bahan</span><Input type="number" value={dividendConfig.targetProfitBahanPct} onChange={e=>setDividendConfig({...dividendConfig,targetProfitBahanPct:safeNumber(e.target.value)})}/><span>%</span></div>
+                  <div className="right small muted">Total Belanja: {formatIDR(calculatedDividendPool.rangeExpenseBahan)}</div>
+                  <div className="deduct"><div><span>- Capex:</span><b>{formatIDR(calculatedDividendPool.rangeCapex)}</b></div><div><span>- Beban Profit:</span><b>{formatIDR(calculatedDividendPool.rangeProfitBurden)}</b></div><div><span>- Hutang Global:</span><b>{formatIDR(analytics.totalDebt)}</b></div></div>
+                  <div className="right small green-text strong">Net Profit Bahan: {formatIDR(calculatedDividendPool.bahanNet)}</div>
+                </div>
+                <div className="pool">
+                  <div>TOTAL POOL DIVIDEN SIAP BAGI</div>
+                  {dividendConfig.mode==="auto" ? <b onClick={()=>setDividendConfig({...dividendConfig,customAmount:calculatedDividendPool.autoTotal,mode:"manual"})}>{formatIDR(calculatedDividendPool.total)}</b> : <div><Input value={formatNumberInput(dividendConfig.customAmount)} onChange={e=>setDividendConfig({...dividendConfig,customAmount:parseIDRInput(e.target.value)})}/><Button variant="ghost" size="sm" onClick={()=>setDividendConfig({...dividendConfig,mode:"auto"})}><RefreshCw size={12}/> Reset ke Auto</Button></div>}
+                </div>
+                <div className="two-cols">
+                  <label>Label Periode<Input value={dividendConfig.periodLabel} onChange={e=>setDividendConfig({...dividendConfig,periodLabel:e.target.value})}/></label>
+                  <label>Tgl Pembagian<Input type="date" value={dividendConfig.distributionDate} onChange={e=>setDividendConfig({...dividendConfig,distributionDate:e.target.value})}/></label>
+                </div>
+                <div className="boxed-table">
+                  <Table><TableHeader><TableRow><TableHead>Investor</TableHead><TableHead className="right">Gross</TableHead><TableHead className="right red-text">Mgmt Fee</TableHead><TableHead className="right">Net</TableHead></TableRow></TableHeader><TableBody>{shareholders.map(s=>{const d=getShareData(s);return <TableRow key={s.id}><TableCell>{s.name}</TableCell><TableCell className="right">{formatIDR(d.gross)}</TableCell><TableCell className="right red-text">-{formatIDR(d.fee)}</TableCell><TableCell><Input className={d.isManual ? "manual" : ""} value={formatNumberInput(d.net)} onChange={e=>setManualDistributions(prev=>({...prev,[s.id]:parseIDRInput(e.target.value)}))}/></TableCell></TableRow>})}</TableBody></Table>
+                </div>
+                <div className="two-buttons"><Button variant="outline" onClick={handlePrintInvestorReport}><Printer size={16}/> Cetak Laporan</Button><Button className="green" onClick={handleDistributeDividend}><DollarSign size={16}/> Bayar Dividen</Button></div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {activeTab === "inventory" && (
+          <section className="grid-three">
+            <Card className="left-form cyan-border-top">
+              <CardHeader><CardTitle><Package size={20}/> Kelola Stok</CardTitle><CardDescription>Tambah atau update stok gudang.</CardDescription></CardHeader>
+              <CardContent className="form-stack">
+                <Input placeholder="Nama Barang" value={newItem.name} onChange={e=>setNewItem({...newItem,name:e.target.value})}/>
+                <div className="two-cols"><Input type="number" placeholder="Qty" value={newItem.qty} onChange={e=>setNewItem({...newItem,qty:e.target.value})}/><Input placeholder="Satuan" value={newItem.unit} onChange={e=>setNewItem({...newItem,unit:e.target.value})}/></div>
+                <Input type="number" placeholder="Nilai per Unit (Rp)" value={newItem.valuePerUnit} onChange={e=>setNewItem({...newItem,valuePerUnit:e.target.value})}/>
+                <Button className="cyan full" onClick={addInventoryItem}><Plus size={16}/> Tambah Stok</Button>
+                <Textarea placeholder="Bulk stok: Beras 50 kg @13000" value={bulkInventoryText} onChange={e=>setBulkInventoryText(e.target.value)}/>
+                <Button className="indigo full" onClick={()=>processInventoryBulkLocal(bulkInventoryText)}><Sparkles size={16}/> Proses Bulk</Button>
+                <div className="asset-box"><span>Total Nilai Aset Gudang</span><b>{formatIDR(analytics.inventoryValue)}</b></div>
+              </CardContent>
+            </Card>
+            <Card className="tracking">
+              <CardHeader><CardTitle className="between"><span>Daftar Barang ({inventory.length} Item)</span><Button variant="outline" size="sm" onClick={handleExportInventoryCSV}><Download size={16}/> CSV</Button></CardTitle></CardHeader>
+              <CardContent><div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Barang</TableHead><TableHead className="right">Qty</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{inventory.length ? inventory.map(item=><TableRow key={item.id}><TableCell className="strong">{item.name}</TableCell><TableCell className="right">{item.qty} {item.unit}</TableCell><TableCell className="right">{formatIDR(item.valuePerUnit)}</TableCell><TableCell className="right strong">{formatIDR(item.qty*item.valuePerUnit)}</TableCell><TableCell><button onClick={()=>openEditInventory(item)}><Edit2 size={13}/></button><button onClick={()=>removeInventoryItem(item.id)}><Trash2 size={13}/></button></TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="center empty">Gudang kosong.</TableCell></TableRow>}</TableBody></Table></div></CardContent>
+            </Card>
+          </section>
+        )}
+
+        {activeTab === "analysis" && (
+          <section className="grid-two">
+            <Card><CardHeader><CardTitle><BrainCircuit size={20}/> Analisa AI Keuangan</CardTitle><CardDescription>Analisa lokal cepat berdasarkan data Firebase.</CardDescription></CardHeader><CardContent><div className="info-box"><ul><li>Total Hutang: {formatIDR(analytics.totalDebt)}</li><li>Rasio Hutang: {analytics.debtRatio.toFixed(2)}%</li><li>Talangan Pending: {formatIDR(analytics.pendingFunds)}</li></ul></div><Button className="violet full" onClick={generateRealAiAnalysis} disabled={isAnalyzing}>{isAnalyzing ? <Loader2 className="spin"/> : <Sparkles/>} Analisa Sekarang</Button>{aiAnalysisResult && <div className="analysis-list">{aiAnalysisResult.map((res,idx)=><div key={idx} className={`analysis ${res.type}`}><b>{res.title}</b><span>{res.msg}</span></div>)}</div>}</CardContent></Card>
+            <Card><CardHeader><CardTitle><ChefHat size={20}/> Menu Planner</CardTitle><CardDescription>Rencanakan menu harian berdasarkan stok.</CardDescription></CardHeader><CardContent className="form-stack"><div className="two-cols"><label>Jumlah Pax<Input type="number" value={menuPlanner.pax} onChange={e=>setMenuPlanner({...menuPlanner,pax:safeNumber(e.target.value)})}/></label><label>Budget/Pax<Input type="number" value={menuPlanner.budget} onChange={e=>setMenuPlanner({...menuPlanner,budget:safeNumber(e.target.value)})}/></label></div><Button variant="outline" className="full" onClick={generateMenuPlan}><Lightbulb/> Generate Menu</Button>{menuResult && <div className="info-box"><b>Rekomendasi Menu:</b><ul>{menuResult.menu.map((m,i)=><li key={i}>{m}</li>)}</ul><b>Estimasi Belanja Tambahan:</b><ul>{menuResult.shoppingList.map((s,i)=><li key={i}>{s.item} ({s.qty}) - {formatIDR(s.estCost)}</li>)}</ul><div className="right strong green-text">Total: {formatIDR(menuResult.totalEstCost)}</div></div>}</CardContent></Card>
+          </section>
+        )}
+
+        {activeTab === "audit" && (
+          <section className="space">
+            <Card className="yellow-border-top">
+              <CardHeader><CardTitle><ShieldAlert size={20}/> Audit Klasifikasi & Sinkron GPT</CardTitle><CardDescription>Tab baru. Tampilan lama tetap dipertahankan, audit ditambahkan di halaman terpisah.</CardDescription></CardHeader>
+              <CardContent>
+                <div className="audit-summary"><span><Database size={16}/> Source GPT/Firebase: {transactions.filter(t=>String(t.source).includes("chatgpt")).length} transaksi</span><span><AlertTriangle size={16}/> Perlu cek: {auditRows.length}</span></div>
+                <div className="scroll-table">
+                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Saat Ini</TableHead><TableHead>Rekomendasi</TableHead><TableHead>Source</TableHead><TableHead className="right">Outstanding</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason}</small></TableCell><TableCell>{t.category}</TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}</TableCell><TableCell>{t.source}</TableCell><TableCell className="right">{formatIDR(t.outstanding)}</TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={6} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {confirmOpen && <Modal title={confirmData.title} onClose={()=>setConfirmOpen(false)}><p>{confirmData.msg}</p><div className="modal-actions"><Button variant="outline" onClick={()=>setConfirmOpen(false)}>Batal</Button><Button onClick={async()=>{const fn=confirmData.action; setConfirmOpen(false); if(fn) await fn();}}>Ya, Lanjutkan</Button></div></Modal>}
+
+        {editCapitalOpen && <Modal title="Ubah Modal Awal" onClose={()=>setEditCapitalOpen(false)}><p className="muted">Saldo Buku dihitung dari Modal Awal + Masuk - Keluar.</p><Input value={formatNumberInput(tempCapital)} onChange={e=>setTempCapital(parseIDRInput(e.target.value))}/><Button className="full dark" onClick={async()=>{setInitialCapital(tempCapital); setEditCapitalOpen(false); if(db) await saveMeta({initialCapital:tempCapital});}}>Simpan Modal Awal</Button></Modal>}
+
+        {editOpen && currentEdit && <Modal title="Edit Transaksi" wide onClose={()=>setEditOpen(false)}><div className="edit-grid"><label>Tanggal<Input type="date" value={currentEdit.date} onChange={e=>setCurrentEdit({...currentEdit,date:e.target.value})}/></label><label>Ket<Input value={currentEdit.desc} onChange={e=>setCurrentEdit({...currentEdit,desc:e.target.value})}/></label><label>Vendor<Input value={currentEdit.orderBy||""} onChange={e=>setCurrentEdit({...currentEdit,orderBy:e.target.value})}/></label><label>Total<Input type="number" value={currentEdit.amount} onChange={e=>setCurrentEdit({...currentEdit,amount:safeNumber(e.target.value)})}/></label><label>Qty<Input type="number" value={currentEdit.qty||""} onChange={e=>setCurrentEdit({...currentEdit,qty:e.target.value})}/></label><label>Satuan<Input value={currentEdit.unit||""} onChange={e=>setCurrentEdit({...currentEdit,unit:e.target.value})}/></label><label>Harga/Unit<Input type="number" value={currentEdit.unitPrice||""} onChange={e=>setCurrentEdit({...currentEdit,unitPrice:e.target.value})}/></label><label>Kategori<select className="select" value={currentEdit.category} onChange={e=>setCurrentEdit({...currentEdit,category:e.target.value})}>{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label className="checkbox"><input type="checkbox" checked={currentEdit.isDebt} onChange={e=>setCurrentEdit({...currentEdit,isDebt:e.target.checked})}/> Hutang?</label></div><Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button></Modal>}
+
+        {detailOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}><div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead className="right">Jumlah</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{selectedDetail.data.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.category}</small><small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small></TableCell><TableCell className={`right strong ${t.type==="income"?"green-text":"red-text"}`}>{formatIDR(t.amount)}</TableCell><TableCell><button onClick={()=>{setDetailOpen(false);openEdit(t);}}><Edit2 size={13}/></button></TableCell></TableRow>)}</TableBody></Table></div></Modal>}
+
+        {backupOpen && <Modal title="Riwayat Backup Cloud" onClose={()=>setBackupOpen(false)}>{isLoadingBackups ? <div className="center"><Loader2 className="spin"/> Loading data...</div> : <div className="backup-list">{backupList.map(b=><div key={b.id} className="backup-row"><div><b>{new Date(b.createdAtClient || b.id).toLocaleString("id-ID")}</b><small>Transaksi: {b.counts?.transactions || 0}</small></div><Button size="sm" variant="outline" onClick={()=>loadBackup(b)}>Restore</Button></div>)}{backupList.length===0 && <p className="center empty">Belum ada backup tersimpan.</p>}</div>}</Modal>}
+
+        {editInventoryOpen && currentEditInventory && <Modal title="Edit Stok Barang" onClose={()=>setEditInventoryOpen(false)}><div className="form-stack"><label>Nama Barang<Input value={currentEditInventory.name} onChange={e=>setCurrentEditInventory({...currentEditInventory,name:e.target.value})}/></label><div className="two-cols"><label>Qty<Input type="number" value={currentEditInventory.qty} onChange={e=>setCurrentEditInventory({...currentEditInventory,qty:e.target.value})}/></label><label>Satuan<Input value={currentEditInventory.unit} onChange={e=>setCurrentEditInventory({...currentEditInventory,unit:e.target.value})}/></label></div><label>Nilai per Unit<Input type="number" value={currentEditInventory.valuePerUnit} onChange={e=>setCurrentEditInventory({...currentEditInventory,valuePerUnit:e.target.value})}/></label><Button className="full cyan" onClick={saveEditInventory}>Simpan Stok</Button></div></Modal>}
+      </div>
+    </div>
+  );
 }
 
-function KPI({title,value,note,danger}) { return <div className={`kpi ${danger?"danger":""}`}><span>{title}</span><b>{value}</b><small>{note}</small></div> }
-function Card({title,children}) { return <section className="card"><h2>{title}</h2>{children}</section> }
-function Rows({rows}) { return <div className="rows">{rows.map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}</div> }
-
-function Table({rows,onDelete}) {
-  return <div className="tablewrap"><table><thead><tr><th>Tanggal</th><th>Deskripsi</th><th>Tipe</th><th>Kategori</th><th>Vendor</th><th className="right">Nilai</th><th>Bayar</th><th></th></tr></thead>
-  <tbody>{rows.map(t=><tr key={t.id}>
-    <td>{t.date}</td><td><b>{t.desc}</b><small>{t.qty} {t.unit} × {money(t.unitPrice)}</small></td>
-    <td><span className={`pill ${t.type}`}>{t.type==="income"?"MASUK":"KELUAR"}</span></td>
-    <td>{t.category}</td><td>{t.orderBy}</td><td className="right"><b>{money(t.amount)}</b></td>
-    <td>{t.type==="income"?"-":money(num(t.paidAmount))}</td>
-    <td><button className="icon danger" onClick={()=>onDelete(t)}><Trash2 size={14}/></button></td>
-  </tr>)}</tbody></table></div>
+function Modal({ title, children, onClose, wide = false }) {
+  return (
+    <div className="modal-backdrop">
+      <div className={`modal ${wide ? "wide" : ""}`}>
+        <div className="modal-head"><h3>{title}</h3><button onClick={onClose}><X size={16}/></button></div>
+        {children}
+      </div>
+    </div>
+  );
 }
 
-function Debt({rows,onPay}) {
-  const total = rows.reduce((a,t)=>a+(t.amount-num(t.paidAmount)),0);
-  return <><div className="total">Total hutang: <b>{money(total)}</b></div>
-  <div className="tablewrap"><table><thead><tr><th>Tanggal</th><th>Item</th><th>Vendor</th><th className="right">Tagihan</th><th className="right">Sisa</th><th></th></tr></thead>
-  <tbody>{rows.map(t=><tr key={t.id}><td>{t.date}</td><td>{t.desc}</td><td>{t.orderBy}</td><td className="right">{money(t.amount)}</td><td className="right"><b>{money(t.amount-num(t.paidAmount))}</b></td><td><button className="btn sm" onClick={()=>onPay(t)}><CheckCircle2 size={14}/> Lunas</button></td></tr>)}</tbody></table></div></>
-}
-
-function Inventory({ledger,setLedger}) {
-  const patch=(i,k,v)=>setLedger(prev=>({...prev,inventory:prev.inventory.map((x,idx)=>idx===i?{...x,[k]:v}:x)}));
-  return <div className="tablewrap"><table><thead><tr><th>Barang</th><th>Qty</th><th>Satuan</th><th>Nilai/Unit</th><th className="right">Total</th></tr></thead>
-  <tbody>{(ledger.inventory||[]).map((x,i)=><tr key={x.id||i}><td><input value={x.name||""} onChange={e=>patch(i,"name",e.target.value)}/></td><td><input type="number" value={x.qty||0} onChange={e=>patch(i,"qty",num(e.target.value))}/></td><td><input value={x.unit||""} onChange={e=>patch(i,"unit",e.target.value)}/></td><td><input type="number" value={x.valuePerUnit||0} onChange={e=>patch(i,"valuePerUnit",num(e.target.value))}/></td><td className="right"><b>{money(num(x.qty)*num(x.valuePerUnit))}</b></td></tr>)}</tbody></table></div>
-}
-
-function Audit({rows}) {
-  return <div className="tablewrap"><table><thead><tr><th>Tanggal</th><th>Deskripsi</th><th>Kategori Sekarang</th><th>Saran</th><th>Confidence</th><th>Alasan</th></tr></thead>
-  <tbody>{rows.slice(0,1000).map(t=><tr key={t.id}><td>{t.date}</td><td>{t.desc}<small>{t.type}</small></td><td>{t.category}</td><td>{t.suggestion.category}</td><td>{Math.round(t.suggestion.confidence*100)}%</td><td>{t.suggestion.reason}</td></tr>)}</tbody></table></div>
-}
-
-createRoot(document.getElementById("root")).render(<App/>);
+export default SmartCateringAccountant;

@@ -5,14 +5,10 @@ export default defineConfig({
   plugins: [react()],
   preview: {
     host: "0.0.0.0",
-    allowedHosts: [
-      "sppg-finance-gpt-site-production.up.railway.app"
-    ]
+    allowedHosts: true
   },
   server: {
     host: "0.0.0.0",
-    allowedHosts: [
-      "sppg-finance-gpt-site-production.up.railway.app"
-    ]
+    allowedHosts: true
   }
 });
