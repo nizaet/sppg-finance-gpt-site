@@ -274,6 +274,19 @@ function TableRow({ children, className = "" }) { return <tr className={classNam
 function TableHead({ children, className = "" }) { return <th className={className}>{children}</th>; }
 function TableCell({ children, className = "", colSpan }) { return <td colSpan={colSpan} className={className}>{children}</td>; }
 
+
+const normalizeDescKey = (desc) => String(desc || "")
+  .toLowerCase()
+  .replace(/[^a-z0-9\u00c0-\u024f]+/gi, " ")
+  .replace(/\b(kg|pcs|pc|box|pack|pouch|rol|roll|liter|ltr|rp|x|dan|di|ke|dari|yang|untuk|hutang|lunas|koperasi)\b/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const descTokens = (desc) => normalizeDescKey(desc)
+  .split(" ")
+  .filter(w => w.length >= 3)
+  .slice(0, 10);
+
 function SmartCateringAccountant() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const fileInputRef = useRef(null);
@@ -313,6 +326,8 @@ function SmartCateringAccountant() {
   const [bulkIncomeText, setBulkIncomeText] = useState("");
   const [bulkExpenseText, setBulkExpenseText] = useState("");
   const [bulkInventoryText, setBulkInventoryText] = useState("");
+  const [debtVendorFilter, setDebtVendorFilter] = useState("ALL");
+  const [debtCategoryFilter, setDebtCategoryFilter] = useState("ALL");
   const [newItem, setNewItem] = useState({ name: "", qty: "", unit: "", valuePerUnit: "" });
   const [newTrans, setNewTrans] = useState({
     date: new Date().toISOString().split("T")[0],
@@ -340,6 +355,48 @@ function SmartCateringAccountant() {
     shareholders: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "shareholders"),
     backups: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups")
   }), []);
+
+
+  const categoryMemory = useMemo(() => {
+    const exact = new Map();
+    const examples = [];
+    const addCount = (map, key, category) => {
+      if (!key || !category || category === "Lainnya (Ops)") return;
+      const cur = map.get(key) || {};
+      cur[category] = (cur[category] || 0) + 1;
+      map.set(key, cur);
+    };
+    for (const t of transactions) {
+      if (!t.desc || !t.category) continue;
+      const key = normalizeDescKey(t.desc);
+      const tokens = descTokens(t.desc);
+      addCount(exact, key, t.category);
+      if (tokens.length) examples.push({ tokens, category: t.category, desc: t.desc });
+    }
+    return { exact, examples };
+  }, [transactions]);
+
+  const mostFrequentCategory = (counts) => {
+    if (!counts) return null;
+    return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0] || null;
+  };
+
+  const learnCategoryFromHistory = (desc, type = "expense") => {
+    const fallback = normalizeCategory(categorizeByDesc(desc), desc, type);
+    const key = normalizeDescKey(desc);
+    const exact = mostFrequentCategory(categoryMemory.exact.get(key));
+    if (exact) return exact;
+    const tokens = new Set(descTokens(desc));
+    if (!tokens.size) return fallback;
+    const scores = {};
+    for (const ex of categoryMemory.examples) {
+      let overlap = 0;
+      for (const t of ex.tokens) if (tokens.has(t)) overlap += 1;
+      if (overlap >= 2) scores[ex.category] = (scores[ex.category] || 0) + overlap;
+    }
+    const learned = Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
+    return learned && learned[1] >= 2 ? learned[0] : fallback;
+  };
 
   useEffect(() => {
     if (!db) {
@@ -426,9 +483,22 @@ function SmartCateringAccountant() {
     setLastSaved(`${txs.length} transaksi masuk Firebase`);
   };
 
+
+  const quickUpdateTransaction = async (id, patch) => {
+    const current = transactions.find(t => t.id === id);
+    if (!current) return;
+    const next = normalizeTx({ ...current, ...patch });
+    setTransactions(prev => prev.map(t => t.id === id ? next : t));
+    if (db) await setDoc(doc(paths.transactions(), String(id)), { ...next, updatedAt: serverTimestamp() }, { merge: true });
+  };
+
+  const applyRecommendedCategory = async (id, category) => {
+    await quickUpdateTransaction(id, { category, type: String(category).includes("Pemasukan") ? "income" : "expense" });
+  };
+
   const handleAddTrans = async () => {
     if (!newTrans.desc) return;
-    let cat = newTrans.category || categorizeByDesc(newTrans.desc);
+    let cat = newTrans.category || learnCategoryFromHistory(newTrans.desc, newTrans.type);
     let type = cat.includes("Pemasukan") ? "income" : newTrans.type;
     let finalAmount = safeNumber(newTrans.amount) || (safeNumber(newTrans.qty) * safeNumber(newTrans.unitPrice));
     if (!finalAmount) return alert("Nilai transaksi belum valid.");
@@ -682,7 +752,15 @@ function SmartCateringAccountant() {
   const processBulkWithLocalParser = async (text, type) => {
     setIsBulkProcessing(true);
     setBulkStatus("Membaca format transaksi...");
-    const rows = parseBulkText(text, type);
+    const rows = parseBulkText(text, type).map(row => {
+      const learnedCategory = learnCategoryFromHistory(row.desc, row.type);
+      return normalizeTx({
+        ...row,
+        category: learnedCategory,
+        type: learnedCategory.includes("Pemasukan") ? "income" : row.type,
+        classificationReason: `Kategori dipilih dari memori backup/riwayat: ${learnedCategory}`
+      });
+    });
     if (!rows.length) {
       setBulkStatus("Tidak ada baris valid.");
       setIsBulkProcessing(false);
@@ -836,9 +914,8 @@ function SmartCateringAccountant() {
     });
 
     const sortedPeriods = Object.values(groupedData).sort((a,b) => a.firstDate.localeCompare(b.firstDate));
-    const expensesNonCapex = grandTotalExpense - grandTotalCapex;
-    const systemBalance = (initialCapital - grandTotalCapex) + (grandTotalRevenue - expensesNonCapex);
-    const realBalance = actualBalance || (initialCapital + grandTotalRevenue - cashPaid);
+    const systemBalance = initialCapital + grandTotalRevenue - cashPaid;
+    const realBalance = actualBalance || systemBalance;
     const discrepancy = systemBalance - realBalance;
     const inventoryValue = inventory.reduce((a,b) => a + safeNumber(b.qty) * safeNumber(b.valuePerUnit), 0);
     const totalAssets = realBalance + inventoryValue;
@@ -894,11 +971,38 @@ function SmartCateringAccountant() {
   };
 
   const auditRows = useMemo(() => transactions.map(t => {
-    const recommended = normalizeCategory(categorizeByDesc(t.desc), t.desc, t.type);
+    const recommended = learnCategoryFromHistory(t.desc, t.type);
     const mismatch = recommended !== t.category && !(t.category || "").includes("Pemasukan");
     const outstanding = Math.max(0, t.amount - safeNumber(t.paidAmount));
     return { ...t, recommended, mismatch, outstanding };
-  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || t.classificationConfidence < 0.75), [transactions]);
+  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || t.classificationConfidence < 0.75), [transactions, categoryMemory]);
+
+  const debtRows = useMemo(() => transactions
+    .map(t => ({ ...t, outstanding: Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount)) }))
+    .filter(t => t.outstanding > 0)
+    .filter(t => debtVendorFilter === "ALL" || t.orderBy === debtVendorFilter)
+    .filter(t => debtCategoryFilter === "ALL" || t.category === debtCategoryFilter), [transactions, debtVendorFilter, debtCategoryFilter]);
+
+  const debtVendors = useMemo(() => Array.from(new Set(transactions
+    .filter(t => Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount)) > 0)
+    .map(t => t.orderBy || "-")
+  )).sort(), [transactions]);
+
+  const debtCategories = useMemo(() => Array.from(new Set(transactions
+    .filter(t => Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount)) > 0)
+    .map(t => t.category || "Lainnya (Ops)")
+  )).sort(), [transactions]);
+
+  const payDebtRows = (rows) => {
+    if (!rows.length) return alert("Tidak ada hutang pada filter ini.");
+    const total = rows.reduce((a,b)=>a+b.outstanding,0);
+    confirmAction("Lunasi Hutang Filter", `Lunasi ${rows.length} transaksi dengan total ${formatIDR(total)}?`, async () => {
+      const today = new Date().toISOString().split("T")[0];
+      const updates = rows.map(t => ({ ...t, isDebt: false, paymentStatus: "paid", paidAmount: t.amount, paidDate: today }));
+      setTransactions(prev => prev.map(t => updates.find(u => u.id === t.id) || t));
+      if (db) await batchWriteDocs(paths.transactions(), updates, x => ({ ...x, updatedAt: serverTimestamp() }));
+    });
+  };
 
   const getTabClass = (id) => activeTab === id ? "active" : "";
 
@@ -936,7 +1040,6 @@ function SmartCateringAccountant() {
           <button className={getTabClass("reports")} onClick={() => setActiveTab("reports")}><FileText size={16}/> Laporan</button>
           <button className={getTabClass("dividend")} onClick={() => setActiveTab("dividend")}><Users size={16}/> Dividen</button>
           <button className={getTabClass("inventory")} onClick={() => setActiveTab("inventory")}><Package size={16}/> Gudang</button>
-          <button className={getTabClass("analysis")} onClick={() => setActiveTab("analysis")}><BrainCircuit size={16}/> AI</button>
           <button className={getTabClass("audit")} onClick={() => setActiveTab("audit")}><ShieldAlert size={16}/> Audit</button>
         </div>
 
@@ -1034,10 +1137,6 @@ function SmartCateringAccountant() {
 
         {activeTab === "input" && (
           <section className="space">
-            <div className="subtabs">
-              <span className="subtab active">Input & Tracking</span>
-              <span className="subtab">Bulk Upload Lokal</span>
-            </div>
             <div className="grid-three">
               <Card className="left-form red-border-top">
                 <CardHeader><CardTitle>Input Transaksi</CardTitle></CardHeader>
@@ -1048,7 +1147,7 @@ function SmartCateringAccountant() {
                     <Button variant={newTrans.type==="income" ? "green" : "outline"} onClick={()=>setNewTrans({...newTrans,type:"income"})}><ArrowUpCircle size={16}/> Masuk</Button>
                   </div>
                   <Input placeholder="Deskripsi (Cth: Beli Ayam)" value={newTrans.desc} onChange={(e)=>{
-                    const val=e.target.value; const autoCat=categorizeByDesc(val); const autoType=autoCat.includes("Pemasukan")?"income":"expense";
+                    const val=e.target.value; const autoCat=learnCategoryFromHistory(val, newTrans.type); const autoType=autoCat.includes("Pemasukan")?"income":"expense";
                     setNewTrans({...newTrans,desc:val,category:autoCat,type:autoType});
                   }} />
                   <div className="three-cols">
@@ -1126,12 +1225,17 @@ function SmartCateringAccountant() {
               <CardHeader className="orange-bg"><CardTitle><CreditCard size={20}/> Daftar Tagihan Belum Lunas</CardTitle></CardHeader>
               <CardContent className="no-pad">
                 <div className="debt-total"><span>Total Hutang: {formatIDR(analytics.totalDebt)}</span>{analytics.totalDebt > 0 && <Button size="sm" variant="red" onClick={handlePayAllDebts}>Lunasi SEMUA Hutang</Button>}</div>
+                <div className="debt-filterbar">
+                  <label>Vendor<select className="select" value={debtVendorFilter} onChange={e=>setDebtVendorFilter(e.target.value)}><option value="ALL">Semua nama/vendor</option>{debtVendors.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+                  <label>Kategori<select className="select" value={debtCategoryFilter} onChange={e=>setDebtCategoryFilter(e.target.value)}><option value="ALL">Semua kategori</option>{debtCategories.map(c=><option key={c} value={c}>{c}</option>)}</select></label>
+                  <div className="filter-paybox"><span>Filter: {debtRows.length} transaksi · {formatIDR(debtRows.reduce((a,b)=>a+b.outstanding,0))}</span><Button size="sm" variant="green" onClick={()=>payDebtRows(debtRows)}>Lunasi Sesuai Filter</Button></div>
+                </div>
                 <Table>
-                  <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Rp</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead>Kategori</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Rp</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
                   <TableBody>
-                    {transactions.filter(t=>Math.max(0,t.amount-safeNumber(t.paidAmount))>0).length ? transactions.filter(t=>Math.max(0,t.amount-safeNumber(t.paidAmount))>0).map(t=>(
-                      <TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}</TableCell><TableCell>{t.orderBy}</TableCell><TableCell className="right strong orange-text">{formatIDR(t.amount-safeNumber(t.paidAmount))}</TableCell><TableCell><Button size="sm" variant="green" onClick={()=>handlePayDebt(t.id)}>Lunas</Button><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>
-                    )) : <TableRow><TableCell colSpan={5} className="center empty">Hore! Tidak ada hutang.</TableCell></TableRow>}
+                    {debtRows.length ? debtRows.map(t=>(
+                      <TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}</TableCell><TableCell>{t.category}</TableCell><TableCell>{t.orderBy}</TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><Button size="sm" variant="green" onClick={()=>handlePayDebt(t.id)}>Lunas</Button><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>
+                    )) : <TableRow><TableCell colSpan={6} className="center empty">Tidak ada hutang pada filter ini.</TableCell></TableRow>}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -1274,7 +1378,7 @@ function SmartCateringAccountant() {
               <CardContent>
                 <div className="audit-summary"><span><Database size={16}/> Source GPT/Firebase: {transactions.filter(t=>String(t.source).includes("chatgpt")).length} transaksi</span><span><AlertTriangle size={16}/> Perlu cek: {auditRows.length}</span></div>
                 <div className="scroll-table">
-                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Saat Ini</TableHead><TableHead>Rekomendasi</TableHead><TableHead>Source</TableHead><TableHead className="right">Outstanding</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason}</small></TableCell><TableCell>{t.category}</TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}</TableCell><TableCell>{t.source}</TableCell><TableCell className="right">{formatIDR(t.outstanding)}</TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={6} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
+                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Editable</TableHead><TableHead>Rekomendasi dari Backup</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Dibayar</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason || `Source: ${t.source || '-'}`}</small></TableCell><TableCell><select className="select audit-select" value={t.category} onChange={e=>applyRecommendedCategory(t.id, e.target.value)}>{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}<button className="detail-btn" onClick={()=>applyRecommendedCategory(t.id, t.recommended)}><Check size={10}/> Pakai ini</button></TableCell><TableCell><Input value={t.orderBy || ''} onChange={e=>quickUpdateTransaction(t.id,{orderBy:e.target.value})}/></TableCell><TableCell className="right"><Input className="right" value={formatNumberInput(t.paidAmount)} onChange={e=>quickUpdateTransaction(t.id,{paidAmount:parseIDRInput(e.target.value), isDebt: parseIDRInput(e.target.value) < t.amount, paymentStatus: parseIDRInput(e.target.value) >= t.amount ? 'paid' : 'unpaid'})}/></TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={8} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
                 </div>
               </CardContent>
             </Card>

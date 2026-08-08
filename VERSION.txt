@@ -1,0 +1,7 @@
+SPPG Finance Legacy UI v7.1
+- AI tab removed from navigation
+- Bulk Upload Lokal label removed from Input page
+- Audit category/vendor/paid fields editable
+- Debt can be paid by current vendor/category filter
+- Reports table has compact mode and reduced width
+- Category learner prefers manually edited backup/history categories

@@ -1,29 +1,25 @@
-# Deploy Manual — SPPG Finance Legacy UI Railway
+# SPPG Finance Legacy UI Railway v7.1
 
-Paket ini mengembalikan bentuk aplikasi lama:
-- Laporan Keuangan SPPG MAJA BARU
-- Tab Dash, Input, Hutang, Laporan, Dividen, Gudang, AI
-- Tambahan tab Audit tanpa membuang tab lama
-- CSS biasa, tidak memakai Tailwind
+Versi ini dibuat supaya Git pasti melihat perubahan saat Anda copy ke repo.
 
-Mesin data baru:
-- Membaca Firebase Firestore path:
-  `gpt_sites/sppg-maja-gpt-site/ledger/meta/transactions`
-- Kompatibel dengan data dari Custom GPT Action.
-- Hutang memakai `paymentStatus`, `paidAmount`, dan outstanding = amount - paidAmount.
+Ciri v7.1:
+- `package.json` version = `7.1.0`
+- Ada file `VERSION.txt`
+- Tab AI dihapus dari navigasi.
+- Tulisan tab kecil "Bulk Upload Lokal" di halaman Input dihapus.
+- Audit bisa edit kategori/vendor/paid langsung.
+- Hutang bisa dilunasi sesuai filter vendor/kategori.
+- Kategori lokal belajar dari transaksi manual/backup yang sudah diedit.
+- Laporan lebih compact supaya tidak terlalu geser kanan-kiri.
 
-## Cara pakai
-
-Copy isi folder ini ke folder repo lokal:
-
+Deploy:
 ```bash
-cd "/Users/zaetjd/Library/CloudStorage/GoogleDrive-jack7bear@gmail.com/My Drive/akuntan gpt/sppg-finance-railway-ready"
-cp -R /path/hasil-unzip/* .
+rsync -av --delete --exclude=".git" sppg-finance-legacy-ui-railway-v7_1/ sppg-finance-railway-ready/
+cd sppg-finance-railway-ready
 npm install
 npm run build
+git status -sb
 git add .
-git commit -m "Restore legacy UI with Firebase GPT engine"
+git commit -m "Improve legacy finance app v7.1"
 git push
 ```
-
-Railway akan redeploy otomatis.
