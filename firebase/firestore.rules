@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // TEST ONLY: public shared ledger.
+    // Untuk produksi, batasi create/update/delete memakai auth atau Cloud Function.
+    match /gpt_sites/{siteId}/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
