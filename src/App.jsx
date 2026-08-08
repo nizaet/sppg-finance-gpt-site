@@ -318,47 +318,42 @@ function App() {
       if (t.type === "income") s.monthly[m].income += t.amount; else {s.monthly[m].expense += t.amount; s.monthly[m].cash += Math.min(t.amount, num(t.paidAmount));}
     }
     s.inventoryValue = (ledger.inventory||[]).reduce((a,b)=>a+num(b.qty)*num(b.valuePerUnit),0);
-    s.netWorth = num(ledger.actualBalance) + s.inventoryValue - s.debt;
+    s.realBalance = num(ledger.actualBalance) || (num(ledger.initialCapital) + s.income - s.cashPaid);
+    s.netWorth = s.realBalance + s.inventoryValue - s.debt;
     s.months = Object.values(s.monthly).sort((a,b)=>a.month.localeCompare(b.month));
     return s;
-  }, [enriched, ledger.inventory, ledger.actualBalance]);
+  }, [enriched, ledger.inventory, ledger.actualBalance, ledger.initialCapital]);
 
   const filtered = enriched.filter(t => `${t.date} ${t.desc} ${t.category} ${t.orderBy}`.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
 
   const nav = [
     ["dashboard","Dashboard",LayoutDashboard],
-    ["input","Input Chat",Bot],
     ["transactions","Transaksi",ReceiptText],
     ["debts","Hutang",CreditCard],
     ["inventory","Gudang",Package],
-    ["audit","Audit",ShieldAlert],
-    ["backup","Backup",FileJson]
+    ["audit","Audit Data",ShieldAlert]
   ];
 
   return <div className="app">
-    <header className="header">
+    <header className="topbar">
       <div>
-        <h1>SPPG GPT Finance Site</h1>
-        <p>Firebase public ledger · transaksi per dokumen · siap update harian via chat/package</p>
+        <h1>SPPG MAJA — Finance Control</h1>
+        <p>Ledger v4 · accrual + cash basis · audit kategori · data terpisah dari aplikasi</p>
       </div>
-      <div className="sync">
-        <span className={firebaseState.mode==="firebase"?"ok":"bad"}>{firebaseState.mode==="firebase"?<Cloud size={15}/>:<CloudOff size={15}/>} {firebaseState.mode}</span>
-        <button className="btn secondary" onClick={()=>firebaseState.mode==="firebase"?loadFromFirebase(firebaseState.db):loadBaselineLocal()} disabled={busy}><RefreshCw size={15}/> Refresh</button>
-        <button className="btn" onClick={uploadCurrentToFirebase} disabled={busy || firebaseState.mode!=="firebase"}><Database size={15}/> Upload ke Firebase</button>
+      <div className="topactions">
+        <span className="status"><Database size={14}/>{firebaseState.mode === "firebase" ? `Firebase aktif · ${ledger.transactions.length} transaksi` : msg}</span>
+        <button className="btn ghost" onClick={()=>firebaseState.mode==="firebase"?loadFromFirebase(firebaseState.db):loadBaselineLocal()} disabled={busy}><RefreshCw size={15}/> Refresh</button>
+        <label className="btn ghost"><Upload size={15}/> Import JSON<input type="file" accept=".json" hidden onChange={importJSONFile}/></label>
+        <button className="btn" onClick={exportJSON}><Download size={15}/> Export</button>
       </div>
     </header>
 
-    <div className="notice">
-      <b>Status:</b> {msg} {busy ? " — proses berjalan…" : ""}
-      {firebaseState.error ? <span className="warn"> Firebase: {firebaseState.error}</span> : null}
-    </div>
-
-    <nav>{nav.map(([k,label,Icon])=><button key={k} onClick={()=>setActive(k)} className={active===k?"active":""}><Icon size={16}/>{label}{k==="audit"&&stats.review?<b>{stats.review}</b>:null}</button>)}</nav>
+    <nav className="nav">{nav.map(([k,label,Icon])=><button key={k} onClick={()=>setActive(k)} className={active===k?"active":""}><Icon size={16}/>{label}{k==="audit"&&stats.review?<b>{stats.review}</b>:null}</button>)}</nav>
 
     <main>
       {active==="dashboard" && <section>
         <div className="grid kpis">
-          <KPI title="Saldo Real" value={money(ledger.actualBalance)} note="saldo kas/rekening manual" />
+          <KPI title="Saldo Real" value={money(stats.realBalance)} note="saldo kas/rekening terhitung" />
           <KPI title="Net Worth" value={money(stats.netWorth)} note="saldo + gudang − hutang" />
           <KPI title="Hutang Outstanding" value={money(stats.debt)} note="belum mengurangi kas" danger={stats.debt>0}/>
           <KPI title="Perlu Audit" value={stats.review} note="kategori/type perlu dicek" danger={stats.review>0}/>
