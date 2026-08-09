@@ -1,11 +1,5 @@
-SPPG Finance Legacy UI Railway v7.5
-- Dashboard filter harian/mingguan/bulanan/custom + dropdown bulan.
-- Grafik dashboard memakai axis Rupiah yang benar, label tidak menumpuk, dan periode kosong disaring.
-- KPI dashboard tambahan: uang masuk, uang keluar, profit, aset gudang, top kategori pengeluaran, top hutang vendor.
-- Laporan tab punya filter harian/mingguan/bulanan/custom dan dropdown bulan.
-- Riwayat dividen lebih tinggi, semua baris bisa edit/hapus.
-- Restore JSON pakai validasi konfirmasi.
-- Cloud Restore bisa hapus titik backup.
-- Audit bisa filter merah saja/semua/selesai, ceklis banyak, dan tandai selesai agar hilang.
-- Export Excel DB menjadi file .xls berwarna rapi dengan section ringkasan, transaksi, gudang, shareholder.
-- Dialog Google Sheet Sync: export/import via Google Apps Script Web App URL.
+SPPG Finance Legacy UI Railway v7.7
+- Popup rincian kategori laporan bisa search.
+- Popup rincian kategori laporan bisa sort terakhir input/ubah, tanggal, nominal, vendor.
+- Popup rincian kategori laporan bisa delete transaksi dengan validasi.
+- Popup rincian menampilkan vendor, status hutang/lunas, catatan, ringkasan total filter.
