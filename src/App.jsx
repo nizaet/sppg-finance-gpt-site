@@ -132,8 +132,22 @@ const timestampMs = (val) => {
 };
 
 const txInputMs = (t) => timestampMs(t.updatedAt) || timestampMs(t.createdAt) || timestampMs(t.createdAtClient) || timestampMs(t.date);
-const txOutstanding = (t) => Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount));
-const txIsDebtActive = (t) => Boolean(t.isDebt) || String(t.paymentStatus || "").toLowerCase() === "unpaid" || txOutstanding(t) > 0;
+
+const txOutstanding = (t) => {
+  const amount = safeNumber(t.amount);
+  const paid = safeNumber(t.paidAmount);
+  const status = String(t.paymentStatus || "").toLowerCase();
+  const rawDebt = Boolean(t.isDebt) || status === "unpaid" || status === "partial";
+  const outstanding = Math.max(0, amount - paid);
+  if (rawDebt && status !== "paid" && outstanding <= 0) return amount;
+  return outstanding;
+};
+
+const txIsDebtActive = (t) => {
+  const status = String(t.paymentStatus || "").toLowerCase();
+  if (status === "paid") return false;
+  return Boolean(t.isDebt) || status === "unpaid" || status === "partial" || txOutstanding(t) > 0;
+};
 const normalizeDate = (dateStr) => {
   if (!dateStr) return new Date().toISOString().split("T")[0];
   if (typeof dateStr === "object") {
@@ -192,14 +206,23 @@ const normalizeTx = (t) => {
   let type = t.type === "income" ? "income" : "expense";
   let category = normalizeCategory(t.category, desc, type);
   if (category.includes("Pemasukan")) type = "income";
+
   const qty = safeNumber(t.qty) || 1;
   const unitPrice = safeNumber(t.unitPrice);
   const amount = safeNumber(t.amount) || (qty * unitPrice);
-  const isDebt = Boolean(t.isDebt) || String(t.paymentStatus || "").toLowerCase() === "unpaid";
-  const paymentStatus = t.paymentStatus || (isDebt ? "unpaid" : "paid");
-  const paidAmount = paymentStatus === "paid"
-    ? (t.paidAmount !== undefined ? safeNumber(t.paidAmount) : amount)
-    : safeNumber(t.paidAmount);
+
+  const statusRaw = String(t.paymentStatus || "").toLowerCase();
+  const rawDebt = Boolean(t.isDebt) || statusRaw === "unpaid" || statusRaw === "partial";
+  const paymentStatus = statusRaw || (rawDebt ? "unpaid" : "paid");
+
+  let paidAmount;
+  if (paymentStatus === "paid") paidAmount = amount;
+  else if (paymentStatus === "unpaid") paidAmount = 0;
+  else if (paymentStatus === "partial") paidAmount = Math.min(amount, safeNumber(t.paidAmount));
+  else paidAmount = rawDebt ? 0 : amount;
+
+  const isDebt = type !== "income" && paymentStatus !== "paid" && (rawDebt || Math.max(0, amount - paidAmount) > 0);
+
   return {
     id: String(t.id || generateId()).replace(/[/.#[\]]/g, "_"),
     date,
@@ -212,9 +235,9 @@ const normalizeTx = (t) => {
     status: t.status || "done",
     category,
     orderBy: safeString(t.orderBy || t.vendor || "-") || "-",
-    isDebt: paymentStatus !== "paid" && Math.max(0, amount - paidAmount) > 0,
-    paymentStatus,
-    paidAmount,
+    isDebt,
+    paymentStatus: isDebt ? paymentStatus : "paid",
+    paidAmount: isDebt ? paidAmount : amount,
     paidDate: safeString(t.paidDate || ""),
     source: safeString(t.source || "legacy"),
     classificationConfidence: safeNumber(t.classificationConfidence),
@@ -367,6 +390,11 @@ function SmartCateringAccountant() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [trackingStatusFilter, setTrackingStatusFilter] = useState("ALL");
   const [trackingCategoryFilter, setTrackingCategoryFilter] = useState("ALL");
+  const [trackingVendorFilter, setTrackingVendorFilter] = useState("ALL");
+  const [trackingDateMode, setTrackingDateMode] = useState("ALL");
+  const [trackingMonthFilter, setTrackingMonthFilter] = useState("ALL");
+  const [trackingStartDate, setTrackingStartDate] = useState("");
+  const [trackingEndDate, setTrackingEndDate] = useState("");
   const [trackingSort, setTrackingSort] = useState("LAST_INPUT");
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
@@ -635,17 +663,37 @@ function SmartCateringAccountant() {
     if (db) await deleteDoc(doc(paths.transactions(), String(id)));
   };
 
-  const openEdit = (t) => { setCurrentEdit({ ...t }); setEditOpen(true); };
+  const openEdit = (t) => {
+    const debtActive = txIsDebtActive(t);
+    const status = debtActive ? (String(t.paymentStatus || "").toLowerCase() === "partial" ? "partial" : "unpaid") : "paid";
+    setCurrentEdit({
+      ...t,
+      isDebt: debtActive,
+      paymentStatus: status,
+      paidAmount: status === "paid" ? safeNumber(t.amount) : (status === "partial" ? safeNumber(t.paidAmount) : 0)
+    });
+    setEditOpen(true);
+  };
 
   const saveEdit = async () => {
     const finalAmount = safeNumber(currentEdit.qty) && safeNumber(currentEdit.unitPrice)
       ? safeNumber(currentEdit.qty) * safeNumber(currentEdit.unitPrice)
       : safeNumber(currentEdit.amount);
+
+    const status = String(currentEdit.paymentStatus || (currentEdit.isDebt ? "unpaid" : "paid")).toLowerCase();
+    const finalIsDebt = status !== "paid" || Boolean(currentEdit.isDebt);
+    const finalPaidAmount = status === "paid"
+      ? finalAmount
+      : status === "partial"
+        ? Math.min(finalAmount, safeNumber(currentEdit.paidAmount))
+        : 0;
+
     const updated = normalizeTx({
       ...currentEdit,
       amount: finalAmount,
-      paymentStatus: currentEdit.isDebt ? "unpaid" : "paid",
-      paidAmount: currentEdit.isDebt ? safeNumber(currentEdit.paidAmount) : finalAmount
+      isDebt: finalIsDebt,
+      paymentStatus: finalIsDebt ? status : "paid",
+      paidAmount: finalPaidAmount
     });
     setTransactions(prev => prev.map(t => t.id === updated.id ? updated : t));
     if (db) await setDoc(doc(paths.transactions(), updated.id), { ...updated, updatedAt: serverTimestamp() }, { merge: true });
@@ -670,7 +718,7 @@ function SmartCateringAccountant() {
   };
 
   const handlePayAllDebts = () => {
-    const debtList = transactions.filter(t => t.type === "expense" && Math.max(0, t.amount - safeNumber(t.paidAmount)) > 0);
+    const debtList = transactions.filter(t => t.type === "expense" && txIsDebtActive(t) && txOutstanding(t) > 0);
     if (!debtList.length) return alert("Tidak ada hutang yang perlu dibayar.");
     confirmAction("Lunasi SEMUA Hutang?", `Anda akan melunasi ${debtList.length} transaksi. Total: ${formatIDR(analytics.totalDebt)}.`, async () => {
       const today = new Date().toISOString().split("T")[0];
@@ -1204,10 +1252,10 @@ function SmartCateringAccountant() {
         else groupedData[timeKey].incBahan += t.amount;
       } else {
         grandTotalExpense += safeNumber(t.amount);
-        const paid = Math.min(t.amount, safeNumber(t.paidAmount));
+        const paid = Math.min(safeNumber(t.amount), safeNumber(t.paidAmount));
         cashPaid += paid;
-        const outstanding = Math.max(0, safeNumber(t.amount) - paid);
-        if (outstanding > 0) {
+        const outstanding = txOutstanding(t);
+        if (txIsDebtActive(t) && outstanding > 0) {
           totalDebt += outstanding;
           const vendor = safeString(t.orderBy || "Lainnya") || "Lainnya";
           debtByVendor[vendor] = (debtByVendor[vendor] || 0) + outstanding;
@@ -1339,8 +1387,8 @@ function SmartCateringAccountant() {
       const recommended = learnCategoryFromHistory(t.desc, t.type);
       const isGeneric = !currentCategory || currentCategory === "Lainnya (Ops)" || currentCategory === "Bahan Baku";
       const mismatch = isGeneric && recommended && recommended !== currentCategory;
-      const outstanding = Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount));
-      const severity = outstanding > 0 || mismatch ? "RED" : "INFO";
+      const outstanding = txOutstanding(t);
+      const severity = txIsDebtActive(t) || outstanding > 0 || mismatch ? "RED" : "INFO";
       return { ...t, recommended, mismatch, outstanding, severity };
     }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || safeNumber(t.classificationConfidence) < 0.75 || t.auditStatus === "done");
     return rows
@@ -1366,13 +1414,31 @@ function SmartCateringAccountant() {
   )).sort(), [transactions]);
 
   const trackingCategories = useMemo(() => Array.from(new Set(transactions.map(t => t.category || "Tanpa Kategori").filter(Boolean))).sort((a,b)=>a.localeCompare(b,"id-ID")), [transactions]);
+  const trackingVendors = useMemo(() => Array.from(new Set(transactions.map(t => t.orderBy || "-").filter(Boolean))).sort((a,b)=>a.localeCompare(b,"id-ID")), [transactions]);
+  const trackingMonthOptions = useMemo(() => {
+    const monthFmt = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" });
+    const keys = Array.from(new Set(transactions.map(t => String(t.date || "").slice(0,7)).filter(k => /^\d{4}-\d{2}$/.test(k)))).sort().reverse();
+    return keys.map(key => ({ key, label: monthFmt.format(new Date(`${key}-01T00:00:00`)) }));
+  }, [transactions]);
 
   const trackingRows = useMemo(() => {
     const q = globalSearch.trim().toLowerCase();
     return transactions
       .map(t => ({ ...t, outstanding: txOutstanding(t), debtActive: txIsDebtActive(t), inputMs: txInputMs(t) }))
-      .filter(t => !q || `${t.date} ${t.desc} ${t.category} ${t.orderBy} ${t.note} ${t.id}`.toLowerCase().includes(q))
+      .filter(t => !q || `${t.date} ${t.desc} ${t.category} ${t.orderBy} ${t.note} ${t.id} ${t.amount} ${t.unit} ${t.unitPrice}`.toLowerCase().includes(q))
       .filter(t => trackingCategoryFilter === "ALL" || (t.category || "Tanpa Kategori") === trackingCategoryFilter)
+      .filter(t => trackingVendorFilter === "ALL" || (t.orderBy || "-") === trackingVendorFilter)
+      .filter(t => {
+        const d = String(t.date || "");
+        if (trackingDateMode === "MONTH") return trackingMonthFilter === "ALL" || d.startsWith(trackingMonthFilter);
+        if (trackingDateMode === "CUSTOM") {
+          if (trackingStartDate && d < trackingStartDate) return false;
+          if (trackingEndDate && d > trackingEndDate) return false;
+          return true;
+        }
+        if (trackingDateMode === "TODAY") return d === new Date().toISOString().split("T")[0];
+        return true;
+      })
       .filter(t => {
         if (trackingStatusFilter === "ALL") return true;
         if (trackingStatusFilter === "DEBT") return t.debtActive;
@@ -1380,15 +1446,19 @@ function SmartCateringAccountant() {
         if (trackingStatusFilter === "INCOME") return t.type === "income";
         if (trackingStatusFilter === "EXPENSE") return t.type !== "income";
         if (trackingStatusFilter === "PRICE") return safeNumber(t.qty) > 0 || safeNumber(t.unitPrice) > 0;
+        if (trackingStatusFilter === "NO_PRICE") return safeNumber(t.qty) > 0 && safeNumber(t.unitPrice) === 0;
         return true;
       })
       .sort((a,b) => {
         if (trackingSort === "DATE_DESC") return String(b.date).localeCompare(String(a.date)) || b.inputMs - a.inputMs;
+        if (trackingSort === "DATE_ASC") return String(a.date).localeCompare(String(b.date)) || a.inputMs - b.inputMs;
         if (trackingSort === "AMOUNT_DESC") return safeNumber(b.amount) - safeNumber(a.amount);
+        if (trackingSort === "AMOUNT_ASC") return safeNumber(a.amount) - safeNumber(b.amount);
+        if (trackingSort === "UNIT_PRICE_DESC") return safeNumber(b.unitPrice) - safeNumber(a.unitPrice);
         if (trackingSort === "OUTSTANDING_DESC") return safeNumber(b.outstanding) - safeNumber(a.outstanding);
         return b.inputMs - a.inputMs || String(b.date).localeCompare(String(a.date));
       });
-  }, [transactions, globalSearch, trackingStatusFilter, trackingCategoryFilter, trackingSort]);
+  }, [transactions, globalSearch, trackingStatusFilter, trackingCategoryFilter, trackingVendorFilter, trackingDateMode, trackingMonthFilter, trackingStartDate, trackingEndDate, trackingSort]);
 
   const detailRows = useMemo(() => {
     if (!selectedDetail?.data) return [];
@@ -1589,10 +1659,61 @@ function SmartCateringAccountant() {
         )}
 
         {activeTab === "input" && (
-          <section className="space">
-            <div className="grid-three">
-              <Card className="left-form red-border-top">
-                <CardHeader><CardTitle>Input Transaksi</CardTitle></CardHeader>
+          <section className="space input-workspace">
+            <Card className="tracking tracking-wide">
+              <CardHeader>
+                <CardTitle className="between">
+                  <span>Tracking Harga & Hutang ({trackingRows.length} dari {transactions.length})</span>
+                  <span className="searchbox wide-search"><Search size={16}/><Input placeholder="Cari item, vendor, invoice, kategori, note..." value={globalSearch} onChange={e=>setGlobalSearch(e.target.value)} /></span>
+                </CardTitle>
+                <CardDescription>Tabel penuh untuk audit transaksi, harga satuan, satuan, vendor, status hutang/lunas, dan edit cepat.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="tracking-toolbar tracking-toolbar-wide">
+                  <label>Periode<select className="select" value={trackingDateMode} onChange={e=>setTrackingDateMode(e.target.value)}><option value="ALL">Semua tanggal</option><option value="TODAY">Hari ini</option><option value="MONTH">Bulanan</option><option value="CUSTOM">Custom</option></select></label>
+                  {trackingDateMode === "MONTH" && <label>Bulan<select className="select" value={trackingMonthFilter} onChange={e=>setTrackingMonthFilter(e.target.value)}><option value="ALL">Semua bulan</option>{trackingMonthOptions.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}</select></label>}
+                  {trackingDateMode === "CUSTOM" && <><label>Dari<Input type="date" value={trackingStartDate} onChange={e=>setTrackingStartDate(e.target.value)}/></label><label>Sampai<Input type="date" value={trackingEndDate} onChange={e=>setTrackingEndDate(e.target.value)}/></label></>}
+                  <label>Kategori<select className="select" value={trackingCategoryFilter} onChange={e=>setTrackingCategoryFilter(e.target.value)}><option value="ALL">Semua kategori</option>{trackingCategories.map(c=><option key={c} value={c}>{c}</option>)}</select></label>
+                  <label>Vendor<select className="select" value={trackingVendorFilter} onChange={e=>setTrackingVendorFilter(e.target.value)}><option value="ALL">Semua vendor</option>{trackingVendors.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+                  <label>Status<select className="select" value={trackingStatusFilter} onChange={e=>setTrackingStatusFilter(e.target.value)}><option value="ALL">Semua</option><option value="DEBT">Hutang aktif</option><option value="PAID">Lunas</option><option value="INCOME">Pemasukan</option><option value="EXPENSE">Pengeluaran</option><option value="PRICE">Ada qty/harga</option><option value="NO_PRICE">Qty tanpa harga</option></select></label>
+                  <label>Urut<select className="select" value={trackingSort} onChange={e=>setTrackingSort(e.target.value)}><option value="LAST_INPUT">Terakhir input/ubah</option><option value="DATE_DESC">Tanggal terbaru</option><option value="DATE_ASC">Tanggal terlama</option><option value="AMOUNT_DESC">Nominal terbesar</option><option value="AMOUNT_ASC">Nominal terkecil</option><option value="UNIT_PRICE_DESC">Harga/unit terbesar</option><option value="OUTSTANDING_DESC">Outstanding terbesar</option></select></label>
+                </div>
+                <div className="tracking-summary">
+                  <span>Total transaksi filter: <b>{trackingRows.length}</b></span>
+                  <span>Pemasukan: <b className="green-text">{formatIDR(trackingRows.filter(t=>t.type==="income").reduce((a,b)=>a+safeNumber(b.amount),0))}</b></span>
+                  <span>Pengeluaran: <b className="red-text">{formatIDR(trackingRows.filter(t=>t.type!=="income").reduce((a,b)=>a+safeNumber(b.amount),0))}</b></span>
+                  <span>Hutang aktif: <b className="orange-text">{formatIDR(trackingRows.reduce((a,b)=>a+safeNumber(b.outstanding),0))}</b></span>
+                </div>
+                <div className="scroll-table tracking-table tracking-table-wide">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Tgl Transaksi</TableHead><TableHead>Input/Ubah</TableHead><TableHead>Item</TableHead><TableHead>Kategori</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Qty</TableHead><TableHead>Satuan</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {trackingRows.map(t=>(
+                        <TableRow key={t.id} className={t.debtActive ? "debt-row" : ""}>
+                          <TableCell className="small">{t.date}</TableCell>
+                          <TableCell className="small">{t.inputMs ? new Date(t.inputMs).toLocaleString("id-ID", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "-"}</TableCell>
+                          <TableCell className="item-cell"><b>{t.desc}</b>{t.note ? <small className="mono">{t.note}</small> : null}<small className="mono">ID: {t.id}</small></TableCell>
+                          <TableCell>{t.category}</TableCell>
+                          <TableCell>{t.orderBy || "-"}</TableCell>
+                          <TableCell>{t.debtActive ? <Badge variant="destructive">Hutang</Badge> : <Badge variant="soft">{t.type==="income" ? "Masuk" : (t.paymentStatus || "paid")}</Badge>}</TableCell>
+                          <TableCell className="right">{safeNumber(t.qty) || "-"}</TableCell>
+                          <TableCell>{t.unit || "-"}</TableCell>
+                          <TableCell className="right">{safeNumber(t.unitPrice) ? formatIDR(t.unitPrice) : "-"}</TableCell>
+                          <TableCell className={`right strong ${t.type==="income" ? "green-text" : "red-text"}`}>{formatIDR(t.amount)}</TableCell>
+                          <TableCell className="right strong orange-text">{t.debtActive ? formatIDR(t.outstanding) : "-"}</TableCell>
+                          <TableCell><div className="row-actions"><button title="Edit" onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button title="Hapus" onClick={()=>confirmAction("Hapus Transaksi?", `Hapus ${t.desc} sebesar ${formatIDR(t.amount)}?`, async()=>handleDeleteTrans(t.id))}><Trash2 size={13}/></button></div></TableCell>
+                        </TableRow>
+                      ))}
+                      {trackingRows.length===0 && <TableRow><TableCell colSpan={12} className="center empty">Tidak ada transaksi sesuai filter. Coba ubah status/filter/search.</TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="input-panel-grid">
+              <Card className="left-form red-border-top input-manual-card">
+                <CardHeader><CardTitle>Input Transaksi Manual</CardTitle><CardDescription>Form manual dipindah ke bawah agar tracking penuh lebar.</CardDescription></CardHeader>
                 <CardContent className="form-stack">
                   <Input type="date" value={newTrans.date} onChange={(e)=>setNewTrans({...newTrans, date:e.target.value})} />
                   <div className="two-buttons">
@@ -1620,58 +1741,24 @@ function SmartCateringAccountant() {
                   <Button onClick={handleAddTrans} className="full dark"><Save size={16}/> Simpan</Button>
                 </CardContent>
               </Card>
-              <Card className="tracking">
-                <CardHeader>
-                  <CardTitle className="between">
-                    <span>Tracking Harga & Hutang ({trackingRows.length} dari {transactions.length})</span>
-                    <span className="searchbox"><Search size={16}/><Input placeholder="Cari item, vendor, invoice, Aya, Tiara..." value={globalSearch} onChange={e=>setGlobalSearch(e.target.value)} /></span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="tracking-toolbar">
-                    <label>Status<select className="select" value={trackingStatusFilter} onChange={e=>setTrackingStatusFilter(e.target.value)}><option value="ALL">Semua</option><option value="DEBT">Hutang aktif</option><option value="PAID">Lunas</option><option value="INCOME">Pemasukan</option><option value="EXPENSE">Pengeluaran</option><option value="PRICE">Ada qty/harga</option></select></label>
-                    <label>Kategori<select className="select" value={trackingCategoryFilter} onChange={e=>setTrackingCategoryFilter(e.target.value)}><option value="ALL">Semua kategori</option>{trackingCategories.map(c=><option key={c} value={c}>{c}</option>)}</select></label>
-                    <label>Urut<select className="select" value={trackingSort} onChange={e=>setTrackingSort(e.target.value)}><option value="LAST_INPUT">Terakhir input</option><option value="DATE_DESC">Tanggal transaksi terbaru</option><option value="AMOUNT_DESC">Nominal terbesar</option><option value="OUTSTANDING_DESC">Outstanding terbesar</option></select></label>
-                  </div>
-                  <div className="scroll-table tracking-table">
-                    <Table>
-                      <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Item</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Total</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
-                      <TableBody>
-                        {trackingRows.map(t=>(
-                          <TableRow key={t.id} className={t.debtActive ? "debt-row" : ""}>
-                            <TableCell className="small">{t.date}<small>{t.inputMs ? new Date(t.inputMs).toLocaleString("id-ID", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : ""}</small></TableCell>
-                            <TableCell className="item-cell"><b>{t.desc}</b><small>{t.category}</small>{t.qty && t.unitPrice ? <small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small> : null}{t.note ? <small className="mono">{t.note}</small> : null}</TableCell>
-                            <TableCell>{t.orderBy || "-"}</TableCell>
-                            <TableCell>{t.debtActive ? <Badge variant="destructive">Hutang</Badge> : <Badge variant="soft">{t.paymentStatus || "paid"}</Badge>}</TableCell>
-                            <TableCell className={`right strong ${t.type==="income" ? "green-text" : "red-text"}`}>{formatIDR(t.amount)}</TableCell>
-                            <TableCell className="right strong orange-text">{t.debtActive ? formatIDR(t.outstanding) : "-"}</TableCell>
-                            <TableCell><div className="row-actions"><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button onClick={()=>handleDeleteTrans(t.id)}><Trash2 size={13}/></button></div></TableCell>
-                          </TableRow>
-                        ))}
-                        {trackingRows.length===0 && <TableRow><TableCell colSpan={7} className="center empty">Tidak ada transaksi sesuai filter. Coba ubah status/filter/search.</TableCell></TableRow>}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
 
-            <div className="grid-two">
-              <Card className="red-border-top">
-                <CardHeader><CardTitle className="red-text"><Sparkles size={18}/> Paste Belanja</CardTitle><CardDescription>Parser lokal untuk format chat. AI tetap lewat Custom GPT.</CardDescription></CardHeader>
-                <CardContent>
-                  <Textarea placeholder="Mama Lemon 60 pouch x 8900 hutang Koperasi" value={bulkExpenseText} onChange={e=>setBulkExpenseText(e.target.value)} />
-                  <Button onClick={()=>processBulkWithLocalParser(bulkExpenseText,"expense")} disabled={isBulkProcessing} className="full red">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Belanja"}</Button>
-                  {bulkStatus && <div className="bulk-status">{bulkStatus}</div>}
-                </CardContent>
-              </Card>
-              <Card className="green-border-top">
-                <CardHeader><CardTitle className="green-text"><Sparkles size={18}/> Paste Pemasukan</CardTitle><CardDescription>Contoh: INSENTIF 6000000 lunas</CardDescription></CardHeader>
-                <CardContent>
-                  <Textarea placeholder="INSENTIF 6000000 lunas" value={bulkIncomeText} onChange={e=>setBulkIncomeText(e.target.value)} />
-                  <Button onClick={()=>processBulkWithLocalParser(bulkIncomeText,"income")} disabled={isBulkProcessing} className="full green">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Pemasukan"}</Button>
-                </CardContent>
-              </Card>
+              <div className="paste-stack">
+                <Card className="red-border-top">
+                  <CardHeader><CardTitle className="red-text"><Sparkles size={18}/> Paste Pengeluaran</CardTitle><CardDescription>Parser lokal untuk format chat. AI tetap lewat Custom GPT.</CardDescription></CardHeader>
+                  <CardContent>
+                    <Textarea placeholder="Mama Lemon 60 pouch x 8900 hutang Koperasi" value={bulkExpenseText} onChange={e=>setBulkExpenseText(e.target.value)} />
+                    <Button onClick={()=>processBulkWithLocalParser(bulkExpenseText,"expense")} disabled={isBulkProcessing} className="full red">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Pengeluaran"}</Button>
+                    {bulkStatus && <div className="bulk-status">{bulkStatus}</div>}
+                  </CardContent>
+                </Card>
+                <Card className="green-border-top">
+                  <CardHeader><CardTitle className="green-text"><Sparkles size={18}/> Paste Pemasukan</CardTitle><CardDescription>Contoh: INSENTIF 6000000 lunas</CardDescription></CardHeader>
+                  <CardContent>
+                    <Textarea placeholder="INSENTIF 6000000 lunas" value={bulkIncomeText} onChange={e=>setBulkIncomeText(e.target.value)} />
+                    <Button onClick={()=>processBulkWithLocalParser(bulkIncomeText,"income")} disabled={isBulkProcessing} className="full green">{isBulkProcessing ? <Loader2 className="spin"/> : "Proses Pemasukan"}</Button>
+                  </CardContent>
+                </Card>
+              </div>
             </div>
           </section>
         )}
@@ -1865,11 +1952,36 @@ function SmartCateringAccountant() {
           </section>
         )}
 
-        {confirmOpen && <Modal title={confirmData.title} onClose={()=>setConfirmOpen(false)}><p>{confirmData.msg}</p><div className="modal-actions"><Button variant="outline" onClick={()=>setConfirmOpen(false)}>Batal</Button><Button onClick={async()=>{const fn=confirmData.action; setConfirmOpen(false); if(fn) await fn();}}>Ya, Lanjutkan</Button></div></Modal>}
-
         {editCapitalOpen && <Modal title="Ubah Modal Awal" onClose={()=>setEditCapitalOpen(false)}><p className="muted">Saldo Buku dihitung dari Modal Awal + Masuk - Keluar.</p><Input value={formatNumberInput(tempCapital)} onChange={e=>setTempCapital(parseIDRInput(e.target.value))}/><Button className="full dark" onClick={async()=>{setInitialCapital(tempCapital); setEditCapitalOpen(false); if(db) await saveMeta({initialCapital:tempCapital});}}>Simpan Modal Awal</Button></Modal>}
 
-        {editOpen && currentEdit && <Modal title="Edit Transaksi" wide onClose={()=>setEditOpen(false)}><div className="edit-grid"><label>Tanggal<Input type="date" value={currentEdit.date} onChange={e=>setCurrentEdit({...currentEdit,date:e.target.value})}/></label><label>Ket<Input value={currentEdit.desc} onChange={e=>setCurrentEdit({...currentEdit,desc:e.target.value})}/></label><label>Vendor<Input value={currentEdit.orderBy||""} onChange={e=>setCurrentEdit({...currentEdit,orderBy:e.target.value})}/></label><label>Total<Input type="number" value={currentEdit.amount} onChange={e=>setCurrentEdit({...currentEdit,amount:safeNumber(e.target.value)})}/></label><label>Qty<Input type="number" value={currentEdit.qty||""} onChange={e=>setCurrentEdit({...currentEdit,qty:e.target.value})}/></label><label>Satuan<Input value={currentEdit.unit||""} onChange={e=>setCurrentEdit({...currentEdit,unit:e.target.value})}/></label><label>Harga/Unit<Input type="number" value={currentEdit.unitPrice||""} onChange={e=>setCurrentEdit({...currentEdit,unitPrice:e.target.value})}/></label><label>Kategori<select className="select" value={currentEdit.category} onChange={e=>setCurrentEdit({...currentEdit,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label className="checkbox"><input type="checkbox" checked={currentEdit.isDebt} onChange={e=>setCurrentEdit({...currentEdit,isDebt:e.target.checked})}/> Hutang?</label></div><Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button></Modal>}
+        {editOpen && currentEdit && <Modal title="Edit Transaksi" wide onClose={()=>setEditOpen(false)}>
+          <div className="edit-grid">
+            <label>Tanggal<Input type="date" value={currentEdit.date} onChange={e=>setCurrentEdit({...currentEdit,date:e.target.value})}/></label>
+            <label>Ket<Input value={currentEdit.desc} onChange={e=>setCurrentEdit({...currentEdit,desc:e.target.value})}/></label>
+            <label>Vendor<Input value={currentEdit.orderBy||""} onChange={e=>setCurrentEdit({...currentEdit,orderBy:e.target.value})}/></label>
+            <label>Total<Input type="number" value={currentEdit.amount} onChange={e=>setCurrentEdit({...currentEdit,amount:safeNumber(e.target.value)})}/></label>
+            <label>Qty<Input type="number" value={currentEdit.qty||""} onChange={e=>setCurrentEdit({...currentEdit,qty:e.target.value})}/></label>
+            <label>Satuan<Input value={currentEdit.unit||""} onChange={e=>setCurrentEdit({...currentEdit,unit:e.target.value})}/></label>
+            <label>Harga/Unit<Input type="number" value={currentEdit.unitPrice||""} onChange={e=>setCurrentEdit({...currentEdit,unitPrice:e.target.value})}/></label>
+            <label>Kategori<select className="select" value={currentEdit.category} onChange={e=>setCurrentEdit({...currentEdit,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label>
+            <label>Status Bayar<select className="select" value={currentEdit.paymentStatus || (currentEdit.isDebt ? "unpaid" : "paid")} onChange={e=>{
+              const status=e.target.value;
+              setCurrentEdit({
+                ...currentEdit,
+                paymentStatus: status,
+                isDebt: status !== "paid",
+                paidAmount: status === "paid" ? safeNumber(currentEdit.amount) : status === "unpaid" ? 0 : safeNumber(currentEdit.paidAmount)
+              });
+            }}><option value="paid">Lunas</option><option value="unpaid">Hutang / Belum Lunas</option><option value="partial">Sebagian</option></select></label>
+            <label>Sudah Dibayar<Input type="number" value={currentEdit.paidAmount ?? ""} onChange={e=>setCurrentEdit({...currentEdit,paidAmount:safeNumber(e.target.value),paymentStatus:"partial",isDebt:true})}/></label>
+            <label className="checkbox"><input type="checkbox" checked={Boolean(currentEdit.isDebt) || String(currentEdit.paymentStatus||"").toLowerCase() !== "paid"} onChange={e=>{
+              const checked=e.target.checked;
+              setCurrentEdit({...currentEdit,isDebt:checked,paymentStatus:checked?"unpaid":"paid",paidAmount:checked?0:safeNumber(currentEdit.amount)});
+            }}/> Hutang?</label>
+            <div className="edit-debt-preview"><span>Outstanding</span><b>{formatIDR(txOutstanding(currentEdit))}</b></div>
+          </div>
+          <Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button>
+        </Modal>}
 
         {detailOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}>
           <div className="detail-toolbar">
@@ -1903,6 +2015,14 @@ function SmartCateringAccountant() {
           </div>
         </Modal>}
         {editInventoryOpen && currentEditInventory && <Modal title="Edit Stok Barang" onClose={()=>setEditInventoryOpen(false)}><div className="form-stack"><label>Nama Barang<Input value={currentEditInventory.name} onChange={e=>setCurrentEditInventory({...currentEditInventory,name:e.target.value})}/></label><div className="two-cols"><label>Qty<Input type="number" value={currentEditInventory.qty} onChange={e=>setCurrentEditInventory({...currentEditInventory,qty:e.target.value})}/></label><label>Satuan<Input value={currentEditInventory.unit} onChange={e=>setCurrentEditInventory({...currentEditInventory,unit:e.target.value})}/></label></div><label>Nilai per Unit<Input type="number" value={currentEditInventory.valuePerUnit} onChange={e=>setCurrentEditInventory({...currentEditInventory,valuePerUnit:e.target.value})}/></label><label>Kategori<select className="select" value={currentEditInventory.category || "Tanpa Kategori"} onChange={e=>setCurrentEditInventory({...currentEditInventory,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Button className="full cyan" onClick={saveEditInventory}>Simpan Stok</Button></div></Modal>}
+        {confirmOpen && <Modal title={confirmData.title} onClose={()=>setConfirmOpen(false)}>
+          <p>{confirmData.msg}</p>
+          <div className="modal-actions">
+            <Button variant="outline" onClick={()=>setConfirmOpen(false)}>Batal</Button>
+            <Button onClick={async()=>{const fn=confirmData.action; setConfirmOpen(false); if(fn) await fn();}}>Ya, Lanjutkan</Button>
+          </div>
+        </Modal>}
+
       </div>
     </div>
   );

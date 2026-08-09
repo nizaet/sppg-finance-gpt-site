@@ -1,5 +1,8 @@
-SPPG Finance Legacy UI Railway v7.7
-- Popup rincian kategori laporan bisa search.
-- Popup rincian kategori laporan bisa sort terakhir input/ubah, tanggal, nominal, vendor.
-- Popup rincian kategori laporan bisa delete transaksi dengan validasi.
-- Popup rincian menampilkan vendor, status hutang/lunas, catatan, ringkasan total filter.
+SPPG Finance Legacy UI Railway v7.8
+- Fix hutang Rp0: unpaid/isDebt dengan paidAmount lama tidak lagi tampil Rp0.
+- Edit transaksi menjaga status hutang/lunas/sebagian dan paidAmount.
+- Confirm delete/lunasi tampil paling depan, tidak tertutup popup rincian.
+- Tracking Harga & Hutang menjadi full lebar.
+- Tracking bisa filter periode, bulan, custom tanggal, kategori, vendor, status.
+- Tracking menampilkan qty, satuan, harga/unit, total, outstanding, input/ubah.
+- Input manual dan paste pemasukan/pengeluaran dipindah ke panel bawah.
