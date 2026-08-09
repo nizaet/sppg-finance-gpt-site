@@ -1,6 +1,38 @@
 <!doctype html>
 <html lang="id">
   <head>
+    <!-- RUNTIME FAVICON V8.4 -->
+    <script>
+      (function () {
+        var host = window.location.hostname.toLowerCase();
+
+        var isCemplang =
+          host === "sppg-finance-gpt-site-production-fc7e.up.railway.app";
+
+        var favicon = isCemplang
+          ? "/favicon-cemplang.svg?v=84"
+          : "/favicon-maja.svg?v=84";
+
+        var title = isCemplang
+          ? "Cemplang 2 | SPPG Finance"
+          : "Maja | SPPG Finance";
+
+        document.title = title;
+
+        var link = document.createElement("link");
+        link.rel = "icon";
+        link.type = "image/svg+xml";
+        link.href = favicon;
+        document.head.appendChild(link);
+
+        var shortcut = document.createElement("link");
+        shortcut.rel = "shortcut icon";
+        shortcut.type = "image/svg+xml";
+        shortcut.href = favicon;
+        document.head.appendChild(shortcut);
+      })();
+    </script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Laporan Keuangan SPPG MAJA BARU</title>
