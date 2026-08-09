@@ -297,3 +297,88 @@
   box-shadow:inset 3px 0 #2563eb;
 }
 /* END TRACKING MULTI SELECT V8.6 */
+
+/* BEGIN TRACKING COLUMN WIDTH FIX V8.7 */
+/* Setelah kolom checkbox ditambahkan, seluruh nth-child bergeser satu kolom. */
+
+.tracking-table-wide th:nth-child(1),
+.tracking-table-wide td:nth-child(1) {
+  width: 2.5% !important;
+  text-align: center !important;
+}
+
+.tracking-table-wide th:nth-child(2),
+.tracking-table-wide td:nth-child(2) {
+  width: 6.5% !important;
+}
+
+.tracking-table-wide th:nth-child(3),
+.tracking-table-wide td:nth-child(3) {
+  width: 8.5% !important;
+}
+
+.tracking-table-wide th:nth-child(4),
+.tracking-table-wide td:nth-child(4) {
+  width: 19% !important;
+}
+
+.tracking-table-wide th:nth-child(5),
+.tracking-table-wide td:nth-child(5) {
+  width: 11% !important;
+}
+
+.tracking-table-wide th:nth-child(6),
+.tracking-table-wide td:nth-child(6) {
+  width: 6.5% !important;
+}
+
+.tracking-table-wide th:nth-child(7),
+.tracking-table-wide td:nth-child(7) {
+  width: 6% !important;
+}
+
+.tracking-table-wide th:nth-child(8),
+.tracking-table-wide td:nth-child(8) {
+  width: 3.5% !important;
+  text-align: right !important;
+}
+
+.tracking-table-wide th:nth-child(9),
+.tracking-table-wide td:nth-child(9) {
+  width: 5% !important;
+}
+
+.tracking-table-wide th:nth-child(10),
+.tracking-table-wide td:nth-child(10) {
+  width: 8% !important;
+  text-align: right !important;
+}
+
+.tracking-table-wide th:nth-child(11),
+.tracking-table-wide td:nth-child(11) {
+  width: 8.5% !important;
+  text-align: right !important;
+}
+
+.tracking-table-wide th:nth-child(12),
+.tracking-table-wide td:nth-child(12) {
+  width: 8.5% !important;
+  text-align: right !important;
+}
+
+.tracking-table-wide th:nth-child(13),
+.tracking-table-wide td:nth-child(13) {
+  width: 6.5% !important;
+  text-align: center !important;
+}
+
+/* Tanggal input dibuat kompak, item mendapat ruang terbesar */
+.tracking-table-wide td:nth-child(3) {
+  white-space: nowrap !important;
+}
+
+.tracking-table-wide th:nth-child(13) {
+  white-space: nowrap !important;
+}
+
+/* END TRACKING COLUMN WIDTH FIX V8.7 */
