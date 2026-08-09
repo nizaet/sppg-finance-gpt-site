@@ -72,6 +72,34 @@ const formatIDR = (num) => {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 };
 
+const formatAxisIDR = (num) => {
+  const n = Number(num) || 0;
+  const abs = Math.abs(n);
+  if (abs >= 1000000000) return `${(n / 1000000000).toFixed(abs >= 10000000000 ? 0 : 1)}M`; // miliar
+  if (abs >= 1000000) return `${(n / 1000000).toFixed(abs >= 10000000 ? 0 : 1)}jt`;
+  if (abs >= 1000) return `${(n / 1000).toFixed(abs >= 10000 ? 0 : 1)}rb`;
+  return String(Math.round(n));
+};
+
+const toMonthKey = (dateStr) => {
+  const d = new Date(normalizeDate(dateStr));
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+};
+const monthLabelFromKey = (key) => {
+  if (!/^\d{4}-\d{2}$/.test(String(key))) return "Semua Bulan";
+  const [y,m] = String(key).split("-");
+  return `${MONTHS[Number(m)-1]} ${y}`;
+};
+const escapeHtml = (v) => String(v ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+const downloadTextFile = (filename, text, mime) => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
 const formatNumberInput = (num) => new Intl.NumberFormat("id-ID").format(Number(num) || 0);
 const parseIDRInput = (val) => {
   const clean = String(val ?? "").replace(/\D/g, "");
@@ -312,6 +340,7 @@ function SmartCateringAccountant() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [periodFilter, setPeriodFilter] = useState("weekly");
+  const [monthFilter, setMonthFilter] = useState("ALL");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [globalSearch, setGlobalSearch] = useState("");
@@ -327,6 +356,8 @@ function SmartCateringAccountant() {
   const [backupOpen, setBackupOpen] = useState(false);
   const [backupList, setBackupList] = useState([]);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [sheetSyncOpen, setSheetSyncOpen] = useState(false);
+  const [googleSheetUrl, setGoogleSheetUrl] = useState(() => typeof window !== "undefined" ? (localStorage.getItem("sppg_google_sheet_webapp_url") || "") : "");
   const [editInventoryOpen, setEditInventoryOpen] = useState(false);
   const [currentEditInventory, setCurrentEditInventory] = useState(null);
   const [aiAnalysisResult, setAiAnalysisResult] = useState(null);
@@ -341,6 +372,8 @@ function SmartCateringAccountant() {
   const [inventorySearch, setInventorySearch] = useState("");
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState("ALL");
   const [inventoryPriceFilter, setInventoryPriceFilter] = useState("ALL");
+  const [auditFilter, setAuditFilter] = useState("NEED_ACTION");
+  const [selectedAuditIds, setSelectedAuditIds] = useState([]);
   const [newItem, setNewItem] = useState({ name: "", qty: "", unit: "", valuePerUnit: "", category: "Bahan Baku (Sembako/Bumbu)" });
   const [newTrans, setNewTrans] = useState({
     date: new Date().toISOString().split("T")[0],
@@ -541,7 +574,16 @@ function SmartCateringAccountant() {
   };
 
   const applyRecommendedCategory = async (id, category) => {
-    await quickUpdateTransaction(id, { category, type: String(category).includes("Pemasukan") ? "income" : "expense" });
+    await quickUpdateTransaction(id, { category, type: String(category).includes("Pemasukan") ? "income" : "expense", auditStatus: "done", auditCompletedAt: new Date().toISOString() });
+  };
+
+  const markAuditDone = async (ids) => {
+    const list = Array.isArray(ids) ? ids : [ids];
+    if (!list.length) return;
+    const updates = transactions.filter(t => list.includes(t.id)).map(t => ({ ...t, auditStatus: "done", auditCompletedAt: new Date().toISOString() }));
+    setTransactions(prev => prev.map(t => list.includes(t.id) ? { ...t, auditStatus: "done", auditCompletedAt: new Date().toISOString() } : t));
+    if (db && paths) await batchWriteDocs(paths.transactions(), updates, x => ({ ...x, updatedAt: serverTimestamp() }));
+    setSelectedAuditIds(prev => prev.filter(id => !list.includes(id)));
   };
 
   const handleAddTrans = async () => {
@@ -619,8 +661,20 @@ function SmartCateringAccountant() {
     });
   };
 
+  const buildDatabasePayload = () => ({
+    initialCapital,
+    actualBalance,
+    transactions,
+    inventory,
+    shareholders,
+    paidPeriods,
+    siteId,
+    schemaVersion: 7.5,
+    lastUpdated: new Date().toISOString()
+  });
+
   const handleExportJSON = () => {
-    const payload = { initialCapital, actualBalance, transactions, inventory, shareholders, paidPeriods, schemaVersion: 6, lastUpdated: new Date().toISOString() };
+    const payload = buildDatabasePayload();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -629,24 +683,56 @@ function SmartCateringAccountant() {
     URL.revokeObjectURL(a.href);
   };
 
+  const applyImportedPayload = async (data, source = "restore_backup") => {
+    const txs = (data.transactions || []).map(t => normalizeTx({ ...t, source: t.source || source }));
+    const inv = (data.inventory || []).map(i => ({
+      ...i,
+      id: String(i.id || generateId()).replace(/[/.#[\]]/g, "_"),
+      name: safeString(i.name || i.id),
+      qty: safeNumber(i.qty),
+      unit: safeString(i.unit || ""),
+      valuePerUnit: safeNumber(i.valuePerUnit),
+      category: safeString(i.category || "Tanpa Kategori")
+    }));
+    const sh = (data.shareholders || []).map(x => ({ ...x, id: x.id || generateId(), pct: safeNumber(x.pct), mgmtFee: safeNumber(x.mgmtFee) }));
+    const nextCapital = safeNumber(data.initialCapital);
+    const nextBalance = safeNumber(data.actualBalance);
+    const nextPaidPeriods = data.paidPeriods || {};
+    setInitialCapital(nextCapital);
+    setActualBalance(nextBalance);
+    setPaidPeriods(nextPaidPeriods);
+    setTransactions(txs);
+    setInventory(inv);
+    setShareholders(sh);
+    if (db && paths) {
+      await clearCollection(paths.transactions());
+      await clearCollection(paths.inventory());
+      await clearCollection(paths.shareholders());
+      await saveMeta({ initialCapital: nextCapital, actualBalance: nextBalance, paidPeriods: nextPaidPeriods, restoredAt: new Date().toISOString() });
+      await batchWriteDocs(paths.transactions(), txs, x => ({ ...x, updatedAt: serverTimestamp() }));
+      await batchWriteDocs(paths.inventory(), inv, x => ({ ...x, updatedAt: serverTimestamp() }));
+      await batchWriteDocs(paths.shareholders(), sh, x => ({ ...x, updatedAt: serverTimestamp() }));
+    }
+    return { txs, inv, sh };
+  };
+
   const handleImportFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
-      const txs = (data.transactions || []).map(t => normalizeTx({ ...t, source: t.source || "restore_backup" }));
-      setInitialCapital(safeNumber(data.initialCapital));
-      setActualBalance(safeNumber(data.actualBalance));
-      setPaidPeriods(data.paidPeriods || {});
-      setTransactions(txs);
-      setInventory((data.inventory || []).map(i => ({ ...i, id: i.id || generateId(), qty: safeNumber(i.qty), valuePerUnit: safeNumber(i.valuePerUnit) })));
-      setShareholders(data.shareholders || []);
-      if (db) {
-        await saveMeta({ initialCapital: safeNumber(data.initialCapital), actualBalance: safeNumber(data.actualBalance), paidPeriods: data.paidPeriods || {} });
-        await batchWriteDocs(paths.transactions(), txs, x => ({ ...x, updatedAt: serverTimestamp() }));
-        await batchWriteDocs(paths.inventory(), data.inventory || [], x => ({ ...x, updatedAt: serverTimestamp() }));
-        await batchWriteDocs(paths.shareholders(), data.shareholders || [], x => ({ ...x, updatedAt: serverTimestamp() }));
-      }
-      alert(`Restore sukses: ${txs.length} transaksi.`);
+      const text = await file.text();
+      const data = JSON.parse(text);
+      confirmAction(
+        "Restore JSON?",
+        `Data aktif akan diganti dari file ${file.name}. Transaksi: ${(data.transactions || []).length}, Stok: ${(data.inventory || []).length}. Lanjutkan?`,
+        async () => {
+          try {
+            const { txs, inv, sh } = await applyImportedPayload(data, "restore_backup_json");
+            alert(`✅ Restore JSON sukses.\nTransaksi: ${txs.length}\nStok: ${inv.length}\nShareholder: ${sh.length}`);
+          } catch (err) {
+            alert("❌ Gagal restore JSON: " + err.message);
+          }
+        }
+      );
     } catch (err) { alert("Gagal membaca file JSON: " + err.message); }
     e.target.value = "";
   };
@@ -680,6 +766,62 @@ function SmartCateringAccountant() {
     e.target.value = "";
   };
 
+  const makeSheetTable = (title, headers, rows) => `
+    <h2>${escapeHtml(title)}</h2>
+    <table>
+      <thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>`;
+
+  const handleExportExcelStyled = () => {
+    const reportRows = analytics.sortedPeriods.map(p => [p.period, p.incSewa, p.incBahan, p.expBahan, p.incOps, p.expOps, p.expCapex, p.expProfitBurden, p.expDividend, p.netProfit, p.cashFlow]);
+    const txRows = transactions.map(t => [t.date, t.desc, t.category, t.type === "income" ? "Pemasukan" : "Pengeluaran", t.amount, t.qty || "", t.unit || "", t.unitPrice || "", t.orderBy || "", t.isDebt ? "YA" : "TIDAK", t.paymentStatus || "", t.paidAmount || 0, t.source || "", t.id]);
+    const invRows = inventory.map(i => [i.name, i.category || "Tanpa Kategori", i.qty, i.unit || "", i.valuePerUnit || 0, safeNumber(i.qty) * safeNumber(i.valuePerUnit), i.priceSource || "", i.lastStockDate || ""]);
+    const shRows = shareholders.map(s => [s.name, s.pct, s.mgmtFee || 0]);
+    const html = `<!doctype html><html><head><meta charset="utf-8" />
+      <style>
+        body{font-family:Arial,sans-serif;color:#1f2937} h1{background:#0f172a;color:#fff;padding:14px} h2{margin-top:24px;color:#0f172a}
+        table{border-collapse:collapse;width:100%;margin-bottom:20px} th{background:#0f766e;color:#fff;font-weight:700} th,td{border:1px solid #cbd5e1;padding:7px;font-size:12px} tr:nth-child(even){background:#f8fafc}.right{text-align:right}.money{mso-number-format:'\\#\\,\\#\\#0'}
+      </style></head><body>
+      <h1>Database Keuangan SPPG MAJA BARU - ${new Date().toLocaleString("id-ID")}</h1>
+      ${makeSheetTable("Ringkasan Laba Rugi", ["Periode","Insentif","Dana Bahan","Belanja Bahan","Dana Ops","Belanja Ops","Capex","Beban Profit","Dividen","Profit Bersih","Arus Kas"], reportRows)}
+      ${makeSheetTable("Transaksi", ["Tanggal","Deskripsi","Kategori","Tipe","Jumlah","Qty","Satuan","Harga Satuan","Vendor","Hutang","Payment Status","Paid Amount","Source","ID"], txRows)}
+      ${makeSheetTable("Gudang", ["Nama Barang","Kategori","Qty","Satuan","Harga/Unit","Total","Price Source","Last Stock Date"], invRows)}
+      ${makeSheetTable("Shareholder", ["Nama","Saham %","Management Fee %"], shRows)}
+      </body></html>`;
+    downloadTextFile(`SPPG_Keuangan_DB_${new Date().toISOString().split("T")[0]}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+  };
+
+  const handleGoogleSheetExport = async () => {
+    if (!googleSheetUrl.trim()) return alert("Isi URL Google Apps Script Web App dulu.");
+    localStorage.setItem("sppg_google_sheet_webapp_url", googleSheetUrl.trim());
+    const resp = await fetch(googleSheetUrl.trim(), {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "export", siteId, payload: buildDatabasePayload() })
+    });
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(text);
+    alert("✅ Export ke Google Sheet terkirim. Response: " + text.slice(0, 200));
+  };
+
+  const handleGoogleSheetImport = async () => {
+    if (!googleSheetUrl.trim()) return alert("Isi URL Google Apps Script Web App dulu.");
+    localStorage.setItem("sppg_google_sheet_webapp_url", googleSheetUrl.trim());
+    const resp = await fetch(googleSheetUrl.trim(), {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "import", siteId })
+    });
+    const data = await resp.json();
+    const payload = data.payload || data;
+    confirmAction("Import dari Google Sheet?", `Data aktif akan diganti dari Google Sheet. Transaksi: ${(payload.transactions || []).length}, Stok: ${(payload.inventory || []).length}. Lanjutkan?`, async () => {
+      const { txs, inv, sh } = await applyImportedPayload(payload, "google_sheet_import");
+      alert(`✅ Import Google Sheet selesai.\\nTransaksi: ${txs.length}\\nStok: ${inv.length}\\nShareholder: ${sh.length}`);
+      setSheetSyncOpen(false);
+    });
+  };
+
   const handleExportTransactionsCSV = () => {
     let csv = "\uFEFFTanggal,Deskripsi,Kategori,Tipe,Jumlah_Total,Qty,Satuan,Harga_Satuan,Vendor,Status_Hutang,Payment_Status,Paid_Amount,Source,ID_Sistem\n";
     for (const t of transactions) {
@@ -708,8 +850,8 @@ function SmartCateringAccountant() {
   };
 
   const handleExportInventoryCSV = () => {
-    let csv = "\uFEFFNama Barang,Stok,Satuan,Harga/Unit,Total Nilai\n";
-    csv += inventory.map(i => `"${String(i.name || "").replace(/"/g, '""')}",${i.qty},"${String(i.unit || "").replace(/"/g, '""')}",${i.valuePerUnit},${safeNumber(i.qty) * safeNumber(i.valuePerUnit)}`).join("\n");
+    let csv = "\uFEFFNama Barang,Kategori,Stok,Satuan,Harga/Unit,Total Nilai,Price Source,Last Stock Date\n";
+    csv += inventory.map(i => `"${String(i.name || "").replace(/"/g, '""')}","${String(i.category || "").replace(/"/g, '""')}",${i.qty},"${String(i.unit || "").replace(/"/g, '""')}",${i.valuePerUnit},${safeNumber(i.qty) * safeNumber(i.valuePerUnit)},"${String(i.priceSource || "").replace(/"/g, '""')}","${String(i.lastStockDate || "").replace(/"/g, '""')}"`).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     a.download = `Stok_Gudang_SPPG_${new Date().toISOString().split("T")[0]}.csv`;
@@ -729,7 +871,7 @@ function SmartCateringAccountant() {
         createdAt: serverTimestamp(),
         createdAtClient: new Date().toISOString(),
         backupType: "full_snapshot_subcollections",
-        schemaVersion: 7.4,
+        schemaVersion: 7.5,
         counts: { transactions: transactions.length, inventory: inventory.length, shareholders: shareholders.length },
         initialCapital,
         actualBalance,
@@ -826,6 +968,19 @@ function SmartCateringAccountant() {
         console.error(err);
         alert("❌ Gagal restore cloud: " + err.message);
       } finally { setIsSaving(false); }
+    });
+  };
+
+  const deleteBackupPoint = (backup) => {
+    if (!backup?.id) return;
+    confirmAction("Hapus Titik Backup?", `Backup ${backup.id} akan dihapus dari cloud. Lanjutkan?`, async () => {
+      if (!db || !paths) throw new Error("Firebase belum terhubung.");
+      await clearCollection(paths.backupTransactions(backup.id));
+      await clearCollection(paths.backupInventory(backup.id));
+      await clearCollection(paths.backupShareholders(backup.id));
+      await deleteDoc(doc(paths.backups(), backup.id));
+      setBackupList(prev => prev.filter(b => b.id !== backup.id));
+      alert("✅ Titik backup cloud dihapus.");
     });
   };
 
@@ -983,14 +1138,25 @@ function SmartCateringAccountant() {
     });
   };
 
+  const monthOptions = useMemo(() => {
+    const keys = Array.from(new Set(transactions.map(t => toMonthKey(t.date)).filter(Boolean))).sort();
+    return keys.map(key => ({ key, label: monthLabelFromKey(key) }));
+  }, [transactions]);
+
+  const visibleTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      const date = normalizeDate(t.date);
+      if (monthFilter !== "ALL" && toMonthKey(date) !== monthFilter) return false;
+      if (periodFilter === "custom" && customStartDate && customEndDate) return date >= customStartDate && date <= customEndDate;
+      return true;
+    });
+  }, [transactions, monthFilter, periodFilter, customStartDate, customEndDate]);
+
   const analytics = useMemo(() => {
     const groupedData = {};
     const debtByVendor = {};
     let totalDebt = 0, grandTotalRevenue = 0, grandTotalExpense = 0, grandTotalCapex = 0, grandTotalProfitBurden = 0, grandTotalDividend = 0, cashPaid = 0;
-    let filteredTransactions = transactions;
-    if (periodFilter === "custom" && customStartDate && customEndDate) {
-      filteredTransactions = transactions.filter(t => t.date >= customStartDate && t.date <= customEndDate);
-    }
+    let filteredTransactions = visibleTransactions;
 
     filteredTransactions.forEach(t => {
       const safeDate = normalizeDate(t.date);
@@ -1053,7 +1219,7 @@ function SmartCateringAccountant() {
       { name: "Beban Profit", value: grandTotalProfitBurden, color: "#ef4444" }
     ].filter(x => x.value > 0);
     return { totalDebt, systemBalance, realBalance, discrepancy, debtByVendor, sortedPeriods, grandTotalRevenue, grandTotalExpense, grandTotalCapex, grandTotalProfitBurden, grandTotalDividend, debtRatio, totalAssets, inventoryValue, pendingFunds, netWorth: totalAssets - totalDebt, pieData, cashPaid };
-  }, [transactions, inventory, initialCapital, periodFilter, customStartDate, customEndDate, actualBalance, paidPeriods]);
+  }, [visibleTransactions, inventory, initialCapital, periodFilter, actualBalance, paidPeriods]);
 
   const calculatedDividendPool = useMemo(() => {
     const rangeTxs = transactions.filter(t => t.date >= divCalcStart && t.date <= divCalcEnd);
@@ -1115,27 +1281,44 @@ function SmartCateringAccountant() {
   }, [inventory, inventorySearch, inventoryCategoryFilter, inventoryPriceFilter]);
 
   const dashboardChartData = useMemo(() => {
-    return analytics.sortedPeriods.slice(-12).map((p) => ({
-      ...p,
-      periodLabel: String(p.period || "").length > 18 ? String(p.period).slice(0, 18) + "…" : String(p.period || ""),
-      incSewa: Number.isFinite(Number(p.incSewa)) ? Number(p.incSewa) : 0,
-      surplusBahan: Number.isFinite(Number(p.surplusBahan)) ? Number(p.surplusBahan) : 0,
-      surplusOps: Number.isFinite(Number(p.surplusOps)) ? Number(p.surplusOps) : 0,
-      totalRevenue: Number.isFinite(Number(p.totalRevenue)) ? Number(p.totalRevenue) : 0,
-      totalExpense: Number.isFinite(Number(p.totalExpense)) ? Number(p.totalExpense) : 0,
-      netProfit: Number.isFinite(Number(p.netProfit)) ? Number(p.netProfit) : 0,
-      cashFlow: Number.isFinite(Number(p.cashFlow)) ? Number(p.cashFlow) : 0
-    }));
-  }, [analytics.sortedPeriods]);
+    return analytics.sortedPeriods
+      .filter(p => safeNumber(p.totalRevenue) || safeNumber(p.totalExpense) || safeNumber(p.netProfit) || safeNumber(p.cashFlow))
+      .slice(-16)
+      .map((p) => ({
+        ...p,
+        periodLabel: periodFilter === "daily" ? String(p.period || "").slice(5) : String(p.period || "").replace(/ - /g,"–"),
+        incSewa: Number.isFinite(Number(p.incSewa)) ? Number(p.incSewa) : 0,
+        surplusBahan: Number.isFinite(Number(p.surplusBahan)) ? Number(p.surplusBahan) : 0,
+        surplusOps: Number.isFinite(Number(p.surplusOps)) ? Number(p.surplusOps) : 0,
+        totalRevenue: Number.isFinite(Number(p.totalRevenue)) ? Number(p.totalRevenue) : 0,
+        totalExpense: Number.isFinite(Number(p.totalExpense)) ? Number(p.totalExpense) : 0,
+        netProfit: Number.isFinite(Number(p.netProfit)) ? Number(p.netProfit) : 0,
+        cashFlow: Number.isFinite(Number(p.cashFlow)) ? Number(p.cashFlow) : 0
+      }));
+  }, [analytics.sortedPeriods, periodFilter]);
 
-  const auditRows = useMemo(() => transactions.map(t => {
-    const currentCategory = safeString(t.category).trim();
-    const recommended = learnCategoryFromHistory(t.desc, t.type);
-    const isGeneric = !currentCategory || currentCategory === "Lainnya (Ops)" || currentCategory === "Bahan Baku";
-    const mismatch = isGeneric && recommended && recommended !== currentCategory;
-    const outstanding = Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount));
-    return { ...t, recommended, mismatch, outstanding };
-  }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || safeNumber(t.classificationConfidence) < 0.75), [transactions, categoryMemory]);
+  const topExpenseCategories = useMemo(() => {
+    const m = {};
+    visibleTransactions.filter(t => t.type === "expense").forEach(t => { m[t.category || "Tanpa Kategori"] = (m[t.category || "Tanpa Kategori"] || 0) + safeNumber(t.amount); });
+    return Object.entries(m).map(([name, value]) => ({ name, value })).sort((a,b)=>b.value-a.value).slice(0,8);
+  }, [visibleTransactions]);
+
+  const topVendorDebts = useMemo(() => Object.entries(analytics.debtByVendor || {}).map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value).slice(0,8), [analytics.debtByVendor]);
+
+  const auditRows = useMemo(() => {
+    const rows = transactions.map(t => {
+      const currentCategory = safeString(t.category).trim();
+      const recommended = learnCategoryFromHistory(t.desc, t.type);
+      const isGeneric = !currentCategory || currentCategory === "Lainnya (Ops)" || currentCategory === "Bahan Baku";
+      const mismatch = isGeneric && recommended && recommended !== currentCategory;
+      const outstanding = Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount));
+      const severity = outstanding > 0 || mismatch ? "RED" : "INFO";
+      return { ...t, recommended, mismatch, outstanding, severity };
+    }).filter(t => t.mismatch || t.outstanding > 0 || !t.source || safeNumber(t.classificationConfidence) < 0.75 || t.auditStatus === "done");
+    return rows
+      .filter(t => auditFilter === "ALL" || (auditFilter === "RED" ? t.severity === "RED" && t.auditStatus !== "done" : auditFilter === "DONE" ? t.auditStatus === "done" : t.auditStatus !== "done"))
+      .sort((a,b)=> (b.severity === "RED") - (a.severity === "RED") || String(b.date).localeCompare(String(a.date)) );
+  }, [transactions, categoryMemory, auditFilter]);
 
   const debtRows = useMemo(() => transactions
     .map(t => ({ ...t, outstanding: Math.max(0, safeNumber(t.amount) - safeNumber(t.paidAmount)) }))
@@ -1175,7 +1358,8 @@ function SmartCateringAccountant() {
             <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa)</p>
           </div>
           <div className="header-actions">
-            <Button variant="green" size="sm" onClick={handleExportTransactionsCSV}><FileSpreadsheet size={16}/> Export Excel DB</Button>
+            <Button variant="green" size="sm" onClick={handleExportExcelStyled}><FileSpreadsheet size={16}/> Export Excel DB</Button>
+            <Button variant="outline" size="sm" onClick={()=>setSheetSyncOpen(true)}><Database size={16}/> Google Sheet</Button>
             <Button variant="blue" size="sm" onClick={() => csvInputRef.current?.click()}><Upload size={16}/> Import CSV DB</Button>
             <input type="file" ref={csvInputRef} hidden accept=".csv" onChange={handleImportCSV} />
             <span className="divider" />
@@ -1205,6 +1389,21 @@ function SmartCateringAccountant() {
 
         {activeTab === "dashboard" && (
           <section className="space">
+            <Card>
+              <CardContent>
+                <div className="dashboard-filterbar">
+                  <div className="periods">
+                    <Button variant={periodFilter==="daily"?"default":"ghost"} onClick={()=>setPeriodFilter("daily")}>Harian</Button>
+                    <Button variant={periodFilter==="weekly"?"default":"ghost"} onClick={()=>setPeriodFilter("weekly")}>Mingguan</Button>
+                    <Button variant={periodFilter==="monthly"?"default":"ghost"} onClick={()=>setPeriodFilter("monthly")}>Bulanan</Button>
+                    <Button variant={periodFilter==="custom"?"default":"ghost"} onClick={()=>setPeriodFilter("custom")}>Custom</Button>
+                  </div>
+                  <select className="select month-select" value={monthFilter} onChange={e=>setMonthFilter(e.target.value)}><option value="ALL">Semua bulan</option>{monthOptions.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}</select>
+                  {periodFilter==="custom" && <div className="date-range"><Input type="date" value={customStartDate} onChange={e=>setCustomStartDate(e.target.value)}/><span>s/d</span><Input type="date" value={customEndDate} onChange={e=>setCustomEndDate(e.target.value)}/></div>}
+                  <Badge variant="soft">{visibleTransactions.length} transaksi</Badge>
+                </div>
+              </CardContent>
+            </Card>
             <Card className="finance-card">
               <CardHeader><CardTitle><Wallet/> POSISI KEUANGAN (REAL TIME)</CardTitle></CardHeader>
               <CardContent>
@@ -1229,6 +1428,12 @@ function SmartCateringAccountant() {
               </CardContent>
             </Card>
 
+            <div className="kpi-grid">
+              <Card><CardContent><span className="label">Uang Masuk</span><div className="kpi green-text">{formatIDR(analytics.grandTotalRevenue)}</div></CardContent></Card>
+              <Card><CardContent><span className="label">Uang Keluar</span><div className="kpi red-text">{formatIDR(analytics.grandTotalExpense)}</div></CardContent></Card>
+              <Card><CardContent><span className="label">Profit Bersih</span><div className={`kpi ${analytics.sortedPeriods.reduce((a,b)=>a+b.netProfit,0)<0?"red-text":"blue-text"}`}>{formatIDR(analytics.sortedPeriods.reduce((a,b)=>a+b.netProfit,0))}</div></CardContent></Card>
+              <Card><CardContent><span className="label">Aset Gudang</span><div className="kpi emerald-text">{formatIDR(analytics.inventoryValue)}</div></CardContent></Card>
+            </div>
             <div className="grid-two">
               <Card>
                 <CardHeader><CardTitle><TrendingUp className="green-icon"/> Grafik Profitabilitas</CardTitle><CardDescription>Performa mingguan/bulanan</CardDescription></CardHeader>
@@ -1239,8 +1444,8 @@ function SmartCateringAccountant() {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={dashboardChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="periodLabel" interval={0} tick={{ fontSize: 10 }} />
-                        <YAxis tickFormatter={(val) => `${Math.round(Number(val || 0)/1000)}k`} width={54} />
+                        <XAxis dataKey="periodLabel" interval="preserveStartEnd" tick={{ fontSize: 10 }} angle={-12} textAnchor="end" height={46} />
+                        <YAxis tickFormatter={formatAxisIDR} width={64} />
                         <RechartsTooltip formatter={(val) => formatIDR(Number(val || 0))} />
                         <Legend />
                         <Bar dataKey="netProfit" name="Profit Bersih" fill="#2563eb" radius={[4, 4, 0, 0]} />
@@ -1256,8 +1461,8 @@ function SmartCateringAccountant() {
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={dashboardChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="periodLabel" interval={0} tick={{ fontSize: 10 }} />
-                      <YAxis tickFormatter={(val) => `${Math.round(Number(val || 0)/1000)}k`} width={54} />
+                      <XAxis dataKey="periodLabel" interval="preserveStartEnd" tick={{ fontSize: 10 }} angle={-12} textAnchor="end" height={46} />
+                      <YAxis tickFormatter={formatAxisIDR} width={64} />
                       <RechartsTooltip formatter={(val) => formatIDR(Number(val || 0))} />
                       <Legend />
                       <Area type="monotone" dataKey="totalRevenue" name="Uang Masuk" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.12} />
@@ -1293,6 +1498,14 @@ function SmartCateringAccountant() {
                     </RePieChart>
                   </ResponsiveContainer>
                 </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle>Top Kategori Pengeluaran</CardTitle></CardHeader>
+                <CardContent><Table><TableHeader><TableRow><TableHead>Kategori</TableHead><TableHead className="right">Total</TableHead></TableRow></TableHeader><TableBody>{topExpenseCategories.map(r=><TableRow key={r.name}><TableCell>{r.name}</TableCell><TableCell className="right strong red-text">{formatIDR(r.value)}</TableCell></TableRow>)}{topExpenseCategories.length===0 && <TableRow><TableCell colSpan={2} className="center empty">Tidak ada pengeluaran pada periode ini.</TableCell></TableRow>}</TableBody></Table></CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle>Top Hutang Vendor</CardTitle></CardHeader>
+                <CardContent><Table><TableHeader><TableRow><TableHead>Vendor</TableHead><TableHead className="right">Outstanding</TableHead></TableRow></TableHeader><TableBody>{topVendorDebts.map(r=><TableRow key={r.name}><TableCell>{r.name}</TableCell><TableCell className="right strong orange-text">{formatIDR(r.value)}</TableCell></TableRow>)}{topVendorDebts.length===0 && <TableRow><TableCell colSpan={2} className="center empty">Tidak ada hutang.</TableCell></TableRow>}</TableBody></Table></CardContent>
               </Card>
             </div>
           </section>
@@ -1410,10 +1623,12 @@ function SmartCateringAccountant() {
           <section className="space">
             <div className="filterbar">
               <div className="periods">
+                <Button variant={periodFilter==="daily"?"default":"ghost"} onClick={()=>{setPeriodFilter("daily");setCustomStartDate("");setCustomEndDate("");}}>Harian</Button>
                 <Button variant={periodFilter==="weekly"?"default":"ghost"} onClick={()=>{setPeriodFilter("weekly");setCustomStartDate("");setCustomEndDate("");}}>Mingguan</Button>
                 <Button variant={periodFilter==="monthly"?"default":"ghost"} onClick={()=>{setPeriodFilter("monthly");setCustomStartDate("");setCustomEndDate("");}}>Bulanan</Button>
                 <Button variant={periodFilter==="custom"?"default":"ghost"} onClick={()=>setPeriodFilter("custom")}>Custom Tanggal</Button>
               </div>
+              <select className="select month-select" value={monthFilter} onChange={e=>setMonthFilter(e.target.value)}><option value="ALL">Semua bulan</option>{monthOptions.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}</select>
               {periodFilter==="custom" && <div className="date-range"><Input type="date" value={customStartDate} onChange={e=>setCustomStartDate(e.target.value)}/><span>s/d</span><Input type="date" value={customEndDate} onChange={e=>setCustomEndDate(e.target.value)}/></div>}
               <Button variant="outline" onClick={handlePrintReport}><Printer size={16}/> Cetak Laporan (Print/PDF)</Button>
             </div>
@@ -1468,8 +1683,8 @@ function SmartCateringAccountant() {
                   </Table>
                 </div>
                 <h4 className="history-title"><History size={16}/> Riwayat Pembagian Dividen</h4>
-                <div className="boxed-table small-box">
-                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead className="right">Jumlah</TableHead></TableRow></TableHeader><TableBody>{transactions.filter(t=>t.category==="Pembagian Dividen").map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}</TableCell><TableCell className="right red-text strong">-{formatIDR(t.amount)}</TableCell></TableRow>)}{transactions.filter(t=>t.category==="Pembagian Dividen").length===0 && <TableRow><TableCell colSpan={3} className="center empty">Belum ada riwayat pembagian</TableCell></TableRow>}</TableBody></Table>
+                <div className="boxed-table dividend-history">
+                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Ket</TableHead><TableHead className="right">Jumlah</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{transactions.filter(t=>t.category==="Pembagian Dividen").map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.orderBy || "-"}</small></TableCell><TableCell className="right red-text strong">-{formatIDR(t.amount)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button onClick={()=>confirmAction("Hapus Riwayat Dividen?", `Hapus ${t.desc}?`, ()=>handleDeleteTrans(t.id))}><Trash2 size={13}/></button></TableCell></TableRow>)}{transactions.filter(t=>t.category==="Pembagian Dividen").length===0 && <TableRow><TableCell colSpan={4} className="center empty">Belum ada riwayat pembagian</TableCell></TableRow>}</TableBody></Table>
                 </div>
               </CardContent>
             </Card>
@@ -1548,9 +1763,13 @@ function SmartCateringAccountant() {
             <Card className="yellow-border-top">
               <CardHeader><CardTitle><ShieldAlert size={20}/> Audit Klasifikasi & Sinkron GPT</CardTitle><CardDescription>Tab baru. Tampilan lama tetap dipertahankan, audit ditambahkan di halaman terpisah.</CardDescription></CardHeader>
               <CardContent>
-                <div className="audit-summary"><span><Database size={16}/> Source GPT/Firebase: {transactions.filter(t=>String(t.source).includes("chatgpt")).length} transaksi</span><span><AlertTriangle size={16}/> Perlu cek: {auditRows.length}</span></div>
+                <div className="audit-toolbar">
+                  <div className="audit-summary"><span><Database size={16}/> Source GPT/Firebase: {transactions.filter(t=>String(t.source).includes("chatgpt")).length} transaksi</span><span><AlertTriangle size={16}/> Tampil: {auditRows.length}</span></div>
+                  <div className="periods"><Button variant={auditFilter==="NEED_ACTION"?"default":"ghost"} onClick={()=>setAuditFilter("NEED_ACTION")}>Belum selesai</Button><Button variant={auditFilter==="RED"?"red":"ghost"} onClick={()=>setAuditFilter("RED")}>Merah saja</Button><Button variant={auditFilter==="ALL"?"default":"ghost"} onClick={()=>setAuditFilter("ALL")}>Semua</Button><Button variant={auditFilter==="DONE"?"green":"ghost"} onClick={()=>setAuditFilter("DONE")}>Selesai</Button></div>
+                  {selectedAuditIds.length>0 && <Button variant="green" size="sm" onClick={()=>markAuditDone(selectedAuditIds)}><Check size={14}/> Tandai selesai ({selectedAuditIds.length})</Button>}
+                </div>
                 <div className="scroll-table">
-                  <Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Editable</TableHead><TableHead>Rekomendasi dari Backup</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Dibayar</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason || `Source: ${t.source || '-'}`}</small></TableCell><TableCell><select className="select audit-select" value={t.category} onChange={e=>applyRecommendedCategory(t.id, e.target.value)}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}<button className="detail-btn" onClick={()=>applyRecommendedCategory(t.id, t.recommended)}><Check size={10}/> Pakai ini</button></TableCell><TableCell><Input value={t.orderBy || ''} onChange={e=>quickUpdateTransaction(t.id,{orderBy:e.target.value})}/></TableCell><TableCell className="right"><Input className="right" value={formatNumberInput(t.paidAmount)} onChange={e=>quickUpdateTransaction(t.id,{paidAmount:parseIDRInput(e.target.value), isDebt: parseIDRInput(e.target.value) < t.amount, paymentStatus: parseIDRInput(e.target.value) >= t.amount ? 'paid' : 'unpaid'})}/></TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button></TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={8} className="center empty">Tidak ada temuan audit.</TableCell></TableRow>}</TableBody></Table>
+                  <Table><TableHeader><TableRow><TableHead><input type="checkbox" checked={auditRows.length>0 && selectedAuditIds.length===auditRows.length} onChange={e=>setSelectedAuditIds(e.target.checked?auditRows.map(x=>x.id):[])}/></TableHead><TableHead>Status</TableHead><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Kategori Editable</TableHead><TableHead>Rekomendasi dari Backup</TableHead><TableHead>Vendor</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{auditRows.map(t=><TableRow key={t.id} className={t.severity==="RED"?"audit-red":""}><TableCell><input type="checkbox" checked={selectedAuditIds.includes(t.id)} onChange={e=>setSelectedAuditIds(prev=>e.target.checked?[...prev,t.id]:prev.filter(id=>id!==t.id))}/></TableCell><TableCell>{t.auditStatus==="done"?<Badge variant="soft">Selesai</Badge>:t.severity==="RED"?<Badge variant="destructive">Merah</Badge>:<Badge variant="soft">Info</Badge>}</TableCell><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.classificationReason || `Source: ${t.source || '-'}`}</small></TableCell><TableCell><select className="select audit-select" value={t.category} onChange={e=>applyRecommendedCategory(t.id, e.target.value)}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></TableCell><TableCell className={t.mismatch?"orange-text strong":"green-text"}>{t.recommended}<button className="detail-btn" onClick={()=>applyRecommendedCategory(t.id, t.recommended)}><Check size={10}/> Pakai ini</button></TableCell><TableCell><Input value={t.orderBy || ''} onChange={e=>quickUpdateTransaction(t.id,{orderBy:e.target.value})}/></TableCell><TableCell className="right strong orange-text">{formatIDR(t.outstanding)}</TableCell><TableCell><button onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button onClick={()=>markAuditDone(t.id)}><Check size={13}/></button></TableCell></TableRow>)}{auditRows.length===0 && <TableRow><TableCell colSpan={9} className="center empty">Tidak ada temuan audit pada filter ini.</TableCell></TableRow>}</TableBody></Table>
                 </div>
               </CardContent>
             </Card>
@@ -1565,8 +1784,17 @@ function SmartCateringAccountant() {
 
         {detailOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}><div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead className="right">Jumlah</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{selectedDetail.data.map(t=><TableRow key={t.id}><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.category}</small><small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small></TableCell><TableCell className={`right strong ${t.type==="income"?"green-text":"red-text"}`}>{formatIDR(t.amount)}</TableCell><TableCell><button onClick={()=>{setDetailOpen(false);openEdit(t);}}><Edit2 size={13}/></button></TableCell></TableRow>)}</TableBody></Table></div></Modal>}
 
-        {backupOpen && <Modal title="Riwayat Backup Cloud" onClose={()=>setBackupOpen(false)}>{isLoadingBackups ? <div className="center"><Loader2 className="spin"/> Loading data...</div> : <div className="backup-list">{backupList.map(b=><div key={b.id} className="backup-row"><div><b>{new Date(b.createdAtClient || b.id).toLocaleString("id-ID")}</b><small>Transaksi: {b.counts?.transactions || 0}</small></div><Button size="sm" variant="outline" onClick={()=>loadBackup(b)}>Restore</Button></div>)}{backupList.length===0 && <p className="center empty">Belum ada backup tersimpan.</p>}</div>}</Modal>}
+        {backupOpen && <Modal title="Riwayat Backup Cloud" onClose={()=>setBackupOpen(false)}>{isLoadingBackups ? <div className="center"><Loader2 className="spin"/> Loading data...</div> : <div className="backup-list">{backupList.map(b=><div key={b.id} className="backup-row"><div><b>{new Date(b.createdAtClient || b.id).toLocaleString("id-ID")}</b><small>Transaksi: {b.counts?.transactions || 0} · Stok: {b.counts?.inventory || 0} · Shareholder: {b.counts?.shareholders || 0}</small><small>{b.backupType || "metadata_lama"}</small></div><div className="row-actions"><Button size="sm" variant="outline" onClick={()=>loadBackup(b)}>Restore</Button><Button size="sm" variant="red" onClick={()=>deleteBackupPoint(b)}><Trash2 size={13}/> Hapus</Button></div></div>)}{backupList.length===0 && <p className="center empty">Belum ada backup tersimpan.</p>}</div>}</Modal>}
 
+
+        {sheetSyncOpen && <Modal title="Google Sheet Sync" onClose={()=>setSheetSyncOpen(false)} wide>
+          <div className="form-stack">
+            <p className="muted">Tempel URL Google Apps Script Web App milik Anda. App akan mengirim/mengambil JSON database: transaksi, gudang, shareholder, dan meta.</p>
+            <label>URL Web App Google Sheet<Input value={googleSheetUrl} onChange={e=>setGoogleSheetUrl(e.target.value)} placeholder="https://script.google.com/macros/s/.../exec" /></label>
+            <div className="two-buttons"><Button variant="green" onClick={handleGoogleSheetExport}><Upload size={16}/> Export ke Google Sheet</Button><Button variant="blue" onClick={handleGoogleSheetImport}><Download size={16}/> Import dari Google Sheet</Button></div>
+            <div className="hint">Catatan: koneksi langsung Google Sheet perlu Apps Script Web App. Kalau URL belum diisi, gunakan Export Excel DB atau Backup PC.</div>
+          </div>
+        </Modal>}
         {editInventoryOpen && currentEditInventory && <Modal title="Edit Stok Barang" onClose={()=>setEditInventoryOpen(false)}><div className="form-stack"><label>Nama Barang<Input value={currentEditInventory.name} onChange={e=>setCurrentEditInventory({...currentEditInventory,name:e.target.value})}/></label><div className="two-cols"><label>Qty<Input type="number" value={currentEditInventory.qty} onChange={e=>setCurrentEditInventory({...currentEditInventory,qty:e.target.value})}/></label><label>Satuan<Input value={currentEditInventory.unit} onChange={e=>setCurrentEditInventory({...currentEditInventory,unit:e.target.value})}/></label></div><label>Nilai per Unit<Input type="number" value={currentEditInventory.valuePerUnit} onChange={e=>setCurrentEditInventory({...currentEditInventory,valuePerUnit:e.target.value})}/></label><label>Kategori<select className="select" value={currentEditInventory.category || "Tanpa Kategori"} onChange={e=>setCurrentEditInventory({...currentEditInventory,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Button className="full cyan" onClick={saveEditInventory}>Simpan Stok</Button></div></Modal>}
       </div>
     </div>
