@@ -62,18 +62,51 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || defaultFirebaseConfig.measurementId
 };
 
-const siteId = import.meta.env.VITE_SITE_ID || "sppg-maja-gpt-site";
-const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || "(default)";
-const siteLabel = import.meta.env.VITE_SITE_LABEL || "SPPG MAJA BARU";
-const siteShortLabel = import.meta.env.VITE_SITE_SHORT_LABEL || "Maja";
+// v8.1: routing dapur diputuskan saat browser membuka URL.
+// Dua Railway service boleh menyajikan bundle JS yang sama.
+const RUNTIME_HOST_SITE_MAP = Object.freeze({
+  "sppg-finance-gpt-site-production.up.railway.app": {
+    siteId: "sppg-maja-gpt-site",
+    databaseId: "(default)",
+    siteLabel: "SPPG MAJA BARU",
+    siteShortLabel: "Maja"
+  },
+  "sppg-finance-gpt-site-production-fc7e.up.railway.app": {
+    siteId: "sppg-cemplang2-gpt-site",
+    databaseId: "cemplang2",
+    siteLabel: "SPPG CEMPLANG 2",
+    siteShortLabel: "Cemplang 2"
+  }
+});
+
+const currentHostname =
+  typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
+
+const runtimeSite = RUNTIME_HOST_SITE_MAP[currentHostname] || null;
+
+const siteId =
+  runtimeSite?.siteId ||
+  import.meta.env.VITE_SITE_ID ||
+  "sppg-maja-gpt-site";
+
+const firestoreDatabaseId =
+  runtimeSite?.databaseId ||
+  import.meta.env.VITE_FIRESTORE_DATABASE_ID ||
+  "(default)";
+
+const siteLabel =
+  runtimeSite?.siteLabel ||
+  import.meta.env.VITE_SITE_LABEL ||
+  "SPPG MAJA BARU";
+
+const siteShortLabel =
+  runtimeSite?.siteShortLabel ||
+  import.meta.env.VITE_SITE_SHORT_LABEL ||
+  "Maja";
 
 const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
 
-// Maja tetap memakai database (default) agar data lama tidak dipindah.
-// Cemplang 2 memakai named database "cemplang2".
-// Env ditentukan per Railway service sehingga satu repo dapat melayani dua dapur
-// tanpa ada tombol pindah database yang berisiko salah input.
 const db = app
   ? (firestoreDatabaseId === "(default)"
       ? getFirestore(app)
@@ -1515,7 +1548,7 @@ function SmartCateringAccountant() {
         <div className="legacy-header">
           <div>
             <h1><Utensils className="orange" /> Laporan Keuangan {siteLabel}</h1>
-            <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa) · {siteShortLabel}</p>
+            <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa) · {siteShortLabel} · DB {firestoreDatabaseId}</p>
           </div>
           <div className="header-actions">
             <Button variant="green" size="sm" onClick={handleExportExcelStyled}><FileSpreadsheet size={16}/> Export Excel DB</Button>

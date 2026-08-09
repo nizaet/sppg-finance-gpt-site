@@ -1,13 +1,5 @@
-SPPG Finance v8.0 Multi-Dapur / Separate Firestore Database
-
-Maja:
-- siteId: sppg-maja-gpt-site
-- Firestore database: (default)
-- Tidak ada migrasi data Maja.
-
-Cemplang 2:
-- siteId: sppg-cemplang2-gpt-site
-- Firestore named database: cemplang2
-
-Satu repo yang sama dapat dipasang pada dua Railway services.
-Setiap push ke branch yang sama akan memperbarui kedua service otomatis.
+SPPG Finance v8.1 Multi-Dapur Runtime Host Routing
+- Maja domain -> sppg-maja-gpt-site / (default)
+- Cemplang domain -> sppg-cemplang2-gpt-site / cemplang2
+- Hostname produksi menang atas VITE_* sehingga bundle boleh sama.
+- Subtitle menampilkan database aktif.

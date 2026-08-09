@@ -1,7 +1,7 @@
 {
-  "name": "sppg-finance-multi-dapur",
+  "name": "sppg-finance-multi-dapur-runtime-routing",
   "private": true,
-  "version": "8.0.0",
+  "version": "8.1.0",
   "type": "module",
   "engines": {
     "node": "20.x"
