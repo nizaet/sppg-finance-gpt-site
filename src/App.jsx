@@ -104,24 +104,22 @@ const siteShortLabel =
   import.meta.env.VITE_SITE_SHORT_LABEL ||
   "Maja";
 
-// BEGIN RUNTIME BROWSER BRAND V8.2
+// BEGIN RUNTIME BROWSER BRAND V8.3
 const browserBrand =
   firestoreDatabaseId === "cemplang2"
     ? {
-        letter: "C",
-        color: "#16a34a",
-        title: "Cemplang 2 | SPPG Finance"
+        title: "Cemplang 2 | SPPG Finance",
+        favicon: "/favicon-cemplang.svg?v=83"
       }
     : {
-        letter: "M",
-        color: "#f97316",
-        title: "Maja | SPPG Finance"
+        title: "Maja | SPPG Finance",
+        favicon: "/favicon-maja.svg?v=83"
       };
 
 if (typeof document !== "undefined") {
   document.title = browserBrand.title;
 
-  let favicon = document.querySelector("link[rel~='icon']");
+  let favicon = document.querySelector("link[rel='icon']");
 
   if (!favicon) {
     favicon = document.createElement("link");
@@ -129,25 +127,11 @@ if (typeof document !== "undefined") {
     document.head.appendChild(favicon);
   }
 
-  const faviconSvg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-      <rect width="64" height="64" rx="14" fill="${browserBrand.color}"/>
-      <text
-        x="32"
-        y="43"
-        text-anchor="middle"
-        font-family="Arial, sans-serif"
-        font-size="38"
-        font-weight="700"
-        fill="white"
-      >${browserBrand.letter}</text>
-    </svg>
-  `;
-
-  favicon.href =
-    "data:image/svg+xml," + encodeURIComponent(faviconSvg);
+  favicon.type = "image/svg+xml";
+  favicon.sizes = "any";
+  favicon.href = browserBrand.favicon;
 }
-// END RUNTIME BROWSER BRAND V8.2
+// END RUNTIME BROWSER BRAND V8.3
 
 const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
