@@ -1,7 +1,7 @@
 {
-  "name": "sppg-finance-legacy-ui-railway-v7-3",
+  "name": "sppg-finance-legacy-ui-railway-v7-4",
   "private": true,
-  "version": "7.3.0",
+  "version": "7.4.0",
   "type": "module",
   "engines": {
     "node": "20.x"

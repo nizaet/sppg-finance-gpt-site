@@ -42,14 +42,24 @@ const CATEGORIES = [
 
 const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 
+const defaultFirebaseConfig = {
+  apiKey: "AIzaSyB72MVySugfHF_vu11WYv-s9uiQbRpftk4",
+  authDomain: "sppg-finance-gpt.firebaseapp.com",
+  projectId: "sppg-finance-gpt",
+  storageBucket: "sppg-finance-gpt.firebasestorage.app",
+  messagingSenderId: "732611890148",
+  appId: "1:732611890148:web:5dcfab93d1d351b10315f1",
+  measurementId: "G-DZERB61197"
+};
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || defaultFirebaseConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || defaultFirebaseConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultFirebaseConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultFirebaseConfig.appId,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || defaultFirebaseConfig.measurementId
 };
 
 const siteId = import.meta.env.VITE_SITE_ID || "sppg-maja-gpt-site";
@@ -351,13 +361,19 @@ function SmartCateringAccountant() {
   const [menuPlanner, setMenuPlanner] = useState({ pax: 100, budget: 15000 });
   const [menuResult, setMenuResult] = useState(null);
 
-  const paths = useMemo(() => ({
-    meta: () => doc(db, "gpt_sites", siteId, "ledger", "meta"),
-    transactions: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "transactions"),
-    inventory: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "inventory"),
-    shareholders: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "shareholders"),
-    backups: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups")
-  }), []);
+  const paths = useMemo(() => {
+    if (!db) return null;
+    return {
+      meta: () => doc(db, "gpt_sites", siteId, "ledger", "meta"),
+      transactions: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "transactions"),
+      inventory: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "inventory"),
+      shareholders: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "shareholders"),
+      backups: () => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups"),
+      backupTransactions: (backupId) => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups", String(backupId), "transactions"),
+      backupInventory: (backupId) => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups", String(backupId), "inventory"),
+      backupShareholders: (backupId) => collection(db, "gpt_sites", siteId, "ledger", "meta", "backups", String(backupId), "shareholders")
+    };
+  }, []);
 
 
   const categoryMemory = useMemo(() => {
@@ -402,7 +418,7 @@ function SmartCateringAccountant() {
   };
 
   useEffect(() => {
-    if (!db) {
+    if (!db || !paths) {
       setIsDataLoaded(true);
       setLastSaved("Firebase config belum tersedia");
       return;
@@ -446,6 +462,10 @@ function SmartCateringAccountant() {
             };
           }).sort((a,b)=>String(a.name).localeCompare(String(b.name), "id-ID"));
           setInventory(rows);
+          setLastSaved(`Firebase aktif · ${transactions.length} transaksi · ${rows.length} stok`);
+        }, err => {
+          console.error(err);
+          setLastSaved("Gagal membaca stok Firebase: " + err.message);
         });
 
         unsubSh = onSnapshot(paths.shareholders(), snap => {
@@ -466,7 +486,7 @@ function SmartCateringAccountant() {
   }, [paths]);
 
   const saveMeta = async (patch = {}) => {
-    if (!db) return;
+    if (!db || !paths) throw new Error("Firebase belum terhubung di aplikasi.");
     await setDoc(paths.meta(), {
       initialCapital,
       actualBalance,
@@ -486,6 +506,17 @@ function SmartCateringAccountant() {
         const docId = String(item.id || generateId()).replace(/[/.#[\]]/g, "_");
         batch.set(doc(colRef, docId), transform({ ...item, id: docId }), { merge: true });
       }
+      await batch.commit();
+    }
+  };
+
+  const clearCollection = async (colRef) => {
+    if (!db) return;
+    const snap = await getDocs(colRef);
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = writeBatch(db);
+      for (const d of docs.slice(i, i + 450)) batch.delete(d.ref);
       await batch.commit();
     }
   };
@@ -689,20 +720,30 @@ function SmartCateringAccountant() {
   const handleSaveToCloud = async () => {
     setIsSaving(true);
     try {
-      if (db) {
-        await saveMeta();
-        await setDoc(doc(paths.backups(), new Date().toISOString().replace(/[^\d]/g, "").slice(0,14)), {
-          createdAt: serverTimestamp(),
-          createdAtClient: new Date().toISOString(),
-          counts: { transactions: transactions.length, inventory: inventory.length },
-          initialCapital,
-          actualBalance
-        }, { merge: true });
-      }
-      setLastSaved(`Titik Backup dibuat: ${new Date().toLocaleTimeString("id-ID")}`);
-      alert("✅ Titik backup cloud berhasil dibuat.");
+      if (!db || !paths) throw new Error("Firebase belum terhubung. Backup cloud tidak bisa dibuat.");
+      const backupId = new Date().toISOString().replace(/[^\d]/g, "").slice(0,14);
+
+      await saveMeta();
+
+      await setDoc(doc(paths.backups(), backupId), {
+        createdAt: serverTimestamp(),
+        createdAtClient: new Date().toISOString(),
+        backupType: "full_snapshot_subcollections",
+        schemaVersion: 7.4,
+        counts: { transactions: transactions.length, inventory: inventory.length, shareholders: shareholders.length },
+        initialCapital,
+        actualBalance,
+        paidPeriods
+      }, { merge: true });
+
+      await batchWriteDocs(paths.backupTransactions(backupId), transactions, x => ({ ...x, backupSavedAt: new Date().toISOString() }));
+      await batchWriteDocs(paths.backupInventory(backupId), inventory, x => ({ ...x, backupSavedAt: new Date().toISOString() }));
+      await batchWriteDocs(paths.backupShareholders(backupId), shareholders, x => ({ ...x, backupSavedAt: new Date().toISOString() }));
+
+      setLastSaved(`Titik Backup cloud penuh dibuat: ${new Date().toLocaleTimeString("id-ID")}`);
+      alert(`✅ Titik backup cloud penuh berhasil dibuat.\nTransaksi: ${transactions.length}\nStok: ${inventory.length}\nShareholder: ${shareholders.length}`);
     } catch (error) {
-      alert("❌ Gagal membuat backup: " + error.message);
+      alert("❌ Gagal membuat backup cloud: " + error.message);
     } finally { setIsSaving(false); }
   };
 
@@ -710,16 +751,82 @@ function SmartCateringAccountant() {
     setBackupOpen(true);
     setIsLoadingBackups(true);
     try {
-      if (!db) return;
+      if (!db || !paths) throw new Error("Firebase belum terhubung.");
       const q = query(paths.backups(), orderBy("createdAtClient", "desc"));
       const snap = await getDocs(q);
       setBackupList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      alert("❌ Gagal membuka backup cloud: " + err.message);
+    }
     finally { setIsLoadingBackups(false); }
   };
 
-  const loadBackup = () => {
-    alert("Backup ini hanya titik metadata. Backup penuh gunakan Restore JSON.");
+  const loadBackup = async (backup) => {
+    if (!backup?.id) return;
+    confirmAction("Restore Cloud Backup", `Restore cloud backup ${backup.id}? Data aktif akan diganti dengan isi snapshot backup.`, async () => {
+      setIsSaving(true);
+      try {
+        if (!db || !paths) throw new Error("Firebase belum terhubung.");
+
+        const [txSnap, invSnap, shSnap] = await Promise.all([
+          getDocs(paths.backupTransactions(backup.id)),
+          getDocs(paths.backupInventory(backup.id)),
+          getDocs(paths.backupShareholders(backup.id))
+        ]);
+
+        const txs = txSnap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
+        const inv = invSnap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            name: safeString(data.name || d.id),
+            qty: safeNumber(data.qty),
+            unit: safeString(data.unit || ""),
+            valuePerUnit: safeNumber(data.valuePerUnit),
+            category: safeString(data.category || "Tanpa Kategori")
+          };
+        });
+        const sh = shSnap.docs.map(d => ({ id: d.id, ...d.data(), pct: safeNumber(d.data().pct), mgmtFee: safeNumber(d.data().mgmtFee) }));
+
+        if (!txs.length && !inv.length && backup.backupType !== "full_snapshot_subcollections") {
+          throw new Error("Backup ini backup metadata lama. Gunakan backup cloud baru atau Restore JSON.");
+        }
+
+        await clearCollection(paths.transactions());
+        await clearCollection(paths.inventory());
+        await clearCollection(paths.shareholders());
+
+        await batchWriteDocs(paths.transactions(), txs, x => ({ ...x, updatedAt: serverTimestamp(), restoredFromBackupId: backup.id }));
+        await batchWriteDocs(paths.inventory(), inv, x => ({ ...x, updatedAt: serverTimestamp(), restoredFromBackupId: backup.id }));
+        await batchWriteDocs(paths.shareholders(), sh, x => ({ ...x, updatedAt: serverTimestamp(), restoredFromBackupId: backup.id }));
+
+        const nextCapital = safeNumber(backup.initialCapital);
+        const nextBalance = safeNumber(backup.actualBalance);
+        const nextPaidPeriods = backup.paidPeriods || {};
+        await saveMeta({
+          initialCapital: nextCapital,
+          actualBalance: nextBalance,
+          paidPeriods: nextPaidPeriods,
+          restoredFromBackupId: backup.id,
+          restoredAt: new Date().toISOString()
+        });
+
+        setInitialCapital(nextCapital);
+        setActualBalance(nextBalance);
+        setPaidPeriods(nextPaidPeriods);
+        setTransactions(txs);
+        setInventory(inv);
+        setShareholders(sh);
+        setBackupOpen(false);
+        setLastSaved(`Cloud restore selesai: ${new Date().toLocaleTimeString("id-ID")}`);
+        alert(`✅ Cloud restore selesai.\nTransaksi: ${txs.length}\nStok: ${inv.length}\nShareholder: ${sh.length}`);
+      } catch (err) {
+        console.error(err);
+        alert("❌ Gagal restore cloud: " + err.message);
+      } finally { setIsSaving(false); }
+    });
   };
 
   const confirmAction = (title, msg, action) => {

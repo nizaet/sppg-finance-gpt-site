@@ -1,3 +1,6 @@
-SPPG Finance Legacy UI v7.3
-- Gudang: kolom kategori, search/filter kategori, filter harga 0, CSV mengikuti filter.
-- Edit stok: kategori editable.
+SPPG Finance Legacy UI Railway v7.4
+- Firebase fallback config embedded so Railway tetap terhubung walau env VITE kosong.
+- Cloud Backup menjadi full snapshot subcollections.
+- Cloud Restore mengembalikan transaksi, gudang, dan shareholder.
+- Inventory snapshot membaca Firestore path Worker: gpt_sites/sppg-maja-gpt-site/ledger/meta/inventory.
+- CSV inventory tambah kategori, priceSource, lastStockDate.
