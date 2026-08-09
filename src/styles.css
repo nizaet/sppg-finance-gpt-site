@@ -115,3 +115,145 @@
 .modal-backdrop{z-index:10000}
 .modal.wide{max-width:1120px}
 @media(max-width:1100px){.input-panel-grid{grid-template-columns:1fr}.paste-stack{grid-template-columns:1fr}.wide-search{width:100%}}
+
+
+/* v7.9: fit Tracking Harga & Hutang table without horizontal scroll */
+.tracking-table-wide {
+  overflow-x: hidden !important;
+  width: 100%;
+  max-width: 100%;
+}
+
+.tracking-table-wide .table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed !important;
+  border-collapse: collapse;
+}
+
+.tracking-table-wide th,
+.tracking-table-wide td {
+  padding: 9px 8px !important;
+  font-size: 12.5px !important;
+  line-height: 1.25 !important;
+  vertical-align: top;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.tracking-table-wide th:nth-child(1),
+.tracking-table-wide td:nth-child(1) { width: 6.5%; }
+
+.tracking-table-wide th:nth-child(2),
+.tracking-table-wide td:nth-child(2) { width: 6.5%; }
+
+.tracking-table-wide th:nth-child(3),
+.tracking-table-wide td:nth-child(3) { width: 22%; }
+
+.tracking-table-wide th:nth-child(4),
+.tracking-table-wide td:nth-child(4) { width: 13.5%; }
+
+.tracking-table-wide th:nth-child(5),
+.tracking-table-wide td:nth-child(5) { width: 7%; }
+
+.tracking-table-wide th:nth-child(6),
+.tracking-table-wide td:nth-child(6) { width: 6%; }
+
+.tracking-table-wide th:nth-child(7),
+.tracking-table-wide td:nth-child(7) { width: 4%; text-align: right; }
+
+.tracking-table-wide th:nth-child(8),
+.tracking-table-wide td:nth-child(8) { width: 4.5%; }
+
+.tracking-table-wide th:nth-child(9),
+.tracking-table-wide td:nth-child(9) { width: 8%; text-align: right; }
+
+.tracking-table-wide th:nth-child(10),
+.tracking-table-wide td:nth-child(10) { width: 8%; text-align: right; }
+
+.tracking-table-wide th:nth-child(11),
+.tracking-table-wide td:nth-child(11) { width: 8%; text-align: right; }
+
+.tracking-table-wide th:nth-child(12),
+.tracking-table-wide td:nth-child(12) { width: 6%; }
+
+.tracking-table-wide .item-cell b {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.tracking-table-wide .item-cell .mono {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal !important;
+  font-size: 11px !important;
+  line-height: 1.22 !important;
+  max-height: 2.6em;
+}
+
+.tracking-table-wide .row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+.tracking-table-wide .row-actions button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex: 0 0 26px;
+}
+
+.tracking-table-wide .badge,
+.tracking-table-wide [class*="badge"] {
+  font-size: 11px !important;
+  padding: 3px 7px !important;
+  white-space: nowrap;
+}
+
+.tracking-table-wide .right,
+.tracking-table-wide .strong {
+  white-space: nowrap !important;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+
+/* keep filter row compact but readable */
+.tracking-toolbar-wide {
+  grid-template-columns: 1.05fr 1.05fr 1.05fr 1.05fr 1.05fr !important;
+}
+
+.tracking-toolbar-wide label {
+  min-width: 0;
+}
+
+.tracking-toolbar-wide .select,
+.tracking-toolbar-wide input {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1280px) {
+  .tracking-table-wide th,
+  .tracking-table-wide td {
+    padding: 7px 6px !important;
+    font-size: 11.5px !important;
+  }
+
+  .tracking-table-wide .item-cell b {
+    font-size: 12px;
+  }
+
+  .tracking-table-wide .item-cell .mono {
+    font-size: 10.5px !important;
+  }
+
+  .tracking-toolbar-wide {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}

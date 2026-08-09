@@ -1,8 +1,5 @@
-SPPG Finance Legacy UI Railway v7.8
-- Fix hutang Rp0: unpaid/isDebt dengan paidAmount lama tidak lagi tampil Rp0.
-- Edit transaksi menjaga status hutang/lunas/sebagian dan paidAmount.
-- Confirm delete/lunasi tampil paling depan, tidak tertutup popup rincian.
-- Tracking Harga & Hutang menjadi full lebar.
-- Tracking bisa filter periode, bulan, custom tanggal, kategori, vendor, status.
-- Tracking menampilkan qty, satuan, harga/unit, total, outstanding, input/ubah.
-- Input manual dan paste pemasukan/pengeluaran dipindah ke panel bawah.
+SPPG Finance Legacy UI Railway v7.9
+- Tracking Harga & Hutang dibuat fit penuh lebar tanpa geser kanan-kiri.
+- Tabel tracking memakai table-layout fixed, kolom proporsional, font compact, dan note/ID dilipat 2 baris.
+- Kolom angka tetap rata kanan dan ringkas.
+- Filter tetap di atas, tetapi lebih kompak.
