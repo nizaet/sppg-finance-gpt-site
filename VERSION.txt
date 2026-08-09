@@ -1,7 +1,3 @@
-SPPG Finance Legacy UI v7.2
-- Restore JSON preserves category exactly from backup/manual/GPT.
-- Category learner uses backup/history but does not overwrite existing category.
-- Category dropdown includes categories discovered from backup.
-- Tabs aligned horizontally to the right and scroll only if needed.
-- Dashboard charts use sanitized compact data and non-stacked bars.
-- Report table compacted to fit desktop width better.
+SPPG Finance Legacy UI v7.3
+- Gudang: kolom kategori, search/filter kategori, filter harga 0, CSV mengikuti filter.
+- Edit stok: kategori editable.

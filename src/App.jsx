@@ -328,7 +328,10 @@ function SmartCateringAccountant() {
   const [bulkInventoryText, setBulkInventoryText] = useState("");
   const [debtVendorFilter, setDebtVendorFilter] = useState("ALL");
   const [debtCategoryFilter, setDebtCategoryFilter] = useState("ALL");
-  const [newItem, setNewItem] = useState({ name: "", qty: "", unit: "", valuePerUnit: "" });
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState("ALL");
+  const [inventoryPriceFilter, setInventoryPriceFilter] = useState("ALL");
+  const [newItem, setNewItem] = useState({ name: "", qty: "", unit: "", valuePerUnit: "", category: "Bahan Baku (Sembako/Bumbu)" });
   const [newTrans, setNewTrans] = useState({
     date: new Date().toISOString().split("T")[0],
     desc: "", amount: "", unitPrice: "", qty: "", unit: "",
@@ -428,7 +431,21 @@ function SmartCateringAccountant() {
         });
 
         unsubInv = onSnapshot(paths.inventory(), snap => {
-          setInventory(snap.docs.map(d => ({ id: d.id, ...d.data(), qty: safeNumber(d.data().qty), valuePerUnit: safeNumber(d.data().valuePerUnit) })));
+          const rows = snap.docs.map(d => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ...data,
+              name: safeString(data.name || d.id),
+              qty: safeNumber(data.qty),
+              unit: safeString(data.unit || ""),
+              valuePerUnit: safeNumber(data.valuePerUnit),
+              category: safeString(data.category || "Tanpa Kategori"),
+              priceSource: safeString(data.priceSource || ""),
+              lastStockDate: safeString(data.lastStockDate || "")
+            };
+          }).sort((a,b)=>String(a.name).localeCompare(String(b.name), "id-ID"));
+          setInventory(rows);
         });
 
         unsubSh = onSnapshot(paths.shareholders(), snap => {
@@ -726,10 +743,10 @@ function SmartCateringAccountant() {
 
   const addInventoryItem = async () => {
     if (!newItem.name) return;
-    const item = { ...newItem, id: generateId(), qty: safeNumber(newItem.qty), valuePerUnit: safeNumber(newItem.valuePerUnit) };
+    const item = { ...newItem, id: generateId(), qty: safeNumber(newItem.qty), valuePerUnit: safeNumber(newItem.valuePerUnit), category: newItem.category || "Tanpa Kategori" };
     setInventory(prev => [...prev, item]);
     if (db) await setDoc(doc(paths.inventory(), item.id), { ...item, updatedAt: serverTimestamp() }, { merge: true });
-    setNewItem({ name: "", qty: "", unit: "", valuePerUnit: "" });
+    setNewItem({ name: "", qty: "", unit: "", valuePerUnit: "", category: "Bahan Baku (Sembako/Bumbu)" });
   };
 
   const removeInventoryItem = async (id) => {
@@ -777,7 +794,8 @@ function SmartCateringAccountant() {
     const items = String(text || "").split(/\n+/).map(line => {
       const m = line.trim().match(/^(.+?)\s+([\d.,]+)\s*([a-zA-ZÀ-ÿ/]+)?(?:\s*[@xX]\s*([\d.,]+))?/);
       if (!m) return null;
-      return { id: generateId(), name: m[1].trim(), qty: safeNumber(m[2]), unit: m[3] || "", valuePerUnit: safeNumber(m[4]) };
+      const nm = m[1].trim();
+      return { id: generateId(), name: nm, qty: safeNumber(m[2]), unit: m[3] || "", valuePerUnit: safeNumber(m[4]), category: learnCategoryFromHistory(nm, "expense") };
     }).filter(Boolean);
     setInventory(prev => [...prev, ...items]);
     if (db) await batchWriteDocs(paths.inventory(), items, x => ({ ...x, updatedAt: serverTimestamp() }));
@@ -971,9 +989,23 @@ function SmartCateringAccountant() {
   };
 
   const categoryOptions = useMemo(() => {
-    const fromData = transactions.map(t => safeString(t.category).trim()).filter(Boolean);
-    return Array.from(new Set([...fromData, ...CATEGORIES])).sort((a, b) => a.localeCompare(b, "id-ID"));
-  }, [transactions]);
+    const fromTx = transactions.map(t => safeString(t.category).trim()).filter(Boolean);
+    const fromInv = inventory.map(i => safeString(i.category).trim()).filter(Boolean);
+    return Array.from(new Set([...fromTx, ...fromInv, ...CATEGORIES])).sort((a, b) => a.localeCompare(b, "id-ID"));
+  }, [transactions, inventory]);
+
+  const inventoryCategoryOptions = useMemo(() => {
+    return Array.from(new Set(inventory.map(i => safeString(i.category || "Tanpa Kategori").trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"id-ID"));
+  }, [inventory]);
+
+  const filteredInventory = useMemo(() => {
+    const q = inventorySearch.trim().toLowerCase();
+    return inventory
+      .filter(i => inventoryCategoryFilter === "ALL" || safeString(i.category || "Tanpa Kategori") === inventoryCategoryFilter)
+      .filter(i => inventoryPriceFilter === "ALL" || (inventoryPriceFilter === "NO_PRICE" ? safeNumber(i.valuePerUnit) === 0 : safeNumber(i.valuePerUnit) > 0))
+      .filter(i => !q || `${i.name} ${i.category} ${i.unit}`.toLowerCase().includes(q))
+      .sort((a,b)=>safeString(a.name).localeCompare(safeString(b.name), "id-ID"));
+  }, [inventory, inventorySearch, inventoryCategoryFilter, inventoryPriceFilter]);
 
   const dashboardChartData = useMemo(() => {
     return analytics.sortedPeriods.slice(-12).map((p) => ({
@@ -1375,6 +1407,7 @@ function SmartCateringAccountant() {
                 <Input placeholder="Nama Barang" value={newItem.name} onChange={e=>setNewItem({...newItem,name:e.target.value})}/>
                 <div className="two-cols"><Input type="number" placeholder="Qty" value={newItem.qty} onChange={e=>setNewItem({...newItem,qty:e.target.value})}/><Input placeholder="Satuan" value={newItem.unit} onChange={e=>setNewItem({...newItem,unit:e.target.value})}/></div>
                 <Input type="number" placeholder="Nilai per Unit (Rp)" value={newItem.valuePerUnit} onChange={e=>setNewItem({...newItem,valuePerUnit:e.target.value})}/>
+                <select className="select" value={newItem.category} onChange={e=>setNewItem({...newItem,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select>
                 <Button className="cyan full" onClick={addInventoryItem}><Plus size={16}/> Tambah Stok</Button>
                 <Textarea placeholder="Bulk stok: Beras 50 kg @13000" value={bulkInventoryText} onChange={e=>setBulkInventoryText(e.target.value)}/>
                 <Button className="indigo full" onClick={()=>processInventoryBulkLocal(bulkInventoryText)}><Sparkles size={16}/> Proses Bulk</Button>
@@ -1382,8 +1415,16 @@ function SmartCateringAccountant() {
               </CardContent>
             </Card>
             <Card className="tracking">
-              <CardHeader><CardTitle className="between"><span>Daftar Barang ({inventory.length} Item)</span><Button variant="outline" size="sm" onClick={handleExportInventoryCSV}><Download size={16}/> CSV</Button></CardTitle></CardHeader>
-              <CardContent><div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Barang</TableHead><TableHead className="right">Qty</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{inventory.length ? inventory.map(item=><TableRow key={item.id}><TableCell className="strong">{item.name}</TableCell><TableCell className="right">{item.qty} {item.unit}</TableCell><TableCell className="right">{formatIDR(item.valuePerUnit)}</TableCell><TableCell className="right strong">{formatIDR(item.qty*item.valuePerUnit)}</TableCell><TableCell><button onClick={()=>openEditInventory(item)}><Edit2 size={13}/></button><button onClick={()=>removeInventoryItem(item.id)}><Trash2 size={13}/></button></TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="center empty">Gudang kosong.</TableCell></TableRow>}</TableBody></Table></div></CardContent>
+              <CardHeader><CardTitle className="between"><span>Daftar Barang ({filteredInventory.length} dari {inventory.length} Item)</span><Button variant="outline" size="sm" onClick={handleExportInventoryCSV}><Download size={16}/> CSV</Button></CardTitle></CardHeader>
+              <CardContent>
+                <div className="inventory-filters">
+                  <Input placeholder="Cari barang / kategori..." value={inventorySearch} onChange={e=>setInventorySearch(e.target.value)}/>
+                  <select className="select" value={inventoryCategoryFilter} onChange={e=>setInventoryCategoryFilter(e.target.value)}><option value="ALL">Semua kategori</option>{inventoryCategoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                  <select className="select" value={inventoryPriceFilter} onChange={e=>setInventoryPriceFilter(e.target.value)}><option value="ALL">Semua harga</option><option value="HAS_PRICE">Ada harga</option><option value="NO_PRICE">Harga 0 / perlu cek</option></select>
+                  <Button variant="outline" size="sm" onClick={()=>{setInventorySearch("");setInventoryCategoryFilter("ALL");setInventoryPriceFilter("ALL");}}><Eraser size={14}/> Reset</Button>
+                </div>
+                <div className="scroll-table"><Table><TableHeader><TableRow><TableHead>Barang</TableHead><TableHead>Kategori</TableHead><TableHead className="right">Qty</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{filteredInventory.length ? filteredInventory.map(item=><TableRow key={item.id}><TableCell className="strong">{item.name}<small>{item.priceSource ? `Harga: ${item.priceSource}` : ''}{item.lastStockDate ? ` · Stok: ${item.lastStockDate}` : ''}</small></TableCell><TableCell><Badge variant="soft">{item.category || "Tanpa Kategori"}</Badge></TableCell><TableCell className="right">{item.qty} {item.unit}</TableCell><TableCell className={`right ${safeNumber(item.valuePerUnit)===0?"orange-text strong":""}`}>{formatIDR(item.valuePerUnit)}</TableCell><TableCell className="right strong">{formatIDR(item.qty*item.valuePerUnit)}</TableCell><TableCell><button onClick={()=>openEditInventory(item)}><Edit2 size={13}/></button><button onClick={()=>removeInventoryItem(item.id)}><Trash2 size={13}/></button></TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="center empty">Tidak ada barang sesuai filter.</TableCell></TableRow>}</TableBody></Table></div>
+              </CardContent>
             </Card>
           </section>
         )}
@@ -1419,7 +1460,7 @@ function SmartCateringAccountant() {
 
         {backupOpen && <Modal title="Riwayat Backup Cloud" onClose={()=>setBackupOpen(false)}>{isLoadingBackups ? <div className="center"><Loader2 className="spin"/> Loading data...</div> : <div className="backup-list">{backupList.map(b=><div key={b.id} className="backup-row"><div><b>{new Date(b.createdAtClient || b.id).toLocaleString("id-ID")}</b><small>Transaksi: {b.counts?.transactions || 0}</small></div><Button size="sm" variant="outline" onClick={()=>loadBackup(b)}>Restore</Button></div>)}{backupList.length===0 && <p className="center empty">Belum ada backup tersimpan.</p>}</div>}</Modal>}
 
-        {editInventoryOpen && currentEditInventory && <Modal title="Edit Stok Barang" onClose={()=>setEditInventoryOpen(false)}><div className="form-stack"><label>Nama Barang<Input value={currentEditInventory.name} onChange={e=>setCurrentEditInventory({...currentEditInventory,name:e.target.value})}/></label><div className="two-cols"><label>Qty<Input type="number" value={currentEditInventory.qty} onChange={e=>setCurrentEditInventory({...currentEditInventory,qty:e.target.value})}/></label><label>Satuan<Input value={currentEditInventory.unit} onChange={e=>setCurrentEditInventory({...currentEditInventory,unit:e.target.value})}/></label></div><label>Nilai per Unit<Input type="number" value={currentEditInventory.valuePerUnit} onChange={e=>setCurrentEditInventory({...currentEditInventory,valuePerUnit:e.target.value})}/></label><Button className="full cyan" onClick={saveEditInventory}>Simpan Stok</Button></div></Modal>}
+        {editInventoryOpen && currentEditInventory && <Modal title="Edit Stok Barang" onClose={()=>setEditInventoryOpen(false)}><div className="form-stack"><label>Nama Barang<Input value={currentEditInventory.name} onChange={e=>setCurrentEditInventory({...currentEditInventory,name:e.target.value})}/></label><div className="two-cols"><label>Qty<Input type="number" value={currentEditInventory.qty} onChange={e=>setCurrentEditInventory({...currentEditInventory,qty:e.target.value})}/></label><label>Satuan<Input value={currentEditInventory.unit} onChange={e=>setCurrentEditInventory({...currentEditInventory,unit:e.target.value})}/></label></div><label>Nilai per Unit<Input type="number" value={currentEditInventory.valuePerUnit} onChange={e=>setCurrentEditInventory({...currentEditInventory,valuePerUnit:e.target.value})}/></label><label>Kategori<select className="select" value={currentEditInventory.category || "Tanpa Kategori"} onChange={e=>setCurrentEditInventory({...currentEditInventory,category:e.target.value})}>{categoryOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Button className="full cyan" onClick={saveEditInventory}>Simpan Stok</Button></div></Modal>}
       </div>
     </div>
   );

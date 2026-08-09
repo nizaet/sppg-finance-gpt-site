@@ -77,3 +77,10 @@
   .report-card .wide-table{overflow-x:auto!important}
   .report-card .table{min-width:960px!important}
 }
+
+
+/* v7.3 inventory filters */
+.inventory-filters{display:grid;grid-template-columns:1.3fr 1fr .8fr auto;gap:10px;margin-bottom:14px;align-items:center}
+.table td small{display:block;color:#64748b;font-size:11px;margin-top:4px;font-weight:500}
+.badge.soft{background:#eef6ff;color:#1e40af;border:1px solid #bfdbfe}
+@media(max-width:900px){.inventory-filters{grid-template-columns:1fr}.inventory-filters .button{width:100%}}
