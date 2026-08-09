@@ -318,6 +318,11 @@ const normalizeTx = (t) => {
     classificationConfidence: safeNumber(t.classificationConfidence),
     classificationReason: safeString(t.classificationReason || ""),
     note: safeString(t.note || ""),
+
+    // AUDIT STATUS PERSISTENCE V8.8
+    auditStatus: safeString(t.auditStatus || "").toLowerCase(),
+    auditCompletedAt: safeString(t.auditCompletedAt || ""),
+
     createdAt: t.createdAt || null,
     updatedAt: t.updatedAt || null,
     createdAtClient: safeString(t.createdAtClient || t.inputAt || "")
