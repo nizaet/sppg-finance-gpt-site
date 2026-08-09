@@ -63,9 +63,22 @@ const firebaseConfig = {
 };
 
 const siteId = import.meta.env.VITE_SITE_ID || "sppg-maja-gpt-site";
+const firestoreDatabaseId = import.meta.env.VITE_FIRESTORE_DATABASE_ID || "(default)";
+const siteLabel = import.meta.env.VITE_SITE_LABEL || "SPPG MAJA BARU";
+const siteShortLabel = import.meta.env.VITE_SITE_SHORT_LABEL || "Maja";
+
 const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
-const db = app ? getFirestore(app) : null;
+
+// Maja tetap memakai database (default) agar data lama tidak dipindah.
+// Cemplang 2 memakai named database "cemplang2".
+// Env ditentukan per Railway service sehingga satu repo dapat melayani dua dapur
+// tanpa ada tombol pindah database yang berisiko salah input.
+const db = app
+  ? (firestoreDatabaseId === "(default)"
+      ? getFirestore(app)
+      : getFirestore(app, firestoreDatabaseId))
+  : null;
 
 const formatIDR = (num) => {
   const n = Number(num) || 0;
@@ -526,7 +539,7 @@ function SmartCateringAccountant() {
           const rows = snap.docs.map(d => normalizeTx({ id: d.id, ...d.data() }));
           setTransactions(rows);
           setIsDataLoaded(true);
-          setLastSaved(`Firebase aktif · ${rows.length} transaksi dimuat`);
+          setLastSaved(`Firebase ${siteShortLabel} · DB ${firestoreDatabaseId} · ${rows.length} transaksi`);
         }, err => {
           console.error(err);
           setLastSaved("Gagal membaca transaksi: " + err.message);
@@ -549,7 +562,7 @@ function SmartCateringAccountant() {
             };
           }).sort((a,b)=>String(a.name).localeCompare(String(b.name), "id-ID"));
           setInventory(rows);
-          setLastSaved(`Firebase aktif · ${transactions.length} transaksi · ${rows.length} stok`);
+          setLastSaved(`Firebase ${siteShortLabel} · DB ${firestoreDatabaseId} · ${rows.length} stok`);
         }, err => {
           console.error(err);
           setLastSaved("Gagal membaca stok Firebase: " + err.message);
@@ -1501,8 +1514,8 @@ function SmartCateringAccountant() {
       <div className="page">
         <div className="legacy-header">
           <div>
-            <h1><Utensils className="orange" /> Laporan Keuangan SPPG MAJA BARU</h1>
-            <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa)</p>
+            <h1><Utensils className="orange" /> Laporan Keuangan {siteLabel}</h1>
+            <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa) · {siteShortLabel}</p>
           </div>
           <div className="header-actions">
             <Button variant="green" size="sm" onClick={handleExportExcelStyled}><FileSpreadsheet size={16}/> Export Excel DB</Button>

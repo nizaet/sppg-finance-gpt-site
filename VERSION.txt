@@ -1,5 +1,13 @@
-SPPG Finance Legacy UI Railway v7.9
-- Tracking Harga & Hutang dibuat fit penuh lebar tanpa geser kanan-kiri.
-- Tabel tracking memakai table-layout fixed, kolom proporsional, font compact, dan note/ID dilipat 2 baris.
-- Kolom angka tetap rata kanan dan ringkas.
-- Filter tetap di atas, tetapi lebih kompak.
+SPPG Finance v8.0 Multi-Dapur / Separate Firestore Database
+
+Maja:
+- siteId: sppg-maja-gpt-site
+- Firestore database: (default)
+- Tidak ada migrasi data Maja.
+
+Cemplang 2:
+- siteId: sppg-cemplang2-gpt-site
+- Firestore named database: cemplang2
+
+Satu repo yang sama dapat dipasang pada dua Railway services.
+Setiap push ke branch yang sama akan memperbarui kedua service otomatis.
