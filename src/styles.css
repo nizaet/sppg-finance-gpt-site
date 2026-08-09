@@ -257,3 +257,43 @@
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
+
+
+/* BEGIN TRACKING MULTI SELECT V8.6 */
+.tracking-selection-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  flex-wrap:wrap;
+  margin:10px 0 12px;
+  font-size:12px;
+  color:#475569;
+}
+
+.tracking-select-cell{
+  width:38px!important;
+  min-width:38px!important;
+  max-width:38px!important;
+  text-align:center!important;
+  padding-left:6px!important;
+  padding-right:6px!important;
+}
+
+.tracking-select-cell input{
+  width:16px;
+  height:16px;
+  cursor:pointer;
+  accent-color:#2563eb;
+}
+
+.tracking-table tr.selected-row{
+  background:#eff6ff!important;
+  box-shadow:inset 3px 0 #2563eb;
+}
+
+.tracking-table tr.selected-row.debt-row{
+  background:#fef2f2!important;
+  box-shadow:inset 3px 0 #2563eb;
+}
+/* END TRACKING MULTI SELECT V8.6 */

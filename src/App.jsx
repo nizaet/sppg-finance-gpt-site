@@ -471,6 +471,7 @@ function SmartCateringAccountant() {
   const [trackingStartDate, setTrackingStartDate] = useState("");
   const [trackingEndDate, setTrackingEndDate] = useState("");
   const [trackingSort, setTrackingSort] = useState("LAST_INPUT");
+  const [selectedTrackingIds, setSelectedTrackingIds] = useState([]);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [detailViewType, setDetailViewType] = useState(null);
@@ -735,6 +736,7 @@ function SmartCateringAccountant() {
 
   const handleDeleteTrans = async (id) => {
     setTransactions(prev => prev.filter(t => t.id !== id));
+    setSelectedTrackingIds(prev => prev.filter(x => x !== id));
     if (db) await deleteDoc(doc(paths.transactions(), String(id)));
   };
 
@@ -1535,6 +1537,102 @@ function SmartCateringAccountant() {
       });
   }, [transactions, globalSearch, trackingStatusFilter, trackingCategoryFilter, trackingVendorFilter, trackingDateMode, trackingMonthFilter, trackingStartDate, trackingEndDate, trackingSort]);
 
+  // BEGIN TRACKING MULTI SELECT V8.6
+  const selectedTrackingSet = useMemo(
+    () => new Set(selectedTrackingIds),
+    [selectedTrackingIds]
+  );
+
+  const selectedTrackingRows = useMemo(
+    () => transactions.filter(t => selectedTrackingSet.has(t.id)),
+    [transactions, selectedTrackingSet]
+  );
+
+  const allTrackingVisibleSelected =
+    trackingRows.length > 0 &&
+    trackingRows.every(t => selectedTrackingSet.has(t.id));
+
+  const toggleTrackingSelection = (id) => {
+    setSelectedTrackingIds(prev =>
+      prev.includes(id)
+        ? prev.filter(x => x !== id)
+        : [...prev, id]
+    );
+  };
+
+  const toggleAllTrackingVisible = () => {
+    const visibleIds = trackingRows.map(t => t.id);
+
+    setSelectedTrackingIds(prev => {
+      const next = new Set(prev);
+
+      const allSelected =
+        visibleIds.length > 0 &&
+        visibleIds.every(id => next.has(id));
+
+      visibleIds.forEach(id => {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      });
+
+      return Array.from(next);
+    });
+  };
+
+  const deleteSelectedTracking = () => {
+    const rows = selectedTrackingRows;
+
+    if (!rows.length) return;
+
+    const total = rows.reduce(
+      (sum, t) => sum + safeNumber(t.amount),
+      0
+    );
+
+    confirmAction(
+      "Hapus Transaksi Terpilih?",
+      `Hapus ${rows.length} transaksi yang dicentang dengan total ${formatIDR(total)}? Hanya item yang dicentang yang akan dihapus.`,
+      async () => {
+        try {
+          const ids = rows.map(t => t.id);
+
+          if (db && paths) {
+            for (let i = 0; i < ids.length; i += 400) {
+              const batch = writeBatch(db);
+
+              ids.slice(i, i + 400).forEach(id => {
+                batch.delete(
+                  doc(paths.transactions(), String(id))
+                );
+              });
+
+              await batch.commit();
+            }
+          }
+
+          const idSet = new Set(ids);
+
+          setTransactions(prev =>
+            prev.filter(t => !idSet.has(t.id))
+          );
+
+          setSelectedTrackingIds([]);
+
+          alert(
+            `✅ ${ids.length} transaksi terpilih berhasil dihapus.`
+          );
+        } catch (err) {
+          console.error(err);
+          alert(
+            "❌ Gagal menghapus transaksi terpilih: " +
+            err.message
+          );
+        }
+      }
+    );
+  };
+  // END TRACKING MULTI SELECT V8.6
+
   const detailRows = useMemo(() => {
     if (!selectedDetail?.data) return [];
     const q = detailSearch.trim().toLowerCase();
@@ -1759,12 +1857,46 @@ function SmartCateringAccountant() {
                   <span>Pengeluaran: <b className="red-text">{formatIDR(trackingRows.filter(t=>t.type!=="income").reduce((a,b)=>a+safeNumber(b.amount),0))}</b></span>
                   <span>Hutang aktif: <b className="orange-text">{formatIDR(trackingRows.reduce((a,b)=>a+safeNumber(b.outstanding),0))}</b></span>
                 </div>
+
+                <div className="tracking-selection-actions">
+                  <span>
+                    Dipilih: <b>{selectedTrackingIds.length}</b> transaksi
+                  </span>
+
+                  {selectedTrackingIds.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={()=>setSelectedTrackingIds([])}
+                    >
+                      Batal Pilih
+                    </Button>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="red"
+                    disabled={selectedTrackingIds.length===0}
+                    onClick={deleteSelectedTracking}
+                  >
+                    <Trash2 size={14}/>
+                    Hapus Dipilih ({selectedTrackingIds.length})
+                  </Button>
+                </div>
                 <div className="scroll-table tracking-table tracking-table-wide">
                   <Table>
-                    <TableHeader><TableRow><TableHead>Tgl Transaksi</TableHead><TableHead>Input/Ubah</TableHead><TableHead>Item</TableHead><TableHead>Kategori</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Qty</TableHead><TableHead>Satuan</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead className="tracking-select-cell"><input type="checkbox" aria-label="Pilih semua transaksi sesuai filter" title="Pilih semua hasil filter" checked={allTrackingVisibleSelected} onChange={toggleAllTrackingVisible} /></TableHead><TableHead>Tgl Transaksi</TableHead><TableHead>Input/Ubah</TableHead><TableHead>Item</TableHead><TableHead>Kategori</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Qty</TableHead><TableHead>Satuan</TableHead><TableHead className="right">Harga/Unit</TableHead><TableHead className="right">Total</TableHead><TableHead className="right">Outstanding</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {trackingRows.map(t=>(
-                        <TableRow key={t.id} className={t.debtActive ? "debt-row" : ""}>
+                        <TableRow key={t.id} className={`${t.debtActive ? "debt-row" : ""} ${selectedTrackingSet.has(t.id) ? "selected-row" : ""}`.trim()}>
+                          <TableCell className="tracking-select-cell">
+                            <input
+                              type="checkbox"
+                              aria-label={`Pilih ${t.desc}`}
+                              checked={selectedTrackingSet.has(t.id)}
+                              onChange={()=>toggleTrackingSelection(t.id)}
+                            />
+                          </TableCell>
                           <TableCell className="small">{t.date}</TableCell>
                           <TableCell className="small">{t.inputMs ? new Date(t.inputMs).toLocaleString("id-ID", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "-"}</TableCell>
                           <TableCell className="item-cell"><b>{t.desc}</b>{t.note ? <small className="mono">{t.note}</small> : null}<small className="mono">ID: {t.id}</small></TableCell>
@@ -1779,7 +1911,7 @@ function SmartCateringAccountant() {
                           <TableCell><div className="row-actions"><button title="Edit" onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button title="Hapus" onClick={()=>confirmAction("Hapus Transaksi?", `Hapus ${t.desc} sebesar ${formatIDR(t.amount)}?`, async()=>handleDeleteTrans(t.id))}><Trash2 size={13}/></button></div></TableCell>
                         </TableRow>
                       ))}
-                      {trackingRows.length===0 && <TableRow><TableCell colSpan={12} className="center empty">Tidak ada transaksi sesuai filter. Coba ubah status/filter/search.</TableCell></TableRow>}
+                      {trackingRows.length===0 && <TableRow><TableCell colSpan={13} className="center empty">Tidak ada transaksi sesuai filter. Coba ubah status/filter/search.</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </div>
