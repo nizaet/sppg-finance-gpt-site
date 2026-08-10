@@ -2571,7 +2571,7 @@ function SmartCateringAccountant() {
           <Button className="full dark" onClick={saveEdit}>Simpan Perubahan</Button>
         </Modal>}
 
-        {detailOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}>
+        {detailOpen && !editOpen && selectedDetail && <Modal title={selectedDetail.title} wide onClose={()=>setDetailOpen(false)}>
           <div className="detail-toolbar">
             <Input placeholder="Cari di rincian: item, vendor, invoice, kategori, nominal..." value={detailSearch} onChange={e=>setDetailSearch(e.target.value)} />
             <select className="select" value={detailSort} onChange={e=>setDetailSort(e.target.value)}>
