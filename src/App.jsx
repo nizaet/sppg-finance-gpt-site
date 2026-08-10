@@ -278,14 +278,9 @@ const normalizeCategory = (cat, desc, type) => {
 const normalizeTx = (t) => {
   const date = normalizeDate(t.date);
   const desc = safeString(t.desc || t.description || t.name).trim();
-  const sourceType = t.type === "income" ? "income" : "expense";
-  let category = normalizeCategory(t.category, desc, sourceType);
-
-  // CATEGORY-TYPE SYNC V8.9
-  // Pemasukan = income, kategori lainnya = expense.
-  let type = String(category || "").includes("Pemasukan")
-    ? "income"
-    : "expense";
+  let type = t.type === "income" ? "income" : "expense";
+  let category = normalizeCategory(t.category, desc, type);
+  if (category.includes("Pemasukan")) type = "income";
 
   const qty = safeNumber(t.qty) || 1;
   const unitPrice = safeNumber(t.unitPrice);
