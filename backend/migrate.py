@@ -4,6 +4,8 @@ from backend.db import connection
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = [
+    ROOT / "schema" / "reference_master_v09.sql",
+    ROOT / "schema" / "reference_seed_v09.sql",
     ROOT / "schema" / "staging_v05.sql",
     ROOT / "schema" / "core_domain_v05.sql",
 ]
