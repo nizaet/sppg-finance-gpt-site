@@ -19,20 +19,14 @@
 - [Koperasi Dry-Goods Flow](inventory/koperasi-flow.md)
 
 ## People
-- [Tiara](people/tiara.md)
-- [Uya](people/uya.md)
-- [Embun](people/embun.md)
-- [Malik](people/malik.md)
-- [Mungki](people/mungki.md)
+- [People & Roles](people/index.md)
 
 ## Suppliers
-- [Holil](suppliers/holil.md)
-- [Wikian](suppliers/wikian.md)
-- [Rumah Duta Pangan](suppliers/rumah-duta-pangan.md)
-- [Heru](suppliers/heru.md)
-- [Dede](suppliers/dede.md)
-- [Haji Badri](suppliers/haji-badri.md)
-- [Indogrosir](suppliers/indogrosir.md)
+- [Supplier Master](suppliers/index.md)
+
+## Structured Data
+- `data/master_entities.json`
+- `parser/whatsapp_event_schema.json`
 
 ## Audit / Change Log
 - [Knowledge Log](log.md)
