@@ -1,14 +1,16 @@
 import React, { useState } from "react";
-import { CalendarDays, LayoutDashboard, ListChecks, Store, WalletCards } from "lucide-react";
+import { CalendarDays, LayoutDashboard, ListChecks, MessageSquareText, Store, WalletCards } from "lucide-react";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import OperationsPoPlanner from "./OperationsPoPlanner.jsx";
 import OperationsVendorMaster from "./OperationsVendorMaster.jsx";
 import OperationsPayments from "./OperationsPayments.jsx";
 import OperationsReviewQueue from "./OperationsReviewQueue.jsx";
+import OperationsChatIngest from "./OperationsChatIngest.jsx";
 import "./workspace.css";
 
 const tabs = [
   ["today", "Hari Ini", LayoutDashboard],
+  ["chat", "Input Chat", MessageSquareText],
   ["po", "Kalender PO", CalendarDays],
   ["vendors", "Vendor & Lead Time", Store],
   ["payments", "Pembayaran", WalletCards],
@@ -26,6 +28,7 @@ export default function OperationsWorkspace() {
       </aside>
       <main className="ops-content">
         {tab === "today" && <OperationsControlTower />}
+        {tab === "chat" && <OperationsChatIngest />}
         {tab === "po" && <OperationsPoPlanner />}
         {tab === "vendors" && <OperationsVendorMaster />}
         {tab === "payments" && <OperationsPayments />}
