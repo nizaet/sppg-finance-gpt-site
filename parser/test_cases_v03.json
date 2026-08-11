@@ -1,0 +1,39 @@
+[
+  {
+    "name": "holil_additional_items",
+    "input": "Pak ada tambahan daun bawang tambah 2kg, wortel tambahan 2kg",
+    "expected_event": "PO_REVISION",
+    "must_not_finalize": true
+  },
+  {
+    "name": "holil_price_rise",
+    "input": "Wortel lagi sulit, harga naik",
+    "expected_event": "PRICE_UPDATE",
+    "secondary_candidate": "ITEM_UNAVAILABLE_OR_SUBSTITUTION",
+    "must_not_change_final_price_without_acceptance": true
+  },
+  {
+    "name": "holil_future_transfer",
+    "input": "Nanti saya transfer ya pak haji",
+    "expected_event": "PAYMENT_INTENT",
+    "must_not_be": "PAID"
+  },
+  {
+    "name": "holil_completed_transfer",
+    "input": "Pak haji udah di transfer ya",
+    "expected_event": "PAYMENT_EVIDENCE_CANDIDATE",
+    "requires_amount_or_bank_reconciliation": true
+  },
+  {
+    "name": "mungki_koperasi_stock",
+    "input": "Stok Gudang Koperasi ... kirim ke Maja",
+    "expected_event": "KOPERASI_STOCK_TRANSFER_REQUEST",
+    "expense_created": false
+  },
+  {
+    "name": "mungki_received_qty_differs",
+    "input": "Pesan 8 papan, yang datang berbeda",
+    "expected_event": "GOODS_RECEIVED_ADJUSTMENT",
+    "preserve_ordered_qty": true
+  }
+]
