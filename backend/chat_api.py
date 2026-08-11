@@ -7,9 +7,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.db import connection, database_ready
+from backend.domain_api import router as domain_router
 from parser.parser_v04 import parse_message
 
 router = APIRouter(tags=["chat-ingest"])
+router.include_router(domain_router)
 
 
 class ChatMessageIn(BaseModel):
