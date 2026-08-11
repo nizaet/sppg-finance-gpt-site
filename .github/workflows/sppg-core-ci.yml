@@ -28,3 +28,22 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: python -m compileall backend parser workflow
       - run: python -c "from backend.app import app; assert app.title == 'SPPG Core API'"
+      - name: Assert SPPG Core routes
+        run: |
+          python - <<'PY'
+          from backend.app import app
+          paths = {r.path for r in app.routes}
+          required = {
+              '/health',
+              '/v1/events',
+              '/v1/control-tower',
+              '/v1/review-queue',
+              '/v1/schema-status',
+              '/v1/reference/vendors',
+              '/v1/po-schedule/preview',
+              '/v1/planning-snapshots',
+          }
+          missing = required - paths
+          assert not missing, f'Missing API routes: {sorted(missing)}'
+          print('routes ok:', sorted(required))
+          PY
