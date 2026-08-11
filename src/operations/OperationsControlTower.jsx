@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, PackageCheck, RefreshCw, WalletCards } from "lucide-react";
 import { operationsApi, hasOperationsBackend } from "./apiClient";
 import { mockControlTower } from "./mockControlTower";
+import OperationsReviewQueue from "./OperationsReviewQueue.jsx";
 import "./operations.css";
 
 const metricDefs = [
@@ -64,6 +65,7 @@ export default function OperationsControlTower({ date: initialDate }) {
   const [data, setData] = useState(mockControlTower);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [schemaReady, setSchemaReady] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -73,7 +75,12 @@ export default function OperationsControlTower({ date: initialDate }) {
         setData({ ...mockControlTower, date });
         return;
       }
-      setData(await operationsApi.getControlTower(date));
+      const [tower, schema] = await Promise.all([
+        operationsApi.getControlTower(date),
+        operationsApi.getSchemaStatus().catch(() => null),
+      ]);
+      setData(tower);
+      if (schema) setSchemaReady(Boolean(schema.schemaReady));
     } catch (err) {
       setError(err.message || "Gagal mengambil data Pusat Operasional");
     } finally {
@@ -102,6 +109,8 @@ export default function OperationsControlTower({ date: initialDate }) {
       {!hasOperationsBackend && (
         <div className="ops-notice">Mode struktur/mock aktif. Kalkulator Maja dan Cemplang tidak diubah. Data live akan aktif setelah SPPG Core API dikonfigurasi.</div>
       )}
+      {schemaReady === false && <div className="ops-error">Database terhubung, tetapi schema SPPG Core belum lengkap.</div>}
+      {schemaReady === true && <div className="ops-success">Backend live · PostgreSQL schema siap.</div>}
       {error && <div className="ops-error">{error}</div>}
 
       {sites.map((site) => (
@@ -115,6 +124,8 @@ export default function OperationsControlTower({ date: initialDate }) {
           </div>
         </section>
       ))}
+
+      <OperationsReviewQueue />
     </div>
   );
 }
