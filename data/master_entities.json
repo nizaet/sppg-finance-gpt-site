@@ -1,0 +1,21 @@
+{
+  "sites": [
+    {"id": "MAJA", "name": "SPPG Maja"},
+    {"id": "CEMPLANG", "name": "SPPG Cemplang"}
+  ],
+  "entities": [
+    {"id": "HOLIL", "name": "Holil", "type": "VENDOR", "roles": ["VENDOR_SAYUR_BUAH"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "MUNGKI", "name": "Mungki", "type": "PERSON", "roles": ["ADMIN_KOPERASI", "PROCUREMENT_INTERMEDIARY"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "WIKIAN", "name": "Wikian", "type": "VENDOR", "roles": ["VENDOR_AYAM"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "RUMAH_DUTA_PANGAN", "name": "Rumah Duta Pangan", "type": "VENDOR", "roles": ["VENDOR_IKAN"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "HERU", "name": "Heru", "type": "VENDOR", "roles": ["VENDOR_GAS"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "DEDE", "name": "Dede", "type": "VENDOR", "roles": ["VENDOR_BERAS"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "HAJI_BADRI", "name": "Haji Badri", "type": "VENDOR", "roles": ["VENDOR_TAHU_CEMPLANG"], "scope": ["CEMPLANG"], "active": true},
+    {"id": "INDOGROSIR", "name": "Indogrosir", "type": "VENDOR", "roles": ["SUPPLIER_KOPERASI_BAHAN_KERING"], "scope": ["KOPERASI"], "active": true},
+    {"id": "KOPERASI", "name": "Koperasi", "type": "INTERNAL_ENTITY", "roles": ["INTERNAL_INVENTORY_SOURCE"], "scope": ["MAJA", "CEMPLANG"], "active": true},
+    {"id": "TIARA", "name": "Tiara", "type": "PERSON", "roles": ["ACCOUNTANT"], "scope": ["MAJA"], "active": true},
+    {"id": "UYA", "name": "Uya", "type": "PERSON", "roles": ["ACCOUNTANT"], "scope": ["CEMPLANG"], "active": true},
+    {"id": "EMBUN", "name": "Embun", "type": "PERSON", "roles": ["KITCHEN_HEAD", "BGN_APPROVER"], "scope": ["MAJA"], "active": true},
+    {"id": "MALIK", "name": "Malik", "type": "PERSON", "roles": ["KITCHEN_HEAD", "BGN_APPROVER"], "scope": ["CEMPLANG"], "active": true}
+  ]
+}
