@@ -1,0 +1,65 @@
+{
+  "version": "0.8",
+  "site_cards": [
+    {
+      "site": "MAJA|CEMPLANG",
+      "production_cycle_id": "string",
+      "distribution_at": "datetime",
+      "cooking_start_at": "datetime",
+      "menu_status": "READY|INCOMPLETE",
+      "po": {
+        "due": 0,
+        "sent": 0,
+        "revised": 0,
+        "acknowledged": 0,
+        "overdue": 0
+      },
+      "delivery": {
+        "expected": 0,
+        "received": 0,
+        "reject_open": 0
+      },
+      "payment": {
+        "invoice_pending": 0,
+        "due_today": 0,
+        "overdue": 0,
+        "evidence_pending": 0,
+        "paid": 0
+      },
+      "costing": {
+        "actual_usage_status": "NOT_STARTED|IN_PROGRESS|FINALIZED",
+        "final_costing_status": "NOT_STARTED|IN_PROGRESS|FINALIZED"
+      },
+      "accountant": {
+        "submission_status": "NOT_SENT|SENT|REVISION_REQUIRED|ACCEPTED",
+        "invoice_status": "NOT_RECEIVED|RECEIVED|REVISED"
+      },
+      "bgn": {
+        "maker_status": "NOT_CREATED|CREATED",
+        "approval_status": "NOT_SENT|PENDING|APPROVED|REJECTED",
+        "funds_status": "NOT_RECEIVED|PARTIAL|RECEIVED",
+        "settlement_status": "NOT_SETTLED|PARTIAL|SETTLED"
+      },
+      "review_queue_count": 0,
+      "critical_alerts": []
+    }
+  ],
+  "today_queues": {
+    "po_actions": [],
+    "deliveries": [],
+    "reject_reconciliation": [],
+    "vendor_invoices": [],
+    "vendor_payments": [],
+    "internal_reimbursements": [],
+    "accountant": [],
+    "maker_approval": [],
+    "bgn_settlement": [],
+    "review_queue": []
+  },
+  "rules": {
+    "no_status_implication": true,
+    "calculator_planning_is_read_only_from_operations": true,
+    "koperasi_transfer_is_not_expense": true,
+    "payment_requires_reconciliation": true
+  }
+}
