@@ -1,0 +1,73 @@
+{
+  "version": "0.3",
+  "strategy": "deterministic-first, llm-fallback",
+  "rules": [
+    {
+      "event_type": "PO_NEW",
+      "signals": ["daftar pesanan", "pesanan", "pesen", "pesen mah", "tgl kirim"],
+      "required_context": ["item_or_qty_present"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "PO_REVISION",
+      "signals": ["tambahan", "tambah", "kurangi", "jadi", "aja", "diganti", "cancel"],
+      "required_context": ["existing_po_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "PRICE_UPDATE",
+      "signals": ["harga naik", "harga turun", "harga sekarang", "harga pasaran", "harga sewaktu-waktu berubah", "modal", "harga beli"],
+      "required_context": ["item_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "ITEM_UNAVAILABLE_OR_SUBSTITUTION",
+      "signals": ["barang kosong", "ga ada", "tidak ada", "sulit", "langka", "ganti menu", "ganti", "substitusi"],
+      "required_context": ["item_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "GOODS_RECEIVED_ADJUSTMENT",
+      "signals": ["kurang", "lebih", "susut", "berat", "ditimbang", "yang diterima", "sesuai timbangan"],
+      "required_context": ["delivery_or_receipt_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "QUALITY_REJECT",
+      "signals": ["reject", "bs", "busuk", "rusak", "jelek", "dikembalikan", "retur", "kualitasnya kurang"],
+      "required_context": ["item_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "PAYMENT_REQUEST",
+      "signals": ["belum transfer", "mohon transfer", "tagihan", "bayar", "pembayaran"],
+      "required_context": ["amount_or_invoice_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "PAYMENT_CONFIRMATION",
+      "signals": ["udah di transfer", "sudah ditransfer", "saya transfer", "tf k sy", "lunas"],
+      "required_context": ["amount_or_payment_context"],
+      "auto_commit": false,
+      "evidence_strength": "high"
+    },
+    {
+      "event_type": "KOPERASI_STOCK_TRANSFER_REQUEST",
+      "signals": ["kirim ke maja", "kirim ke cemplang", "kirim barang", "stok gudang koperasi", "bahan kering"],
+      "required_context": ["mungki_or_koperasi_context"],
+      "auto_commit": false
+    },
+    {
+      "event_type": "CASH_PURCHASE_REIMBURSEMENT_CANDIDATE",
+      "signals": ["telur", "tahu", "tempe"],
+      "required_context": ["mungki_context", "cash_purchase_context"],
+      "auto_commit": false
+    }
+  ],
+  "confidence_policy": {
+    "low": "store candidate only",
+    "medium": "store candidate + extracted fields",
+    "high": "workflow update allowed only when deterministic rule and evidence agree",
+    "financial_events": "never final from ambiguous chat alone"
+  }
+}
