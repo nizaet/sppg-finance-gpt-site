@@ -53,23 +53,37 @@ export const operationsApi = {
     return request(`/v1/planning-snapshots?${q.toString()}`);
   },
   getPlanningSnapshot: (snapshotId) => request(`/v1/planning-snapshots/${snapshotId}`),
-  ingestPlanningSnapshot: (payload) => request("/v1/planning-snapshots", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }),
-  parseMessage: (payload) => request("/v1/parse-message", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }),
+  ingestPlanningSnapshot: (payload) => request("/v1/planning-snapshots", { method: "POST", body: JSON.stringify(payload) }),
+  parseMessage: (payload) => request("/v1/parse-message", { method: "POST", body: JSON.stringify(payload) }),
+  getGoodsReceipts: ({ site = "", limit = 100 } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (site) q.set("site", site);
+    return request(`/v1/goods-receipts?${q.toString()}`);
+  },
+  createGoodsReceipt: (payload) => request("/v1/goods-receipts", { method: "POST", body: JSON.stringify(payload) }),
+  getActualUsage: (productionCycleId) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(productionCycleId)}`),
+  saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
+  getAccountantFlow: (site = "") => {
+    const q = new URLSearchParams(); if (site) q.set("site", site);
+    return request(`/v1/accountant-flow${q.toString() ? `?${q.toString()}` : ""}`);
+  },
+  createAccountantSubmission: (payload) => request("/v1/accountant-submissions", { method: "POST", body: JSON.stringify(payload) }),
+  createAccountantInvoice: (payload) => request("/v1/accountant-invoices", { method: "POST", body: JSON.stringify(payload) }),
+  getBgnFlow: (site = "") => {
+    const q = new URLSearchParams(); if (site) q.set("site", site);
+    return request(`/v1/bgn-flow${q.toString() ? `?${q.toString()}` : ""}`);
+  },
+  createBgnMaker: (payload) => request("/v1/bgn-makers", { method: "POST", body: JSON.stringify(payload) }),
+  createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: JSON.stringify(payload) }),
+  createBgnReceipt: (payload) => request("/v1/bgn-receipts", { method: "POST", body: JSON.stringify(payload) }),
+  createSettlement: (payload) => request("/v1/settlements", { method: "POST", body: JSON.stringify(payload) }),
+  getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
   getReviewQueue: () => request("/v1/review-queue"),
   submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, {
     method: "POST",
     body: JSON.stringify({ decision, note }),
   }),
-  ingestEvent: (payload) => request("/v1/events", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }),
+  ingestEvent: (payload) => request("/v1/events", { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export const hasOperationsBackend = Boolean(DEFAULT_BASE_URL);
