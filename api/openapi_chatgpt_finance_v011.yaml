@@ -1,0 +1,215 @@
+openapi: 3.1.0
+info:
+  title: SPPG ChatGPT Finance Bridge
+  version: 0.11.0
+  description: >-
+    Authenticated bridge for trusted ChatGPT operator input. Writes structured finance
+    transactions to PostgreSQL audit mirror and synchronizes the same transaction schema
+    used by the SPPG Firestore application. Raw operator text can be archived to Google Drive.
+servers:
+  - url: https://sppg-finance-gpt-site-production-5b7d.up.railway.app
+security:
+  - bearerAuth: []
+paths:
+  /v1/gpt/status:
+    get:
+      operationId: getSppgBridgeStatus
+      summary: Check whether database, Google credentials, and raw-chat archive are configured
+      responses:
+        '200':
+          description: Bridge configuration status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/gpt/finance-transactions:
+    post:
+      operationId: createSppgFinanceTransactions
+      summary: Create one or more classified SPPG finance transactions from one operator message
+      description: >-
+        Use this for explicit operator instructions that are already sufficiently clear to be
+        recorded. Preserve manual categories exactly when the operator supplies them. Use one
+        source_ref per source message/request so retries remain idempotent. Never invent amounts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinanceTransactionBatch'
+      responses:
+        '200':
+          description: Persisted and synchronization attempted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { description: Missing bearer token }
+        '403': { description: Invalid bearer token }
+        '503': { description: Backend not fully configured }
+    get:
+      operationId: searchSppgFinanceTransactions
+      summary: Search recorded SPPG finance transactions before correcting or marking payment
+      parameters:
+        - in: query
+          name: site
+          schema: { type: string, enum: [MAJA, CEMPLANG] }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+        - in: query
+          name: payment_status
+          schema: { type: string, enum: [paid, unpaid, partial] }
+        - in: query
+          name: q
+          description: Description, category, vendor/orderBy, or transaction id text
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Matching transactions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+  /v1/gpt/finance-transactions/{transaction_id}:
+    patch:
+      operationId: updateSppgFinanceTransaction
+      summary: Correct an existing transaction or change debt/payment status
+      parameters:
+        - in: path
+          name: transaction_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinanceTransactionPatch'
+      responses:
+        '200':
+          description: Updated and synchronization attempted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404': { description: Transaction not found }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    FinanceTransactionBatch:
+      type: object
+      required: [site, source_ref, items]
+      properties:
+        site:
+          type: string
+          enum: [MAJA, CEMPLANG]
+        source_ref:
+          type: string
+          description: Stable unique reference for this source message/request; reuse it on retries.
+        raw_text:
+          type: string
+          description: Exact operator message as evidence. Do not rewrite it.
+        actor:
+          type: string
+          default: chatgpt
+        archive_raw_text:
+          type: boolean
+          default: true
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/FinanceTransactionItem'
+    FinanceTransactionItem:
+      type: object
+      required: [date, description, type, category, amount]
+      properties:
+        transaction_id:
+          type: [string, 'null']
+        date:
+          type: string
+          format: date
+        description:
+          type: string
+        type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+          description: Preserve explicit operator category. Otherwise choose the closest existing SPPG category.
+        amount:
+          type: number
+          minimum: 0
+        qty:
+          type: [number, 'null']
+        unit:
+          type: [string, 'null']
+        unit_price:
+          type: [number, 'null']
+          minimum: 0
+        order_by:
+          type: [string, 'null']
+          description: Vendor, payee, payer, accountant, or counterparty shown as orderBy in the existing app.
+        is_debt:
+          type: boolean
+          default: false
+        payment_status:
+          type: string
+          enum: [paid, unpaid, partial]
+          default: paid
+        paid_amount:
+          type: [number, 'null']
+          minimum: 0
+        paid_date:
+          type: [string, 'null']
+          format: date
+        classification_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+        classification_reason:
+          type: string
+        note:
+          type: string
+    FinanceTransactionPatch:
+      type: object
+      properties:
+        date: { type: [string, 'null'], format: date }
+        description: { type: [string, 'null'] }
+        category: { type: [string, 'null'] }
+        amount: { type: [number, 'null'], minimum: 0 }
+        qty: { type: [number, 'null'] }
+        unit: { type: [string, 'null'] }
+        unit_price: { type: [number, 'null'], minimum: 0 }
+        order_by: { type: [string, 'null'] }
+        is_debt: { type: [boolean, 'null'] }
+        payment_status:
+          type: [string, 'null']
+          enum: [paid, unpaid, partial, null]
+        paid_amount: { type: [number, 'null'], minimum: 0 }
+        paid_date: { type: [string, 'null'], format: date }
+        category_override_reason: { type: [string, 'null'] }
+        note: { type: [string, 'null'] }
+        actor:
+          type: string
+          default: chatgpt
