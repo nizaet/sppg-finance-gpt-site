@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.chat_api import router as chat_router
 
 router = APIRouter(prefix="/v1", tags=["planning"])
+router.include_router(chat_router)
 
 
 class PlanningItemIn(BaseModel):
