@@ -24,6 +24,9 @@
 ## Suppliers
 - [Supplier Master](suppliers/index.md)
 
+## Evidence Storage
+- [Google Drive Evidence Archive](../operations/drive_archive_v01.md)
+
 ## Structured Data
 - `data/master_entities.json`
 - `parser/whatsapp_event_schema.json`
