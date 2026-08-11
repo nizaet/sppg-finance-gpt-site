@@ -42,6 +42,10 @@ jobs:
               '/v1/reference/vendors',
               '/v1/po-schedule/preview',
               '/v1/planning-snapshots',
+              '/v1/parse-message',
+              '/v1/gpt/status',
+              '/v1/gpt/finance-transactions',
+              '/v1/gpt/finance-transactions/{transaction_id}',
           }
           missing = required - paths
           assert not missing, f'Missing API routes: {sorted(missing)}'
