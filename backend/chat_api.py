@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from backend.db import connection, database_ready
 from parser.parser_v04 import parse_message
 
-router = APIRouter(prefix="/v1", tags=["chat-ingest"])
+router = APIRouter(tags=["chat-ingest"])
 
 
 class ChatMessageIn(BaseModel):
