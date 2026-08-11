@@ -10,9 +10,11 @@ from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 from backend.reference_api import router as reference_router
+from backend.planning_api import router as planning_router
 
-app = FastAPI(title="SPPG Core API", version="0.3.0")
+app = FastAPI(title="SPPG Core API", version="0.4.0")
 app.include_router(reference_router)
+app.include_router(planning_router)
 
 origins = [x.strip() for x in os.getenv("SPPG_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
