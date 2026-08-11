@@ -5,7 +5,7 @@ import hmac
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date as DateType, datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,7 +25,7 @@ bearer = HTTPBearer(auto_error=False)
 
 class FinanceTransactionItemIn(BaseModel):
     transaction_id: str | None = None
-    date: date
+    date: DateType
     description: str = Field(min_length=1)
     type: Literal["income", "expense"]
     category: str = Field(min_length=1)
@@ -37,7 +37,7 @@ class FinanceTransactionItemIn(BaseModel):
     is_debt: bool = False
     payment_status: Literal["paid", "unpaid", "partial"] = "paid"
     paid_amount: float | None = Field(default=None, ge=0)
-    paid_date: date | None = None
+    paid_date: DateType | None = None
     classification_confidence: float = Field(default=1.0, ge=0, le=1)
     classification_reason: str = ""
     note: str = ""
@@ -53,7 +53,7 @@ class FinanceTransactionBatchIn(BaseModel):
 
 
 class FinanceTransactionPatchIn(BaseModel):
-    date: date | None = None
+    date: DateType | None = None
     description: str | None = None
     category: str | None = None
     amount: float | None = Field(default=None, ge=0)
@@ -64,7 +64,7 @@ class FinanceTransactionPatchIn(BaseModel):
     is_debt: bool | None = None
     payment_status: Literal["paid", "unpaid", "partial"] | None = None
     paid_amount: float | None = Field(default=None, ge=0)
-    paid_date: date | None = None
+    paid_date: DateType | None = None
     category_override_reason: str | None = None
     note: str | None = None
     actor: str = "chatgpt"
@@ -85,7 +85,7 @@ def _clean_id(value: str) -> str:
     return cleaned[:120] or "tx"
 
 
-def _normalized_payment(item: FinanceTransactionItemIn | dict[str, Any]) -> tuple[bool, str, float, date | None]:
+def _normalized_payment(item: FinanceTransactionItemIn | dict[str, Any]) -> tuple[bool, str, float, DateType | None]:
     getter = item.get if isinstance(item, dict) else lambda key, default=None: getattr(item, key, default)
     tx_type = str(getter("type") if not isinstance(item, dict) else getter("transaction_type", getter("type"))).lower()
     amount = float(getter("amount", 0) or 0)
@@ -168,7 +168,7 @@ def _sync_row(row: dict[str, Any]) -> tuple[str, str | None, str | None]:
         return "SYNCED", path, None
     except GoogleServicesNotConfigured as exc:
         return "NOT_CONFIGURED", None, str(exc)
-    except Exception as exc:  # preserve ledger even when Google API is temporarily unavailable
+    except Exception as exc:
         return "ERROR", None, f"{type(exc).__name__}: {exc}"[:1500]
 
 
@@ -288,8 +288,8 @@ def create_finance_transactions(payload: FinanceTransactionBatchIn) -> dict[str,
 @router.get("/finance-transactions", dependencies=[Depends(require_gpt_auth)])
 def list_finance_transactions(
     site: Literal["MAJA", "CEMPLANG"] | None = None,
-    date_from: date | None = Query(default=None, alias="from"),
-    date_to: date | None = Query(default=None, alias="to"),
+    date_from: DateType | None = Query(default=None, alias="from"),
+    date_to: DateType | None = Query(default=None, alias="to"),
     payment_status: Literal["paid", "unpaid", "partial"] | None = None,
     q: str = "",
     limit: int = Query(default=100, ge=1, le=500),
