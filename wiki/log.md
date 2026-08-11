@@ -15,3 +15,10 @@
 - Ingested extracted text source `WhatsApp Chat with Mungkie 2.txt` (Drive id `1qPJD-wzTawsr0HQ3s7qA4OYfnb0qlstg`).
 - Learned Mungki patterns: telur/tahu/tempe procurement requests, Koperasi stock checks, Indogrosir replenishment, internal stock transfers to Maja/Cemplang, additional material requests, and shortage/reject reconciliation.
 - Added dedicated knowledge pages for Holil and Mungki with provenance.
+
+## 2026-08-12 — Google Drive evidence archive initialized
+- Created a dedicated `SPPG OPERASIONAL - LLM WIKI` evidence archive in Google Drive.
+- Added separate folders for raw WhatsApp/chat, vendor PO evidence, accountant invoices/Excel, BGN approver evidence, Koperasi stock evidence, parsed/review exports, and backups.
+- Documented archive responsibilities and ingest rules in `operations/drive_archive_v01.md`.
+- Added deployment environment placeholders for Drive folder mapping without committing live folder IDs to the public repository.
+- PostgreSQL remains the transactional source of truth; Drive remains the evidence/archive layer.
