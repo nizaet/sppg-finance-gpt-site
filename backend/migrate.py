@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from backend.db import connection
@@ -11,13 +12,42 @@ MIGRATIONS = [
 ]
 
 
+def checksum(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def run() -> None:
     with connection() as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                create table if not exists schema_migrations (
+                  migration_name text primary key,
+                  checksum text not null,
+                  applied_at timestamptz not null default now()
+                )
+                """
+            )
             for path in MIGRATIONS:
                 sql = path.read_text(encoding="utf-8")
+                name = str(path.relative_to(ROOT))
+                digest = checksum(sql)
+                cur.execute("select checksum from schema_migrations where migration_name=%s", (name,))
+                row = cur.fetchone()
+                if row and row["checksum"] == digest:
+                    print(f"skip unchanged: {name}")
+                    continue
                 cur.execute(sql)
-                print(f"applied: {path.relative_to(ROOT)}")
+                cur.execute(
+                    """
+                    insert into schema_migrations(migration_name, checksum)
+                    values (%s, %s)
+                    on conflict (migration_name)
+                    do update set checksum=excluded.checksum, applied_at=now()
+                    """,
+                    (name, digest),
+                )
+                print(f"applied: {name}")
         conn.commit()
 
 
