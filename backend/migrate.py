@@ -9,6 +9,7 @@ MIGRATIONS = [
     ROOT / "schema" / "reference_seed_v09.sql",
     ROOT / "schema" / "staging_v05.sql",
     ROOT / "schema" / "core_domain_v05.sql",
+    ROOT / "schema" / "planning_bridge_v010.sql",
 ]
 
 
