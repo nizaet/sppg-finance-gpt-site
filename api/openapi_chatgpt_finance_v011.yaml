@@ -88,6 +88,10 @@ paths:
     patch:
       operationId: updateSppgFinanceTransaction
       summary: Correct an existing transaction or change debt/payment status
+      description: >-
+        Search first when the transaction id is not already known. For an explicit LUNAS instruction,
+        send payment_status=paid, is_debt=false, paid_amount equal to the full transaction amount, and
+        paid_date from the operator instruction/current operational date. Never infer LUNAS from intent.
       parameters:
         - in: path
           name: transaction_id
@@ -202,7 +206,9 @@ components:
         unit: { type: [string, 'null'] }
         unit_price: { type: [number, 'null'], minimum: 0 }
         order_by: { type: [string, 'null'] }
-        is_debt: { type: [boolean, 'null'] }
+        is_debt:
+          type: [boolean, 'null']
+          description: Set false when marking a debt fully paid; set true for unpaid/partial debt.
         payment_status:
           type: [string, 'null']
           enum: [paid, unpaid, partial, null]
