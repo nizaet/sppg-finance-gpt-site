@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Send, Sparkles } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import "./chat.css";
 
 export default function OperationsChatIngest() {
   const [text, setText] = useState("");
