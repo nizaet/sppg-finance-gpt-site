@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import "./review.css";
 
 export default function OperationsReviewQueue() {
   const [items, setItems] = useState([]);
