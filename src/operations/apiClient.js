@@ -4,7 +4,6 @@ const jsonHeaders = { "Content-Type": "application/json" };
 
 async function request(path, options = {}) {
   const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
-    credentials: "omit",
     ...options,
     headers: { ...jsonHeaders, ...(options.headers || {}) },
   });
@@ -20,12 +19,25 @@ async function request(path, options = {}) {
 }
 
 export const operationsApi = {
-  getHealth: () => request("/health"),
+  health: () => request("/health"),
+  getSchemaStatus: () => request("/v1/schema-status"),
   getControlTower: (date) => request(`/v1/control-tower?date=${encodeURIComponent(date)}`),
   getPoCalendar: ({ from, to, site }) => {
     const q = new URLSearchParams({ from, to });
     if (site) q.set("site", site);
     return request(`/v1/po-calendar?${q.toString()}`);
+  },
+  previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => {
+    const q = new URLSearchParams({ distributionDate });
+    if (cookingDate) q.set("cookingDate", cookingDate);
+    if (site) q.set("site", site);
+    return request(`/v1/po-schedule/preview?${q.toString()}`);
+  },
+  getReferenceSites: () => request("/v1/reference/sites"),
+  getReferenceVendors: (site = "") => {
+    const q = new URLSearchParams();
+    if (site) q.set("site", site);
+    return request(`/v1/reference/vendors${q.toString() ? `?${q.toString()}` : ""}`);
   },
   getVendorPayments: ({ status = "", site = "" } = {}) => {
     const q = new URLSearchParams();
@@ -37,6 +49,10 @@ export const operationsApi = {
   submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, {
     method: "POST",
     body: JSON.stringify({ decision, note }),
+  }),
+  ingestEvent: (payload) => request("/v1/events", {
+    method: "POST",
+    body: JSON.stringify(payload),
   }),
 };
 
