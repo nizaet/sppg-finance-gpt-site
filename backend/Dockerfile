@@ -4,4 +4,4 @@ COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 COPY schema ./schema
-CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "python -m backend.migrate && uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
