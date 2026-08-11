@@ -45,6 +45,22 @@ export const operationsApi = {
     if (site) q.set("site", site);
     return request(`/v1/vendor-payments?${q.toString()}`);
   },
+  getPlanningSnapshots: ({ site = "", distributionDate = "", activeOnly = true } = {}) => {
+    const q = new URLSearchParams();
+    if (site) q.set("site", site);
+    if (distributionDate) q.set("distributionDate", distributionDate);
+    q.set("activeOnly", activeOnly ? "true" : "false");
+    return request(`/v1/planning-snapshots?${q.toString()}`);
+  },
+  getPlanningSnapshot: (snapshotId) => request(`/v1/planning-snapshots/${snapshotId}`),
+  ingestPlanningSnapshot: (payload) => request("/v1/planning-snapshots", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  parseMessage: (payload) => request("/v1/parse-message", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
   getReviewQueue: () => request("/v1/review-queue"),
   submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, {
     method: "POST",
