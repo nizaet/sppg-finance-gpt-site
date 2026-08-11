@@ -1,10 +1,10 @@
-const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "";
+const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
 async function request(path, options = {}) {
   const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
-    credentials: "include",
+    credentials: "omit",
     ...options,
     headers: { ...jsonHeaders, ...(options.headers || {}) },
   });
@@ -20,6 +20,7 @@ async function request(path, options = {}) {
 }
 
 export const operationsApi = {
+  getHealth: () => request("/health"),
   getControlTower: (date) => request(`/v1/control-tower?date=${encodeURIComponent(date)}`),
   getPoCalendar: ({ from, to, site }) => {
     const q = new URLSearchParams({ from, to });
@@ -40,3 +41,4 @@ export const operationsApi = {
 };
 
 export const hasOperationsBackend = Boolean(DEFAULT_BASE_URL);
+export const operationsBackendUrl = DEFAULT_BASE_URL;
