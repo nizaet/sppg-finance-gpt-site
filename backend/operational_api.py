@@ -48,7 +48,11 @@ def normalize_site(site: str) -> str:
 def normalize_text(value: str) -> str:
     text = value.lower().strip()
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    stop = {"sudah", "udah", "barang", "datang", "sampai", "diterima", "terima", "lengkap", "total", "vendor"}
+    stop = {
+        "sudah", "udah", "barang", "datang", "sampai", "diterima", "terima", "lengkap", "total", "vendor",
+        "maja", "cemplang", "holil", "haji", "wikian", "dede", "heru", "badri", "mungki", "koperasi",
+        "rumah", "duta", "pangan",
+    }
     words = [word for word in text.split() if word not in stop]
     return " ".join(words)
 
@@ -77,7 +81,8 @@ RECEIPT_ITEM_PATTERN = re.compile(
 
 def extract_receipt_items(text: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    # Splitting first prevents one item name from swallowing a previous sentence.
+    # Split on message/list separators. A sentence prefix may still be captured by the item regex,
+    # therefore we also keep only the final sentence fragment of the captured name below.
     segments = re.split(r"[\n;,]+", text)
     for segment in segments:
         clean_segment = re.sub(r"^[\-•*\s]+", "", segment.strip())
@@ -85,6 +90,9 @@ def extract_receipt_items(text: str) -> list[dict[str, Any]]:
             continue
         for match in RECEIPT_ITEM_PATTERN.finditer(clean_segment):
             raw_name = match.group("name").strip(" :-")
+            # Example: "Barang Holil Maja sudah datang. Wortel diterima" -> "Wortel diterima".
+            if "." in raw_name:
+                raw_name = raw_name.rsplit(".", 1)[-1].strip()
             # Remove common receipt prefixes while retaining the actual item name.
             raw_name = re.sub(
                 r"^(?:maja|cemplang|barang|kiriman|pesanan|po|dari|vendor|sudah|udah|datang|diterima|terima)\s+",
