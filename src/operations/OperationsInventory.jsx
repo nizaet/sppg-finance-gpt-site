@@ -11,11 +11,11 @@ export default function OperationsInventory() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const load = async () => {
+  const load = async (searchValue = search) => {
     setLoading(true);
     setError("");
     try {
-      const data = await operationsApi.getInventoryBalances({ site, search });
+      const data = await operationsApi.getInventoryBalances({ site, search: searchValue });
       setItems(data?.items || []);
     } catch (err) {
       setError(err.message || "Gagal mengambil saldo gudang");
@@ -24,7 +24,7 @@ export default function OperationsInventory() {
     }
   };
 
-  useEffect(() => { load(); }, [site]);
+  useEffect(() => { load(""); }, [site]);
 
   const negativeCount = useMemo(() => items.filter((x) => Number(x.balance || 0) < 0).length, [items]);
 
@@ -37,10 +37,10 @@ export default function OperationsInventory() {
           <p>Saldo dihitung dari movement masuk/keluar. Transfer internal Koperasi tetap movement stok, bukan transaksi biaya baru.</p>
         </div>
         <div className="ops-inline-controls">
-          <select value={site} onChange={(e) => setSite(e.target.value)}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} placeholder="Cari barang" />
-          <button type="button" onClick={load} disabled={loading}><Search size={15} /> Cari</button>
-          <button type="button" onClick={() => { setSearch(""); setTimeout(load, 0); }} disabled={loading}><RefreshCw size={15} /> Refresh</button>
+          <select value={site} onChange={(e) => { setSite(e.target.value); setSearch(""); }}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load(search)} placeholder="Cari barang" />
+          <button type="button" onClick={() => load(search)} disabled={loading}><Search size={15} /> Cari</button>
+          <button type="button" onClick={() => { setSearch(""); load(""); }} disabled={loading}><RefreshCw size={15} /> Semua</button>
         </div>
       </div>
       {error && <div className="ops-error">{error}</div>}
