@@ -1,0 +1,272 @@
+openapi: 3.1.0
+info:
+  title: SPPG Finance and Operations Bridge
+  version: 0.13.0
+  description: SPPG bridge for finance, purchase orders, planning, and safe WhatsApp goods receiving.
+servers:
+  - url: https://sppg-finance-gpt-site-production-5b7d.up.railway.app
+security:
+  - bearerAuth: []
+paths:
+  /v1/gpt/status:
+    get:
+      operationId: getSppgBridgeStatus
+      summary: Check SPPG bridge configuration
+      responses:
+        '200': {description: Bridge status, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/gpt/finance-transactions:
+    get:
+      operationId: searchSppgFinanceTransactions
+      summary: Search SPPG finance transactions
+      parameters:
+        - {in: query, name: site, schema: {type: string, enum: [MAJA, CEMPLANG]}}
+        - {in: query, name: from, schema: {type: string, format: date}}
+        - {in: query, name: to, schema: {type: string, format: date}}
+        - {in: query, name: payment_status, schema: {type: string, enum: [paid, unpaid, partial]}}
+        - {in: query, name: q, schema: {type: string}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+      responses:
+        '200': {description: Matching transactions, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+    post:
+      operationId: createSppgFinanceTransactions
+      summary: Create classified SPPG finance transactions
+      description: Preserve explicit categories, never invent amounts, and reuse source_ref on retries.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/FinanceTransactionBatch'}}}
+      responses:
+        '200': {description: Persisted result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/gpt/finance-transactions/{transaction_id}:
+    patch:
+      operationId: updateSppgFinanceTransaction
+      summary: Correct a finance transaction or payment status
+      parameters:
+        - {in: path, name: transaction_id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/FinanceTransactionPatch'}}}
+      responses:
+        '200': {description: Update result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/gpt/backfill-firestore:
+    post:
+      operationId: backfillSppgFirestoreHistory
+      summary: Preview or import one Firestore history batch
+      description: Firestore is read-only. Existing records are skipped. Use nextCursor for subsequent batches.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/FirestoreBackfillRequest'}}}
+      responses:
+        '200': {description: Backfill batch result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/planning-snapshots:
+    get:
+      operationId: searchSppgPlanningSnapshots
+      summary: Search calculator planning snapshots
+      parameters:
+        - {in: query, name: site, schema: {type: string, enum: [MAJA, CEMPLANG]}}
+        - {in: query, name: distributionDate, schema: {type: string, format: date}}
+        - {in: query, name: activeOnly, schema: {type: boolean, default: true}}
+      responses:
+        '200': {description: Planning snapshots, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+    post:
+      operationId: createSppgPlanningSnapshot
+      summary: Store an immutable calculator planning snapshot
+      description: Creates a new planning layer. Earlier active snapshots are superseded, not overwritten.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PlanningSnapshot'}}}
+      responses:
+        '200': {description: Snapshot result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/purchase-orders:
+    get:
+      operationId: searchSppgPurchaseOrders
+      summary: Search SPPG purchase orders
+      parameters:
+        - {in: query, name: site, schema: {type: string, enum: [MAJA, CEMPLANG]}}
+        - {in: query, name: vendor, schema: {type: string}}
+        - {in: query, name: status, schema: {type: string}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+      responses:
+        '200': {description: Purchase orders, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+    post:
+      operationId: createSppgPurchaseOrder
+      summary: Create a purchase order revision
+      description: planned_qty and po_qty are separate. Creating or revising a PO must never overwrite calculator planning quantities.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseOrder'}}}
+      responses:
+        '200': {description: Purchase order result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/purchase-orders/{purchase_order_id}:
+    get:
+      operationId: getSppgPurchaseOrder
+      summary: Read one purchase order and its item layers
+      parameters:
+        - {in: path, name: purchase_order_id, required: true, schema: {type: integer}}
+      responses:
+        '200': {description: Purchase order detail, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+  /v1/receiving/whatsapp:
+    post:
+      operationId: processSppgWhatsAppReceipt
+      summary: Preview or confirm goods received from WhatsApp text
+      description: Use commit=false first. commit=true writes received_qty only after safe PO and item matching. planned_qty and po_qty are never overwritten.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/WhatsAppReceipt'}}}
+      responses:
+        '200': {description: Receipt preview or commit result, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+        '409': {description: Matching is too ambiguous to commit}
+  /v1/receiving/variance:
+    get:
+      operationId: getSppgReceivingVariance
+      summary: Read PO versus received quantity variances
+      parameters:
+        - {in: query, name: site, schema: {type: string, enum: [MAJA, CEMPLANG]}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
+      responses:
+        '200': {description: Receiving variance rows, content: {application/json: {schema: {$ref: '#/components/schemas/GenericObject'}}}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+    FinanceTransactionBatch:
+      type: object
+      required: [site, source_ref, items]
+      properties:
+        site: {type: string, enum: [MAJA, CEMPLANG]}
+        source_ref: {type: string}
+        raw_text: {type: string}
+        actor: {type: string, default: chatgpt}
+        archive_raw_text: {type: boolean, default: true}
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {$ref: '#/components/schemas/FinanceTransactionItem'}
+    FinanceTransactionItem:
+      type: object
+      required: [date, description, type, category, amount]
+      properties:
+        transaction_id: {type: [string, 'null']}
+        date: {type: string, format: date}
+        description: {type: string}
+        type: {type: string, enum: [income, expense]}
+        category: {type: string}
+        amount: {type: number, minimum: 0}
+        qty: {type: [number, 'null']}
+        unit: {type: [string, 'null']}
+        unit_price: {type: [number, 'null'], minimum: 0}
+        order_by: {type: [string, 'null']}
+        is_debt: {type: boolean, default: false}
+        payment_status: {type: string, enum: [paid, unpaid, partial], default: paid}
+        paid_amount: {type: [number, 'null'], minimum: 0}
+        paid_date: {type: [string, 'null'], format: date}
+        classification_confidence: {type: number, minimum: 0, maximum: 1, default: 1}
+        classification_reason: {type: string}
+        note: {type: string}
+    FinanceTransactionPatch:
+      type: object
+      properties:
+        date: {type: [string, 'null'], format: date}
+        description: {type: [string, 'null']}
+        category: {type: [string, 'null']}
+        amount: {type: [number, 'null'], minimum: 0}
+        qty: {type: [number, 'null']}
+        unit: {type: [string, 'null']}
+        unit_price: {type: [number, 'null'], minimum: 0}
+        order_by: {type: [string, 'null']}
+        is_debt: {type: [boolean, 'null']}
+        payment_status: {type: [string, 'null'], enum: [paid, unpaid, partial, null]}
+        paid_amount: {type: [number, 'null'], minimum: 0}
+        paid_date: {type: [string, 'null'], format: date}
+        category_override_reason: {type: [string, 'null']}
+        note: {type: [string, 'null']}
+        actor: {type: string, default: chatgpt}
+    FirestoreBackfillRequest:
+      type: object
+      required: [site]
+      properties:
+        site: {type: string, enum: [MAJA, CEMPLANG]}
+        dry_run: {type: boolean, default: true}
+        batch_size: {type: integer, minimum: 1, maximum: 500, default: 200}
+        start_after_id: {type: [string, 'null']}
+        actor: {type: string, default: chatgpt}
+    PlanningSnapshot:
+      type: object
+      required: [site, distribution_date, source_system]
+      properties:
+        site: {type: string, enum: [MAJA, CEMPLANG]}
+        distribution_date: {type: string, format: date}
+        cooking_at: {type: [string, 'null'], format: date-time}
+        source_system: {type: string}
+        source_version: {type: [string, 'null']}
+        source_updated_at: {type: [string, 'null'], format: date-time}
+        snapshot_key: {type: [string, 'null']}
+        payload: {type: object, additionalProperties: true}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/PlanningItem'}
+    PlanningItem:
+      type: object
+      required: [item_name]
+      properties:
+        item_code: {type: [string, 'null']}
+        item_name: {type: string}
+        category_code: {type: [string, 'null']}
+        planned_qty: {type: [number, 'null']}
+        unit: {type: [string, 'null']}
+        planning_price: {type: [number, 'null']}
+        preferred_vendor_code: {type: [string, 'null']}
+        notes: {type: [string, 'null']}
+        source_payload: {type: object, additionalProperties: true}
+    PurchaseOrder:
+      type: object
+      required: [po_code, site, vendor_code, distribution_date, items]
+      properties:
+        po_code: {type: string}
+        site: {type: string, enum: [MAJA, CEMPLANG]}
+        vendor_code: {type: string}
+        distribution_date: {type: string, format: date}
+        cooking_at: {type: [string, 'null'], format: date-time}
+        source_planning_snapshot_id: {type: [integer, 'null']}
+        status: {type: string, enum: [DRAFT, FINALIZED, SENT, ACKNOWLEDGED], default: DRAFT}
+        items:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/PurchaseOrderItem'}
+    PurchaseOrderItem:
+      type: object
+      required: [item_name, po_qty]
+      properties:
+        item_code: {type: [string, 'null']}
+        item_name: {type: string}
+        planning_snapshot_item_id: {type: [integer, 'null']}
+        planned_qty: {type: [number, 'null']}
+        po_qty: {type: number, minimum: 0}
+        unit: {type: [string, 'null']}
+        planning_price: {type: [number, 'null'], minimum: 0}
+        po_price: {type: [number, 'null'], minimum: 0}
+        aliases:
+          type: array
+          items: {type: string}
+        notes: {type: [string, 'null']}
+    WhatsAppReceipt:
+      type: object
+      required: [site, text]
+      properties:
+        site: {type: string, enum: [MAJA, CEMPLANG]}
+        text: {type: string}
+        vendor_code: {type: [string, 'null']}
+        purchase_order_id: {type: [integer, 'null']}
+        received_at: {type: [string, 'null'], format: date-time}
+        source_external_id: {type: [string, 'null']}
+        source_uri: {type: [string, 'null']}
+        reporter: {type: [string, 'null']}
+        commit:
+          type: boolean
+          default: false
+          description: false previews only; true writes a receipt when matching is safe.
