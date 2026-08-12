@@ -76,6 +76,17 @@ jobs:
           assert matched[1]['variance_qty'] == 0.0
           # Matcher returns variance; it never mutates po_qty.
           assert po_items[0]['po_qty'] == 100
+
+          sentence_reported = extract_receipt_items('Barang Holil Maja sudah datang. Wortel diterima 102 kg.')
+          assert sentence_reported == [
+              {'reported_item_name': 'Wortel diterima', 'received_qty': 102.0, 'unit': 'kg'},
+          ]
+          sentence_match = match_items(sentence_reported, [
+              {'id': 12, 'item_name': 'Wortel', 'po_qty': 105, 'unit': 'kg', 'item_aliases': []},
+          ])[0]
+          assert sentence_match['purchase_order_item_id'] == 12
+          assert sentence_match['match_confidence'] >= 0.99
+          assert sentence_match['variance_qty'] == -3.0
           print('WhatsApp receiving parser/variance protection ok')
           PY
       - name: Assert legacy Firestore patch target
