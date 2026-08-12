@@ -81,16 +81,23 @@ REJECT_RE = re.compile(
 def _best_item_match(reject_name: str, items: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float]:
     needle = norm(canonical_item(reject_name))
     best = None
-    best_score = 0.0
+    best_rank: tuple[float, int, float] = (0.0, 0, 0.0)
     for item in items:
         candidate = norm(str(item["item_name"]))
         score = SequenceMatcher(None, needle, candidate).ratio()
         if needle in candidate or candidate in needle:
             score = max(score, 0.95)
-        if score > best_score:
+        # Prefer a primary-name match ("jeruk" -> "Jeruk Medan") over a
+        # modifier match ("jeruk" -> "Daun Jeruk"). When still tied, prefer
+        # the larger invoice quantity because reject reports normally refer to
+        # the actual bulk line being inspected.
+        primary = 1 if candidate == needle or candidate.startswith(needle + " ") else 0
+        qty = float(item.get("invoiced_qty") or 0)
+        rank = (score, primary, qty)
+        if rank > best_rank:
             best = item
-            best_score = score
-    return best, best_score
+            best_rank = rank
+    return best, best_rank[0]
 
 
 def parse_vendor_invoice_text(text: str, vendor_code: str | None = None, site: str | None = None) -> dict[str, Any]:
