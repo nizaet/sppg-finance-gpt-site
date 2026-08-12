@@ -18,7 +18,8 @@ router = APIRouter(prefix="/v1/gpt", tags=["gpt-backfill"])
 class FirestoreBackfillIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
     dry_run: bool = True
-    limit: int = Field(default=10000, ge=1, le=50000)
+    batch_size: int = Field(default=200, ge=1, le=500)
+    start_after_id: str | None = None
     actor: str = "chatgpt"
 
 
@@ -45,6 +46,13 @@ def _number(value: Any, default: Decimal | None = None) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return default
+
+
+def _confidence(value: Any) -> Decimal | None:
+    number = _number(value)
+    if number is None:
+        return None
+    return min(Decimal("1"), max(Decimal("0"), number))
 
 
 def _normalize_type(value: Any) -> str | None:
@@ -82,6 +90,21 @@ def _collection(site: str):
         .document("meta")
         .collection("transactions")
     )
+
+
+def _read_batch(site: str, batch_size: int, start_after_id: str | None):
+    collection = _collection(site)
+    # Document IDs in the legacy ledger are stable. Fetch one extra document so the
+    # response can state whether another batch remains.
+    query = collection.order_by("__name__").limit(batch_size + 1)
+    if start_after_id:
+        cursor = collection.document(start_after_id).get()
+        if not cursor.exists:
+            raise HTTPException(400, f"start_after_id not found: {start_after_id}")
+        query = query.start_after(cursor)
+    docs = list(query.stream())
+    has_more = len(docs) > batch_size
+    return docs[:batch_size], has_more
 
 
 def _target_transaction_id(site: str, firestore_id: str) -> str:
@@ -133,64 +156,25 @@ def _prepare(site: str, firestore_id: str, data: dict[str, Any]) -> tuple[dict[s
         "paid_amount": paid_amount,
         "paid_date": paid_date,
         "source_ref": f"firestore:{site}:{firestore_id}",
-        "classification_confidence": _number(data.get("classificationConfidence")),
+        "classification_confidence": _confidence(data.get("classificationConfidence")),
         "classification_reason": str(data.get("classificationReason") or ""),
         "note": str(data.get("note") or ""),
         "firestore_doc_id": firestore_id,
     }, None
 
 
-@router.post("/backfill-firestore", dependencies=[Depends(require_gpt_auth)])
-def backfill_firestore(payload: FirestoreBackfillIn) -> dict[str, Any]:
-    if not database_ready():
-        raise HTTPException(503, "database unavailable")
-
-    docs = list(_collection(payload.site).limit(payload.limit).stream())
-    summary = {
-        "site": payload.site,
-        "dryRun": payload.dry_run,
-        "firestoreRead": len(docs),
-        "importable": 0,
-        "alreadyPresent": 0,
-        "inserted": 0,
-        "invalid": 0,
-        "errors": [],
-        "sample": [],
-    }
-
+def _insert_one(row: dict[str, Any], actor: str, firestore_id: str) -> bool:
+    # One DB transaction per historical record. A malformed legacy record can fail
+    # independently without rolling back earlier successful imports.
     with connection() as conn:
-        with conn.cursor() as cur:
-            for snap in docs:
-                data = snap.to_dict() or {}
-                row, error = _prepare(payload.site, snap.id, data)
-                if error or row is None:
-                    summary["invalid"] += 1
-                    if len(summary["errors"]) < 20:
-                        summary["errors"].append({"firestoreId": snap.id, "reason": error})
-                    continue
-
+        try:
+            with conn.cursor() as cur:
                 cur.execute(
                     "select transaction_id from finance_transactions where transaction_id=%s or idempotency_key=%s limit 1",
                     (row["transaction_id"], row["idempotency_key"]),
                 )
-                existing = cur.fetchone()
-                if existing:
-                    summary["alreadyPresent"] += 1
-                    continue
-
-                summary["importable"] += 1
-                if len(summary["sample"]) < 10:
-                    summary["sample"].append({
-                        "firestoreId": snap.id,
-                        "date": row["transaction_date"].isoformat(),
-                        "description": row["description"],
-                        "category": row["category"],
-                        "amount": float(row["amount"]),
-                    })
-
-                if payload.dry_run:
-                    continue
-
+                if cur.fetchone():
+                    return False
                 cur.execute(
                     """insert into finance_transactions(
                          transaction_id,idempotency_key,site,transaction_date,description,transaction_type,
@@ -210,17 +194,88 @@ def backfill_firestore(payload: FirestoreBackfillIn) -> dict[str, Any]:
                     ),
                 )
                 inserted = cur.fetchone()
-                if inserted:
-                    summary["inserted"] += 1
-                    cur.execute(
-                        """insert into finance_bridge_audit_log(transaction_id,action,actor,details)
-                           values (%s,'FIRESTORE_BACKFILL',%s,jsonb_build_object('firestore_doc_id',%s,'site',%s))""",
-                        (inserted["transaction_id"], payload.actor, snap.id, payload.site),
-                    )
+                if not inserted:
+                    conn.rollback()
+                    return False
+                cur.execute(
+                    """insert into finance_bridge_audit_log(transaction_id,action,actor,details)
+                       values (%s,'FIRESTORE_BACKFILL',%s,jsonb_build_object('firestore_doc_id',%s,'site',%s))""",
+                    (inserted["transaction_id"], actor, firestore_id, row["site"]),
+                )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+
+
+@router.post("/backfill-firestore", dependencies=[Depends(require_gpt_auth)])
+def backfill_firestore(payload: FirestoreBackfillIn) -> dict[str, Any]:
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+
+    docs, has_more = _read_batch(payload.site, payload.batch_size, payload.start_after_id)
+    summary: dict[str, Any] = {
+        "site": payload.site,
+        "dryRun": payload.dry_run,
+        "batchSize": payload.batch_size,
+        "startAfterId": payload.start_after_id,
+        "firestoreRead": len(docs),
+        "importable": 0,
+        "alreadyPresent": 0,
+        "inserted": 0,
+        "invalid": 0,
+        "failed": 0,
+        "hasMore": has_more,
+        "nextCursor": docs[-1].id if docs and has_more else None,
+        "errors": [],
+        "sample": [],
+    }
+
+    for snap in docs:
+        data = snap.to_dict() or {}
+        row, error = _prepare(payload.site, snap.id, data)
+        if error or row is None:
+            summary["invalid"] += 1
+            if len(summary["errors"]) < 20:
+                summary["errors"].append({"firestoreId": snap.id, "reason": error})
+            continue
+
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "select transaction_id from finance_transactions where transaction_id=%s or idempotency_key=%s limit 1",
+                    (row["transaction_id"], row["idempotency_key"]),
+                )
+                existing = cur.fetchone()
+        if existing:
+            summary["alreadyPresent"] += 1
+            continue
+
+        summary["importable"] += 1
+        if len(summary["sample"]) < 10:
+            summary["sample"].append({
+                "firestoreId": snap.id,
+                "date": row["transaction_date"].isoformat(),
+                "description": row["description"],
+                "category": row["category"],
+                "amount": float(row["amount"]),
+            })
 
         if payload.dry_run:
-            conn.rollback()
-        else:
-            conn.commit()
+            continue
+
+        try:
+            if _insert_one(row, payload.actor, snap.id):
+                summary["inserted"] += 1
+            else:
+                summary["alreadyPresent"] += 1
+        except Exception as exc:
+            summary["failed"] += 1
+            if len(summary["errors"]) < 20:
+                summary["errors"].append({
+                    "firestoreId": snap.id,
+                    "reason": f"{type(exc).__name__}: {exc}"[:500],
+                })
 
     return summary
