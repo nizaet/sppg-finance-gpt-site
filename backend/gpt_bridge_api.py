@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 from backend.google_services import (
+    FirestoreDocumentNotFound,
     GoogleServicesNotConfigured,
+    assert_finance_transaction_exists,
+    update_existing_finance_transaction,
     upsert_finance_transaction,
     upload_text_to_drive,
 )
@@ -162,14 +165,29 @@ def _fetch_tx(transaction_id: str) -> dict[str, Any] | None:
             return cur.fetchone()
 
 
-def _sync_row(row: dict[str, Any]) -> tuple[str, str | None, str | None]:
+def _firestore_target(row: dict[str, Any]) -> tuple[str, bool]:
+    if str(row.get("source") or "") == "firestore_backfill":
+        original_id = str(row.get("firestore_doc_id") or "").strip()
+        if not original_id:
+            raise FirestoreDocumentNotFound(
+                f"Backfilled transaction {row.get('transaction_id')} has no original firestore_doc_id"
+            )
+        return original_id, True
+    return str(row["transaction_id"]), False
+
+
+def _sync_row(row: dict[str, Any]) -> tuple[str, str | None, str | None, str | None]:
     try:
-        path = upsert_finance_transaction(row["site"], row["transaction_id"], _firestore_payload(row))
-        return "SYNCED", path, None
+        target_id, must_exist = _firestore_target(row)
+        if must_exist:
+            path = update_existing_finance_transaction(row["site"], target_id, _firestore_payload(row))
+        else:
+            path = upsert_finance_transaction(row["site"], target_id, _firestore_payload(row))
+        return "SYNCED", path, target_id, None
     except GoogleServicesNotConfigured as exc:
-        return "NOT_CONFIGURED", None, str(exc)
+        return "NOT_CONFIGURED", None, None, str(exc)
     except Exception as exc:
-        return "ERROR", None, f"{type(exc).__name__}: {exc}"[:1500]
+        return "ERROR", None, None, f"{type(exc).__name__}: {exc}"[:1500]
 
 
 def _update_sync_status(transaction_id: str, status: str, doc_id: str | None, error: str | None, evidence_uri: str | None = None) -> None:
@@ -265,13 +283,13 @@ def create_finance_transactions(payload: FinanceTransactionBatchIn) -> dict[str,
                 )
             conn.commit()
 
-        sync_status, firestore_doc, sync_error = _sync_row(row)
-        _update_sync_status(row["transaction_id"], sync_status, firestore_doc, sync_error, evidence_uri)
+        sync_status, firestore_path, firestore_doc_id, sync_error = _sync_row(row)
+        _update_sync_status(row["transaction_id"], sync_status, firestore_doc_id, sync_error, evidence_uri)
         results.append({
             "transactionId": row["transaction_id"],
             "inserted": bool(inserted),
             "firestoreSyncStatus": sync_status,
-            "firestoreDocument": firestore_doc,
+            "firestoreDocument": firestore_path,
             "syncError": sync_error,
         })
 
@@ -335,6 +353,17 @@ def patch_finance_transaction(transaction_id: str, payload: FinanceTransactionPa
     patch.pop("actor", None)
     if not patch:
         return {"transactionId": transaction_id, "changed": False}
+
+    if str(existing.get("source") or "") == "firestore_backfill":
+        original_id = str(existing.get("firestore_doc_id") or "").strip()
+        if not original_id:
+            raise HTTPException(409, "Backfilled transaction is missing original firestore_doc_id; no changes were made")
+        try:
+            assert_finance_transaction_exists(existing["site"], original_id)
+        except FirestoreDocumentNotFound as exc:
+            raise HTTPException(409, f"Original Firestore document not found; no changes were made: {exc}") from exc
+        except GoogleServicesNotConfigured as exc:
+            raise HTTPException(503, f"Firestore verification unavailable; no changes were made: {exc}") from exc
 
     allowed_map = {
         "date": "transaction_date",
@@ -400,12 +429,12 @@ def patch_finance_transaction(transaction_id: str, payload: FinanceTransactionPa
             )
         conn.commit()
 
-    sync_status, firestore_doc, sync_error = _sync_row(row)
-    _update_sync_status(transaction_id, sync_status, firestore_doc, sync_error)
+    sync_status, firestore_path, firestore_doc_id, sync_error = _sync_row(row)
+    _update_sync_status(transaction_id, sync_status, firestore_doc_id, sync_error)
     return {
         "transactionId": transaction_id,
         "changed": True,
         "firestoreSyncStatus": sync_status,
-        "firestoreDocument": firestore_doc,
+        "firestoreDocument": firestore_path,
         "syncError": sync_error,
     }
