@@ -9,6 +9,7 @@ from backend.operational_search_api import router as operational_search_router
 from backend.operational_history_api import router as operational_history_router
 from backend.operations_action_schema_api import router as operations_action_schema_router
 from backend.operations_action_schema_fix_api import router as operations_action_schema_fix_router
+from backend.operations_action_schema_v017_api import router as operations_action_schema_v017_router
 
 router = APIRouter(prefix="/v1", tags=["reference"])
 router.include_router(vendor_payables_router)
@@ -16,6 +17,7 @@ router.include_router(operational_search_router)
 router.include_router(operational_history_router)
 router.include_router(operations_action_schema_router)
 router.include_router(operations_action_schema_fix_router)
+router.include_router(operations_action_schema_v017_router)
 
 
 @router.get("/schema-status")
@@ -118,8 +120,8 @@ def po_schedule_preview(
         po_date = cook - timedelta(days=lead) if lead is not None else None
         items.append({**row, "po_date": po_date})
     return {
-        "distributionDate": distribution_date,
-        "cookingDate": cook,
+        "distributionDate": distribution_date.isoformat(),
+        "cookingDate": cook.isoformat(),
         "site": site or None,
         "items": items,
     }
