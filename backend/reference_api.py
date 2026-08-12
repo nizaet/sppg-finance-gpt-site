@@ -10,6 +10,7 @@ from backend.operational_history_api import router as operational_history_router
 from backend.operations_action_schema_api import router as operations_action_schema_router
 from backend.operations_action_schema_fix_api import router as operations_action_schema_fix_router
 from backend.operations_action_schema_v017_api import router as operations_action_schema_v017_router
+from backend.whatsapp_webhook_api import router as whatsapp_webhook_router
 
 router = APIRouter(prefix="/v1", tags=["reference"])
 router.include_router(vendor_payables_router)
@@ -18,6 +19,7 @@ router.include_router(operational_history_router)
 router.include_router(operations_action_schema_router)
 router.include_router(operations_action_schema_fix_router)
 router.include_router(operations_action_schema_v017_router)
+router.include_router(whatsapp_webhook_router)
 
 
 @router.get("/schema-status")
