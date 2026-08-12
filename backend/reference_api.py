@@ -7,11 +7,13 @@ from backend.db import connection, database_ready
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.operational_search_api import router as operational_search_router
 from backend.operations_action_schema_api import router as operations_action_schema_router
+from backend.operations_action_schema_fix_api import router as operations_action_schema_fix_router
 
 router = APIRouter(prefix="/v1", tags=["reference"])
 router.include_router(vendor_payables_router)
 router.include_router(operational_search_router)
 router.include_router(operations_action_schema_router)
+router.include_router(operations_action_schema_fix_router)
 
 
 @router.get("/schema-status")
