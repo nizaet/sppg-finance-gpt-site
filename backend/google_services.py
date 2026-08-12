@@ -87,6 +87,14 @@ def firestore_transaction_doc(site: str, transaction_id: str):
     )
 
 
+def assert_finance_transaction_exists(site: str, transaction_id: str) -> str:
+    doc_ref = firestore_transaction_doc(site, transaction_id)
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
+        raise FirestoreDocumentNotFound(f"Firestore transaction document not found: {doc_ref.path}")
+    return doc_ref.path
+
+
 def upsert_finance_transaction(site: str, transaction_id: str, data: dict[str, Any]) -> str:
     doc_ref = firestore_transaction_doc(site, transaction_id)
     payload = dict(data)
