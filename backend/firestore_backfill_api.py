@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
@@ -161,34 +162,6 @@ def _prepare(site: str, firestore_id: str, data: dict[str, Any]) -> tuple[dict[s
     }, None
 
 
-BACKFILL_INSERT_SQL = """insert into finance_transactions(
-     transaction_id,idempotency_key,site,transaction_date,description,transaction_type,
-     category,amount,qty,unit,unit_price,order_by,is_debt,payment_status,paid_amount,
-     paid_date,source,source_ref,classification_confidence,classification_reason,note,
-     firestore_doc_id,firestore_sync_status
-   ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-             'firestore_backfill',%s,%s,%s,%s,%s,'SOURCE_IMPORTED')
-   on conflict do nothing
-   returning transaction_id"""
-
-
-def _insert_params(row: dict[str, Any]) -> tuple[Any, ...]:
-    params = (
-        row["transaction_id"], row["idempotency_key"], row["site"], row["transaction_date"],
-        row["description"], row["transaction_type"], row["category"], row["amount"], row["qty"],
-        row["unit"], row["unit_price"], row["order_by"], row["is_debt"], row["payment_status"],
-        row["paid_amount"], row["paid_date"], row["source_ref"], row["classification_confidence"],
-        row["classification_reason"], row["note"], row["firestore_doc_id"],
-    )
-    # Keep the SQL and parameter tuple structurally locked together. This catches
-    # future edits before they can turn a whole backfill batch into runtime errors.
-    if BACKFILL_INSERT_SQL.count("%s") != len(params):
-        raise RuntimeError(
-            f"backfill insert placeholder mismatch: {BACKFILL_INSERT_SQL.count('%s')} placeholders vs {len(params)} params"
-        )
-    return params
-
-
 def _insert_one(row: dict[str, Any], actor: str, firestore_id: str) -> bool:
     with connection() as conn:
         try:
@@ -199,15 +172,37 @@ def _insert_one(row: dict[str, Any], actor: str, firestore_id: str) -> bool:
                 )
                 if cur.fetchone():
                     return False
-                cur.execute(BACKFILL_INSERT_SQL, _insert_params(row))
+                cur.execute(
+                    """insert into finance_transactions(
+                         transaction_id,idempotency_key,site,transaction_date,description,transaction_type,
+                         category,amount,qty,unit,unit_price,order_by,is_debt,payment_status,paid_amount,
+                         paid_date,source,source_ref,classification_confidence,classification_reason,note,
+                         firestore_doc_id,firestore_sync_status
+                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                 'firestore_backfill',%s,%s,%s,%s,%s,'SOURCE_IMPORTED')
+                       on conflict do nothing
+                       returning transaction_id""",
+                    (
+                        row["transaction_id"], row["idempotency_key"], row["site"], row["transaction_date"],
+                        row["description"], row["transaction_type"], row["category"], row["amount"], row["qty"],
+                        row["unit"], row["unit_price"], row["order_by"], row["is_debt"], row["payment_status"],
+                        row["paid_amount"], row["paid_date"], row["source_ref"], row["classification_confidence"],
+                        row["classification_reason"], row["note"], row["firestore_doc_id"],
+                    ),
+                )
                 inserted = cur.fetchone()
                 if not inserted:
                     conn.rollback()
                     return False
+
+                audit_details = json.dumps(
+                    {"firestore_doc_id": firestore_id, "site": row["site"]},
+                    ensure_ascii=False,
+                )
                 cur.execute(
                     """insert into finance_bridge_audit_log(transaction_id,action,actor,details)
-                       values (%s,'FIRESTORE_BACKFILL',%s,jsonb_build_object('firestore_doc_id',%s,'site',%s))""",
-                    (inserted["transaction_id"], actor, firestore_id, row["site"]),
+                       values (%s,'FIRESTORE_BACKFILL',%s,%s::jsonb)""",
+                    (inserted["transaction_id"], actor, audit_details),
                 )
             conn.commit()
             return True
