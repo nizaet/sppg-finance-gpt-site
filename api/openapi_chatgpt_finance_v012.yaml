@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: SPPG ChatGPT Finance Bridge
-  version: 0.12.0
-  description: Authenticated SPPG finance bridge with safe Firestore history backfill.
+  version: 0.12.1
+  description: Authenticated SPPG finance bridge with safe batched Firestore history backfill.
 servers:
   - url: https://sppg-finance-gpt-site-production-5b7d.up.railway.app
 security:
@@ -91,11 +91,11 @@ paths:
   /v1/gpt/backfill-firestore:
     post:
       operationId: backfillSppgFirestoreHistory
-      summary: Preview or import existing Firestore transaction history into PostgreSQL
+      summary: Preview or import one safe batch of existing Firestore history into PostgreSQL
       description: >-
-        Always call with dry_run=true first. This operation reads the existing Firestore ledger and never
-        modifies Firestore. Only call with dry_run=false after the operator explicitly approves the preview.
-        Re-running is safe because existing source documents are detected and skipped.
+        Always preview first with dry_run=true. Firestore is read-only and never modified. For actual import,
+        use dry_run=false with batch_size at most 200. If hasMore=true, call again with start_after_id set to
+        nextCursor. Continue until hasMore=false. Re-running any batch is safe because existing records are skipped.
       requestBody:
         required: true
         content:
@@ -104,7 +104,7 @@ paths:
               $ref: '#/components/schemas/FirestoreBackfillRequest'
       responses:
         '200':
-          description: Backfill preview or import result
+          description: One backfill batch result
           content:
             application/json:
               schema:
@@ -255,7 +255,15 @@ components:
           type: boolean
           default: true
           description: Keep true for preview. Set false only after explicit operator approval.
-        limit: {type: integer, minimum: 1, maximum: 50000, default: 10000}
+        batch_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 200
+          description: Number of Firestore documents to process in this call. Use 200 for actual imports.
+        start_after_id:
+          type: [string, 'null']
+          description: Cursor returned by the previous batch as nextCursor; omit for the first batch.
         actor: {type: string, default: chatgpt}
     FirestoreBackfillSample:
       type: object
@@ -275,11 +283,16 @@ components:
       properties:
         site: {type: string}
         dryRun: {type: boolean}
+        batchSize: {type: integer}
+        startAfterId: {type: [string, 'null']}
         firestoreRead: {type: integer}
         importable: {type: integer}
         alreadyPresent: {type: integer}
         inserted: {type: integer}
         invalid: {type: integer}
+        failed: {type: integer}
+        hasMore: {type: boolean}
+        nextCursor: {type: [string, 'null']}
         errors:
           type: array
           items:
@@ -288,4 +301,4 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FirestoreBackfillSample'
-      required: [site, dryRun, firestoreRead, importable, alreadyPresent, inserted, invalid, errors, sample]
+      required: [site, dryRun, batchSize, firestoreRead, importable, alreadyPresent, inserted, invalid, failed, hasMore, errors, sample]
