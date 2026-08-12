@@ -36,9 +36,8 @@ function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (method !== "GET") return doRequest(path, options);
 
-  // React StrictMode dan beberapa modul dapat meminta resource yang sama hampir
-  // bersamaan. Dedup hanya selama request masih berjalan: tidak ada cache data
-  // lama, sehingga tombol Refresh tetap selalu mengambil state terbaru.
+  // Dedup hanya selama GET yang sama masih berjalan. Tidak ada cache data lama,
+  // sehingga tombol Refresh selalu mengambil state terbaru.
   const key = `${DEFAULT_BASE_URL}${path}`;
   const existing = inflightGets.get(key);
   if (existing) return existing;
@@ -51,7 +50,7 @@ function request(path, options = {}) {
 export const operationsApi = {
   health: () => request("/health"),
   getSchemaStatus: () => request("/v1/schema-status"),
-  getControlTower: (date) => request(`/v1/control-tower?date=${encodeURIComponent(date)}`),
+  getControlTower: (date) => request(`/v1/control-tower-v2?date=${encodeURIComponent(date)}`),
   getPoCalendar: ({ from, to, site }) => {
     const q = new URLSearchParams({ from, to });
     if (site) q.set("site", site);
@@ -90,6 +89,13 @@ export const operationsApi = {
     const q = new URLSearchParams({ limit: String(limit) });
     if (site) q.set("site", site);
     return request(`/v1/receiving/variance?${q.toString()}`);
+  },
+  getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (status) q.set("status", status);
+    if (site) q.set("site", site);
+    if (vendor) q.set("vendor", vendor);
+    return request(`/v1/vendor-payables?${q.toString()}`);
   },
   getVendorPayments: ({ status = "", site = "" } = {}) => {
     const q = new URLSearchParams();
