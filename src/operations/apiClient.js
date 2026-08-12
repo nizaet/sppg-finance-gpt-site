@@ -36,8 +36,6 @@ function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (method !== "GET") return doRequest(path, options);
 
-  // Dedup hanya selama GET yang sama masih berjalan. Tidak ada cache data lama,
-  // sehingga tombol Refresh selalu mengambil state terbaru.
   const key = `${DEFAULT_BASE_URL}${path}`;
   const existing = inflightGets.get(key);
   if (existing) return existing;
@@ -102,6 +100,11 @@ export const operationsApi = {
     if (status) q.set("status", status);
     if (site) q.set("site", site);
     return request(`/v1/vendor-payments?${q.toString()}`);
+  },
+  getInventoryBalances: ({ site, search = "", limit = 300 }) => {
+    const q = new URLSearchParams({ site, limit: String(limit) });
+    if (search) q.set("search", search);
+    return request(`/v1/inventory/balances?${q.toString()}`);
   },
   getPlanningSnapshots: ({ site = "", distributionDate = "", activeOnly = true } = {}) => {
     const q = new URLSearchParams();
