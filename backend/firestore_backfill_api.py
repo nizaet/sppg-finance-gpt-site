@@ -94,8 +94,6 @@ def _collection(site: str):
 
 def _read_batch(site: str, batch_size: int, start_after_id: str | None):
     collection = _collection(site)
-    # Document IDs in the legacy ledger are stable. Fetch one extra document so the
-    # response can state whether another batch remains.
     query = collection.order_by("__name__").limit(batch_size + 1)
     if start_after_id:
         cursor = collection.document(start_after_id).get()
@@ -163,9 +161,35 @@ def _prepare(site: str, firestore_id: str, data: dict[str, Any]) -> tuple[dict[s
     }, None
 
 
+BACKFILL_INSERT_SQL = """insert into finance_transactions(
+     transaction_id,idempotency_key,site,transaction_date,description,transaction_type,
+     category,amount,qty,unit,unit_price,order_by,is_debt,payment_status,paid_amount,
+     paid_date,source,source_ref,classification_confidence,classification_reason,note,
+     firestore_doc_id,firestore_sync_status
+   ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+             'firestore_backfill',%s,%s,%s,%s,%s,'SOURCE_IMPORTED')
+   on conflict do nothing
+   returning transaction_id"""
+
+
+def _insert_params(row: dict[str, Any]) -> tuple[Any, ...]:
+    params = (
+        row["transaction_id"], row["idempotency_key"], row["site"], row["transaction_date"],
+        row["description"], row["transaction_type"], row["category"], row["amount"], row["qty"],
+        row["unit"], row["unit_price"], row["order_by"], row["is_debt"], row["payment_status"],
+        row["paid_amount"], row["paid_date"], row["source_ref"], row["classification_confidence"],
+        row["classification_reason"], row["note"], row["firestore_doc_id"],
+    )
+    # Keep the SQL and parameter tuple structurally locked together. This catches
+    # future edits before they can turn a whole backfill batch into runtime errors.
+    if BACKFILL_INSERT_SQL.count("%s") != len(params):
+        raise RuntimeError(
+            f"backfill insert placeholder mismatch: {BACKFILL_INSERT_SQL.count('%s')} placeholders vs {len(params)} params"
+        )
+    return params
+
+
 def _insert_one(row: dict[str, Any], actor: str, firestore_id: str) -> bool:
-    # One DB transaction per historical record. A malformed legacy record can fail
-    # independently without rolling back earlier successful imports.
     with connection() as conn:
         try:
             with conn.cursor() as cur:
@@ -175,24 +199,7 @@ def _insert_one(row: dict[str, Any], actor: str, firestore_id: str) -> bool:
                 )
                 if cur.fetchone():
                     return False
-                cur.execute(
-                    """insert into finance_transactions(
-                         transaction_id,idempotency_key,site,transaction_date,description,transaction_type,
-                         category,amount,qty,unit,unit_price,order_by,is_debt,payment_status,paid_amount,
-                         paid_date,source,source_ref,classification_confidence,classification_reason,note,
-                         firestore_doc_id,firestore_sync_status
-                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                 'firestore_backfill',%s,%s,%s,%s,%s,%s,'SOURCE_IMPORTED')
-                       on conflict do nothing
-                       returning transaction_id""",
-                    (
-                        row["transaction_id"], row["idempotency_key"], row["site"], row["transaction_date"],
-                        row["description"], row["transaction_type"], row["category"], row["amount"], row["qty"],
-                        row["unit"], row["unit_price"], row["order_by"], row["is_debt"], row["payment_status"],
-                        row["paid_amount"], row["paid_date"], row["source_ref"], row["classification_confidence"],
-                        row["classification_reason"], row["note"], row["firestore_doc_id"],
-                    ),
-                )
+                cur.execute(BACKFILL_INSERT_SQL, _insert_params(row))
                 inserted = cur.fetchone()
                 if not inserted:
                     conn.rollback()
