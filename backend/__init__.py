@@ -9,14 +9,16 @@ from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
+from backend.inventory_summary_api import router as inventory_summary_router
 
 # chat_router contains the domain router, restoring these live routes under /v1:
 # /parse-message, /goods-receipts, /actual-usage, /accountant-flow,
 # /bgn-flow, /audit-log, and their corresponding write endpoints.
 operational_router.include_router(chat_router)
 
-# Read-only v2 projection uses committed operational state instead of placeholder counters.
+# Read-only projections used by Pusat Operasional.
 operational_router.include_router(control_tower_router)
+operational_router.include_router(inventory_summary_router)
 
 # Preserve the legacy compatibility bundle used by existing clients.
 operational_router.include_router(vendor_payables_router)
