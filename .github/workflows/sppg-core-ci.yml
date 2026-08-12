@@ -49,6 +49,12 @@ jobs:
               '/v1/receiving/variance',
               '/v1/vendor-payables/from-receipt',
               '/v1/vendor-payables',
+              '/v1/vendor-invoices/parse-whatsapp',
+              '/v1/vendor-payments/confirm',
+              '/v1/inventory/from-receipt',
+              '/v1/inventory/usage',
+              '/v1/inventory/balance',
+              '/v1/inventory/requirement-preview',
               '/v1/gpt/status',
               '/v1/gpt/finance-transactions',
               '/v1/gpt/finance-transactions/{transaction_id}',
@@ -77,36 +83,65 @@ jobs:
           assert po_items[0]['po_qty'] == 105
           print('WhatsApp receiving parser/variance protection ok')
           PY
-      - name: Assert vendor payable uses received quantity and preserves price layers
+      - name: Assert vendor payable uses invoice and reject layers
         run: |
           python - <<'PY'
           from backend.vendor_payables_api import VendorPayableFromReceiptIn, VendorCostLineIn, resolve_lines
 
           payload = VendorPayableFromReceiptIn(
               site='MAJA', purchase_order_id=1, goods_receipt_id=1, commit=False,
-              lines=[VendorCostLineIn(goods_receipt_item_id=1, vendor_cost_price=10200)],
+              lines=[VendorCostLineIn(goods_receipt_item_id=1, vendor_cost_price=14000, invoiced_qty=165, rejected_qty=6)],
           )
           receipt_items = [{
               'goods_receipt_item_id': 1,
               'purchase_order_item_id': 10,
-              'accepted_qty': 102,
+              'accepted_qty': 165,
               'unit': 'kg',
-              'reported_item_name': 'Wortel diterima',
+              'reported_item_name': 'Jeruk Medan',
               'item_code': None,
-              'item_name': 'Wortel',
-              'planned_qty': 100,
-              'po_qty': 105,
-              'planning_price': 10000,
-              'po_price': 10500,
+              'item_name': 'Jeruk Medan',
+              'planned_qty': 165,
+              'po_qty': 165,
+              'planning_price': None,
+              'po_price': None,
           }]
           lines = resolve_lines(payload, receipt_items)
-          assert lines[0]['line_total'] == 1040400.0
-          assert lines[0]['vendor_cost_price'] == 10200.0
-          assert lines[0]['planning_price'] == 10000.0
-          assert lines[0]['po_price'] == 10500.0
-          assert receipt_items[0]['planning_price'] == 10000
-          assert receipt_items[0]['po_price'] == 10500
-          print('vendor payable layer protection ok')
+          assert lines[0]['gross_line_total'] == 2310000.0
+          assert lines[0]['reject_amount'] == 84000.0
+          assert lines[0]['payable_qty'] == 159.0
+          assert lines[0]['line_total'] == 2226000.0
+          assert receipt_items[0]['po_qty'] == 165
+          print('vendor invoice/reject layer protection ok')
+          PY
+      - name: Assert Holil WhatsApp invoice parser
+        run: |
+          python - <<'PY'
+          from backend.vendor_invoice_parser import parse_vendor_invoice_text
+
+          text = '''10 Agustus 2026
+          Maja
+          Tw merah 6x37000= 222.000
+          Daun bw 5x15000= 75.000
+          Daun jruk 0,5x35000= 17.500
+          Jruk medan 165x14000= 2.310.000
+          Kmbang kol 73x13000= 949.000
+          Sereh 1x15000= 15.000
+          Tomat 7x8000= 56.000
+          Wortel 79x9500= 750.500
+          Kol 36x8500= 306.000
+          Jagung kupas 30x15000= 450.000
+          Total Rp. 5.151.000
+          riject 6 jeruk 6kg (hasil laporan dapur)
+          '''
+          parsed = parse_vendor_invoice_text(text, 'HOLIL', 'MAJA')
+          assert parsed['grossAmount'] == 5151000.0
+          assert parsed['rejectDeduction'] == 84000.0
+          assert parsed['netAmount'] == 5067000.0
+          jeruk = next(x for x in parsed['items'] if x['item_name'] == 'Jeruk Medan')
+          assert jeruk['rejected_qty'] == 6.0
+          assert jeruk['payable_qty'] == 159.0
+          assert parsed['canCommit'] is True
+          print('Holil invoice parser ok')
           PY
       - name: Assert legacy Firestore patch target
         run: |
