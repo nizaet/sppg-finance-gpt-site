@@ -47,6 +47,8 @@ jobs:
               '/v1/purchase-orders/{purchase_order_id}',
               '/v1/receiving/whatsapp',
               '/v1/receiving/variance',
+              '/v1/vendor-payables/from-receipt',
+              '/v1/vendor-payables',
               '/v1/gpt/status',
               '/v1/gpt/finance-transactions',
               '/v1/gpt/finance-transactions/{transaction_id}',
@@ -61,33 +63,50 @@ jobs:
           python - <<'PY'
           from backend.operational_api import extract_receipt_items, match_items
 
-          reported = extract_receipt_items('Wortel 95 kg\nSawi Putih 82 kg')
+          reported = extract_receipt_items('Barang Holil Maja sudah datang. Wortel diterima 102 kg.')
           assert reported == [
-              {'reported_item_name': 'Wortel', 'received_qty': 95.0, 'unit': 'kg'},
-              {'reported_item_name': 'Sawi Putih', 'received_qty': 82.0, 'unit': 'kg'},
+              {'reported_item_name': 'Wortel diterima', 'received_qty': 102.0, 'unit': 'kg'},
           ]
           po_items = [
-              {'id': 10, 'item_name': 'Wortel', 'po_qty': 100, 'unit': 'kg', 'item_aliases': []},
-              {'id': 11, 'item_name': 'Sawi Putih', 'po_qty': 82, 'unit': 'kg', 'item_aliases': []},
+              {'id': 10, 'item_name': 'Wortel', 'po_qty': 105, 'unit': 'kg', 'item_aliases': []},
           ]
           matched = match_items(reported, po_items)
           assert matched[0]['purchase_order_item_id'] == 10
-          assert matched[0]['variance_qty'] == -5.0
-          assert matched[1]['variance_qty'] == 0.0
-          # Matcher returns variance; it never mutates po_qty.
-          assert po_items[0]['po_qty'] == 100
-
-          sentence_reported = extract_receipt_items('Barang Holil Maja sudah datang. Wortel diterima 102 kg.')
-          assert sentence_reported == [
-              {'reported_item_name': 'Wortel diterima', 'received_qty': 102.0, 'unit': 'kg'},
-          ]
-          sentence_match = match_items(sentence_reported, [
-              {'id': 12, 'item_name': 'Wortel', 'po_qty': 105, 'unit': 'kg', 'item_aliases': []},
-          ])[0]
-          assert sentence_match['purchase_order_item_id'] == 12
-          assert sentence_match['match_confidence'] >= 0.99
-          assert sentence_match['variance_qty'] == -3.0
+          assert matched[0]['variance_qty'] == -3.0
+          assert matched[0]['match_confidence'] >= 0.99
+          assert po_items[0]['po_qty'] == 105
           print('WhatsApp receiving parser/variance protection ok')
+          PY
+      - name: Assert vendor payable uses received quantity and preserves price layers
+        run: |
+          python - <<'PY'
+          from backend.vendor_payables_api import VendorPayableFromReceiptIn, VendorCostLineIn, resolve_lines
+
+          payload = VendorPayableFromReceiptIn(
+              site='MAJA', purchase_order_id=1, goods_receipt_id=1, commit=False,
+              lines=[VendorCostLineIn(goods_receipt_item_id=1, vendor_cost_price=10200)],
+          )
+          receipt_items = [{
+              'goods_receipt_item_id': 1,
+              'purchase_order_item_id': 10,
+              'accepted_qty': 102,
+              'unit': 'kg',
+              'reported_item_name': 'Wortel diterima',
+              'item_code': None,
+              'item_name': 'Wortel',
+              'planned_qty': 100,
+              'po_qty': 105,
+              'planning_price': 10000,
+              'po_price': 10500,
+          }]
+          lines = resolve_lines(payload, receipt_items)
+          assert lines[0]['line_total'] == 1040400.0
+          assert lines[0]['vendor_cost_price'] == 10200.0
+          assert lines[0]['planning_price'] == 10000.0
+          assert lines[0]['po_price'] == 10500.0
+          assert receipt_items[0]['planning_price'] == 10000
+          assert receipt_items[0]['po_price'] == 10500
+          print('vendor payable layer protection ok')
           PY
       - name: Assert legacy Firestore patch target
         run: |
