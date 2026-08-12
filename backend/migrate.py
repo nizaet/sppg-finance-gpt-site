@@ -11,6 +11,7 @@ MIGRATIONS = [
     ROOT / "schema" / "core_domain_v05.sql",
     ROOT / "schema" / "planning_bridge_v010.sql",
     ROOT / "schema" / "operational_receiving_v012.sql",
+    ROOT / "schema" / "vendor_payables_v013.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
