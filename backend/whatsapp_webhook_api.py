@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from backend.db import connection, database_ready
 from backend.operational_api import WhatsAppReceiptIn, choose_po, extract_receipt_items, infer_vendor
 
-router = APIRouter(prefix="/v1/whatsapp", tags=["whatsapp-ingress"])
+router = APIRouter(prefix="/whatsapp", tags=["whatsapp-ingress"])
 
 MONTHS_ID = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
