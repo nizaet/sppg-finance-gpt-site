@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
@@ -18,7 +19,7 @@ from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.vendor_workflow_api import router as vendor_workflow_router
 
-app = FastAPI(title="SPPG Core API", version="0.16.0")
+app = FastAPI(title="SPPG Core API", version="0.16.1")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
@@ -41,6 +42,76 @@ SITE_DEFS = [
     {"siteId": "sppg-maja-gpt-site", "siteLabel": "SPPG MAJA BARU", "dbSite": "MAJA"},
     {"siteId": "sppg-cemplang2-gpt-site", "siteLabel": "SPPG CEMPLANG 2", "dbSite": "CEMPLANG"},
 ]
+
+
+def _chatgpt_operations_schema() -> dict[str, Any]:
+    """Build a self-contained OpenAPI schema for the operational GPT Action.
+
+    This is generated from the live FastAPI routes, so it never depends on a
+    YAML file being present in the Railway filesystem.
+    """
+    full = app.openapi()
+    wanted = {
+        "/v1/vendor-invoices/parse-whatsapp",
+        "/v1/vendor-payables/from-receipt",
+        "/v1/vendor-payables",
+        "/v1/vendor-payments/confirm",
+        "/v1/inventory/from-receipt",
+        "/v1/inventory/usage",
+        "/v1/inventory/balance",
+        "/v1/inventory/requirement-preview",
+    }
+    paths = {k: v for k, v in full.get("paths", {}).items() if k in wanted}
+
+    parser = paths.get("/v1/vendor-invoices/parse-whatsapp", {}).get("post")
+    if parser:
+        parser["operationId"] = "parseOnlySuppliedSppgVendorInvoiceText"
+        parser["summary"] = "Parse ONLY vendor invoice text supplied in the current user request"
+        parser["description"] = (
+            "READ-ONLY. When the user pastes, types, or forwards vendor invoice text, use ONLY that exact supplied text. "
+            "Never search or substitute finance transactions, purchase orders, historical MAJA/CEMPLANG records, or other database data. "
+            "Do not invent missing prices. Preserve all invoice lines and rijek/reject notes. This action writes nothing."
+        )
+
+    payable = paths.get("/v1/vendor-payables/from-receipt", {}).get("post")
+    if payable:
+        payable["summary"] = "Preview or commit reconciled vendor payable after invoice parsing"
+        payable["description"] = (
+            "NOT a text parser. Use only when a purchase order and goods receipt already exist. "
+            "Always preview with commit=false first. Keep PO qty, received qty, invoice qty, rejected qty, and payable qty separate."
+        )
+
+    search_payable = paths.get("/v1/vendor-payables", {}).get("get")
+    if search_payable:
+        search_payable["summary"] = "Search already-recorded vendor payables"
+        search_payable["description"] = "Never use this endpoint to parse newly supplied invoice text."
+
+    payment = paths.get("/v1/vendor-payments/confirm", {}).get("post")
+    if payment:
+        payment["summary"] = "Preview or confirm payment evidence for an existing vendor payable"
+        payment["description"] = (
+            "NOT an invoice parser. Use commit=false first. A committed payment updates payable status but does not automatically create a finance ledger transaction."
+        )
+
+    return {
+        "openapi": full.get("openapi", "3.1.0"),
+        "info": {
+            "title": "SPPG Vendor and Inventory Operations",
+            "version": "0.16.1",
+            "description": (
+                "Vendor invoice parsing, payable reconciliation, operational stock, and vendor payment confirmation. "
+                "For newly supplied invoice text, always use parseOnlySuppliedSppgVendorInvoiceText and only the user's supplied text."
+            ),
+        },
+        "servers": [{"url": "https://sppg-finance-gpt-site-production-5b7d.up.railway.app"}],
+        "paths": paths,
+        "components": full.get("components", {}),
+    }
+
+
+@app.get("/v1/schema/chatgpt-operations-v0161.json", include_in_schema=False)
+def chatgpt_operations_schema_json() -> JSONResponse:
+    return JSONResponse(_chatgpt_operations_schema())
 
 
 def empty_site(site: dict[str, str]) -> dict[str, Any]:
@@ -108,7 +179,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.16.0", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.16.1", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")
