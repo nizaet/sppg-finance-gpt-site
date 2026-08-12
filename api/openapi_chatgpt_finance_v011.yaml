@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: SPPG ChatGPT Finance Bridge
-  version: 0.11.0
+  version: 0.11.1
   description: >-
     Authenticated bridge for trusted ChatGPT operator input. Writes structured finance
     transactions to PostgreSQL audit mirror and synchronizes the same transaction schema
@@ -21,8 +21,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/BridgeStatusResponse'
+        '401':
+          description: Missing bearer token
+        '403':
+          description: Invalid bearer token
+        '503':
+          description: Bridge not configured
   /v1/gpt/finance-transactions:
     post:
       operationId: createSppgFinanceTransactions
@@ -43,47 +48,62 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
-        '401': { description: Missing bearer token }
-        '403': { description: Invalid bearer token }
-        '503': { description: Backend not fully configured }
+                $ref: '#/components/schemas/CreateFinanceTransactionsResponse'
+        '401':
+          description: Missing bearer token
+        '403':
+          description: Invalid bearer token
+        '503':
+          description: Backend not fully configured
     get:
       operationId: searchSppgFinanceTransactions
       summary: Search recorded SPPG finance transactions before correcting or marking payment
       parameters:
         - in: query
           name: site
-          schema: { type: string, enum: [MAJA, CEMPLANG] }
+          schema:
+            type: string
+            enum: [MAJA, CEMPLANG]
         - in: query
           name: from
-          schema: { type: string, format: date }
+          schema:
+            type: string
+            format: date
         - in: query
           name: to
-          schema: { type: string, format: date }
+          schema:
+            type: string
+            format: date
         - in: query
           name: payment_status
-          schema: { type: string, enum: [paid, unpaid, partial] }
+          schema:
+            type: string
+            enum: [paid, unpaid, partial]
         - in: query
           name: q
           description: Description, category, vendor/orderBy, or transaction id text
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: limit
-          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
       responses:
         '200':
           description: Matching transactions
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
+                $ref: '#/components/schemas/SearchFinanceTransactionsResponse'
+        '401':
+          description: Missing bearer token
+        '403':
+          description: Invalid bearer token
+        '503':
+          description: Database unavailable
   /v1/gpt/finance-transactions/{transaction_id}:
     patch:
       operationId: updateSppgFinanceTransaction
@@ -96,7 +116,8 @@ paths:
         - in: path
           name: transaction_id
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -109,15 +130,37 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
-        '404': { description: Transaction not found }
+                $ref: '#/components/schemas/UpdateFinanceTransactionResponse'
+        '401':
+          description: Missing bearer token
+        '403':
+          description: Invalid bearer token
+        '404':
+          description: Transaction not found
+        '503':
+          description: Database unavailable
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    BridgeStatusResponse:
+      type: object
+      properties:
+        databaseReady:
+          type: boolean
+        googleCredentialsConfigured:
+          type: boolean
+        rawChatFolderConfigured:
+          type: boolean
+        firestoreProject:
+          type: string
+      required:
+        - databaseReady
+        - googleCredentialsConfigured
+        - rawChatFolderConfigured
+        - firestoreProject
     FinanceTransactionBatch:
       type: object
       required: [site, source_ref, items]
@@ -198,24 +241,158 @@ components:
     FinanceTransactionPatch:
       type: object
       properties:
-        date: { type: [string, 'null'], format: date }
-        description: { type: [string, 'null'] }
-        category: { type: [string, 'null'] }
-        amount: { type: [number, 'null'], minimum: 0 }
-        qty: { type: [number, 'null'] }
-        unit: { type: [string, 'null'] }
-        unit_price: { type: [number, 'null'], minimum: 0 }
-        order_by: { type: [string, 'null'] }
+        date:
+          type: [string, 'null']
+          format: date
+        description:
+          type: [string, 'null']
+        category:
+          type: [string, 'null']
+        amount:
+          type: [number, 'null']
+          minimum: 0
+        qty:
+          type: [number, 'null']
+        unit:
+          type: [string, 'null']
+        unit_price:
+          type: [number, 'null']
+          minimum: 0
+        order_by:
+          type: [string, 'null']
         is_debt:
           type: [boolean, 'null']
           description: Set false when marking a debt fully paid; set true for unpaid/partial debt.
         payment_status:
           type: [string, 'null']
           enum: [paid, unpaid, partial, null]
-        paid_amount: { type: [number, 'null'], minimum: 0 }
-        paid_date: { type: [string, 'null'], format: date }
-        category_override_reason: { type: [string, 'null'] }
-        note: { type: [string, 'null'] }
+        paid_amount:
+          type: [number, 'null']
+          minimum: 0
+        paid_date:
+          type: [string, 'null']
+          format: date
+        category_override_reason:
+          type: [string, 'null']
+        note:
+          type: [string, 'null']
         actor:
           type: string
           default: chatgpt
+    CreateFinanceTransactionsResponse:
+      type: object
+      properties:
+        site:
+          type: string
+          enum: [MAJA, CEMPLANG]
+        sourceRef:
+          type: string
+        evidenceUri:
+          type: [string, 'null']
+        archiveError:
+          type: [string, 'null']
+        count:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinanceTransactionSyncResult'
+      required: [site, sourceRef, count, items]
+    FinanceTransactionSyncResult:
+      type: object
+      properties:
+        transactionId:
+          type: string
+        inserted:
+          type: boolean
+        firestoreSyncStatus:
+          type: string
+          enum: [SYNCED, NOT_CONFIGURED, ERROR]
+        firestoreDocument:
+          type: [string, 'null']
+        syncError:
+          type: [string, 'null']
+      required: [transactionId, inserted, firestoreSyncStatus]
+    SearchFinanceTransactionsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinanceTransactionRecord'
+      required: [items]
+    FinanceTransactionRecord:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+        idempotency_key:
+          type: string
+        site:
+          type: string
+        transaction_date:
+          type: string
+          format: date
+        description:
+          type: string
+        transaction_type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+        amount:
+          type: number
+        qty:
+          type: [number, 'null']
+        unit:
+          type: [string, 'null']
+        unit_price:
+          type: [number, 'null']
+        order_by:
+          type: [string, 'null']
+        is_debt:
+          type: boolean
+        payment_status:
+          type: string
+          enum: [paid, unpaid, partial]
+        paid_amount:
+          type: number
+        paid_date:
+          type: [string, 'null']
+          format: date
+        source:
+          type: string
+        source_ref:
+          type: string
+        classification_confidence:
+          type: number
+        classification_reason:
+          type: string
+        note:
+          type: string
+        firestore_sync_status:
+          type: string
+        firestore_doc_id:
+          type: [string, 'null']
+        firestore_sync_error:
+          type: [string, 'null']
+        evidence_uri:
+          type: [string, 'null']
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    UpdateFinanceTransactionResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+        changed:
+          type: boolean
+        firestoreSyncStatus:
+          type: string
+        firestoreDocument:
+          type: [string, 'null']
+        syncError:
+          type: [string, 'null']
+      required: [transactionId, changed]
