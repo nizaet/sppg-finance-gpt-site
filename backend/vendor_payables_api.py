@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 
-router = APIRouter(prefix="/v1", tags=["vendor-payables"])
+router = APIRouter(tags=["vendor-payables"])
 
 
 def require_db() -> None:
