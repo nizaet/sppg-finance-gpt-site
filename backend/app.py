@@ -13,12 +13,14 @@ from backend.reference_api import router as reference_router
 from backend.planning_api import router as planning_router
 from backend.gpt_bridge_api import router as gpt_bridge_router
 from backend.firestore_backfill_api import router as firestore_backfill_router
+from backend.operational_api import router as operational_router
 
-app = FastAPI(title="SPPG Core API", version="0.11.2")
+app = FastAPI(title="SPPG Core API", version="0.12.0")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
 app.include_router(firestore_backfill_router)
+app.include_router(operational_router)
 
 origins = [x.strip() for x in os.getenv("SPPG_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
@@ -100,7 +102,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.11.2", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.12.0", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")
@@ -181,6 +183,15 @@ def control_tower(target_date: date = Query(alias="date")) -> dict[str, Any]:
                 out["summary"]["unresolvedRejects"] = cur.fetchone()["n"]
 
                 cur.execute(
+                    """select count(*) as n from purchase_orders po
+                       left join production_cycles pc on pc.id=po.production_cycle_id
+                       where upper(coalesce(po.site,''))=%s and pc.distribution_date=%s
+                         and upper(po.status) in ('FINALIZED','SENT','ACKNOWLEDGED','PARTIAL_RECEIVED')""",
+                    (site, target_date),
+                )
+                out["summary"]["deliveriesExpected"] = cur.fetchone()["n"]
+
+                cur.execute(
                     """select id, event_type, vendor_code, confidence, raw_text, created_at
                        from candidate_events where upper(coalesce(site,''))=%s and status='PENDING'
                        order by created_at desc limit 8""",
@@ -196,6 +207,16 @@ def control_tower(target_date: date = Query(alias="date")) -> dict[str, Any]:
                         "status": "REVIEW",
                         "severity": "warning",
                     })
+
+                cur.execute(
+                    """select gr.id,po.po_code,po.vendor_code,gr.received_at,
+                              coalesce(sum(abs(gri.variance_qty)),0) as variance_abs
+                       from goods_receipts gr join purchase_orders po on po.id=gr.purchase_order_id
+                       left join goods_receipt_items gri on gri.goods_receipts_id=gr.id
+                       where upper(coalesce(po.site,''))=%s and date(gr.received_at)=%s
+                       group by gr.id,po.id order by gr.received_at desc limit 8""",
+                    (site, target_date),
+                )
 
     return {"date": target_date.isoformat(), "databaseReady": True, "sites": sites}
 
