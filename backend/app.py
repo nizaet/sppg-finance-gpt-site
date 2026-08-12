@@ -12,11 +12,13 @@ from backend.db import connection, database_ready
 from backend.reference_api import router as reference_router
 from backend.planning_api import router as planning_router
 from backend.gpt_bridge_api import router as gpt_bridge_router
+from backend.firestore_backfill_api import router as firestore_backfill_router
 
-app = FastAPI(title="SPPG Core API", version="0.11.0")
+app = FastAPI(title="SPPG Core API", version="0.11.2")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
+app.include_router(firestore_backfill_router)
 
 origins = [x.strip() for x in os.getenv("SPPG_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
@@ -98,7 +100,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.11.0", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.11.2", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")
@@ -275,7 +277,7 @@ def review_decision(event_id: int, payload: ReviewDecision) -> dict[str, Any]:
             if row is None:
                 raise HTTPException(409, "event not found or no longer pending")
             cur.execute(
-                "insert into event_audit_log(candidate_event_id, action, actor, details) values (%s,%s,%s,%s::jsonb)",
+                "insert into event_audit_log(candidate_event_id, action,actor,details) values (%s,%s,%s,%s::jsonb)",
                 (event_id, f"REVIEW_{decision}", payload.actor, json.dumps({"note": payload.note}, ensure_ascii=False)),
             )
             conn.commit()
