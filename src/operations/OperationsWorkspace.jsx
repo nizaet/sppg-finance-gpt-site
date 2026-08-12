@@ -28,6 +28,15 @@ const tabs = [
   ["chat", "Sumber Chat", MessageSquareText],
 ];
 
+const moduleComponents = {
+  po: OperationsPoPlanner,
+  payments: OperationsPayments,
+  accounting: OperationsAccountantBgn,
+  vendors: OperationsVendorMaster,
+  review: OperationsReviewQueue,
+  chat: OperationsChatIngest,
+};
+
 function ModuleFallback() {
   return (
     <section className="ops-module">
@@ -38,6 +47,17 @@ function ModuleFallback() {
 
 export default function OperationsWorkspace() {
   const [tab, setTab] = useState("today");
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
+
+  const openTab = (id) => {
+    setTab(id);
+    setVisitedTabs((current) => {
+      if (current.has(id)) return current;
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div className="ops-workspace">
@@ -54,7 +74,7 @@ export default function OperationsWorkspace() {
               type="button"
               key={id}
               className={tab === id ? "active" : ""}
-              onClick={() => setTab(id)}
+              onClick={() => openTab(id)}
             >
               <Icon size={17} />
               {label}
@@ -69,18 +89,19 @@ export default function OperationsWorkspace() {
       </aside>
 
       <main className="ops-content">
-        {tab === "today" ? (
+        <div hidden={tab !== "today"}>
           <OperationsControlTower />
-        ) : (
-          <Suspense fallback={<ModuleFallback />}>
-            {tab === "po" && <OperationsPoPlanner />}
-            {tab === "payments" && <OperationsPayments />}
-            {tab === "accounting" && <OperationsAccountantBgn />}
-            {tab === "vendors" && <OperationsVendorMaster />}
-            {tab === "review" && <OperationsReviewQueue />}
-            {tab === "chat" && <OperationsChatIngest />}
-          </Suspense>
-        )}
+        </div>
+
+        <Suspense fallback={<ModuleFallback />}>
+          {Object.entries(moduleComponents).map(([id, Component]) => (
+            visitedTabs.has(id) ? (
+              <div key={id} hidden={tab !== id}>
+                <Component />
+              </div>
+            ) : null
+          ))}
+        </Suspense>
       </main>
     </div>
   );
