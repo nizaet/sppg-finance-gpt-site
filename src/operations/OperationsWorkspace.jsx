@@ -5,13 +5,17 @@ import {
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
+  PackageCheck,
   Store,
   WalletCards,
+  Warehouse,
 } from "lucide-react";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import "./workspace.css";
 
 const OperationsPoPlanner = lazy(() => import("./OperationsPoPlanner.jsx"));
+const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
+const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
 const OperationsAccountantBgn = lazy(() => import("./OperationsAccountantBgn.jsx"));
 const OperationsVendorMaster = lazy(() => import("./OperationsVendorMaster.jsx"));
@@ -21,6 +25,8 @@ const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
 const tabs = [
   ["today", "Hari Ini", LayoutDashboard],
   ["po", "PO Vendor", CalendarDays],
+  ["receiving", "Penerimaan", PackageCheck],
+  ["inventory", "Gudang", Warehouse],
   ["payments", "Invoice & Pembayaran", WalletCards],
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
@@ -30,6 +36,8 @@ const tabs = [
 
 const moduleComponents = {
   po: OperationsPoPlanner,
+  receiving: OperationsReceiving,
+  inventory: OperationsInventory,
   payments: OperationsPayments,
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
@@ -84,7 +92,7 @@ export default function OperationsWorkspace() {
 
         <div className="ops-sidebar-note">
           Pusat Resep, Master Harga, dan Kalkulator tetap menjadi sumber planning terpusat.
-          Pusat Operasional mengelola proses setelah planning tanpa menimpa data planning historis.
+          Pusat Operasional mengelola PO, penerimaan, gudang, tagihan, akuntan, dan BGN tanpa menimpa planning historis.
         </div>
       </aside>
 
