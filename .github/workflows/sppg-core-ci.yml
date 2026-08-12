@@ -46,6 +46,7 @@ jobs:
               '/v1/gpt/status',
               '/v1/gpt/finance-transactions',
               '/v1/gpt/finance-transactions/{transaction_id}',
+              '/v1/gpt/backfill-firestore',
           }
           missing = required - paths
           assert not missing, f'Missing API routes: {sorted(missing)}'
