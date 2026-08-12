@@ -4,8 +4,10 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from backend.db import connection, database_ready
+from backend.vendor_payables_api import router as vendor_payables_router
 
 router = APIRouter(prefix="/v1", tags=["reference"])
+router.include_router(vendor_payables_router)
 
 
 @router.get("/schema-status")
@@ -77,8 +79,6 @@ def po_schedule_preview(
     cooking_date: date | None = Query(default=None, alias="cookingDate"),
     site: str = "",
 ) -> dict[str, Any]:
-    # Cooking date is authoritative. If not supplied, use D-1 from distribution
-    # only as a preview convenience; production cycle can later store exact cooking_at.
     cook = cooking_date or (distribution_date - timedelta(days=1))
     if not database_ready():
         return {"distributionDate": distribution_date, "cookingDate": cook, "items": []}
