@@ -26,6 +26,8 @@ class VendorCostLineIn(BaseModel):
     goods_receipt_item_id: int | None = None
     item_name: str | None = None
     vendor_cost_price: float = Field(ge=0)
+    invoiced_qty: float | None = Field(default=None, ge=0)
+    rejected_qty: float = Field(default=0, ge=0)
 
 
 class VendorPayableFromReceiptIn(BaseModel):
@@ -52,6 +54,8 @@ def payable_source_key(payload: VendorPayableFromReceiptIn, vendor_code: str) ->
                 "goods_receipt_item_id": x.goods_receipt_item_id,
                 "item_name": normalize_name(x.item_name or ""),
                 "vendor_cost_price": x.vendor_cost_price,
+                "invoiced_qty": x.invoiced_qty,
+                "rejected_qty": x.rejected_qty,
             }
             for x in payload.lines
         ],
@@ -111,21 +115,48 @@ def resolve_lines(payload: VendorPayableFromReceiptIn, receipt_items: list[dict[
             raise HTTPException(409, "vendor cost line does not resolve to exactly one receipt item")
         item = candidates[0]
         used.add(item["goods_receipt_item_id"])
-        qty = float(item["accepted_qty"] or 0)
+
+        accepted_qty = float(item["accepted_qty"] or 0)
+        po_qty = float(item["po_qty"]) if item.get("po_qty") is not None else None
+        invoiced_qty = float(requested.invoiced_qty) if requested.invoiced_qty is not None else accepted_qty
+        rejected_qty = float(requested.rejected_qty or 0)
+        if rejected_qty > invoiced_qty:
+            raise HTTPException(400, "rejected_qty cannot exceed invoiced_qty")
+        payable_qty = round(invoiced_qty - rejected_qty, 4)
         price = float(requested.vendor_cost_price)
+        gross_line_total = round(invoiced_qty * price, 2)
+        reject_amount = round(rejected_qty * price, 2)
+        line_total = round(payable_qty * price, 2)
+
+        warnings: list[str] = []
+        if po_qty is not None and abs(invoiced_qty - po_qty) > 0.0001:
+            warnings.append(f"invoice_qty differs from po_qty by {round(invoiced_qty - po_qty, 4):g}")
+        if abs(invoiced_qty - accepted_qty) > 0.0001:
+            warnings.append(f"invoice_qty differs from received/accepted qty by {round(invoiced_qty - accepted_qty, 4):g}")
+        if rejected_qty > 0:
+            warnings.append(f"reject deduction {rejected_qty:g} {item.get('unit') or ''}".strip())
+
         resolved.append({
             "goods_receipt_item_id": item["goods_receipt_item_id"],
             "purchase_order_item_id": item["purchase_order_item_id"],
             "item_code": item.get("item_code"),
             "item_name": item.get("item_name") or item.get("reported_item_name"),
-            "accepted_qty": qty,
+            "accepted_qty": accepted_qty,
+            "invoiced_qty": invoiced_qty,
+            "rejected_qty": rejected_qty,
+            "payable_qty": payable_qty,
             "unit": item.get("unit"),
             "planned_qty": float(item["planned_qty"]) if item.get("planned_qty") is not None else None,
-            "po_qty": float(item["po_qty"]) if item.get("po_qty") is not None else None,
+            "po_qty": po_qty,
             "planning_price": float(item["planning_price"]) if item.get("planning_price") is not None else None,
             "po_price": float(item["po_price"]) if item.get("po_price") is not None else None,
             "vendor_cost_price": price,
-            "line_total": round(qty * price, 2),
+            "gross_line_total": gross_line_total,
+            "reject_amount": reject_amount,
+            "line_total": line_total,
+            "invoice_vs_po_variance": round(invoiced_qty - po_qty, 4) if po_qty is not None else None,
+            "invoice_vs_receipt_variance": round(invoiced_qty - accepted_qty, 4),
+            "warnings": warnings,
         })
     return resolved
 
@@ -137,7 +168,10 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
         with conn.cursor() as cur:
             ctx, receipt_items = load_receipt_context(cur, payload)
             resolved = resolve_lines(payload, receipt_items)
+            gross_amount = round(sum(x["gross_line_total"] for x in resolved), 2)
+            reject_deduction = round(sum(x["reject_amount"] for x in resolved), 2)
             net_amount = round(sum(x["line_total"] for x in resolved), 2)
+            warnings = [w for line in resolved for w in line["warnings"]]
             source_key = payable_source_key(payload, str(ctx["vendor_code"]))
             result = {
                 "committed": False,
@@ -151,9 +185,11 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
                 "invoiceDate": payload.invoice_date,
                 "dueDate": payload.due_date,
                 "payableStatus": "UNPAID",
-                "grossAmount": net_amount,
+                "grossAmount": gross_amount,
+                "rejectDeduction": reject_deduction,
                 "netAmount": net_amount,
                 "lines": resolved,
+                "warnings": warnings,
                 "financeTransactionCreated": False,
             }
             if not payload.commit:
@@ -176,11 +212,11 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
                      vendor_code,site,production_cycle_id,purchase_order_id,goods_receipt_id,
                      invoice_number,invoice_date,gross_amount,reject_deduction,net_amount,
                      evidence_uri,payable_status,due_date,source_key
-                   ) values (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,'UNPAID',%s,%s) returning id""",
+                   ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'UNPAID',%s,%s) returning id""",
                 (
                     ctx["vendor_code"], ctx["site"], ctx["production_cycle_id"], ctx["purchase_order_id"],
-                    ctx["goods_receipt_id"], payload.invoice_number, payload.invoice_date, net_amount,
-                    net_amount, payload.evidence_uri, payload.due_date, source_key,
+                    ctx["goods_receipt_id"], payload.invoice_number, payload.invoice_date, gross_amount,
+                    reject_deduction, net_amount, payload.evidence_uri, payload.due_date, source_key,
                 ),
             )
             invoice_id = cur.fetchone()["id"]
@@ -188,12 +224,15 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
                 cur.execute(
                     """insert into vendor_invoice_items(
                          vendor_invoice_id,item_code,item_name,invoiced_qty,unit,vendor_cost_price,line_total,
-                         purchase_order_item_id,goods_receipt_item_id,accepted_qty_snapshot
-                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                         purchase_order_item_id,goods_receipt_item_id,accepted_qty_snapshot,rejected_qty,payable_qty,
+                         reject_amount,po_qty_snapshot,invoice_vs_po_variance,invoice_vs_receipt_variance
+                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
-                        invoice_id, line["item_code"], line["item_name"], line["accepted_qty"], line["unit"],
+                        invoice_id, line["item_code"], line["item_name"], line["invoiced_qty"], line["unit"],
                         line["vendor_cost_price"], line["line_total"], line["purchase_order_item_id"],
-                        line["goods_receipt_item_id"], line["accepted_qty"],
+                        line["goods_receipt_item_id"], line["accepted_qty"], line["rejected_qty"],
+                        line["payable_qty"], line["reject_amount"], line["po_qty"],
+                        line["invoice_vs_po_variance"], line["invoice_vs_receipt_variance"],
                     ),
                 )
             conn.commit()
@@ -210,8 +249,8 @@ def list_vendor_payables(
 ) -> dict[str, Any]:
     require_db()
     sql = """select vi.id as vendor_invoice_id,vi.vendor_code,vi.site,vi.purchase_order_id,vi.goods_receipt_id,
-                    vi.invoice_number,vi.invoice_date,vi.gross_amount,vi.net_amount,vi.payable_status,vi.due_date,
-                    vi.created_at,po.po_code,pc.distribution_date
+                    vi.invoice_number,vi.invoice_date,vi.gross_amount,vi.reject_deduction,vi.net_amount,
+                    vi.payable_status,vi.due_date,vi.created_at,po.po_code,pc.distribution_date
              from vendor_invoices vi
              left join purchase_orders po on po.id=vi.purchase_order_id
              left join production_cycles pc on pc.id=vi.production_cycle_id
