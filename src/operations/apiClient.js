@@ -39,6 +39,28 @@ export const operationsApi = {
     if (site) q.set("site", site);
     return request(`/v1/reference/vendors${q.toString() ? `?${q.toString()}` : ""}`);
   },
+  getPurchaseOrders: ({ site = "", vendor = "", status = "", limit = 100 } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (site) q.set("site", site);
+    if (vendor) q.set("vendor", vendor);
+    if (status) q.set("status", status);
+    return request(`/v1/purchase-orders?${q.toString()}`);
+  },
+  getPurchaseOrder: (purchaseOrderId) => request(`/v1/purchase-orders/${encodeURIComponent(purchaseOrderId)}`),
+  createPurchaseOrder: (payload) => request("/v1/purchase-orders", { method: "POST", body: JSON.stringify(payload) }),
+  previewWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, commit: false }),
+  }),
+  commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, commit: true }),
+  }),
+  getReceivingVariance: ({ site = "", limit = 200 } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (site) q.set("site", site);
+    return request(`/v1/receiving/variance?${q.toString()}`);
+  },
   getVendorPayments: ({ status = "", site = "" } = {}) => {
     const q = new URLSearchParams();
     if (status) q.set("status", status);
