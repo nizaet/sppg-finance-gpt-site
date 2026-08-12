@@ -43,6 +43,10 @@ jobs:
               '/v1/po-schedule/preview',
               '/v1/planning-snapshots',
               '/v1/parse-message',
+              '/v1/purchase-orders',
+              '/v1/purchase-orders/{purchase_order_id}',
+              '/v1/receiving/whatsapp',
+              '/v1/receiving/variance',
               '/v1/gpt/status',
               '/v1/gpt/finance-transactions',
               '/v1/gpt/finance-transactions/{transaction_id}',
@@ -51,6 +55,28 @@ jobs:
           missing = required - paths
           assert not missing, f'Missing API routes: {sorted(missing)}'
           print('routes ok:', sorted(required))
+          PY
+      - name: Assert WhatsApp receipt extraction and immutable PO layer
+        run: |
+          python - <<'PY'
+          from backend.operational_api import extract_receipt_items, match_items
+
+          reported = extract_receipt_items('Wortel 95 kg\nSawi Putih 82 kg')
+          assert reported == [
+              {'reported_item_name': 'Wortel', 'received_qty': 95.0, 'unit': 'kg'},
+              {'reported_item_name': 'Sawi Putih', 'received_qty': 82.0, 'unit': 'kg'},
+          ]
+          po_items = [
+              {'id': 10, 'item_name': 'Wortel', 'po_qty': 100, 'unit': 'kg', 'item_aliases': []},
+              {'id': 11, 'item_name': 'Sawi Putih', 'po_qty': 82, 'unit': 'kg', 'item_aliases': []},
+          ]
+          matched = match_items(reported, po_items)
+          assert matched[0]['purchase_order_item_id'] == 10
+          assert matched[0]['variance_qty'] == -5.0
+          assert matched[1]['variance_qty'] == 0.0
+          # Matcher returns variance; it never mutates po_qty.
+          assert po_items[0]['po_qty'] == 100
+          print('WhatsApp receiving parser/variance protection ok')
           PY
       - name: Assert legacy Firestore patch target
         run: |
