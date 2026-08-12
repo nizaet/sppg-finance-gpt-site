@@ -52,3 +52,25 @@ jobs:
           assert not missing, f'Missing API routes: {sorted(missing)}'
           print('routes ok:', sorted(required))
           PY
+      - name: Assert legacy Firestore patch target
+        run: |
+          python - <<'PY'
+          from backend.gpt_bridge_api import _firestore_target
+
+          legacy_id, must_exist = _firestore_target({
+              'transaction_id': 'fs_maja_generated_id',
+              'source': 'firestore_backfill',
+              'firestore_doc_id': 'legacy-original-doc-id',
+          })
+          assert legacy_id == 'legacy-original-doc-id'
+          assert must_exist is True
+
+          bridge_id, must_exist = _firestore_target({
+              'transaction_id': 'gpt_maja_new_id',
+              'source': 'chatgpt_bridge',
+              'firestore_doc_id': None,
+          })
+          assert bridge_id == 'gpt_maja_new_id'
+          assert must_exist is False
+          print('legacy Firestore target protection ok')
+          PY
