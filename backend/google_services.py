@@ -32,6 +32,10 @@ class GoogleServicesNotConfigured(RuntimeError):
     pass
 
 
+class FirestoreDocumentNotFound(RuntimeError):
+    pass
+
+
 def _service_account_info() -> dict[str, Any]:
     raw = os.getenv("SPPG_GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
     if not raw:
@@ -85,6 +89,19 @@ def firestore_transaction_doc(site: str, transaction_id: str):
 
 def upsert_finance_transaction(site: str, transaction_id: str, data: dict[str, Any]) -> str:
     doc_ref = firestore_transaction_doc(site, transaction_id)
+    payload = dict(data)
+    payload["id"] = transaction_id
+    payload["updatedAt"] = firestore.SERVER_TIMESTAMP
+    doc_ref.set(payload, merge=True)
+    return doc_ref.path
+
+
+def update_existing_finance_transaction(site: str, transaction_id: str, data: dict[str, Any]) -> str:
+    """Update a known legacy Firestore transaction without ever creating a new document."""
+    doc_ref = firestore_transaction_doc(site, transaction_id)
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
+        raise FirestoreDocumentNotFound(f"Firestore transaction document not found: {doc_ref.path}")
     payload = dict(data)
     payload["id"] = transaction_id
     payload["updatedAt"] = firestore.SERVER_TIMESTAMP
