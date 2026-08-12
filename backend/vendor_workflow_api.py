@@ -3,15 +3,26 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 from backend.vendor_invoice_parser import parse_vendor_invoice_text, payment_draft
 
 router = APIRouter(prefix="/v1", tags=["vendor-workflow"])
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@router.get("/schema/chatgpt-operations-v0161.yaml", response_class=PlainTextResponse, include_in_schema=False)
+def chatgpt_operations_schema() -> str:
+    path = ROOT / "api" / "openapi_chatgpt_operations_v0161.yaml"
+    if not path.exists():
+        raise HTTPException(404, "operations schema not found")
+    return path.read_text(encoding="utf-8")
 
 
 def require_db() -> None:
