@@ -16,6 +16,7 @@ MIGRATIONS = [
     ROOT / "schema" / "inventory_ledger_v014.sql",
     ROOT / "schema" / "vendor_invoice_reconciliation_v015.sql",
     ROOT / "schema" / "vendor_payment_workflow_v016.sql",
+    ROOT / "schema" / "operational_history_provenance_v017.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
