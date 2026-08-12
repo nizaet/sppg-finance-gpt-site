@@ -14,13 +14,19 @@ from backend.planning_api import router as planning_router
 from backend.gpt_bridge_api import router as gpt_bridge_router
 from backend.firestore_backfill_api import router as firestore_backfill_router
 from backend.operational_api import router as operational_router
+from backend.vendor_payables_api import router as vendor_payables_router
+from backend.inventory_api import router as inventory_router
+from backend.vendor_workflow_api import router as vendor_workflow_router
 
-app = FastAPI(title="SPPG Core API", version="0.12.0")
+app = FastAPI(title="SPPG Core API", version="0.16.0")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
 app.include_router(firestore_backfill_router)
 app.include_router(operational_router)
+app.include_router(vendor_payables_router, prefix="/v1")
+app.include_router(inventory_router)
+app.include_router(vendor_workflow_router)
 
 origins = [x.strip() for x in os.getenv("SPPG_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
@@ -102,7 +108,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.12.0", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.16.0", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")
