@@ -1,24 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, PackageCheck, RefreshCw, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, RefreshCw, WalletCards } from "lucide-react";
 import { operationsApi, hasOperationsBackend } from "./apiClient";
 import { mockControlTower } from "./mockControlTower";
-import OperationsReviewQueue from "./OperationsReviewQueue.jsx";
 import "./operations.css";
 
 const metricDefs = [
   ["poDueToday", "PO Hari Ini", CalendarDays],
   ["poOverdue", "PO Terlambat", AlertTriangle],
-  ["deliveriesExpected", "Kedatangan", PackageCheck],
-  ["unresolvedRejects", "Reject Belum Selesai", ClipboardList],
   ["paymentsDue", "Pembayaran Jatuh Tempo", WalletCards],
   ["reviewQueue", "Perlu Review", CheckCircle2],
 ];
 
 const laneLabels = {
-  procurement: "PO & Supplier",
-  receiving: "Penerimaan & Reject",
-  payments: "Pembayaran Vendor",
-  costing: "Actual Usage & Costing",
+  procurement: "PO Vendor",
+  payments: "Invoice & Pembayaran Vendor",
   accountant: "Akuntan",
   bgn: "Maker / Approval / BGN",
 };
@@ -65,7 +60,6 @@ export default function OperationsControlTower({ date: initialDate }) {
   const [data, setData] = useState(mockControlTower);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [schemaReady, setSchemaReady] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -75,12 +69,8 @@ export default function OperationsControlTower({ date: initialDate }) {
         setData({ ...mockControlTower, date });
         return;
       }
-      const [tower, schema] = await Promise.all([
-        operationsApi.getControlTower(date),
-        operationsApi.getSchemaStatus().catch(() => null),
-      ]);
+      const tower = await operationsApi.getControlTower(date);
       setData(tower);
-      if (schema) setSchemaReady(Boolean(schema.schemaReady));
     } catch (err) {
       setError(err.message || "Gagal mengambil data Pusat Operasional");
     } finally {
@@ -98,34 +88,38 @@ export default function OperationsControlTower({ date: initialDate }) {
         <div>
           <span className="ops-kicker">PUSAT OPERASIONAL</span>
           <h2>Control Tower Hari Ini</h2>
-          <p>PO → penerimaan → pembayaran → costing → akuntan → BGN → settlement.</p>
+          <p>Kalkulator → PO vendor → invoice/pembayaran → akuntan → maker & approval BGN.</p>
         </div>
         <div className="ops-toolbar">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <button type="button" onClick={load} disabled={loading}><RefreshCw size={16} /> {loading ? "Memuat" : "Refresh"}</button>
+          <button type="button" onClick={load} disabled={loading}>
+            <RefreshCw size={16} /> {loading ? "Memuat" : "Refresh"}
+          </button>
         </div>
       </div>
 
       {!hasOperationsBackend && (
-        <div className="ops-notice">Mode struktur/mock aktif. Kalkulator Maja dan Cemplang tidak diubah. Data live akan aktif setelah SPPG Core API dikonfigurasi.</div>
+        <div className="ops-notice">
+          Mode struktur/mock aktif. Pusat Resep, Master Harga, dan Kalkulator Maja/Cemplang tidak diubah.
+        </div>
       )}
-      {schemaReady === false && <div className="ops-error">Database terhubung, tetapi schema SPPG Core belum lengkap.</div>}
-      {schemaReady === true && <div className="ops-success">Backend live · PostgreSQL schema siap.</div>}
       {error && <div className="ops-error">{error}</div>}
 
       {sites.map((site) => (
         <section className="ops-site" key={site.siteId}>
           <div className="ops-site-title"><h3>{site.siteLabel}</h3><span>{date}</span></div>
           <div className="ops-metrics">
-            {metricDefs.map(([key, label, Icon]) => <Metric key={key} value={site.summary?.[key]} label={label} Icon={Icon} />)}
+            {metricDefs.map(([key, label, Icon]) => (
+              <Metric key={key} value={site.summary?.[key]} label={label} Icon={Icon} />
+            ))}
           </div>
           <div className="ops-lanes">
-            {Object.keys(laneLabels).map((name) => <Lane key={name} name={name} items={site.lanes?.[name] || []} />)}
+            {Object.keys(laneLabels).map((name) => (
+              <Lane key={name} name={name} items={site.lanes?.[name] || []} />
+            ))}
           </div>
         </section>
       ))}
-
-      <OperationsReviewQueue />
     </div>
   );
 }
