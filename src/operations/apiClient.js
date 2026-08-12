@@ -1,21 +1,51 @@
 const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 
 const jsonHeaders = { "Content-Type": "application/json" };
+const inflightGets = new Map();
+const REQUEST_TIMEOUT_MS = 20000;
 
-async function request(path, options = {}) {
-  const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
-    ...options,
-    headers: { ...jsonHeaders, ...(options.headers || {}) },
-  });
+async function doRequest(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: { ...jsonHeaders, ...(options.headers || {}) },
+    });
 
-  if (!res.ok) {
-    let detail = "";
-    try { detail = await res.text(); } catch {}
-    throw new Error(`SPPG Core API ${res.status}: ${detail || res.statusText}`);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = await res.text(); } catch {}
+      throw new Error(`SPPG Core API ${res.status}: ${detail || res.statusText}`);
+    }
+
+    if (res.status === 204) return null;
+    return res.json();
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
+}
 
-  if (res.status === 204) return null;
-  return res.json();
+function request(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  if (method !== "GET") return doRequest(path, options);
+
+  // React StrictMode dan beberapa modul dapat meminta resource yang sama hampir
+  // bersamaan. Dedup hanya selama request masih berjalan: tidak ada cache data
+  // lama, sehingga tombol Refresh tetap selalu mengambil state terbaru.
+  const key = `${DEFAULT_BASE_URL}${path}`;
+  const existing = inflightGets.get(key);
+  if (existing) return existing;
+
+  const pending = doRequest(path, options).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, pending);
+  return pending;
 }
 
 export const operationsApi = {
