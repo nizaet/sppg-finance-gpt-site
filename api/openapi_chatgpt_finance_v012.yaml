@@ -52,7 +52,7 @@ paths:
     post:
       operationId: createSppgFinanceTransactions
       summary: Create classified SPPG finance transactions
-      description: Preserve explicit operator categories. Never invent amounts. Reuse source_ref on retries.
+      description: Preserve explicit categories, never invent amounts, and reuse source_ref on retries.
       requestBody:
         required: true
         content:
@@ -91,11 +91,8 @@ paths:
   /v1/gpt/backfill-firestore:
     post:
       operationId: backfillSppgFirestoreHistory
-      summary: Preview or import one safe batch of existing Firestore history into PostgreSQL
-      description: >-
-        Always preview first with dry_run=true. Firestore is read-only and never modified. For actual import,
-        use dry_run=false with batch_size at most 200. If hasMore=true, call again with start_after_id set to
-        nextCursor. Continue until hasMore=false. Re-running any batch is safe because existing records are skipped.
+      summary: Preview or import one Firestore history batch into PostgreSQL
+      description: Preview with dry_run=true. For import use dry_run=false and batch_size up to 200. If hasMore=true, call again using nextCursor as start_after_id. Firestore is read-only and existing records are skipped.
       requestBody:
         required: true
         content:
@@ -254,16 +251,16 @@ components:
         dry_run:
           type: boolean
           default: true
-          description: Keep true for preview. Set false only after explicit operator approval.
+          description: Preview only when true; import when false after explicit approval.
         batch_size:
           type: integer
           minimum: 1
           maximum: 500
           default: 200
-          description: Number of Firestore documents to process in this call. Use 200 for actual imports.
+          description: Firestore documents processed in this call.
         start_after_id:
           type: [string, 'null']
-          description: Cursor returned by the previous batch as nextCursor; omit for the first batch.
+          description: Use nextCursor from the previous batch; omit for the first batch.
         actor: {type: string, default: chatgpt}
     FirestoreBackfillSample:
       type: object
