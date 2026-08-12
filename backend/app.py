@@ -212,11 +212,20 @@ def control_tower(target_date: date = Query(alias="date")) -> dict[str, Any]:
                     """select gr.id,po.po_code,po.vendor_code,gr.received_at,
                               coalesce(sum(abs(gri.variance_qty)),0) as variance_abs
                        from goods_receipts gr join purchase_orders po on po.id=gr.purchase_order_id
-                       left join goods_receipt_items gri on gri.goods_receipts_id=gr.id
+                       left join goods_receipt_items gri on gri.goods_receipt_id=gr.id
                        where upper(coalesce(po.site,''))=%s and date(gr.received_at)=%s
                        group by gr.id,po.id order by gr.received_at desc limit 8""",
                     (site, target_date),
                 )
+                for row in cur.fetchall():
+                    variance_abs = float(row["variance_abs"] or 0)
+                    out["lanes"]["receiving"].append({
+                        "id": row["id"],
+                        "title": f"{row['vendor_code']} · {row['po_code']}",
+                        "subtitle": f"Penerimaan tercatat · selisih absolut {variance_abs:g}",
+                        "status": "VARIANCE" if variance_abs > 0 else "RECEIVED",
+                        "severity": "warning" if variance_abs > 0 else "success",
+                    })
 
     return {"date": target_date.isoformat(), "databaseReady": True, "sites": sites}
 
