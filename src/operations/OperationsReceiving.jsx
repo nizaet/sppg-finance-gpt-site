@@ -5,8 +5,8 @@ import { operationsApi } from "./apiClient";
 function pct(value){ return `${Math.round(Number(value || 0) * 100)}%`; }
 function fmtQty(value){ return value === null || value === undefined ? "-" : Number(value).toLocaleString("id-ID", { maximumFractionDigits: 4 }); }
 
-export default function OperationsReceiving(){
-  const [site,setSite]=useState("MAJA");
+export default function OperationsReceiving({ fixedSite = "" }){
+  const [site,setSite]=useState(fixedSite || "MAJA");
   const [items,setItems]=useState([]);
   const [variance,setVariance]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -18,25 +18,31 @@ export default function OperationsReceiving(){
   const [saving,setSaving]=useState(false);
   const [message,setMessage]=useState("");
 
+  useEffect(()=>{
+    if(fixedSite && site !== fixedSite){ setSite(fixedSite); setPreview(null); }
+  },[fixedSite,site]);
+
+  const activeSite = fixedSite || site;
+
   const load=async()=>{
     setLoading(true); setError("");
     try{
       const [d,v]=await Promise.all([
-        operationsApi.getGoodsReceipts({site}),
-        operationsApi.getReceivingVariance({site}),
+        operationsApi.getGoodsReceipts({site: activeSite}),
+        operationsApi.getReceivingVariance({site: activeSite}),
       ]);
       setItems(d?.items||[]); setVariance(v?.items||[]);
     }catch(e){setError(e.message||"Gagal mengambil penerimaan");}
     finally{setLoading(false);}
   };
-  useEffect(()=>{load();},[site]);
+  useEffect(()=>{load();},[activeSite]);
 
   const payload=useMemo(()=>({
-    site,
+    site: activeSite,
     text,
     vendor_code: vendor.trim() || null,
     reporter: reporter.trim() || null,
-  }),[site,text,vendor,reporter]);
+  }),[activeSite,text,vendor,reporter]);
 
   const runPreview=async()=>{
     if(!text.trim()) return;
@@ -61,7 +67,7 @@ export default function OperationsReceiving(){
   return <section className="ops-module">
     <div className="ops-module-header">
       <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Chat grup Maja/Cemplang menjadi bukti penerimaan. Received qty dicatat sebagai layer terpisah dan tidak pernah menimpa planned qty atau PO qty.</p></div>
-      <div className="ops-inline-controls"><select value={site} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
+      <div className="ops-inline-controls"><select value={activeSite} disabled={Boolean(fixedSite)} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
     </div>
 
     <div className="ops-parse-result">
