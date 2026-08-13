@@ -142,6 +142,10 @@ export const operationsApi = {
   createGoodsReceipt: (payload) => request("/v1/goods-receipts", { method: "POST", body: JSON.stringify(payload) }),
   getActualUsage: (productionCycleId) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(productionCycleId)}`),
   saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
+  generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, commit }),
+  }),
   getAccountantFlow: (site = "") => {
     const q = new URLSearchParams(); if (site) q.set("site", site);
     return request(`/v1/accountant-flow${q.toString() ? `?${q.toString()}` : ""}`);
