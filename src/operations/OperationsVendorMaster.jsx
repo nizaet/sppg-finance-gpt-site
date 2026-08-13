@@ -2,17 +2,23 @@ import React, { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
-export default function OperationsVendorMaster() {
-  const [site, setSite] = useState("");
+export default function OperationsVendorMaster({ fixedSite = "" }) {
+  const [site, setSite] = useState(fixedSite || "");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (fixedSite && site !== fixedSite) setSite(fixedSite);
+  }, [fixedSite, site]);
+
+  const activeSite = fixedSite || site;
 
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await operationsApi.getReferenceVendors(site);
+      const data = await operationsApi.getReferenceVendors(activeSite);
       setItems(data?.items || []);
     } catch (err) {
       setError(err.message || "Gagal mengambil master vendor");
@@ -21,7 +27,7 @@ export default function OperationsVendorMaster() {
     }
   };
 
-  useEffect(() => { load(); }, [site]);
+  useEffect(() => { load(); }, [activeSite]);
 
   return (
     <section className="ops-module">
@@ -32,7 +38,7 @@ export default function OperationsVendorMaster() {
           <p>Rule aktif ditampilkan berdasarkan effective date. Histori transaksi tidak ditimpa.</p>
         </div>
         <div className="ops-inline-controls">
-          <select value={site} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
+          <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
           <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh</button>
         </div>
       </div>
