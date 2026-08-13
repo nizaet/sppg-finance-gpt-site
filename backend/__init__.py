@@ -11,9 +11,10 @@ from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
 from backend.inventory_summary_api import router as inventory_summary_router
 from backend.auth_api import router as auth_router
+from backend.accountant_excel_api import router as accountant_excel_router
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
-# activated in the frontend after Railway has all role passwords + auth secret.
+# activated after Railway has all role passwords + auth secret.
 operational_router.include_router(auth_router)
 
 # chat_router contains the domain router, restoring these live routes under /v1:
@@ -21,9 +22,10 @@ operational_router.include_router(auth_router)
 # /bgn-flow, /audit-log, and their corresponding write endpoints.
 operational_router.include_router(chat_router)
 
-# Read-only projections used by Pusat Operasional.
+# Read-only projections and owner-side generated accountant artifacts.
 operational_router.include_router(control_tower_router)
 operational_router.include_router(inventory_summary_router)
+operational_router.include_router(accountant_excel_router)
 
 # Preserve the legacy compatibility bundle used by existing clients.
 operational_router.include_router(vendor_payables_router)
