@@ -55,7 +55,7 @@ function Lane({ name, items = [] }) {
   );
 }
 
-export default function OperationsControlTower({ date: initialDate }) {
+export default function OperationsControlTower({ date: initialDate, fixedSite = "" }) {
   const [date, setDate] = useState(initialDate || new Date().toISOString().slice(0, 10));
   const [data, setData] = useState(mockControlTower);
   const [loading, setLoading] = useState(false);
@@ -66,10 +66,13 @@ export default function OperationsControlTower({ date: initialDate }) {
     setError("");
     try {
       if (!hasOperationsBackend) {
-        setData({ ...mockControlTower, date });
+        const mockSites = fixedSite
+          ? (mockControlTower.sites || []).filter((x) => String(x.siteLabel || "").toUpperCase().includes(fixedSite))
+          : mockControlTower.sites;
+        setData({ ...mockControlTower, date, sites: mockSites });
         return;
       }
-      const tower = await operationsApi.getControlTower(date);
+      const tower = await operationsApi.getControlTower(date, fixedSite);
       setData(tower);
     } catch (err) {
       setError(err.message || "Gagal mengambil data Pusat Operasional");
@@ -78,17 +81,19 @@ export default function OperationsControlTower({ date: initialDate }) {
     }
   };
 
-  useEffect(() => { load(); }, [date]);
+  useEffect(() => { load(); }, [date, fixedSite]);
 
   const sites = useMemo(() => data?.sites || [], [data]);
+  const visibleLaneNames = fixedSite ? ["procurement", "payments"] : Object.keys(laneLabels);
+  const visibleMetrics = fixedSite ? metricDefs.filter(([key]) => key !== "reviewQueue") : metricDefs;
 
   return (
     <div className="ops-shell">
       <div className="ops-heading">
         <div>
           <span className="ops-kicker">PUSAT OPERASIONAL</span>
-          <h2>Control Tower Hari Ini</h2>
-          <p>Kalkulator → PO vendor → invoice/pembayaran → akuntan → maker & approval BGN.</p>
+          <h2>Control Tower Hari Ini{fixedSite ? ` · ${fixedSite}` : ""}</h2>
+          <p>{fixedSite ? "Kalkulator → PO vendor → invoice/pembayaran untuk dapur ini." : "Kalkulator → PO vendor → invoice/pembayaran → akuntan → maker & approval BGN."}</p>
         </div>
         <div className="ops-toolbar">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -109,12 +114,12 @@ export default function OperationsControlTower({ date: initialDate }) {
         <section className="ops-site" key={site.siteId}>
           <div className="ops-site-title"><h3>{site.siteLabel}</h3><span>{date}</span></div>
           <div className="ops-metrics">
-            {metricDefs.map(([key, label, Icon]) => (
+            {visibleMetrics.map(([key, label, Icon]) => (
               <Metric key={key} value={site.summary?.[key]} label={label} Icon={Icon} />
             ))}
           </div>
           <div className="ops-lanes">
-            {Object.keys(laneLabels).map((name) => (
+            {visibleLaneNames.map((name) => (
               <Lane key={name} name={name} items={site.lanes?.[name] || []} />
             ))}
           </div>
