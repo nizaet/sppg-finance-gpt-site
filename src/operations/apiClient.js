@@ -1,8 +1,18 @@
+import { readSessionToken } from "../auth/session.js";
+
 const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 
-const jsonHeaders = { "Content-Type": "application/json" };
 const inflightGets = new Map();
 const REQUEST_TIMEOUT_MS = 20000;
+
+function requestHeaders(options = {}) {
+  const token = readSessionToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+}
 
 async function doRequest(path, options = {}) {
   const controller = new AbortController();
@@ -11,7 +21,7 @@ async function doRequest(path, options = {}) {
     const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
       ...options,
       signal: controller.signal,
-      headers: { ...jsonHeaders, ...(options.headers || {}) },
+      headers: requestHeaders(options),
     });
 
     if (!res.ok) {
@@ -48,7 +58,11 @@ function request(path, options = {}) {
 export const operationsApi = {
   health: () => request("/health"),
   getSchemaStatus: () => request("/v1/schema-status"),
-  getControlTower: (date) => request(`/v1/control-tower-v2?date=${encodeURIComponent(date)}`),
+  getControlTower: (date, site = "") => {
+    const q = new URLSearchParams({ date });
+    if (site) q.set("site", site);
+    return request(`/v1/control-tower-v2?${q.toString()}`);
+  },
   getPoCalendar: ({ from, to, site }) => {
     const q = new URLSearchParams({ from, to });
     if (site) q.set("site", site);
