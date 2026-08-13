@@ -54,8 +54,10 @@ jobs:
               '/v1/receiving/variance',
               '/v1/goods-receipts',
               '/v1/actual-usage',
+              '/v1/accountant-excel/from-planning',
               '/v1/accountant-flow',
               '/v1/accountant-submissions',
+              '/v1/accountant-submissions/{submission_id}/mark-sent',
               '/v1/accountant-invoices',
               '/v1/bgn-flow',
               '/v1/bgn-makers',
@@ -117,6 +119,39 @@ jobs:
           assert _validate_body_site(b'{"site":"CEMPLANG"}', 'MAJA')[0] is False
           print('SPPG role signing and site boundary checks ok')
           PY
+      - name: Assert accountant Excel matches calculator Belanja format
+        run: |
+          python - <<'PY'
+          from backend.accountant_excel_api import _build_rows, _workbook_bytes
+
+          snapshot = {
+              'payload': {'porsiKecil': 100, 'porsiBesar': 200},
+          }
+          items = [
+              {
+                  'item_name': 'Wortel', 'planned_qty': 50, 'unit': 'kg',
+                  'planning_price': 9500, 'notes': '', 'category_code': 'SAYUR_BUAH',
+                  'preferred_vendor_code': 'HOLIL', 'source_payload': {},
+              },
+              {
+                  'item_name': 'Beras Lokal Premium', 'planned_qty': 100, 'unit': 'kg',
+                  'planning_price': 15000, 'notes': '', 'category_code': 'BERAS',
+                  'preferred_vendor_code': 'DEDE', 'source_payload': {},
+              },
+          ]
+          rows, grand, pagu, delta = _build_rows(snapshot, items)
+          assert rows[0] == [
+              'Item', 'Jumlah', 'Satuan', 'Harga Satuan (Estimasi)',
+              'Total Harga (Estimasi)', 'Catatan', 'Kategori / Supplier'
+          ]
+          assert grand == 1975000.0
+          assert pagu == 2800000.0
+          assert delta == 825000.0
+          blob = _workbook_bytes(rows)
+          assert blob[:2] == b'PK', 'xlsx must be a ZIP container'
+          assert len(blob) > 1000
+          print('accountant calculator-format Excel ok')
+          PY
       - name: Assert WhatsApp receipt extraction and immutable PO layer
         run: |
           python - <<'PY'
@@ -166,7 +201,7 @@ jobs:
           assert receipt_items[0]['po_qty'] == 165
           print('vendor invoice/reject layer protection ok')
           PY
-      - name: Assert Holil WhatsApp invoice parser
+      - name: Assert vendor invoice parser arithmetic and units
         run: |
           python - <<'PY'
           from backend.vendor_invoice_parser import parse_vendor_invoice_text
@@ -193,8 +228,16 @@ jobs:
           jeruk = next(x for x in parsed['items'] if x['item_name'] == 'Jeruk Medan')
           assert jeruk['rejected_qty'] == 6.0
           assert jeruk['payable_qty'] == 159.0
+          assert jeruk['unit'] == 'kg'
           assert parsed['canCommit'] is True
-          print('Holil invoice parser ok')
+
+          unit_text = 'Tahu 10 papan x 100000 = 1.000.000\nTotal Rp 1.000.000'
+          parsed_unit = parse_vendor_invoice_text(unit_text, 'HAJI_BADRI', 'CEMPLANG')
+          assert parsed_unit['items'][0]['unit'] == 'papan'
+          assert parsed_unit['items'][0]['computed_line_total'] == 1000000.0
+          assert parsed_unit['grossAmount'] == 1000000.0
+          assert parsed_unit['canCommit'] is True
+          print('vendor invoice arithmetic and unit preservation ok')
           PY
       - name: Assert legacy Firestore patch target
         run: |
