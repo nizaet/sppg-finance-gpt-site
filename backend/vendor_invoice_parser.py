@@ -25,6 +25,18 @@ ALIASES = {
     "kol putih": "Kol Putih",
 }
 
+UNIT_ALIASES = {
+    "kilogram": "kg",
+    "gram": "gr",
+    "pc": "pcs",
+    "piece": "pcs",
+    "pieces": "pcs",
+    "ltr": "liter",
+    "lt": "liter",
+    "roll": "rol",
+}
+UNIT_PATTERN = r"kg|kilogram|gr|gram|pcs|pc|piece|pieces|buah|butir|ikat|pack|papan|tabung|liter|ltr|lt|box|dus|pouch|rol|roll|botol"
+
 
 def norm(value: str) -> str:
     value = value.lower().strip()
@@ -35,6 +47,11 @@ def norm(value: str) -> str:
 def canonical_item(value: str) -> str:
     n = norm(value)
     return ALIASES.get(n, " ".join(x.capitalize() for x in n.split()))
+
+
+def canonical_unit(value: str | None) -> str:
+    raw = (value or "kg").lower().strip().rstrip(".")
+    return UNIT_ALIASES.get(raw, raw)
 
 
 def parse_num(value: str) -> float:
@@ -68,12 +85,12 @@ def fmt_idr(value: float) -> str:
 
 
 LINE_RE = re.compile(
-    r"^\s*(?P<item>.+?)\s+(?P<qty>\d+(?:[\.,]\d+)?)\s*[xX×]\s*(?P<price>\d[\d\.,]*)\s*=\s*(?:Rp\.?\s*)?(?P<total>\d[\d\.,]*)\s*$",
+    rf"^\s*(?P<item>.+?)\s+(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>{UNIT_PATTERN})?\s*[xX×]\s*(?P<price>\d[\d\.,]*)\s*=\s*(?:Rp\.?\s*)?(?P<total>\d[\d\.,]*)\s*$",
     re.IGNORECASE,
 )
 TOTAL_RE = re.compile(r"^\s*total\s*(?:rp\.?\s*)?(?P<total>\d[\d\.,]*)\s*$", re.IGNORECASE)
 REJECT_RE = re.compile(
-    r"\b(?:riject|reject|rijek|rejek)\b\s*(?:\d+\s+)?(?P<item>[a-zA-Z][a-zA-Z\s\[\]-]*?)\s+(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>kg|gr|gram|pcs|pc|buah|ikat|pack|papan)\b",
+    rf"\b(?:riject|reject|rijek|rejek)\b\s*(?:\d+\s+)?(?P<item>[a-zA-Z][a-zA-Z\s\[\]-]*?)\s+(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>{UNIT_PATTERN})\b",
     re.IGNORECASE,
 )
 
@@ -87,10 +104,6 @@ def _best_item_match(reject_name: str, items: list[dict[str, Any]]) -> tuple[dic
         score = SequenceMatcher(None, needle, candidate).ratio()
         if needle in candidate or candidate in needle:
             score = max(score, 0.95)
-        # Prefer a primary-name match ("jeruk" -> "Jeruk Medan") over a
-        # modifier match ("jeruk" -> "Daun Jeruk"). When still tied, prefer
-        # the larger invoice quantity because reject reports normally refer to
-        # the actual bulk line being inspected.
         primary = 1 if candidate == needle or candidate.startswith(needle + " ") else 0
         qty = float(item.get("invoiced_qty") or 0)
         rank = (score, primary, qty)
@@ -111,22 +124,22 @@ def parse_vendor_invoice_text(text: str, vendor_code: str | None = None, site: s
             continue
         m = LINE_RE.match(stripped)
         if m:
-            qty = parse_num(m.group("qty"))
+            quantity = parse_num(m.group("qty"))
             price = parse_num(m.group("price"))
             declared_line_total = parse_num(m.group("total"))
-            computed = round(qty * price, 2)
+            computed = round(quantity * price, 2)
             item = {
                 "reported_item_name": m.group("item").strip(),
                 "item_name": canonical_item(m.group("item")),
-                "invoiced_qty": qty,
-                "unit": "kg",
+                "invoiced_qty": quantity,
+                "unit": canonical_unit(m.group("unit")),
                 "vendor_cost_price": price,
                 "declared_line_total": declared_line_total,
                 "computed_line_total": computed,
                 "line_total_matches": abs(declared_line_total - computed) <= 1,
                 "rejected_qty": 0.0,
                 "reject_amount": 0.0,
-                "payable_qty": qty,
+                "payable_qty": quantity,
                 "net_line_total": computed,
             }
             if not item["line_total_matches"]:
@@ -139,9 +152,13 @@ def parse_vendor_invoice_text(text: str, vendor_code: str | None = None, site: s
 
     for rm in REJECT_RE.finditer(text):
         reject_qty = parse_num(rm.group("qty"))
+        reject_unit = canonical_unit(rm.group("unit"))
         matched, score = _best_item_match(rm.group("item"), lines)
         if matched is None or score < 0.70:
             warnings.append(f"Rijek tidak dapat dicocokkan: {rm.group(0).strip()}")
+            continue
+        if reject_unit != canonical_unit(str(matched.get("unit") or "kg")):
+            warnings.append(f"Satuan rijek berbeda dari invoice: {matched['item_name']} ({reject_unit} vs {matched['unit']})")
             continue
         if reject_qty > float(matched["invoiced_qty"]):
             warnings.append(f"Rijek melebihi qty invoice: {matched['item_name']}")
@@ -158,6 +175,13 @@ def parse_vendor_invoice_text(text: str, vendor_code: str | None = None, site: s
     if declared_total is not None and abs(declared_total - gross) > 1:
         warnings.append(f"Declared total Rp {fmt_idr(declared_total)} berbeda dari hasil hitung Rp {fmt_idr(gross)}")
 
+    blocking = [
+        warning for warning in warnings
+        if "mismatch" in warning.lower()
+        or "berbeda" in warning.lower()
+        or "melebihi" in warning.lower()
+        or "tidak dapat dicocokkan" in warning.lower()
+    ]
     return {
         "vendorCode": vendor_code,
         "site": site,
@@ -167,7 +191,7 @@ def parse_vendor_invoice_text(text: str, vendor_code: str | None = None, site: s
         "rejectDeduction": reject_total,
         "netAmount": net,
         "warnings": warnings,
-        "canCommit": bool(lines) and not any("mismatch" in x.lower() or "berbeda" in x.lower() for x in warnings),
+        "canCommit": bool(lines) and not blocking,
     }
 
 
