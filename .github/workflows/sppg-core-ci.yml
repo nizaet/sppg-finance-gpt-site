@@ -27,7 +27,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
       - run: python -m compileall backend parser workflow
-      - run: python -c "from backend.app import app; assert app.title == 'SPPG Core API'"
+      - run: python -c "from backend.app import app; assert app.title == 'SPPG Core API'; from backend.server import app as production_app; assert production_app is not None"
       - name: Assert SPPG Core routes
         run: |
           python - <<'PY'
@@ -80,15 +80,17 @@ jobs:
           assert not missing, f'Missing API routes: {sorted(missing)}'
           print('routes ok:', sorted(required))
           PY
-      - name: Assert SPPG role sessions
+      - name: Assert SPPG role sessions and site scoping
         env:
           SPPG_AUTH_SECRET: ci-auth-secret-should-never-be-used-in-production
           SPPG_OWNER_PASSWORD: ci-owner-password
           SPPG_MAJA_PASSWORD: ci-maja-password
           SPPG_CEMPLANG_PASSWORD: ci-cemplang-password
+          SPPG_GPT_API_KEY: ci-gpt-owner-key
         run: |
           python - <<'PY'
           from backend.auth_api import auth_config, issue_session, verify_session
+          from backend.auth_middleware import _query_with_site, _role_from_auth, _validate_body_site
 
           cfg = auth_config()
           assert cfg['enabled'] is True
@@ -99,7 +101,21 @@ jobs:
               payload = verify_session(token)
               assert payload['role'] == role
               assert payload['exp'] == exp
-          print('SPPG role session signing ok')
+              assert _role_from_auth(f'Bearer {token}') == role
+
+          assert _role_from_auth('Bearer ci-gpt-owner-key') == 'OWNER'
+
+          scope = {'query_string': b'date=2026-08-13'}
+          ok, _ = _query_with_site(scope, 'MAJA')
+          assert ok and b'site=MAJA' in scope['query_string']
+
+          scope = {'query_string': b'site=CEMPLANG'}
+          ok, _ = _query_with_site(scope, 'MAJA')
+          assert not ok
+
+          assert _validate_body_site(b'{"site":"MAJA"}', 'MAJA')[0] is True
+          assert _validate_body_site(b'{"site":"CEMPLANG"}', 'MAJA')[0] is False
+          print('SPPG role signing and site boundary checks ok')
           PY
       - name: Assert WhatsApp receipt extraction and immutable PO layer
         run: |
