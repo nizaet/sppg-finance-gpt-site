@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ClipboardCopy, ExternalLink, MessageCircle, RefreshCw } from "lucide-react";
+import { ClipboardCopy, ExternalLink, FileCheck2, MessageCircle, RefreshCw, Stamp } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
+const APPROVERS = { MAJA: "EMBUN", CEMPLANG: "MALIK" };
 
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
@@ -47,6 +48,7 @@ export default function OperationsAccountantBgn(){
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
   const [message,setMessage]=useState("");
+  const [saving,setSaving]=useState("");
 
   const load=async()=>{
     setLoading(true); setError("");
@@ -62,6 +64,14 @@ export default function OperationsAccountantBgn(){
     () => bgn.filter((x) => String(x.approval_status || "PENDING").toUpperCase() !== "APPROVED"),
     [bgn],
   );
+
+  const makerByCycle = useMemo(() => {
+    const map = new Map();
+    bgn.forEach((x) => {
+      if (x.production_cycle_id != null && !map.has(String(x.production_cycle_id))) map.set(String(x.production_cycle_id), x);
+    });
+    return map;
+  }, [bgn]);
 
   const copyAccountant = async (row) => {
     await copyText(accountantMessage(row));
@@ -80,15 +90,97 @@ export default function OperationsAccountantBgn(){
     setMessage("WhatsApp dibuka dengan rekap pending approval. Pilih Embun/Malik sesuai site sebelum kirim.");
   };
 
+  const recordInvoice = async (row) => {
+    if (row.invoice_id) return;
+    const invoiceNumber = window.prompt(`Nomor invoice dari ${row.accountant_code} untuk ${row.site}:`, "");
+    if (invoiceNumber === null) return;
+    const amountRaw = window.prompt("Nilai invoice (angka tanpa Rp):", "");
+    if (amountRaw === null) return;
+    const amount = Number(String(amountRaw).replace(/[^0-9.-]/g, ""));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Nilai invoice harus lebih dari 0.");
+      return;
+    }
+    if (!window.confirm(`Catat invoice ${invoiceNumber || "tanpa nomor"} sebesar ${money(amount)} untuk ${row.site}?`)) return;
+
+    setSaving(`invoice-${row.submission_id}`); setError(""); setMessage("");
+    try {
+      await operationsApi.createAccountantInvoice({
+        accountant_submission_id: row.submission_id,
+        invoice_number: invoiceNumber.trim() || null,
+        invoice_amount: amount,
+        invoice_evidence_uri: null,
+        received_at: null,
+      });
+      setMessage("Invoice akuntan tercatat. Status pembayaran/receipt BGN belum berubah.");
+      await load();
+    } catch (e) {
+      setError(e.message || "Gagal mencatat invoice akuntan");
+    } finally {
+      setSaving("");
+    }
+  };
+
+  const createMakerAndApproval = async (row) => {
+    if (!row.invoice_id || !row.production_cycle_id || Number(row.invoice_amount || 0) <= 0) return;
+    if (makerByCycle.has(String(row.production_cycle_id))) {
+      setError("Maker untuk production cycle ini sudah ada.");
+      return;
+    }
+    const approver = APPROVERS[String(row.site || "").toUpperCase()];
+    if (!approver) {
+      setError("Approver site belum dapat ditentukan.");
+      return;
+    }
+    const reference = row.invoice_number || `AKUNTAN-${row.submission_id}`;
+    const confirmed = window.confirm(
+      `Buat Maker BGN ${row.site} dari invoice ${reference} sebesar ${money(row.invoice_amount)} dan masukkan approval PENDING ke ${approver}?`
+    );
+    if (!confirmed) return;
+
+    setSaving(`maker-${row.submission_id}`); setError(""); setMessage("");
+    try {
+      const maker = await operationsApi.createBgnMaker({
+        production_cycle_id: row.production_cycle_id,
+        site: row.site,
+        reference_number: reference,
+        amount: Number(row.invoice_amount),
+      });
+      await operationsApi.createBgnApproval({
+        bgn_maker_id: maker.makerId,
+        approver_code: approver,
+        status: "PENDING",
+        requested_at: null,
+        approved_at: null,
+        rejected_at: null,
+      });
+      setMessage(`Maker #${maker.makerId} dibuat dan approval PENDING diarahkan ke ${approver}. Belum dianggap approved.`);
+      await load();
+    } catch (e) {
+      setError(e.message || "Gagal membuat maker/approval");
+    } finally {
+      setSaving("");
+    }
+  };
+
   return <div className="ops-domain-stack">
     <section className="ops-module">
       <div className="ops-module-header">
-        <div><span className="ops-kicker">ACCOUNTANT</span><h3>Excel & Invoice Akuntan</h3><p>Maja → Tiara · Cemplang → Uya. Pengiriman WhatsApp masih manual; tombol hanya menyiapkan pesan/link dan tidak menganggap file sudah terkirim.</p></div>
+        <div><span className="ops-kicker">ACCOUNTANT</span><h3>Excel → Invoice Akuntan → Maker</h3><p>Maja → Tiara · Cemplang → Uya. Pengiriman WhatsApp masih manual; tombol hanya menyiapkan pesan/link dan tidak menganggap file sudah terkirim.</p></div>
         <div className="ops-inline-controls"><select value={site} onChange={e=>setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
       </div>
       {error&&<div className="ops-error">{error}</div>}
       {message&&<div className="ops-success">{message}</div>}
-      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Akuntan</th><th>Excel Sent</th><th>Status</th><th>Invoice</th><th>Nilai</th><th>Diterima</th><th>Aksi Manual</th></tr></thead><tbody>{accountant.map(x=><tr key={`${x.submission_id}-${x.invoice_id||0}`}><td>{x.site}</td><td>{x.accountant_code}</td><td>{x.sent_at||"-"}</td><td>{x.submission_status}</td><td>{x.invoice_number||"-"}</td><td>{money(x.invoice_amount)}</td><td>{x.received_at||"-"}</td><td><div className="ops-row-actions">{x.excel_evidence_uri&&<button type="button" onClick={()=>window.open(x.excel_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Excel</button>}<button type="button" onClick={()=>copyAccountant(x)}><ClipboardCopy size={14}/> Copy Pesan</button><button type="button" onClick={()=>waAccountant(x)}><MessageCircle size={14}/> WhatsApp</button></div></td></tr>)}{!loading&&accountant.length===0&&<tr><td colSpan="8" className="ops-empty-cell">Belum ada submission akuntan.</td></tr>}</tbody></table></div>
+      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Akuntan</th><th>Excel Sent</th><th>Status</th><th>Invoice</th><th>Nilai</th><th>Diterima</th><th>Maker</th><th>Aksi</th></tr></thead><tbody>{accountant.map(x=>{
+        const existingMaker = x.production_cycle_id != null ? makerByCycle.get(String(x.production_cycle_id)) : null;
+        return <tr key={`${x.submission_id}-${x.invoice_id||0}`}><td>{x.site}</td><td>{x.accountant_code}</td><td>{x.sent_at||"-"}</td><td>{x.submission_status}</td><td>{x.invoice_number||"-"}</td><td>{money(x.invoice_amount)}</td><td>{x.received_at||"-"}</td><td>{existingMaker ? `#${existingMaker.maker_id}` : "-"}</td><td><div className="ops-row-actions">
+          {x.excel_evidence_uri&&<button type="button" onClick={()=>window.open(x.excel_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Excel</button>}
+          <button type="button" onClick={()=>copyAccountant(x)}><ClipboardCopy size={14}/> Copy</button>
+          <button type="button" onClick={()=>waAccountant(x)}><MessageCircle size={14}/> WhatsApp</button>
+          {!x.invoice_id&&<button type="button" onClick={()=>recordInvoice(x)} disabled={saving===`invoice-${x.submission_id}`}><FileCheck2 size={14}/> Catat Invoice</button>}
+          {x.invoice_id&&!existingMaker&&x.production_cycle_id&&Number(x.invoice_amount||0)>0&&<button type="button" onClick={()=>createMakerAndApproval(x)} disabled={saving===`maker-${x.submission_id}`}><Stamp size={14}/> Buat Maker</button>}
+        </div></td></tr>;
+      })}{!loading&&accountant.length===0&&<tr><td colSpan="9" className="ops-empty-cell">Belum ada submission akuntan.</td></tr>}</tbody></table></div>
     </section>
 
     <section className="ops-module">
