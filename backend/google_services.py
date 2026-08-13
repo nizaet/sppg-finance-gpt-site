@@ -122,10 +122,10 @@ def drive_service():
     return build("drive", "v3", credentials=google_credentials(), cache_discovery=False)
 
 
-def upload_text_to_drive(folder_id: str, filename: str, text: str, mime_type: str = "text/plain") -> str:
+def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type: str) -> str:
     if not folder_id:
         raise GoogleServicesNotConfigured("Drive folder id is not configured")
-    media = MediaIoBaseUpload(io.BytesIO(text.encode("utf-8")), mimetype=mime_type, resumable=False)
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime_type, resumable=False)
     created = (
         drive_service()
         .files()
@@ -138,3 +138,7 @@ def upload_text_to_drive(folder_id: str, filename: str, text: str, mime_type: st
         .execute()
     )
     return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
+
+
+def upload_text_to_drive(folder_id: str, filename: str, text: str, mime_type: str = "text/plain") -> str:
+    return upload_bytes_to_drive(folder_id, filename, text.encode("utf-8"), mime_type)
