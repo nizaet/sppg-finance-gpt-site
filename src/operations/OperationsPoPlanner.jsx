@@ -1,10 +1,57 @@
-import React, { useEffect, useState } from "react";
-import { CalendarDays, ClipboardCopy, MessageCircle, RefreshCw } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { CalendarDays, CheckCircle2, ClipboardCopy, MessageCircle, RefreshCw, ShoppingCart } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 const qty = (v) => Number(v || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
+
+const FALLBACK_VENDORS = [
+  ["HOLIL", "Haji Holil"],
+  ["WIKIAN", "Wikian"],
+  ["RUMAH_DUTA_PANGAN", "Rumah Duta Pangan"],
+  ["HERU", "Heru"],
+  ["DEDE", "Dede"],
+  ["HAJI_BADRI", "Haji Badri"],
+  ["KOPERASI", "Koperasi / Mungki"],
+];
+
+function normalize(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function safeVendorForPlanningItem(item, site) {
+  const preferred = String(item.preferred_vendor_code || "").trim().toUpperCase();
+  if (preferred) return { vendor: preferred, method: "preferred_vendor" };
+
+  const category = normalize(item.category_code);
+  const name = normalize(item.item_name);
+  const text = `${category} ${name}`;
+
+  if (/\b(ayam|chicken)\b/.test(text)) return { vendor: "WIKIAN", method: "item_rule" };
+  if (/\b(dori|ikan|fish)\b/.test(text)) return { vendor: "RUMAH_DUTA_PANGAN", method: "item_rule" };
+  if (/\b(gas|lpg)\b/.test(text)) return { vendor: "HERU", method: "item_rule" };
+  if (/\bberas\b/.test(text)) return { vendor: "DEDE", method: "item_rule" };
+  if (/\btelur\b/.test(text)) return { vendor: "KOPERASI", method: "confirmed_internal_rule" };
+  if (/\btahu\b/.test(text)) {
+    return site === "CEMPLANG"
+      ? { vendor: "HAJI_BADRI", method: "confirmed_site_rule" }
+      : { vendor: "KOPERASI", method: "confirmed_internal_rule" };
+  }
+  if (/\btempe\b/.test(text)) {
+    return site === "MAJA"
+      ? { vendor: "KOPERASI", method: "confirmed_internal_rule" }
+      : { vendor: "", method: "unassigned" };
+  }
+  if (/\b(bahan kering|sembako|dry goods|packaging)\b/.test(category)) {
+    return { vendor: "KOPERASI", method: "confirmed_internal_rule" };
+  }
+  if (/\b(sayur|buah|bumbu|vegetable|fruit)\b/.test(category)) {
+    return { vendor: "HOLIL", method: "category_rule" };
+  }
+
+  return { vendor: "", method: "unassigned" };
+}
 
 function poMessage(po) {
   const lines = [
@@ -42,10 +89,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [site, setSite] = useState(fixedSite || "MAJA");
   const [schedule, setSchedule] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [planningSnapshot, setPlanningSnapshot] = useState(null);
+  const [draftItems, setDraftItems] = useState([]);
+  const [vendorOptions, setVendorOptions] = useState(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [actionId, setActionId] = useState(null);
+  const [creatingVendor, setCreatingVendor] = useState("");
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -53,24 +104,128 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const activeSite = fixedSite || site;
 
+  const applyPlanningSnapshot = (snapshot) => {
+    setPlanningSnapshot(snapshot || null);
+    setDraftItems((snapshot?.items || []).map((item) => {
+      const assignment = safeVendorForPlanningItem(item, activeSite);
+      return {
+        planning_snapshot_item_id: item.id,
+        item_code: item.item_code || null,
+        item_name: item.item_name,
+        category_code: item.category_code || "",
+        planned_qty: item.planned_qty == null ? 0 : Number(item.planned_qty),
+        po_qty: item.planned_qty == null ? 0 : Number(item.planned_qty),
+        unit: item.unit || "",
+        planning_price: item.planning_price == null ? null : Number(item.planning_price),
+        vendor_code: assignment.vendor,
+        assignment_method: assignment.method,
+        notes: item.notes || "",
+      };
+    }));
+  };
+
   const load = async () => {
     setLoading(true);
     setError("");
+    setMessage("");
     try {
-      const [scheduleData, poData] = await Promise.all([
+      const [scheduleData, poData, snapshotsData, vendorsData] = await Promise.all([
         operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
         operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
+        operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
+        operationsApi.getReferenceVendors(activeSite),
       ]);
       setSchedule(scheduleData?.items || []);
       setPurchaseOrders(poData?.items || []);
+
+      const uniqueVendors = new Map(FALLBACK_VENDORS.map(([code, name]) => [code, { code, name }]));
+      (vendorsData?.items || []).forEach((item) => {
+        if (item?.code) uniqueVendors.set(String(item.code).toUpperCase(), { code: String(item.code).toUpperCase(), name: item.name || item.code });
+      });
+      setVendorOptions(Array.from(uniqueVendors.values()).sort((a, b) => a.name.localeCompare(b.name, "id")));
+
+      const snapshots = snapshotsData?.items || [];
+      if (!snapshots.length) {
+        applyPlanningSnapshot(null);
+      } else {
+        const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
+        applyPlanningSnapshot(detail);
+      }
     } catch (err) {
-      setError(err.message || "Gagal mengambil jadwal/PO vendor");
+      setError(err.message || "Gagal mengambil planning/jadwal/PO vendor");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, [distributionDate, cookingDate, activeSite]);
+
+  const groupedDrafts = useMemo(() => {
+    const groups = new Map();
+    draftItems.forEach((item) => {
+      const vendor = item.vendor_code || "UNASSIGNED";
+      if (!groups.has(vendor)) groups.set(vendor, []);
+      groups.get(vendor).push(item);
+    });
+    return Array.from(groups.entries()).map(([vendor, items]) => ({ vendor, items }));
+  }, [draftItems]);
+
+  const updateDraftItem = (planningItemId, patch) => {
+    setDraftItems((current) => current.map((item) => item.planning_snapshot_item_id === planningItemId ? { ...item, ...patch } : item));
+  };
+
+  const createVendorPo = async (vendor) => {
+    if (!planningSnapshot?.id || !vendor || vendor === "UNASSIGNED") return;
+    const lines = draftItems.filter((item) => item.vendor_code === vendor && Number(item.po_qty || 0) > 0);
+    if (!lines.length) return;
+
+    const unresolved = lines.some((item) => !item.vendor_code);
+    if (unresolved) {
+      setError("Masih ada item tanpa vendor. Pilih vendor sebelum membuat draft PO.");
+      return;
+    }
+
+    const code = `PO-${activeSite}-${distributionDate.replaceAll("-", "")}-${vendor}`;
+    const confirmed = window.confirm(
+      `Buat DRAFT PO ${vendor} untuk ${activeSite} tanggal distribusi ${distributionDate}?\n\n` +
+      `${lines.length} item akan disimpan ke PostgreSQL. planned_qty tetap tidak diubah.`
+    );
+    if (!confirmed) return;
+
+    setCreatingVendor(vendor);
+    setError("");
+    setMessage("");
+    try {
+      const result = await operationsApi.createPurchaseOrder({
+        po_code: code,
+        site: activeSite,
+        vendor_code: vendor,
+        distribution_date: distributionDate,
+        cooking_at: cookingDate ? `${cookingDate}T03:00:00+07:00` : null,
+        source_planning_snapshot_id: planningSnapshot.id,
+        status: "DRAFT",
+        items: lines.map((item) => ({
+          item_code: item.item_code || null,
+          item_name: item.item_name,
+          planning_snapshot_item_id: item.planning_snapshot_item_id,
+          planned_qty: Number(item.planned_qty || 0),
+          po_qty: Number(item.po_qty || 0),
+          unit: item.unit || null,
+          planning_price: item.planning_price,
+          po_price: null,
+          aliases: [],
+          notes: item.notes || null,
+        })),
+      });
+      setMessage(`Draft PO ${result.poCode} rev ${result.revisionNo} berhasil dibuat. Belum dianggap terkirim ke vendor.`);
+      const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 });
+      setPurchaseOrders(poData?.items || []);
+    } catch (err) {
+      setError(err.message || "Gagal membuat draft PO");
+    } finally {
+      setCreatingVendor("");
+    }
+  };
 
   const loadPoText = async (poId) => {
     setActionId(poId);
@@ -105,9 +260,9 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       <section className="ops-module">
         <div className="ops-module-header">
           <div>
-            <span className="ops-kicker">JADWAL PO</span>
-            <h3>Preview Waktu Pesan Vendor</h3>
-            <p>Tanggal masak menjadi anchor lead time. Default masak sama dengan tanggal distribusi; ubah hanya bila siklus tertentu memang berbeda.</p>
+            <span className="ops-kicker">KALKULATOR → PO</span>
+            <h3>Draft PO Otomatis dari Planning</h3>
+            <p>Planning dari Kalkulator tetap sumber awal. planned_qty tidak diubah; po_qty boleh Anda koreksi khusus untuk PO. Harga vendor tidak diarang dan tidak diisi otomatis dari planning_price.</p>
           </div>
           <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh</button>
         </div>
@@ -120,6 +275,74 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
         {error && <div className="ops-error">{error}</div>}
         {message && <div className="ops-success">{message}</div>}
+
+        {!loading && !planningSnapshot && (
+          <div className="ops-notice">
+            Belum ada planning snapshot Kalkulator untuk {activeSite} tanggal {distributionDate}. Pusat Resep, Master Harga, dan Kalkulator tidak diubah; PO tidak dibuat dari data tebakan.
+          </div>
+        )}
+
+        {planningSnapshot && (
+          <>
+            <div className="ops-summary-strip">
+              <span>Snapshot <strong>#{planningSnapshot.id}</strong></span>
+              <span>Sumber <strong>{planningSnapshot.source_system || "-"}</strong></span>
+              <span>Versi <strong>{planningSnapshot.source_version || "-"}</strong></span>
+              <span>Item <strong>{draftItems.length}</strong></span>
+              <span>Belum ada vendor <strong>{draftItems.filter((x) => !x.vendor_code).length}</strong></span>
+            </div>
+
+            {groupedDrafts.map((group) => (
+              <div className="ops-draft-group" key={group.vendor}>
+                <div className="ops-draft-group-head">
+                  <div>
+                    <strong>{group.vendor === "UNASSIGNED" ? "⚠ Vendor belum ditentukan" : group.vendor}</strong>
+                    <span>{group.items.length} item</span>
+                  </div>
+                  {group.vendor !== "UNASSIGNED" && (
+                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => Number(x.po_qty || 0) <= 0)}>
+                      <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : "Buat Draft PO"}
+                    </button>
+                  )}
+                </div>
+                <div className="ops-table-wrap">
+                  <table className="ops-table">
+                    <thead><tr><th>Item</th><th>Kategori</th><th>Planned Qty</th><th>PO Qty</th><th>Unit</th><th>Planning Price</th><th>Vendor</th><th>Dasar</th></tr></thead>
+                    <tbody>
+                      {group.items.map((item) => (
+                        <tr key={item.planning_snapshot_item_id}>
+                          <td><strong>{item.item_name}</strong></td>
+                          <td>{item.category_code || "-"}</td>
+                          <td>{qty(item.planned_qty)}</td>
+                          <td><input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: Number(e.target.value) })} /></td>
+                          <td>{item.unit || "-"}</td>
+                          <td>{item.planning_price == null ? "-" : money(item.planning_price)}</td>
+                          <td>
+                            <select value={item.vendor_code} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { vendor_code: e.target.value, assignment_method: "manual" })}>
+                              <option value="">Pilih vendor</option>
+                              {vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}
+                            </select>
+                          </td>
+                          <td>{item.assignment_method === "manual" ? "Manual" : item.assignment_method === "preferred_vendor" ? "Preferred vendor dari planning" : item.assignment_method === "unassigned" ? "Perlu dipilih" : "Rule operasional"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </section>
+
+      <section className="ops-module">
+        <div className="ops-module-header">
+          <div>
+            <span className="ops-kicker">JADWAL PO</span>
+            <h3>Preview Waktu Pesan Vendor</h3>
+            <p>Tanggal masak menjadi anchor lead time. Jadwal hanya membantu timing; tidak membuat PO atau mengirim pesan otomatis.</p>
+          </div>
+        </div>
         <div className="ops-table-wrap">
           <table className="ops-table">
             <thead><tr><th>Vendor</th><th>Kategori</th><th>Lead Time</th><th>Tanggal Pesan</th><th>Flow</th><th>Catatan</th></tr></thead>
