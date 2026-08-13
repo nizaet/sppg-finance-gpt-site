@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState } from "react";
+import React, { Suspense, lazy, useMemo, useState } from "react";
 import {
   CalendarDays,
   FileSpreadsheet,
@@ -34,6 +34,8 @@ const tabs = [
   ["chat", "Sumber Chat", MessageSquareText],
 ];
 
+const OWNER_ONLY_TABS = new Set(["accounting", "review", "chat"]);
+
 const moduleComponents = {
   po: OperationsPoPlanner,
   receiving: OperationsReceiving,
@@ -53,11 +55,18 @@ function ModuleFallback() {
   );
 }
 
-export default function OperationsWorkspace() {
+export default function OperationsWorkspace({ accessRole = "OWNER" }) {
+  const role = String(accessRole || "OWNER").toUpperCase();
+  const fixedSite = role === "MAJA" || role === "CEMPLANG" ? role : "";
+  const visibleTabs = useMemo(
+    () => tabs.filter(([id]) => role === "OWNER" || !OWNER_ONLY_TABS.has(id)),
+    [role],
+  );
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
 
   const openTab = (id) => {
+    if (role !== "OWNER" && OWNER_ONLY_TABS.has(id)) return;
     setTab(id);
     setVisitedTabs((current) => {
       if (current.has(id)) return current;
@@ -73,11 +82,11 @@ export default function OperationsWorkspace() {
         <div className="ops-brand">
           <span>SPPG</span>
           <strong>Pusat Operasional</strong>
-          <small>Maja + Cemplang</small>
+          <small>{fixedSite ? `Akses ${fixedSite}` : "Maja + Cemplang"}</small>
         </div>
 
         <nav>
-          {tabs.map(([id, label, Icon]) => (
+          {visibleTabs.map(([id, label, Icon]) => (
             <button
               type="button"
               key={id}
@@ -92,20 +101,22 @@ export default function OperationsWorkspace() {
 
         <div className="ops-sidebar-note">
           Pusat Resep, Master Harga, dan Kalkulator tetap menjadi sumber planning terpusat.
-          Pusat Operasional mengelola PO, penerimaan, gudang, tagihan, akuntan, dan BGN tanpa menimpa planning historis.
+          {fixedSite
+            ? ` Akun ${fixedSite} hanya melihat dan bekerja pada operasional ${fixedSite}.`
+            : " Pusat Operasional mengelola kedua dapur; Akuntan & BGN tetap khusus OWNER."}
         </div>
       </aside>
 
       <main className="ops-content">
         <div hidden={tab !== "today"}>
-          <OperationsControlTower />
+          <OperationsControlTower fixedSite={fixedSite} />
         </div>
 
         <Suspense fallback={<ModuleFallback />}>
           {Object.entries(moduleComponents).map(([id, Component]) => (
-            visitedTabs.has(id) ? (
+            visitedTabs.has(id) && (role === "OWNER" || !OWNER_ONLY_TABS.has(id)) ? (
               <div key={id} hidden={tab !== id}>
-                <Component />
+                <Component fixedSite={fixedSite} accessRole={role} />
               </div>
             ) : null
           ))}
