@@ -146,6 +146,7 @@ export const operationsApi = {
     method: "POST",
     body: JSON.stringify({ ...payload, commit }),
   }),
+  markAccountantSubmissionSent: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/mark-sent`, { method: "POST", body: "{}" }),
   getAccountantFlow: (site = "") => {
     const q = new URLSearchParams(); if (site) q.set("site", site);
     return request(`/v1/accountant-flow${q.toString() ? `?${q.toString()}` : ""}`);
