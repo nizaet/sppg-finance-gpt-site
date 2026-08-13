@@ -35,6 +35,10 @@ jobs:
           paths = {r.path for r in app.routes}
           required = {
               '/health',
+              '/v1/auth/config',
+              '/v1/auth/login',
+              '/v1/auth/me',
+              '/v1/auth/logout',
               '/v1/events',
               '/v1/control-tower',
               '/v1/control-tower-v2',
@@ -64,6 +68,7 @@ jobs:
               '/v1/inventory/from-receipt',
               '/v1/inventory/usage',
               '/v1/inventory/balance',
+              '/v1/inventory/balances',
               '/v1/inventory/requirement-preview',
               '/v1/whatsapp/webhook',
               '/v1/gpt/status',
@@ -74,6 +79,27 @@ jobs:
           missing = required - paths
           assert not missing, f'Missing API routes: {sorted(missing)}'
           print('routes ok:', sorted(required))
+          PY
+      - name: Assert SPPG role sessions
+        env:
+          SPPG_AUTH_SECRET: ci-auth-secret-should-never-be-used-in-production
+          SPPG_OWNER_PASSWORD: ci-owner-password
+          SPPG_MAJA_PASSWORD: ci-maja-password
+          SPPG_CEMPLANG_PASSWORD: ci-cemplang-password
+        run: |
+          python - <<'PY'
+          from backend.auth_api import auth_config, issue_session, verify_session
+
+          cfg = auth_config()
+          assert cfg['enabled'] is True
+          assert set(cfg['configuredRoles']) == {'OWNER', 'MAJA', 'CEMPLANG'}
+
+          for role in ('OWNER', 'MAJA', 'CEMPLANG'):
+              token, exp = issue_session(role, remember=False)
+              payload = verify_session(token)
+              assert payload['role'] == role
+              assert payload['exp'] == exp
+          print('SPPG role session signing ok')
           PY
       - name: Assert WhatsApp receipt extraction and immutable PO layer
         run: |
