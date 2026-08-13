@@ -44,34 +44,46 @@ def _money(value: Any) -> str:
         return "Rp0"
 
 
+def _site_defs(site: str) -> list[dict[str, str]]:
+    value = (site or "").upper().strip()
+    if not value:
+        return SITE_DEFS
+    if value not in {"MAJA", "CEMPLANG"}:
+        raise HTTPException(400, "site must be MAJA or CEMPLANG")
+    return [x for x in SITE_DEFS if x["dbSite"] == value]
+
+
 @router.get("/control-tower-v2")
-def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
+def control_tower_v2(
+    target_date: date = Query(alias="date"),
+    site: str = "",
+) -> dict[str, Any]:
     """Read-only operational control tower built from committed domain state.
 
     Metrics intentionally use actual PO/payable/accountant/BGN records. Planning
     estimates are not rewritten or inferred here, and historical-import POs do
-    not become permanent overdue work items.
+    not become permanent overdue work items. The optional site filter is used by
+    MAJA/CEMPLANG role sessions so the UI does not request the other site's data.
     """
-    sites = [empty_site(x) for x in SITE_DEFS]
+    definitions = _site_defs(site)
+    sites = [empty_site(x) for x in definitions]
     if not database_ready():
         return {"date": target_date.isoformat(), "databaseReady": False, "sites": sites}
 
     try:
         with connection() as conn:
             with conn.cursor() as cur:
-                for definition, out in zip(SITE_DEFS, sites):
-                    site = definition["dbSite"]
+                for definition, out in zip(definitions, sites):
+                    db_site = definition["dbSite"]
 
-                    # Review queue: only events that explicitly require operator confirmation.
                     cur.execute(
                         """select count(*) as n from candidate_events
                            where upper(coalesce(site,''))=%s
                              and status='PENDING' and requires_confirmation=true""",
-                        (site,),
+                        (db_site,),
                     )
                     out["summary"]["reviewQueue"] = int(cur.fetchone()["n"] or 0)
 
-                    # PO today / overdue: current operational POs only. Historical backfill is excluded.
                     cur.execute(
                         """select
                                count(*) filter (where pc.distribution_date=%s) as due_today,
@@ -81,7 +93,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                            where upper(coalesce(po.site,''))=%s
                              and coalesce(po.historical_import,false)=false
                              and upper(coalesce(po.status,'')) <> all(%s)""",
-                        (target_date, target_date, site, list(DONE_PO)),
+                        (target_date, target_date, db_site, list(DONE_PO)),
                     )
                     po_counts = cur.fetchone()
                     out["summary"]["poDueToday"] = int(po_counts["due_today"] or 0)
@@ -97,7 +109,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                              and upper(coalesce(po.status,'')) <> all(%s)
                            order by (pc.distribution_date<%s) desc,pc.distribution_date,po.created_at desc
                            limit 8""",
-                        (site, target_date, list(DONE_PO), target_date),
+                        (db_site, target_date, list(DONE_PO), target_date),
                     )
                     for row in cur.fetchall():
                         overdue = row["distribution_date"] < target_date
@@ -109,13 +121,12 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                             "severity": "warning" if overdue else "info",
                         })
 
-                    # Payables are sourced from vendor_invoices, not payment-intent/payment-history rows.
                     cur.execute(
                         """select count(*) as n from vendor_invoices vi
                            where upper(coalesce(vi.site,''))=%s
                              and upper(coalesce(vi.payable_status,'UNPAID')) <> all(%s)
                              and vi.due_date is not null and vi.due_date<=%s""",
-                        (site, list(DONE_PAYABLE), target_date),
+                        (db_site, list(DONE_PAYABLE), target_date),
                     )
                     out["summary"]["paymentsDue"] = int(cur.fetchone()["n"] or 0)
 
@@ -128,7 +139,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                              and upper(coalesce(vi.payable_status,'UNPAID')) <> all(%s)
                            order by vi.due_date asc nulls last,vi.created_at desc
                            limit 8""",
-                        (site, list(DONE_PAYABLE)),
+                        (db_site, list(DONE_PAYABLE)),
                     )
                     for row in cur.fetchall():
                         due = row["due_date"]
@@ -142,7 +153,6 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                             "severity": "warning" if is_due else "info",
                         })
 
-                    # Accountant lane: sent/pending submissions that still have no accountant invoice.
                     cur.execute(
                         """select s.id,s.accountant_code,s.sent_at,s.status,pc.distribution_date
                            from accountant_submissions s
@@ -152,7 +162,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                                select 1 from accountant_invoices i where i.accountant_submission_id=s.id
                              )
                            order by s.created_at desc limit 8""",
-                        (site,),
+                        (db_site,),
                     )
                     for row in cur.fetchall():
                         cycle = row["distribution_date"].isoformat() if row["distribution_date"] else "tanpa cycle"
@@ -164,7 +174,6 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                             "severity": "info",
                         })
 
-                    # BGN lane: latest approval is not approved, or approved maker has no BGN receipt yet.
                     cur.execute(
                         """select m.id,m.reference_number,m.amount,m.status as maker_status,
                                   a.approver_code,a.status as approval_status,a.requested_at,a.approved_at,
@@ -178,7 +187,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                              and (coalesce(upper(a.status),'PENDING') <> 'APPROVED'
                                   or not exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id))
                            order by m.created_at desc limit 8""",
-                        (site,),
+                        (db_site,),
                     )
                     for row in cur.fetchall():
                         approval = str(row["approval_status"] or "BELUM DIMINTA")
@@ -198,6 +207,7 @@ def control_tower_v2(target_date: date = Query(alias="date")) -> dict[str, Any]:
                         })
 
         return {"date": target_date.isoformat(), "databaseReady": True, "sites": sites}
+    except HTTPException:
+        raise
     except Exception as exc:
-        # Surface a controlled API error rather than returning plausible-looking zeros.
         raise HTTPException(500, f"control tower query failed: {type(exc).__name__}") from exc
