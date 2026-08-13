@@ -1,0 +1,10 @@
+import React, { useState } from "react";
+import { Search } from "lucide-react";
+import { operationsApi } from "./apiClient";
+
+const money=v=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(v||0));
+export default function OperationsCosting(){
+  const [cycleId,setCycleId]=useState(""); const [data,setData]=useState(null); const [error,setError]=useState(""); const [loading,setLoading]=useState(false);
+  const load=async()=>{if(!cycleId)return;setLoading(true);setError("");try{setData(await operationsApi.getActualUsage(cycleId));}catch(e){setError(e.message||"Gagal mengambil actual usage");}finally{setLoading(false);}};
+  return <section className="ops-module"><div className="ops-module-header"><div><span className="ops-kicker">ACTUAL USAGE / COSTING</span><h3>Final Costing</h3><p>Vendor cost dan Harga Pengajuan disimpan terpisah.</p></div><div className="ops-inline-controls"><input value={cycleId} onChange={e=>setCycleId(e.target.value.replace(/\D/g,""))} placeholder="Production Cycle ID"/><button onClick={load} disabled={loading||!cycleId}><Search size={15}/> Buka</button></div></div>{error&&<div className="ops-error">{error}</div>}{data&&<><div className="ops-cost-summary"><div><span>Modal Aktual</span><strong>{money(data.costTotal)}</strong></div><div><span>Harga Pengajuan</span><strong>{money(data.claimTotal)}</strong></div><div><span>Selisih Kotor</span><strong>{money(Number(data.claimTotal||0)-Number(data.costTotal||0))}</strong></div></div><div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Item</th><th>Actual Qty</th><th>Unit</th><th>Vendor Cost</th><th>Harga Pengajuan</th><th>Total Modal</th><th>Total Pengajuan</th></tr></thead><tbody>{(data.items||[]).map(x=><tr key={x.id}><td>{x.item_name}</td><td>{x.actual_used_qty}</td><td>{x.unit||"-"}</td><td>{money(x.vendor_cost_price)}</td><td>{money(x.claim_price)}</td><td>{money(x.cost_total)}</td><td>{money(x.claim_total)}</td></tr>)}{(data.items||[]).length===0&&<tr><td colSpan="7" className="ops-empty-cell">Belum ada actual usage untuk cycle ini.</td></tr>}</tbody></table></div></>}</section>;
+}

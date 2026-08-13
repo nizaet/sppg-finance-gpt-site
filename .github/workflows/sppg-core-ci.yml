@@ -1,0 +1,263 @@
+name: SPPG Core CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - llm-wiki-v0
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m compileall backend parser workflow
+      - run: python -c "from backend.app import app; assert app.title == 'SPPG Core API'; from backend.server import app as production_app; assert production_app is not None"
+      - name: Assert SPPG Core routes
+        run: |
+          python - <<'PY'
+          from backend.app import app
+          paths = {r.path for r in app.routes}
+          required = {
+              '/health',
+              '/v1/auth/config',
+              '/v1/auth/login',
+              '/v1/auth/me',
+              '/v1/auth/logout',
+              '/v1/events',
+              '/v1/control-tower',
+              '/v1/control-tower-v2',
+              '/v1/review-queue',
+              '/v1/schema-status',
+              '/v1/reference/vendors',
+              '/v1/po-schedule/preview',
+              '/v1/planning-snapshots',
+              '/v1/parse-message',
+              '/v1/purchase-orders',
+              '/v1/purchase-orders/{purchase_order_id}',
+              '/v1/receiving/whatsapp',
+              '/v1/receiving/variance',
+              '/v1/goods-receipts',
+              '/v1/actual-usage',
+              '/v1/accountant-excel/from-planning',
+              '/v1/accountant-flow',
+              '/v1/accountant-submissions',
+              '/v1/accountant-submissions/{submission_id}/mark-sent',
+              '/v1/accountant-invoices',
+              '/v1/bgn-flow',
+              '/v1/bgn-makers',
+              '/v1/bgn-approvals',
+              '/v1/audit-log',
+              '/v1/vendor-payables/from-receipt',
+              '/v1/vendor-payables',
+              '/v1/vendor-invoices/parse-whatsapp',
+              '/v1/vendor-payments/confirm',
+              '/v1/inventory/from-receipt',
+              '/v1/inventory/usage',
+              '/v1/inventory/balance',
+              '/v1/inventory/balances',
+              '/v1/inventory/requirement-preview',
+              '/v1/whatsapp/webhook',
+              '/v1/gpt/status',
+              '/v1/gpt/finance-transactions',
+              '/v1/gpt/finance-transactions/{transaction_id}',
+              '/v1/gpt/backfill-firestore',
+          }
+          missing = required - paths
+          assert not missing, f'Missing API routes: {sorted(missing)}'
+          print('routes ok:', sorted(required))
+          PY
+      - name: Assert SPPG role sessions and site scoping
+        env:
+          SPPG_AUTH_SECRET: ci-auth-secret-should-never-be-used-in-production
+          SPPG_OWNER_PASSWORD: ci-owner-password
+          SPPG_MAJA_PASSWORD: ci-maja-password
+          SPPG_CEMPLANG_PASSWORD: ci-cemplang-password
+          SPPG_GPT_API_KEY: ci-gpt-owner-key
+        run: |
+          python - <<'PY'
+          from backend.auth_api import auth_config, issue_session, verify_session
+          from backend.auth_middleware import _query_with_site, _role_from_auth, _validate_body_site
+
+          cfg = auth_config()
+          assert cfg['enabled'] is True
+          assert set(cfg['configuredRoles']) == {'OWNER', 'MAJA', 'CEMPLANG'}
+
+          for role in ('OWNER', 'MAJA', 'CEMPLANG'):
+              token, exp = issue_session(role, remember=False)
+              payload = verify_session(token)
+              assert payload['role'] == role
+              assert payload['exp'] == exp
+              assert _role_from_auth(f'Bearer {token}') == role
+
+          assert _role_from_auth('Bearer ci-gpt-owner-key') == 'OWNER'
+
+          scope = {'query_string': b'date=2026-08-13'}
+          ok, _ = _query_with_site(scope, 'MAJA')
+          assert ok and b'site=MAJA' in scope['query_string']
+
+          scope = {'query_string': b'site=CEMPLANG'}
+          ok, _ = _query_with_site(scope, 'MAJA')
+          assert not ok
+
+          assert _validate_body_site(b'{"site":"MAJA"}', 'MAJA')[0] is True
+          assert _validate_body_site(b'{"site":"CEMPLANG"}', 'MAJA')[0] is False
+          print('SPPG role signing and site boundary checks ok')
+          PY
+      - name: Assert accountant Excel matches calculator Belanja format
+        run: |
+          python - <<'PY'
+          from backend.accountant_excel_api import _build_rows, _workbook_bytes
+
+          snapshot = {
+              'payload': {'porsiKecil': 100, 'porsiBesar': 200},
+          }
+          items = [
+              {
+                  'item_name': 'Wortel', 'planned_qty': 50, 'unit': 'kg',
+                  'planning_price': 9500, 'notes': '', 'category_code': 'SAYUR_BUAH',
+                  'preferred_vendor_code': 'HOLIL', 'source_payload': {},
+              },
+              {
+                  'item_name': 'Beras Lokal Premium', 'planned_qty': 100, 'unit': 'kg',
+                  'planning_price': 15000, 'notes': '', 'category_code': 'BERAS',
+                  'preferred_vendor_code': 'DEDE', 'source_payload': {},
+              },
+          ]
+          rows, grand, pagu, delta = _build_rows(snapshot, items)
+          assert rows[0] == [
+              'Item', 'Jumlah', 'Satuan', 'Harga Satuan (Estimasi)',
+              'Total Harga (Estimasi)', 'Catatan', 'Kategori / Supplier'
+          ]
+          assert grand == 1975000.0
+          assert pagu == 2800000.0
+          assert delta == 825000.0
+          blob = _workbook_bytes(rows)
+          assert blob[:2] == b'PK', 'xlsx must be a ZIP container'
+          assert len(blob) > 1000
+          print('accountant calculator-format Excel ok')
+          PY
+      - name: Assert WhatsApp receipt extraction and immutable PO layer
+        run: |
+          python - <<'PY'
+          from backend.operational_api import extract_receipt_items, match_items
+
+          reported = extract_receipt_items('Barang Holil Maja sudah datang. Wortel diterima 102 kg.')
+          assert reported == [
+              {'reported_item_name': 'Wortel diterima', 'received_qty': 102.0, 'unit': 'kg'},
+          ]
+          po_items = [
+              {'id': 10, 'item_name': 'Wortel', 'po_qty': 105, 'unit': 'kg', 'item_aliases': []},
+          ]
+          matched = match_items(reported, po_items)
+          assert matched[0]['purchase_order_item_id'] == 10
+          assert matched[0]['variance_qty'] == -3.0
+          assert matched[0]['match_confidence'] >= 0.99
+          assert po_items[0]['po_qty'] == 105
+          print('WhatsApp receiving parser/variance protection ok')
+          PY
+      - name: Assert vendor payable uses invoice and reject layers
+        run: |
+          python - <<'PY'
+          from backend.vendor_payables_api import VendorPayableFromReceiptIn, VendorCostLineIn, resolve_lines
+
+          payload = VendorPayableFromReceiptIn(
+              site='MAJA', purchase_order_id=1, goods_receipt_id=1, commit=False,
+              lines=[VendorCostLineIn(goods_receipt_item_id=1, vendor_cost_price=14000, invoiced_qty=165, rejected_qty=6)],
+          )
+          receipt_items = [{
+              'goods_receipt_item_id': 1,
+              'purchase_order_item_id': 10,
+              'accepted_qty': 165,
+              'unit': 'kg',
+              'reported_item_name': 'Jeruk Medan',
+              'item_code': None,
+              'item_name': 'Jeruk Medan',
+              'planned_qty': 165,
+              'po_qty': 165,
+              'planning_price': None,
+              'po_price': None,
+          }]
+          lines = resolve_lines(payload, receipt_items)
+          assert lines[0]['gross_line_total'] == 2310000.0
+          assert lines[0]['reject_amount'] == 84000.0
+          assert lines[0]['payable_qty'] == 159.0
+          assert lines[0]['line_total'] == 2226000.0
+          assert receipt_items[0]['po_qty'] == 165
+          print('vendor invoice/reject layer protection ok')
+          PY
+      - name: Assert vendor invoice parser arithmetic and units
+        run: |
+          python - <<'PY'
+          from backend.vendor_invoice_parser import parse_vendor_invoice_text
+
+          text = '''10 Agustus 2026
+          Maja
+          Tw merah 6x37000= 222.000
+          Daun bw 5x15000= 75.000
+          Daun jruk 0,5x35000= 17.500
+          Jruk medan 165x14000= 2.310.000
+          Kmbang kol 73x13000= 949.000
+          Sereh 1x15000= 15.000
+          Tomat 7x8000= 56.000
+          Wortel 79x9500= 750.500
+          Kol 36x8500= 306.000
+          Jagung kupas 30x15000= 450.000
+          Total Rp. 5.151.000
+          riject 6 jeruk 6kg (hasil laporan dapur)
+          '''
+          parsed = parse_vendor_invoice_text(text, 'HOLIL', 'MAJA')
+          assert parsed['grossAmount'] == 5151000.0
+          assert parsed['rejectDeduction'] == 84000.0
+          assert parsed['netAmount'] == 5067000.0
+          jeruk = next(x for x in parsed['items'] if x['item_name'] == 'Jeruk Medan')
+          assert jeruk['rejected_qty'] == 6.0
+          assert jeruk['payable_qty'] == 159.0
+          assert jeruk['unit'] == 'kg'
+          assert parsed['canCommit'] is True
+
+          unit_text = 'Tahu 10 papan x 100000 = 1.000.000\nTotal Rp 1.000.000'
+          parsed_unit = parse_vendor_invoice_text(unit_text, 'HAJI_BADRI', 'CEMPLANG')
+          assert parsed_unit['items'][0]['unit'] == 'papan'
+          assert parsed_unit['items'][0]['computed_line_total'] == 1000000.0
+          assert parsed_unit['grossAmount'] == 1000000.0
+          assert parsed_unit['canCommit'] is True
+          print('vendor invoice arithmetic and unit preservation ok')
+          PY
+      - name: Assert legacy Firestore patch target
+        run: |
+          python - <<'PY'
+          from backend.gpt_bridge_api import _firestore_target
+
+          legacy_id, must_exist = _firestore_target({
+              'transaction_id': 'fs_maja_generated_id',
+              'source': 'firestore_backfill',
+              'firestore_doc_id': 'legacy-original-doc-id',
+          })
+          assert legacy_id == 'legacy-original-doc-id'
+          assert must_exist is True
+
+          bridge_id, must_exist = _firestore_target({
+              'transaction_id': 'gpt_maja_new_id',
+              'source': 'chatgpt_bridge',
+              'firestore_doc_id': None,
+          })
+          assert bridge_id == 'gpt_maja_new_id'
+          assert must_exist is False
+          print('legacy Firestore target protection ok')
+          PY

@@ -1,0 +1,86 @@
+{
+  "version": "0.7.0",
+  "screen": "CONTROL_TOWER_TODAY",
+  "sites": ["MAJA", "CEMPLANG"],
+  "production_cycle_card": {
+    "required_fields": [
+      "production_cycle_id",
+      "site",
+      "distribution_date",
+      "cooking_datetime",
+      "menu_name",
+      "portion_count",
+      "workflow_status"
+    ],
+    "sections": {
+      "procurement": [
+        "po_due_count",
+        "po_sent_count",
+        "po_acknowledged_count",
+        "po_revision_count",
+        "late_po_count"
+      ],
+      "receiving": [
+        "pending_receipt_count",
+        "received_count",
+        "reject_pending_count",
+        "unreconciled_reject_value"
+      ],
+      "vendor_payment": [
+        "payment_due_count",
+        "payment_pending_review_count",
+        "payment_paid_count",
+        "payment_due_amount"
+      ],
+      "costing": [
+        "actual_usage_status",
+        "final_costing_status",
+        "vendor_cost_total",
+        "claim_total"
+      ],
+      "accountant": [
+        "accountant_name",
+        "excel_status",
+        "invoice_status",
+        "invoice_number"
+      ],
+      "bgn": [
+        "maker_status",
+        "maker_reference_count",
+        "approval_status",
+        "approver_name",
+        "bgn_funds_status",
+        "settlement_status"
+      ]
+    }
+  },
+  "vendor_payment_checklist": {
+    "fields": [
+      "vendor_id",
+      "vendor_name",
+      "site",
+      "production_cycle_id",
+      "invoice_amount",
+      "adjustment_amount",
+      "net_payable",
+      "due_at",
+      "payment_term",
+      "payment_status",
+      "evidence_status"
+    ],
+    "rules": [
+      "payment_status=PAID requires reconciled evidence",
+      "PAYMENT_INTENT must not mark checklist paid",
+      "amount fields remain editable only through auditable adjustment/reconciliation"
+    ]
+  },
+  "review_queue_badges": [
+    "PAYMENT",
+    "APPROVAL",
+    "SETTLEMENT",
+    "PRICE_CONFLICT",
+    "QTY_CONFLICT",
+    "UNMATCHED_ENTITY",
+    "LOW_CONFIDENCE"
+  ]
+}

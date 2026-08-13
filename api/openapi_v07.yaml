@@ -1,0 +1,152 @@
+openapi: 3.0.3
+info:
+  title: SPPG Core Operations API
+  version: 0.7.0
+  description: API contract for GPT Site Pusat Operasional. Menu calculators remain unchanged and are treated as upstream planning sources.
+servers:
+  - url: https://api.example.invalid
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /events:
+    post:
+      summary: Submit a candidate operational event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CandidateEvent'
+      responses:
+        '202':
+          description: Accepted into staging
+  /review-queue:
+    get:
+      summary: List events requiring operator review
+      parameters:
+        - in: query
+          name: site
+          schema: { type: string, enum: [MAJA, CEMPLANG] }
+        - in: query
+          name: event_type
+          schema: { type: string }
+      responses:
+        '200':
+          description: Review queue
+    post:
+      summary: Resolve a review item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_id, decision]
+              properties:
+                event_id: { type: string }
+                decision: { type: string, enum: [APPROVE, REJECT, CORRECT] }
+                correction: { type: object, additionalProperties: true }
+  /production-cycles:
+    get:
+      summary: List production cycles
+      responses:
+        '200': { description: OK }
+  /po:
+    get:
+      summary: List purchase orders and current revisions
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create PO from calculator/planning snapshot or operator input
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site, cooking_date, vendor_id, items]
+              properties:
+                site: { type: string }
+                cooking_date: { type: string, format: date }
+                vendor_id: { type: string }
+                source: { type: string, enum: [CALCULATOR, MANUAL, CHAT] }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [item_name, planned_qty, po_qty, unit]
+                    properties:
+                      item_name: { type: string }
+                      planned_qty: { type: number }
+                      po_qty: { type: number }
+                      unit: { type: string }
+                      planning_price: { type: number }
+                      po_price: { type: number }
+  /receipts:
+    post:
+      summary: Record goods receipt/reject without overwriting PO quantities
+      responses:
+        '201': { description: Created }
+  /payments:
+    get:
+      summary: List vendor payment obligations and payment status
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Record payment evidence candidate
+      responses:
+        '202': { description: Requires reconciliation }
+  /stock/movements:
+    post:
+      summary: Create stock movement, including internal Koperasi transfers
+      responses:
+        '201': { description: Created }
+  /actual-usage:
+    post:
+      summary: Record actual ingredient usage for final costing
+      responses:
+        '201': { description: Created }
+  /accountant/submissions:
+    post:
+      summary: Register accountant Excel submission
+      responses:
+        '201': { description: Created }
+  /accountant/invoices:
+    post:
+      summary: Register accountant invoice and invoice number
+      responses:
+        '201': { description: Created }
+  /bgn/makers:
+    post:
+      summary: Register BGN maker transaction
+      responses:
+        '201': { description: Created }
+  /bgn/approvals:
+    post:
+      summary: Record approval evidence candidate; sending a list is not approval
+      responses:
+        '202': { description: Requires validation }
+  /settlements:
+    post:
+      summary: Record Yayasan/Koperasi to BCA Operational settlement
+      responses:
+        '201': { description: Created }
+components:
+  schemas:
+    CandidateEvent:
+      type: object
+      required: [event_type, source_type, source_ref, idempotency_key]
+      properties:
+        event_type: { type: string }
+        site: { type: string, nullable: true }
+        vendor_id: { type: string, nullable: true }
+        source_type: { type: string, enum: [WHATSAPP, CHAT, DRIVE, GPT_SITE, CALCULATOR, MANUAL] }
+        source_ref: { type: string }
+        idempotency_key: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        requires_confirmation: { type: boolean }
+        payload: { type: object, additionalProperties: true }
