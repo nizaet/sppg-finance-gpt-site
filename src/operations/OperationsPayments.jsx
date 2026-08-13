@@ -5,20 +5,26 @@ import { operationsApi } from "./apiClient";
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 const CLOSED = new Set(["PAID", "RECONCILED", "CLOSED", "CANCELLED", "CANCELED"]);
 
-export default function OperationsPayments() {
-  const [site, setSite] = useState("");
+export default function OperationsPayments({ fixedSite = "" }) {
+  const [site, setSite] = useState(fixedSite || "");
   const [payables, setPayables] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (fixedSite && site !== fixedSite) setSite(fixedSite);
+  }, [fixedSite, site]);
+
+  const activeSite = fixedSite || site;
 
   const load = async () => {
     setLoading(true);
     setError("");
     try {
       const [payableData, paymentData] = await Promise.all([
-        operationsApi.getVendorPayables({ site }),
-        operationsApi.getVendorPayments({ site }),
+        operationsApi.getVendorPayables({ site: activeSite }),
+        operationsApi.getVendorPayments({ site: activeSite }),
       ]);
       setPayables(payableData?.items || []);
       setPayments(paymentData?.items || []);
@@ -29,7 +35,7 @@ export default function OperationsPayments() {
     }
   };
 
-  useEffect(() => { load(); }, [site]);
+  useEffect(() => { load(); }, [activeSite]);
 
   const outstanding = useMemo(
     () => payables.filter((x) => !CLOSED.has(String(x.payable_status || "UNPAID").toUpperCase())),
@@ -50,7 +56,7 @@ export default function OperationsPayments() {
             <p>Invoice adalah kewajiban. Bruto, reject, netto dan status payable tetap terpisah dari bukti pembayaran.</p>
           </div>
           <div className="ops-inline-controls">
-            <select value={site} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
+            <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select>
             <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh</button>
           </div>
         </div>
