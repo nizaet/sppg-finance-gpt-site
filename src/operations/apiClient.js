@@ -102,6 +102,10 @@ export const operationsApi = {
     if (site) q.set("site", site);
     return request(`/v1/receiving/variance?${q.toString()}`);
   },
+  parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
   getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (status) q.set("status", status);
