@@ -5,22 +5,27 @@ import { operationsApi } from "./apiClient";
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 
-export default function OperationsPoPlanner() {
+export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [distributionDate, setDistributionDate] = useState(today());
   const [cookingDate, setCookingDate] = useState(today());
-  const [site, setSite] = useState("MAJA");
+  const [site, setSite] = useState(fixedSite || "MAJA");
   const [schedule, setSchedule] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (fixedSite && site !== fixedSite) setSite(fixedSite);
+  }, [fixedSite, site]);
+
   const load = async () => {
+    const activeSite = fixedSite || site;
     setLoading(true);
     setError("");
     try {
       const [scheduleData, poData] = await Promise.all([
-        operationsApi.previewPoSchedule({ distributionDate, cookingDate, site }),
-        operationsApi.getPurchaseOrders({ site, limit: 50 }),
+        operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
+        operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
       ]);
       setSchedule(scheduleData?.items || []);
       setPurchaseOrders(poData?.items || []);
@@ -31,7 +36,7 @@ export default function OperationsPoPlanner() {
     }
   };
 
-  useEffect(() => { load(); }, [distributionDate, cookingDate, site]);
+  useEffect(() => { load(); }, [distributionDate, cookingDate, site, fixedSite]);
 
   return (
     <div className="ops-domain-stack">
@@ -46,7 +51,7 @@ export default function OperationsPoPlanner() {
         </div>
 
         <div className="ops-form-grid">
-          <label>Site<select value={site} onChange={(e) => setSite(e.target.value)}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select></label>
+          <label>Site<select value={fixedSite || site} disabled={Boolean(fixedSite)} onChange={(e) => setSite(e.target.value)}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select></label>
           <label>Distribusi<input type="date" value={distributionDate} onChange={(e) => setDistributionDate(e.target.value)} /></label>
           <label>Masak<input type="date" value={cookingDate} onChange={(e) => setCookingDate(e.target.value)} /></label>
         </div>
