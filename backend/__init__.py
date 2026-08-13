@@ -10,6 +10,11 @@ from backend.inventory_api import router as inventory_router
 from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
 from backend.inventory_summary_api import router as inventory_summary_router
+from backend.auth_api import router as auth_router
+
+# Public login/session endpoints live under /v1/auth. Login enforcement is only
+# activated in the frontend after Railway has all role passwords + auth secret.
+operational_router.include_router(auth_router)
 
 # chat_router contains the domain router, restoring these live routes under /v1:
 # /parse-message, /goods-receipts, /actual-usage, /accountant-flow,
