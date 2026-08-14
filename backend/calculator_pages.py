@@ -22,16 +22,12 @@ DEFAULT_FIREBASE_CONFIG = {
 UNIT_CONFIG = {
     "maja": {
         "label": "MAJA",
-        "app_id_env": "SPPG_MAJA_CALCULATOR_APP_ID",
         "app_id_default": "sppg-maja-gpt-site",
-        "database_env": "SPPG_MAJA_CALCULATOR_DATABASE_ID",
         "database_default": "(default)",
     },
     "cemplang": {
         "label": "CEMPLANG",
-        "app_id_env": "SPPG_CEMPLANG_CALCULATOR_APP_ID",
         "app_id_default": "sppg-cemplang2-gpt-site",
-        "database_env": "SPPG_CEMPLANG_CALCULATOR_DATABASE_ID",
         "database_default": "cemplang2",
     },
 }
@@ -54,8 +50,10 @@ def calculator_settings(unit: str) -> dict[str, str]:
     config = UNIT_CONFIG[unit]
     return {
         "label": config["label"],
-        "app_id": os.getenv(config["app_id_env"], "").strip() or config["app_id_default"],
-        "database_id": os.getenv(config["database_env"], "").strip() or config["database_default"],
+        # These targets contain the existing calculator data. Do not allow a
+        # deployment variable to accidentally point one kitchen at the other.
+        "app_id": config["app_id_default"],
+        "database_id": config["database_default"],
     }
 
 
@@ -80,7 +78,6 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       var __legacyUnitId = {json.dumps(unit)};
       var __app_id = {json.dumps(app_id)};
       var __firebase_config = JSON.stringify({firebase_json});
-      var __initial_auth_token = 'railway-session';
       var __siteAccessRole = {json.dumps(role)};
       window.__legacyUnitId = __legacyUnitId;
       window.__firestoreDatabaseId = {json.dumps(database_id)};
@@ -152,6 +149,10 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
     </style>
     """
     html = source.replace("<head>", f"<head>{boot}", 1)
+    html = html.replace(
+        "const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1';",
+        f"const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1-{unit}';",
+    )
     html = html.replace(
         "if (!db) db = getFirestore(app);",
         "if (!db) db = (window.__firestoreDatabaseId && window.__firestoreDatabaseId !== '(default)') ? getFirestore(app, window.__firestoreDatabaseId) : getFirestore(app);",

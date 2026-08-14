@@ -2,10 +2,10 @@ import importlib
 
 
 def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
-    monkeypatch.delenv("SPPG_MAJA_CALCULATOR_APP_ID", raising=False)
-    monkeypatch.delenv("SPPG_CEMPLANG_CALCULATOR_APP_ID", raising=False)
-    monkeypatch.delenv("SPPG_MAJA_CALCULATOR_DATABASE_ID", raising=False)
-    monkeypatch.delenv("SPPG_CEMPLANG_CALCULATOR_DATABASE_ID", raising=False)
+    monkeypatch.setenv("SPPG_MAJA_CALCULATOR_APP_ID", "wrong-maja-target")
+    monkeypatch.setenv("SPPG_CEMPLANG_CALCULATOR_APP_ID", "sppg-maja-gpt-site")
+    monkeypatch.setenv("SPPG_MAJA_CALCULATOR_DATABASE_ID", "wrong-maja-database")
+    monkeypatch.setenv("SPPG_CEMPLANG_CALCULATOR_DATABASE_ID", "(default)")
     module = importlib.import_module("backend.calculator_pages")
     module.render_calculator_html.cache_clear()
 
@@ -16,6 +16,11 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "window.__firestoreDatabaseId = \"(default)\"" in maja
     assert "sppg-cemplang2-gpt-site" in cemplang
     assert "window.__firestoreDatabaseId = \"cemplang2\"" in cemplang
+    assert "wrong-maja-target" not in maja
+    assert "wrong-maja-database" not in maja
+    assert "var __initial_auth_token = 'railway-session'" not in maja
+    assert "spbg_firebase_connection_v1-maja" in maja
+    assert "spbg_firebase_connection_v1-cemplang" in cemplang
     assert "#loginOverlay" in maja
     assert "sppg_session_token_v1" in cemplang
 
