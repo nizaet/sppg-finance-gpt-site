@@ -23,13 +23,11 @@ async function doRequest(path, options = {}) {
       signal: controller.signal,
       headers: requestHeaders(options),
     });
-
     if (!res.ok) {
       let detail = "";
       try { detail = await res.text(); } catch {}
       throw new Error(`SPPG Core API ${res.status}: ${detail || res.statusText}`);
     }
-
     if (res.status === 204) return null;
     return res.json();
   } catch (err) {
@@ -43,11 +41,9 @@ async function doRequest(path, options = {}) {
 function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (method !== "GET") return doRequest(path, options);
-
   const key = `${DEFAULT_BASE_URL}${path}`;
   const existing = inflightGets.get(key);
   if (existing) return existing;
-
   const pending = doRequest(path, options).finally(() => inflightGets.delete(key));
   inflightGets.set(key, pending);
   return pending;
@@ -122,7 +118,13 @@ export const operationsApi = {
     const q = new URLSearchParams({ site, distributionDate });
     return request(`/v1/calculator-planning/preview?${q.toString()}`);
   },
-  getPlanningSnapshots: ({ site = "", distributionDate = "", activeOnly = true } = {}) => {
+  getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = false } = {}) => {
+    if (syncCalculator && site && distributionDate) {
+      await doRequest("/v1/calculator-planning/sync", {
+        method: "POST",
+        body: JSON.stringify({ site, distribution_date: distributionDate }),
+      });
+    }
     const q = new URLSearchParams();
     if (site) q.set("site", site);
     if (distributionDate) q.set("distributionDate", distributionDate);
