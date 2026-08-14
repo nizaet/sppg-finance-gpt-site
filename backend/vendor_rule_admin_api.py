@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from typing import Any
 
@@ -34,12 +35,7 @@ def _clean_nullable(value: str | None) -> str | None:
 
 @router.post("/reference/vendor-rules/lead-time")
 def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
-    """Create an effective-dated lead-time revision without rewriting history.
-
-    If the current rule starts on the same effective date, update that same row.
-    Otherwise close the old rule one day before the new rule and clone the rest
-    of the rule fields into a new row with the edited lead time.
-    """
+    """Create an effective-dated lead-time revision without rewriting history."""
     require_db()
     vendor = payload.vendor_code.upper().strip()
     site = _clean_nullable(payload.site_code.upper() if payload.site_code else None)
@@ -49,8 +45,7 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute("select code,name from entities where code=%s and active=true", (vendor,))
-            vendor_row = cur.fetchone()
-            if not vendor_row:
+            if not cur.fetchone():
                 raise HTTPException(404, "vendor tidak ditemukan")
 
             cur.execute(
@@ -70,7 +65,8 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
             if not current:
                 raise HTTPException(404, "rule vendor aktif untuk kombinasi site/kategori ini tidak ditemukan")
 
-            if int(current.get("lead_time_days_before_cooking") or 0) == payload.lead_time_days_before_cooking:
+            current_lead = current.get("lead_time_days_before_cooking")
+            if current_lead is not None and int(current_lead) == payload.lead_time_days_before_cooking:
                 return {
                     "changed": False,
                     "ruleId": current["id"],
@@ -103,10 +99,7 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
                     "effectiveFrom": updated["effective_from"],
                 }
 
-            cur.execute(
-                "update vendor_rules set effective_to=%s where id=%s",
-                (effective_from - timedelta(days=1), current["id"]),
-            )
+            cur.execute("update vendor_rules set effective_to=%s where id=%s", (effective_from - timedelta(days=1), current["id"]))
             cur.execute(
                 """
                 insert into vendor_rules(
@@ -117,17 +110,10 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
                 returning id,effective_from
                 """,
                 (
-                    vendor,
-                    site,
-                    category,
-                    payload.lead_time_days_before_cooking,
-                    current.get("payment_term_code"),
-                    __import__("json").dumps(current.get("payment_term_payload") or {}),
-                    bool(current.get("internal_reimbursement")),
-                    current.get("intermediary_code"),
-                    effective_from,
-                    current.get("evidence_ref"),
-                    payload.note,
+                    vendor, site, category, payload.lead_time_days_before_cooking,
+                    current.get("payment_term_code"), json.dumps(current.get("payment_term_payload") or {}),
+                    bool(current.get("internal_reimbursement")), current.get("intermediary_code"),
+                    effective_from, current.get("evidence_ref"), payload.note,
                 ),
             )
             created = cur.fetchone()
