@@ -33,9 +33,7 @@ async function doRequest(path, options = {}) {
     if (res.status === 204) return null;
     return res.json();
   } catch (err) {
-    if (err?.name === "AbortError") {
-      throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");
-    }
+    if (err?.name === "AbortError") throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -80,6 +78,7 @@ export const operationsApi = {
     if (site) q.set("site", site);
     return request(`/v1/reference/vendors${q.toString() ? `?${q.toString()}` : ""}`);
   },
+  updateVendorLeadTime: (payload) => request("/v1/reference/vendor-rules/lead-time", { method: "POST", body: JSON.stringify(payload) }),
   getPurchaseOrders: ({ site = "", vendor = "", status = "", limit = 100 } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (site) q.set("site", site);
@@ -89,23 +88,14 @@ export const operationsApi = {
   },
   getPurchaseOrder: (purchaseOrderId) => request(`/v1/purchase-orders/${encodeURIComponent(purchaseOrderId)}`),
   createPurchaseOrder: (payload) => request("/v1/purchase-orders", { method: "POST", body: JSON.stringify(payload) }),
-  previewWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit: false }),
-  }),
-  commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit: true }),
-  }),
+  previewWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
   getReceivingVariance: ({ site = "", limit = 200 } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (site) q.set("site", site);
     return request(`/v1/receiving/variance?${q.toString()}`);
   },
-  parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }),
+  parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", { method: "POST", body: JSON.stringify(payload) }),
   getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (status) q.set("status", status);
@@ -142,10 +132,7 @@ export const operationsApi = {
   createGoodsReceipt: (payload) => request("/v1/goods-receipts", { method: "POST", body: JSON.stringify(payload) }),
   getActualUsage: (productionCycleId) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(productionCycleId)}`),
   saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
-  generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit }),
-  }),
+  generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   markAccountantSubmissionSent: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/mark-sent`, { method: "POST", body: "{}" }),
   getAccountantFlow: (site = "") => {
     const q = new URLSearchParams(); if (site) q.set("site", site);
@@ -163,10 +150,7 @@ export const operationsApi = {
   createSettlement: (payload) => request("/v1/settlements", { method: "POST", body: JSON.stringify(payload) }),
   getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
   getReviewQueue: () => request("/v1/review-queue"),
-  submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, {
-    method: "POST",
-    body: JSON.stringify({ decision, note }),
-  }),
+  submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, { method: "POST", body: JSON.stringify({ decision, note }) }),
   ingestEvent: (payload) => request("/v1/events", { method: "POST", body: JSON.stringify(payload) }),
 };
 
