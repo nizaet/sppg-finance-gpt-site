@@ -36,6 +36,19 @@ def auth_config() -> dict[str, Any]:
         "configuredRoles": configured_roles,
         "requiredRoles": list(ROLES),
         "secretReady": secret_ready,
+        "rolePolicy": {
+            "OWNER": ["CALCULATOR_MAJA", "CALCULATOR_CEMPLANG", "OPERATIONS", "ACCOUNTANT_MAJA", "ACCOUNTANT_CEMPLANG"],
+            "MAJA": ["CALCULATOR_MAJA"],
+            "CEMPLANG": ["CALCULATOR_CEMPLANG"],
+        },
+        "calculatorUrls": {
+            "MAJA": _env("SPPG_MAJA_CALCULATOR_URL"),
+            "CEMPLANG": _env("SPPG_CEMPLANG_CALCULATOR_URL"),
+        },
+        "accountantUrls": {
+            "MAJA": _env("SPPG_MAJA_ACCOUNTANT_URL") or "/",
+            "CEMPLANG": _env("SPPG_CEMPLANG_ACCOUNTANT_URL") or "https://sppg-finance-gpt-site-production-fc7e.up.railway.app/",
+        },
     }
 
 
@@ -123,7 +136,6 @@ def login(payload: LoginIn) -> dict[str, Any]:
 
     role = payload.username.upper().strip()
     if role not in ROLES:
-        # Keep the response deliberately generic so role/user probing gives no extra signal.
         raise HTTPException(401, "username atau password salah")
 
     expected = _env(f"SPPG_{role}_PASSWORD")
@@ -150,5 +162,4 @@ def me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
 
 @router.post("/logout")
 def logout() -> dict[str, bool]:
-    # Sessions are stateless signed tokens; logout is completed by deleting the token in the browser.
     return {"ok": True}
