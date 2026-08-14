@@ -1,0 +1,73 @@
+name: Role PO Stock Lead CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Build frontend MAJA default
+        run: npm run build
+      - run: pip install -r backend/requirements.txt
+      - run: python -m compileall backend parser workflow
+
+      - name: Assert new API routes and final role policy
+        env:
+          SPPG_AUTH_SECRET: ci-auth-secret
+          SPPG_OWNER_PASSWORD: ci-owner-password
+          SPPG_MAJA_PASSWORD: ci-maja-password
+          SPPG_CEMPLANG_PASSWORD: ci-cemplang-password
+        run: |
+          python - <<'PY'
+          from backend.app import app
+          from backend.auth_api import auth_config
+          from backend.server import _index_for_path
+
+          paths = {r.path for r in app.routes}
+          required = {
+              '/v1/calculator-planning/preview',
+              '/v1/calculator-planning/sync',
+              '/v1/reference/vendor-rules/lead-time',
+          }
+          missing = required - paths
+          assert not missing, f'missing routes: {sorted(missing)}'
+
+          cfg = auth_config()
+          assert cfg['enabled'] is True
+          assert cfg['rolePolicy']['MAJA'] == ['CALCULATOR_MAJA']
+          assert cfg['rolePolicy']['CEMPLANG'] == ['CALCULATOR_CEMPLANG']
+          assert set(cfg['rolePolicy']['OWNER']) == {
+              'CALCULATOR_MAJA', 'CALCULATOR_CEMPLANG', 'OPERATIONS',
+              'ACCOUNTANT_MAJA', 'ACCOUNTANT_CEMPLANG'
+          }
+          assert cfg['accountantUrls']['MAJA'] == '/accountant/maja'
+          assert cfg['accountantUrls']['CEMPLANG'] == '/accountant/cemplang'
+          assert _index_for_path('accountant/maja').name == 'index.html'
+          assert _index_for_path('accountant/cemplang').name == 'index-cemplang.html'
+          print('role policy, new routes and accountant routing ok')
+          PY
+
+      - name: Assert calculator bridge imports safely
+        run: |
+          python - <<'PY'
+          from backend.calculator_planning_bridge_api import SUPPLIER_CATEGORY, CalculatorPlanningSyncIn
+          assert SUPPLIER_CATEGORY['supplier_ayam'] == 'AYAM'
+          assert SUPPLIER_CATEGORY['supplier_kering'] == 'BAHAN_KERING'
+          payload = CalculatorPlanningSyncIn(site='MAJA', distribution_date='2026-08-14')
+          assert payload.site == 'MAJA'
+          print('calculator bridge import/model ok')
+          PY
+
+      - name: Build unified Railway image
+        run: docker build -f backend/Dockerfile -t sppg-unified:test .
