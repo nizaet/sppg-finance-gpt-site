@@ -8,7 +8,7 @@ import os
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 ROLES = ("OWNER", "MAJA", "CEMPLANG")
 SESSION_TTL_SECONDS = 12 * 60 * 60
 REMEMBER_TTL_SECONDS = 30 * 24 * 60 * 60
+SESSION_COOKIE = "sppg_session_v1"
 
 
 class LoginIn(BaseModel):
@@ -49,8 +50,8 @@ def auth_config() -> dict[str, Any]:
             "CEMPLANG": ["CALCULATOR_CEMPLANG"],
         },
         "calculatorUrls": {
-            "MAJA": _env("SPPG_MAJA_CALCULATOR_URL"),
-            "CEMPLANG": _env("SPPG_CEMPLANG_CALCULATOR_URL"),
+            "MAJA": _env("SPPG_MAJA_CALCULATOR_URL") or "/dapur/maja",
+            "CEMPLANG": _env("SPPG_CEMPLANG_CALCULATOR_URL") or "/dapur/cemplang",
         },
         "accountantUrls": {
             "MAJA": _env("SPPG_MAJA_ACCOUNTANT_URL") or "/accountant/maja",
@@ -126,8 +127,20 @@ def get_auth_config() -> dict[str, Any]:
     return auth_config()
 
 
+def _set_session_cookie(response: Response, token: str, remember: bool) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=REMEMBER_TTL_SECONDS if remember else SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/",
+    )
+
+
 @router.post("/login")
-def login(payload: LoginIn) -> dict[str, Any]:
+def login(payload: LoginIn, response: Response) -> dict[str, Any]:
     config = auth_config()
     if not config["enabled"]:
         raise HTTPException(503, "SPPG OWNER login is not configured")
@@ -138,15 +151,19 @@ def login(payload: LoginIn) -> dict[str, Any]:
     if not expected or not hmac.compare_digest(payload.password, expected):
         raise HTTPException(401, "username atau password salah")
     token, expires_at = issue_session(role, payload.remember)
+    _set_session_cookie(response, token, payload.remember)
     return {"token": token, "role": role, "expiresAt": expires_at, "remember": payload.remember}
 
 
 @router.get("/me")
-def me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    payload = verify_session(bearer_token(authorization))
+def me(response: Response, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    token = bearer_token(authorization)
+    payload = verify_session(token)
+    _set_session_cookie(response, token, payload["exp"] - int(time.time()) > SESSION_TTL_SECONDS)
     return {"role": payload["role"], "expiresAt": payload["exp"]}
 
 
 @router.post("/logout")
-def logout() -> dict[str, bool]:
+def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
     return {"ok": True}

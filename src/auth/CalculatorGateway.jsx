@@ -31,11 +31,11 @@ function CalculatorCard({ site, url }) {
           onClick={() => window.location.assign(url)}
           style={{ border: 0, borderRadius: 10, padding: "12px 16px", background: "#0f5138", color: "white", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}
         >
-          <ExternalLink size={16} /> Buka {LABELS[site]}
+          <ExternalLink size={16} /> Masuk ke {LABELS[site]}
         </button>
       ) : (
         <div style={{ padding: 14, borderRadius: 10, background: "#fff8e6", color: "#805d00", border: "1px solid #f2d58b" }}>
-          URL kalkulator {site} belum diisi di Railway. OWNER perlu mengisi <strong>SPPG_{site}_CALCULATOR_URL</strong>.
+          Route kalkulator {site} belum tersedia pada deployment ini.
         </div>
       )}
     </section>

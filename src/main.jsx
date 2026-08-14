@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from "react";
+import React, { Suspense, lazy, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import AuthGate from "./auth/AuthGate.jsx";
 import CalculatorGateway from "./auth/CalculatorGateway.jsx";
@@ -21,16 +21,20 @@ function BootFallback({ text = "Memuat SPPG…" }) {
   );
 }
 
+function CalculatorRedirect({ role }) {
+  useEffect(() => {
+    window.location.replace(`/dapur/${String(role).toLowerCase()}`);
+  }, [role]);
+  return <BootFallback text={`Membuka Kalkulator ${role}…`} />;
+}
+
 function RoutedApp({ role, config }) {
   const normalizedRole = String(role || "OWNER").toUpperCase();
 
   // MAJA/CEMPLANG are calculator-only. This routing rule applies regardless of
   // which browser URL they manually type after login.
   if (normalizedRole !== "OWNER") {
-    if (!isCalculatorRoute) {
-      window.history.replaceState({}, "", "/calculator");
-    }
-    return <CalculatorGateway role={normalizedRole} config={config} />;
+    return <CalculatorRedirect role={normalizedRole} />;
   }
 
   if (isCalculatorRoute) {

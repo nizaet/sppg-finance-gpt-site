@@ -9,12 +9,14 @@ All /v1 routes remain API endpoints and are protected by SPPG role middleware.
 
 from pathlib import Path
 
-from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app import app as fastapi_app
+from backend.auth_api import SESSION_COOKIE, verify_session
 from backend.auth_middleware import SppgAccessMiddleware
+from backend.calculator_pages import calculator_html
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
@@ -31,6 +33,37 @@ def _index_for_path(full_path: str) -> Path:
     if normalized == "accountant/cemplang" or normalized.startswith("accountant/cemplang/"):
         return INDEX_CEMPLANG
     return INDEX_MAJA
+
+
+def _calculator_role(request: Request) -> str | None:
+    token = request.cookies.get(SESSION_COOKIE, "").strip()
+    if not token:
+        return None
+    try:
+        return str(verify_session(token).get("role") or "").upper() or None
+    except Exception:
+        return None
+
+
+@fastapi_app.get("/dapur/{unit}", include_in_schema=False)
+def frontend_calculator(unit: str, request: Request):
+    normalized = unit.lower().strip()
+    if normalized not in {"maja", "cemplang"}:
+        raise HTTPException(404, "calculator not found")
+    role = _calculator_role(request)
+    if role is None:
+        return RedirectResponse("/", status_code=302)
+    required_role = normalized.upper()
+    if role not in {"OWNER", required_role}:
+        return RedirectResponse(f"/dapur/{role.lower()}", status_code=302)
+    return HTMLResponse(
+        calculator_html(normalized, role),
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "same-origin",
+        },
+    )
 
 
 @fastapi_app.get("/", include_in_schema=False)
