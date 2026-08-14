@@ -31,11 +31,18 @@ def _env(name: str) -> str:
 def auth_config() -> dict[str, Any]:
     configured_roles = [role for role in ROLES if _env(f"SPPG_{role}_PASSWORD")]
     secret_ready = bool(_env("SPPG_AUTH_SECRET"))
+    owner_ready = "OWNER" in configured_roles
+    missing_roles = [role for role in ROLES if role not in configured_roles]
     return {
-        "enabled": secret_ready and len(configured_roles) == len(ROLES),
+        # Security invariant: never fall back to implicit OWNER merely because an
+        # optional site password is missing. OWNER + signing secret are enough to
+        # keep authentication enforcement active; missing site roles simply cannot login.
+        "enabled": secret_ready and owner_ready,
         "configuredRoles": configured_roles,
+        "missingRoles": missing_roles,
         "requiredRoles": list(ROLES),
         "secretReady": secret_ready,
+        "ownerReady": owner_ready,
         "rolePolicy": {
             "OWNER": ["CALCULATOR_MAJA", "CALCULATOR_CEMPLANG", "OPERATIONS", "ACCOUNTANT_MAJA", "ACCOUNTANT_CEMPLANG"],
             "MAJA": ["CALCULATOR_MAJA"],
@@ -123,7 +130,7 @@ def get_auth_config() -> dict[str, Any]:
 def login(payload: LoginIn) -> dict[str, Any]:
     config = auth_config()
     if not config["enabled"]:
-        raise HTTPException(503, "SPPG login is not fully configured")
+        raise HTTPException(503, "SPPG OWNER login is not configured")
     role = payload.username.upper().strip()
     if role not in ROLES:
         raise HTTPException(401, "username atau password salah")
