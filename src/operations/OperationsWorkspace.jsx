@@ -1,5 +1,6 @@
-import React, { Suspense, lazy, useMemo, useState } from "react";
+import React, { Suspense, lazy, useState } from "react";
 import {
+  Calculator,
   CalendarDays,
   FileSpreadsheet,
   LayoutDashboard,
@@ -23,7 +24,7 @@ const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
 const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
 
 const tabs = [
-  ["today", "Hari Ini", LayoutDashboard],
+  ["today", "Control Tower", LayoutDashboard],
   ["po", "PO Vendor", CalendarDays],
   ["receiving", "Penerimaan", PackageCheck],
   ["inventory", "Gudang", Warehouse],
@@ -33,8 +34,6 @@ const tabs = [
   ["review", "Review", ListChecks],
   ["chat", "Sumber Chat", MessageSquareText],
 ];
-
-const OWNER_ONLY_TABS = new Set(["accounting", "review", "chat"]);
 
 const moduleComponents = {
   po: OperationsPoPlanner,
@@ -48,25 +47,21 @@ const moduleComponents = {
 };
 
 function ModuleFallback() {
-  return (
-    <section className="ops-module">
-      <div className="ops-empty">Membuka modul…</div>
-    </section>
-  );
+  return <section className="ops-module"><div className="ops-empty">Membuka modul…</div></section>;
 }
 
 export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const role = String(accessRole || "OWNER").toUpperCase();
-  const fixedSite = role === "MAJA" || role === "CEMPLANG" ? role : "";
-  const visibleTabs = useMemo(
-    () => tabs.filter(([id]) => role === "OWNER" || !OWNER_ONLY_TABS.has(id)),
-    [role],
-  );
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
 
+  // Defense in depth: site roles should have been routed to /calculator by main.jsx.
+  if (role !== "OWNER") {
+    window.location.replace("/calculator");
+    return null;
+  }
+
   const openTab = (id) => {
-    if (role !== "OWNER" && OWNER_ONLY_TABS.has(id)) return;
     setTab(id);
     setVisitedTabs((current) => {
       if (current.has(id)) return current;
@@ -82,11 +77,14 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
         <div className="ops-brand">
           <span>SPPG</span>
           <strong>Pusat Operasional</strong>
-          <small>{fixedSite ? `Akses ${fixedSite}` : "Maja + Cemplang"}</small>
+          <small>OWNER · MAJA + CEMPLANG</small>
         </div>
 
         <nav>
-          {visibleTabs.map(([id, label, Icon]) => (
+          <button type="button" onClick={() => window.location.href = "/calculator"}>
+            <Calculator size={17} /> Kalkulator Maja & Cemplang
+          </button>
+          {tabs.map(([id, label, Icon]) => (
             <button
               type="button"
               key={id}
@@ -100,23 +98,20 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
         </nav>
 
         <div className="ops-sidebar-note">
-          Pusat Resep, Master Harga, dan Kalkulator tetap menjadi sumber planning terpusat.
-          {fixedSite
-            ? ` Akun ${fixedSite} hanya melihat dan bekerja pada operasional ${fixedSite}.`
-            : " Pusat Operasional mengelola kedua dapur; Akuntan & BGN tetap khusus OWNER."}
+          <strong>Alur:</strong> Kalkulator → planning → kurangi stok gudang → PO editable → invoice vendor → pembayaran → Excel akuntan → maker/approval BGN.
         </div>
       </aside>
 
       <main className="ops-content">
         <div hidden={tab !== "today"}>
-          <OperationsControlTower fixedSite={fixedSite} />
+          <OperationsControlTower />
         </div>
 
         <Suspense fallback={<ModuleFallback />}>
           {Object.entries(moduleComponents).map(([id, Component]) => (
-            visitedTabs.has(id) && (role === "OWNER" || !OWNER_ONLY_TABS.has(id)) ? (
+            visitedTabs.has(id) ? (
               <div key={id} hidden={tab !== id}>
-                <Component fixedSite={fixedSite} accessRole={role} />
+                <Component accessRole="OWNER" />
               </div>
             ) : null
           ))}

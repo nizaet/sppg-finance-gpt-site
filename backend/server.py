@@ -1,8 +1,10 @@
 """Production ASGI entrypoint.
 
-Serve the compiled React frontend and the SPPG API from the same Railway service.
-All /v1 routes remain FastAPI endpoints; browser routes fall back to dist/index.html.
-SPPG role/site enforcement remains active for protected /v1 application endpoints.
+Serve React frontend + SPPG API from one Railway service.
+- / and /accountant/maja use the MAJA accountant build.
+- /accountant/cemplang uses the CEMPLANG accountant build.
+- /operations and /calculator use the shared SPA shell.
+All /v1 routes remain API endpoints and are protected by SPPG role middleware.
 """
 
 from pathlib import Path
@@ -16,33 +18,41 @@ from backend.auth_middleware import SppgAccessMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
-INDEX = DIST / "index.html"
+INDEX_MAJA = DIST / "index.html"
+INDEX_CEMPLANG = DIST / "index-cemplang.html"
 ASSETS = DIST / "assets"
 
 if ASSETS.is_dir():
     fastapi_app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="frontend-assets")
 
 
+def _index_for_path(full_path: str) -> Path:
+    normalized = full_path.strip("/").lower()
+    if normalized == "accountant/cemplang" or normalized.startswith("accountant/cemplang/"):
+        return INDEX_CEMPLANG
+    return INDEX_MAJA
+
+
 @fastapi_app.get("/", include_in_schema=False)
 def frontend_root():
-    if not INDEX.is_file():
+    if not INDEX_MAJA.is_file():
         raise HTTPException(503, "frontend build is not available")
-    return FileResponse(INDEX)
+    return FileResponse(INDEX_MAJA)
 
 
 @fastapi_app.get("/{full_path:path}", include_in_schema=False)
 def frontend_spa(full_path: str):
-    # Existing FastAPI routes are registered before this catch-all. Keep unknown
-    # API/documentation paths as real 404s instead of returning HTML.
     if full_path == "openapi.json" or full_path.startswith(("v1/", "docs", "redoc")):
         raise HTTPException(404, "not found")
 
     candidate = DIST / full_path
     if candidate.is_file() and DIST in candidate.resolve().parents:
         return FileResponse(candidate)
-    if not INDEX.is_file():
+
+    index = _index_for_path(full_path)
+    if not index.is_file():
         raise HTTPException(503, "frontend build is not available")
-    return FileResponse(INDEX)
+    return FileResponse(index)
 
 
 app = SppgAccessMiddleware(fastapi_app)

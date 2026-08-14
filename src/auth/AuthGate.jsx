@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { LockKeyhole, LogOut, ShieldCheck, WalletCards } from "lucide-react";
+import { Calculator, LockKeyhole, LogOut, ShieldCheck, WalletCards, Workflow } from "lucide-react";
 import { authApi, clearSession, readSessionRole, readSessionToken, storeSession } from "./session.js";
 import "./auth.css";
 
@@ -34,7 +34,7 @@ function LoginScreen({ onAuthenticated }) {
         <div>
           <div className="sppg-login-kicker">SPPG OPERATIONS</div>
           <h1>Pusat Kontrol SPPG</h1>
-          <p>Masuk dengan akun operasional. Akun ChatGPT tidak diperlukan.</p>
+          <p>OWNER mengelola seluruh sistem. Akun MAJA/CEMPLANG hanya membuka Kalkulator dapurnya.</p>
         </div>
 
         <label>
@@ -71,14 +71,19 @@ function LoginScreen({ onAuthenticated }) {
   );
 }
 
-function SessionBar({ role, onLogout }) {
+function SessionBar({ role, config, onLogout }) {
+  const calculator = () => { window.location.href = "/calculator"; };
   const operations = () => { window.location.href = "/operations"; };
-  const accountant = () => { window.location.href = "/"; };
+  const accountantMaja = () => { window.location.href = config?.accountantUrls?.MAJA || "/"; };
+  const accountantCemplang = () => { window.location.href = config?.accountantUrls?.CEMPLANG || "/"; };
+
   return (
     <div className="sppg-session-bar">
       <span>{role}</span>
-      <button type="button" onClick={operations}>Pusat Operasional</button>
-      {role === "OWNER" && <button type="button" onClick={accountant}><WalletCards size={14} /> Akuntan</button>}
+      <button type="button" onClick={calculator}><Calculator size={14} /> Kalkulator</button>
+      {role === "OWNER" && <button type="button" onClick={operations}><Workflow size={14} /> Pusat Operasional</button>}
+      {role === "OWNER" && <button type="button" onClick={accountantMaja}><WalletCards size={14} /> Akuntan Maja</button>}
+      {role === "OWNER" && <button type="button" onClick={accountantCemplang}><WalletCards size={14} /> Akuntan Cemplang</button>}
       <button type="button" className="danger" onClick={onLogout}><LogOut size={14} /> Keluar</button>
     </div>
   );
@@ -97,8 +102,6 @@ export default function AuthGate({ children }) {
         if (cancelled) return;
         setConfig(cfg);
 
-        // Failsafe: until Railway has all four secrets, preserve the current app
-        // so configuration cannot accidentally lock the owner out.
         if (!cfg?.enabled) {
           setRole("OWNER");
           return;
@@ -118,8 +121,6 @@ export default function AuthGate({ children }) {
           if (!cancelled) setRole("");
         }
       } catch {
-        // Backend unavailable must not turn into an insecure implicit login once
-        // auth has been configured. Show login and let its error explain failure.
         setConfig({ enabled: true, backendUnavailable: true });
         clearSession();
         setRole("");
@@ -147,8 +148,8 @@ export default function AuthGate({ children }) {
 
   return (
     <>
-      {config?.enabled && <SessionBar role={role} onLogout={logout} />}
-      {children({ role: role || "OWNER", authEnabled: Boolean(config?.enabled) })}
+      {config?.enabled && <SessionBar role={role} config={config} onLogout={logout} />}
+      {children({ role: role || "OWNER", authEnabled: Boolean(config?.enabled), config })}
     </>
   );
 }

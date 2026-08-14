@@ -13,6 +13,8 @@ from backend.inventory_summary_api import router as inventory_summary_router
 from backend.auth_api import router as auth_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
+from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
+from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
@@ -23,11 +25,13 @@ operational_router.include_router(auth_router)
 # /bgn-flow, /audit-log, and their corresponding write endpoints.
 operational_router.include_router(chat_router)
 
-# Read-only projections and owner-side accountant artifacts/workflow controls.
+# Read-only projections and owner-side workflow controls.
 operational_router.include_router(control_tower_router)
 operational_router.include_router(inventory_summary_router)
 operational_router.include_router(accountant_excel_router)
 operational_router.include_router(accountant_status_router)
+operational_router.include_router(vendor_rule_admin_router)
+operational_router.include_router(calculator_planning_bridge_router)
 
 # Preserve the legacy compatibility bundle used by existing clients.
 operational_router.include_router(vendor_payables_router)
