@@ -114,6 +114,14 @@ export const operationsApi = {
     if (search) q.set("search", search);
     return request(`/v1/inventory/balances?${q.toString()}`);
   },
+  syncCalculatorPlanning: ({ site, distributionDate }) => request("/v1/calculator-planning/sync", {
+    method: "POST",
+    body: JSON.stringify({ site, distribution_date: distributionDate }),
+  }),
+  previewCalculatorPlanning: ({ site, distributionDate }) => {
+    const q = new URLSearchParams({ site, distributionDate });
+    return request(`/v1/calculator-planning/preview?${q.toString()}`);
+  },
   getPlanningSnapshots: ({ site = "", distributionDate = "", activeOnly = true } = {}) => {
     const q = new URLSearchParams();
     if (site) q.set("site", site);
