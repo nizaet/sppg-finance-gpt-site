@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
+from urllib.parse import parse_qsl, urlencode
 
 from starlette.responses import JSONResponse
 
@@ -10,8 +12,8 @@ from backend.auth_api import auth_config, verify_session
 
 PUBLIC_PREFIXES = (
     "/v1/auth/",
-    "/v1/gpt/",          # protected by SPPG_GPT_API_KEY in its own router
-    "/v1/whatsapp/",     # webhook/ingress has its own verification/auth
+    "/v1/gpt/",
+    "/v1/whatsapp/",
     "/v1/schema/",
     "/docs",
     "/redoc",
@@ -37,15 +39,43 @@ def _role_from_auth(value: str) -> str | None:
     token = _bearer(value)
     if not token:
         return None
-
     gpt_key = os.getenv("SPPG_GPT_API_KEY", "").strip()
     if gpt_key and hmac.compare_digest(token, gpt_key):
         return "OWNER"
-
     try:
         return str(verify_session(token).get("role") or "").upper() or None
     except Exception:
         return None
+
+
+# Kept for regression compatibility and utility tests. They no longer grant site
+# roles operational API access; the middleware below blocks those roles entirely.
+def _query_with_site(scope: dict, role: str) -> tuple[bool, str | None]:
+    pairs = parse_qsl(scope.get("query_string", b"").decode("utf-8"), keep_blank_values=True)
+    values = [v for k, v in pairs if k.lower() == "site" and v]
+    if values and any(v.upper() != role for v in values):
+        return False, "akun hanya dapat mengakses site sendiri"
+    if not values:
+        pairs.append(("site", role))
+        scope["query_string"] = urlencode(pairs).encode("utf-8")
+    return True, None
+
+
+def _validate_body_site(body: bytes, role: str) -> tuple[bool, str | None]:
+    if not body:
+        return False, "site wajib ada untuk akun dapur"
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return False, "payload JSON tidak valid"
+    if not isinstance(payload, dict):
+        return False, "payload harus berupa object"
+    site = str(payload.get("site") or "").upper().strip()
+    if not site:
+        return False, "site wajib ada untuk akun dapur"
+    if site != role:
+        return False, "akun hanya dapat menulis ke site sendiri"
+    return True, None
 
 
 def _json_response(status_code: int, detail: str) -> JSONResponse:
@@ -53,16 +83,11 @@ def _json_response(status_code: int, detail: str) -> JSONResponse:
 
 
 class SppgAccessMiddleware:
-    """Role enforcement for the deployed SPPG application.
+    """Final role policy.
 
-    Final policy:
-    - OWNER: calculators, Operational Control Center, all accountant modules/API.
-    - MAJA: calculator MAJA only.
-    - CEMPLANG: calculator CEMPLANG only.
-
-    Site accounts therefore cannot call operational/accountant `/v1/*` endpoints
-    even if they manually type a URL. Their calculator destinations are supplied
-    from auth config and live outside these protected operational endpoints.
+    OWNER: both calculators + Operational Control Center + accountant modules.
+    MAJA: calculator MAJA only.
+    CEMPLANG: calculator CEMPLANG only.
     """
 
     def __init__(self, app):
@@ -84,8 +109,6 @@ class SppgAccessMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Browser SPA assets/pages are handled by the frontend gate. API access is
-        # additionally enforced here so hidden/manual URLs cannot bypass roles.
         if not path.startswith("/v1/"):
             await self.app(scope, receive, send)
             return
