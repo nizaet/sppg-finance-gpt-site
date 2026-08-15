@@ -26,6 +26,7 @@ export default function OperationsPayments({ fixedSite = "" }) {
   const [site, setSite] = useState(fixedSite || "");
   const [payables, setPayables] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [vendorContacts, setVendorContacts] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -46,12 +47,18 @@ export default function OperationsPayments({ fixedSite = "" }) {
     setLoading(true);
     setError("");
     try {
-      const [payableData, paymentData] = await Promise.all([
+      const [payableData, paymentData, vendorData] = await Promise.all([
         operationsApi.getVendorPayables({ site: activeSite }),
         operationsApi.getVendorPayments({ site: activeSite }),
+        operationsApi.getReferenceVendors(activeSite),
       ]);
       setPayables(payableData?.items || []);
       setPayments(paymentData?.items || []);
+      const contacts = {};
+      (vendorData?.items || []).forEach((item) => {
+        if (item?.code) contacts[String(item.code).toUpperCase()] = String(item.metadata?.whatsapp_phone || "");
+      });
+      setVendorContacts(contacts);
     } catch (err) {
       setError(err.message || "Gagal mengambil invoice/pembayaran vendor");
     } finally {
@@ -101,8 +108,13 @@ export default function OperationsPayments({ fixedSite = "" }) {
   const openPaymentDraftWhatsApp = () => {
     const text = invoicePreview?.paymentDraft || "";
     if (!text) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
-    setActionMessage("WhatsApp dibuka dengan laporan pembayaran siap diteruskan. Pilih tujuan yang benar sebelum kirim.");
+    const phone = vendorContacts[invoiceVendor] || "";
+    if (!phone) {
+      setError(`Nomor WhatsApp ${invoiceVendor} belum tersimpan. Isi dahulu di menu Vendor & Lead Time.`);
+      return;
+    }
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+    setActionMessage(`WhatsApp ${invoiceVendor} dibuka dengan laporan pembayaran yang sudah dikoreksi.`);
   };
 
   return (

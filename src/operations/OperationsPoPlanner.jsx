@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ClipboardCopy, MessageCircle, RefreshCw, RotateCcw, ShoppingCart } from "lucide-react";
+import { CalendarDays, CheckCircle2, ClipboardCopy, MessageCircle, RefreshCw, RotateCcw, Send, ShoppingCart, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -77,21 +77,6 @@ function stockForItem(item, lookup) {
   return candidates.length === 1 ? candidates[0].balance : 0;
 }
 
-function poMessage(po) {
-  const lines = [
-    `*PO SPPG ${po.site || ""}*`,
-    `Vendor: ${po.vendor_code || "-"}`,
-    `Tanggal distribusi: ${po.distribution_date || "-"}`,
-    `PO: ${po.po_code || "-"}${po.revision_no ? ` / Rev ${po.revision_no}` : ""}`,
-    "",
-  ];
-  (po.items || []).forEach((item, index) => {
-    lines.push(`${index + 1}. ${item.item_name} — ${qty(item.po_qty)} ${item.unit || ""}`.trim());
-  });
-  lines.push("", "Mohon konfirmasi pesanan di atas. Terima kasih.");
-  return lines.join("\n");
-}
-
 async function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   const area = document.createElement("textarea");
@@ -147,6 +132,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         vendor_code: assignment.vendor,
         assignment_method: assignment.method,
         notes: item.notes || "",
+        excluded: false,
       };
     }));
   };
@@ -204,7 +190,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const createVendorPo = async (vendor) => {
     if (!planningSnapshot?.id || !vendor || vendor === "UNASSIGNED") return;
-    const lines = draftItems.filter((item) => item.vendor_code === vendor && Number(item.po_qty || 0) > 0);
+    const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0);
     if (!lines.length) return;
 
     const code = `PO-${activeSite}-${distributionDate.replaceAll("-", "")}-${vendor}`;
@@ -249,32 +235,80 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     }
   };
 
-  const loadPoText = async (poId) => {
+  const loadPoPreview = async (poId) => {
     setActionId(poId);
     setError("");
     try {
-      const detail = await operationsApi.getPurchaseOrder(poId);
-      return poMessage(detail);
+      return await operationsApi.getPoWhatsAppPreview({ purchaseOrderId: poId });
     } catch (err) {
-      setError(err.message || "Gagal membuka detail PO");
-      return "";
+      setError(err.message || "Gagal menyiapkan pesan PO");
+      return null;
     } finally {
       setActionId(null);
     }
   };
 
   const copyPo = async (poId) => {
-    const text = await loadPoText(poId);
-    if (!text) return;
-    await copyText(text);
+    const preview = await loadPoPreview(poId);
+    if (!preview?.message) return;
+    await copyText(preview.message);
     setMessage("Teks PO sudah disalin. Tinggal paste ke chat vendor.");
   };
 
   const openWhatsApp = async (poId) => {
-    const text = await loadPoText(poId);
-    if (!text) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
-    setMessage("WhatsApp dibuka dengan teks PO siap diteruskan. Pilih chat vendor yang benar sebelum kirim.");
+    const whatsappWindow = window.open("about:blank", "_blank");
+    if (whatsappWindow) whatsappWindow.opener = null;
+    const preview = await loadPoPreview(poId);
+    if (!preview?.message) {
+      whatsappWindow?.close();
+      return;
+    }
+    if (!preview.whatsappBaseUrl) {
+      whatsappWindow?.close();
+      setError(`Nomor WhatsApp ${preview.vendorName || preview.vendorCode} belum tersimpan. Isi dahulu di menu Vendor & Lead Time.`);
+      return;
+    }
+    const targetUrl = `${preview.whatsappBaseUrl}${encodeURIComponent(preview.message)}`;
+    if (whatsappWindow) whatsappWindow.location.replace(targetUrl);
+    else window.open(targetUrl, "_blank", "noopener,noreferrer");
+    setMessage(`WhatsApp ${preview.vendorName} dibuka dengan pesan PO final. Setelah benar-benar terkirim, klik “Tandai Terkirim”.`);
+  };
+
+  const refreshPurchaseOrders = async () => {
+    const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 });
+    setPurchaseOrders(poData?.items || []);
+  };
+
+  const finalizePo = async (po) => {
+    if (!window.confirm(`Finalkan ${po.po_code} rev ${po.revision_no}?\n\nSetelah final, GPTS dan tombol WhatsApp akan memakai PO ini. Data kalkulator tidak berubah.`)) return;
+    setActionId(po.id);
+    setError("");
+    setMessage("");
+    try {
+      await operationsApi.finalizePurchaseOrder(po.id);
+      await refreshPurchaseOrders();
+      setMessage(`${po.po_code} sudah FINAL. GPTS sekarang dapat mengambil pesan WhatsApp dari PO hasil edit ini.`);
+    } catch (err) {
+      setError(err.message || "Gagal memfinalkan PO");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const markSent = async (po) => {
+    if (!window.confirm(`Konfirmasi bahwa ${po.po_code} sudah benar-benar dikirim ke ${po.vendor_code} melalui WhatsApp?`)) return;
+    setActionId(po.id);
+    setError("");
+    setMessage("");
+    try {
+      await operationsApi.markPurchaseOrderSent(po.id);
+      await refreshPurchaseOrders();
+      setMessage(`${po.po_code} tercatat sebagai SENT.`);
+    } catch (err) {
+      setError(err.message || "Gagal menandai PO terkirim");
+    } finally {
+      setActionId(null);
+    }
   };
 
   const reducedByStock = draftItems.filter((x) => Number(x.stock_qty || 0) > 0 && Number(x.recommended_po_qty) < Number(x.planned_qty)).length;
@@ -326,33 +360,39 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     <span>{group.items.length} item</span>
                   </div>
                   {group.vendor !== "UNASSIGNED" && (
-                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => Number(x.po_qty || 0) <= 0)}>
+                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Number(x.po_qty || 0) <= 0)}>
                       <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : "Buat Draft PO"}
                     </button>
                   )}
                 </div>
                 <div className="ops-table-wrap">
                   <table className="ops-table">
-                    <thead><tr><th>Item</th><th>Planning</th><th>Stok Gudang</th><th>Rekomendasi PO</th><th>PO Qty — EDIT</th><th>Unit</th><th>Vendor</th><th>Dasar</th></tr></thead>
+                    <thead><tr><th>Ikut PO?</th><th>Item</th><th>Planning</th><th>Stok Gudang</th><th>Rekomendasi PO</th><th>PO Qty — EDIT</th><th>Unit</th><th>Vendor</th><th>Dasar</th></tr></thead>
                     <tbody>
                       {group.items.map((item) => {
                         const isManual = Number(item.po_qty) !== Number(item.recommended_po_qty);
                         return (
                           <tr key={item.planning_snapshot_item_id}>
+                            <td>
+                              <button type="button" onClick={() => updateDraftItem(item.planning_snapshot_item_id, { excluded: !item.excluded })} title={item.excluded ? "Masukkan kembali ke PO" : "Hapus item dari PO ini"}>
+                                {item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}
+                              </button>
+                              {item.excluded && <div className="ops-muted">Tidak dipesan</div>}
+                            </td>
                             <td><strong>{item.item_name}</strong><div className="ops-muted">{item.category_code || "-"}</div></td>
                             <td>{qty(item.planned_qty)}</td>
                             <td>{qty(item.stock_qty)}</td>
                             <td><strong>{qty(item.recommended_po_qty)}</strong></td>
                             <td>
                               <div className="ops-row-actions">
-                                <input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: Number(e.target.value) })} />
+                                <input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty} disabled={item.excluded} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: Number(e.target.value) })} />
                                 {isManual && <button type="button" title="Kembalikan ke rekomendasi" onClick={() => updateDraftItem(item.planning_snapshot_item_id, { po_qty: item.recommended_po_qty })}><RotateCcw size={13} /></button>}
                               </div>
                               {isManual && <div className="ops-muted">Manual override</div>}
                             </td>
                             <td>{item.unit || "-"}</td>
                             <td>
-                              <select value={item.vendor_code} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { vendor_code: e.target.value, assignment_method: "manual" })}>
+                              <select value={item.vendor_code} disabled={item.excluded} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { vendor_code: e.target.value, assignment_method: "manual" })}>
                                 <option value="">Pilih vendor</option>
                                 {vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}
                               </select>
@@ -400,7 +440,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>
         <div className="ops-table-wrap">
           <table className="ops-table">
-            <thead><tr><th>Distribusi</th><th>PO</th><th>Vendor</th><th>Revisi</th><th>Item</th><th>Total PO</th><th>Status</th><th>Aksi Manual</th></tr></thead>
+            <thead><tr><th>Distribusi</th><th>PO</th><th>Vendor</th><th>Revisi</th><th>Item</th><th>Total PO</th><th>Status</th><th>Aksi</th></tr></thead>
             <tbody>
               {purchaseOrders.map((po) => (
                 <tr key={po.id}>
@@ -411,7 +451,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                   <td>{po.item_count}</td>
                   <td>{money(po.po_total)}</td>
                   <td>{po.status}</td>
-                  <td><div className="ops-row-actions"><button type="button" onClick={() => copyPo(po.id)} disabled={actionId === po.id}><ClipboardCopy size={14} /> Copy PO</button><button type="button" onClick={() => openWhatsApp(po.id)} disabled={actionId === po.id}><MessageCircle size={14} /> WhatsApp</button></div></td>
+                  <td>
+                    <div className="ops-row-actions">
+                      {String(po.status).toUpperCase() === "DRAFT" && <button type="button" onClick={() => finalizePo(po)} disabled={actionId === po.id}><CheckCircle2 size={14} /> Finalkan</button>}
+                      {String(po.status).toUpperCase() !== "DRAFT" && <button type="button" onClick={() => copyPo(po.id)} disabled={actionId === po.id}><ClipboardCopy size={14} /> Copy PO</button>}
+                      {String(po.status).toUpperCase() !== "DRAFT" && <button type="button" onClick={() => openWhatsApp(po.id)} disabled={actionId === po.id}><MessageCircle size={14} /> WhatsApp Vendor</button>}
+                      {String(po.status).toUpperCase() === "FINALIZED" && <button type="button" onClick={() => markSent(po)} disabled={actionId === po.id}><Send size={14} /> Tandai Terkirim</button>}
+                    </div>
+                  </td>
                 </tr>
               ))}
               {!loading && purchaseOrders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}
