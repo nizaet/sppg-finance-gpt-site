@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from backend.operations_action_schema_v017_api import schema_v0172
 from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182
 
@@ -139,3 +141,26 @@ def test_v0182_new_action_response_objects_have_explicit_properties():
     for path, method in contexts:
         response = unified["paths"][path][method]["responses"]["200"]["content"]["application/json"]["schema"]
         assert_object_properties(response)
+
+
+def test_v0182_gpts_instructions_keep_canonical_accountant_rules_and_fit_limit():
+    instructions = Path("api/gpts_instructions_v0182.md").read_text(encoding="utf-8")
+    assert len(instructions.encode("utf-8")) <= 8_000
+    for category in (
+        "Pemasukan: Insentif Sewa",
+        "Pemasukan: Dana Operasional",
+        "Pemasukan: Dana Bahan Baku",
+        "Bahan Baku (Lauk)",
+        "Bahan Baku (Sayur/Buah)",
+        "Bahan Baku (Sembako/Bumbu)",
+        "Operasional (Kebersihan/APD)",
+        "Operasional (Utilitas)",
+        "Operasional (Transport)",
+        "Operasional (Gaji/Admin)",
+        "Belanja Modal (Capex)",
+        "Beban Profit (Non-Reimburse)",
+        "Pembagian Dividen",
+    ):
+        assert f"`{category}`" in instructions
+    assert "SPPG_DRIVE_RAW_CHAT_FOLDER_ID" in instructions
+    assert "Jika `SYNCED`, transaksi berhasil" in instructions
