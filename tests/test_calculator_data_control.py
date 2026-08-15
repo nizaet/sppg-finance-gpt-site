@@ -3,7 +3,16 @@ from backend.calculator_data_api import (
     _plan_preview_rows,
     _record_key,
     _same_content,
+    router,
 )
+
+
+def test_calculator_data_router_is_mounted_under_v1_exactly_once():
+    paths = {route.path for route in router.routes}
+    assert router.prefix == ""
+    assert "/calculator-data/plan-preview" in paths
+    assert "/calculator-data/import" in paths
+    assert not any(path.startswith("/v1/") for path in paths)
 
 
 def test_master_record_keys_preserve_calculator_contracts():

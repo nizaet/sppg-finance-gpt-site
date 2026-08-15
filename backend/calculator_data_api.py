@@ -15,7 +15,10 @@ from backend.db import connection, database_ready
 from backend.google_services import SITE_TARGETS, firestore_client
 from backend.stock_opname_parser import canonical_unit, normalize_name
 
-router = APIRouter(prefix="/v1", tags=["calculator-data-control"])
+# This router is mounted inside ``operational_router``, whose prefix is already
+# ``/v1``. Keeping another /v1 here exposes the endpoints as /v1/v1/... and
+# makes the frontend's POST requests fall through to the GET-only SPA route.
+router = APIRouter(tags=["calculator-data-control"])
 
 DATA_TYPES = {"PRICES", "GRAMASI", "RECIPES", "DAILY_PLANS"}
 
