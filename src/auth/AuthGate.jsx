@@ -4,6 +4,7 @@ import { authApi, clearSession, readSessionRole, readSessionToken, storeSession 
 import "./auth.css";
 
 const ALL_ROLES = ["OWNER", "MAJA", "CEMPLANG"];
+const ROLE_LABELS = { OWNER: "YAYASAN", MAJA: "MAJA", CEMPLANG: "CEMPLANG" };
 
 function LoginScreen({ onAuthenticated, configuredRoles = ["OWNER"] }) {
   const roles = configuredRoles.length ? configuredRoles : ["OWNER"];
@@ -35,13 +36,12 @@ function LoginScreen({ onAuthenticated, configuredRoles = ["OWNER"] }) {
         <div>
           <div className="sppg-login-kicker">SPPG OPERATIONS</div>
           <h1>Pusat Kontrol SPPG</h1>
-          <p>OWNER mengelola seluruh sistem. Akun MAJA/CEMPLANG hanya membuka Kalkulator dapurnya.</p>
         </div>
 
         <label>
           Akun
           <select value={role} onChange={(e) => setRole(e.target.value)}>
-            {roles.map((item) => <option key={item} value={item}>{item}</option>)}
+            {roles.map((item) => <option key={item} value={item}>{ROLE_LABELS[item] || item}</option>)}
           </select>
         </label>
 
@@ -81,7 +81,7 @@ function ConfigurationLocked({ config }) {
         <div>
           <div className="sppg-login-kicker">AKSES DIKUNCI</div>
           <h1>Konfigurasi login belum aman</h1>
-          <p>Aplikasi tidak akan memberikan akses OWNER otomatis. Pastikan SPPG_AUTH_SECRET dan SPPG_OWNER_PASSWORD tersedia di Railway.</p>
+          <p>Aplikasi tidak akan memberikan akses YAYASAN otomatis. Pastikan konfigurasi login pusat tersedia di Railway.</p>
           {missing.length > 0 && <p>Role belum dikonfigurasi: <strong>{missing.join(", ")}</strong>.</p>}
         </div>
       </section>
@@ -90,15 +90,19 @@ function ConfigurationLocked({ config }) {
 }
 
 function SessionBar({ role, config, onLogout }) {
-  const calculator = () => { window.location.href = "/calculator"; };
   const operations = () => { window.location.href = "/operations"; };
   const accountantMaja = () => { window.location.href = config?.accountantUrls?.MAJA || "/accountant/maja"; };
   const accountantCemplang = () => { window.location.href = config?.accountantUrls?.CEMPLANG || "/accountant/cemplang"; };
+  const calculatorSites = role === "OWNER" ? ["MAJA", "CEMPLANG"] : [role];
 
   return (
     <div className="sppg-session-bar">
-      <span>{role}</span>
-      <button type="button" onClick={calculator}><Calculator size={14} /> Kalkulator</button>
+      <span>{ROLE_LABELS[role] || role}</span>
+      {calculatorSites.map((site) => (
+        <a key={site} href={config?.calculatorUrls?.[site] || `/dapur/${site.toLowerCase()}`}>
+          <Calculator size={14} /> Kalkulator {site === "MAJA" ? "Maja" : "Cemplang"}
+        </a>
+      ))}
       {role === "OWNER" && <button type="button" onClick={operations}><Workflow size={14} /> Pusat Operasional</button>}
       {role === "OWNER" && <button type="button" onClick={accountantMaja}><WalletCards size={14} /> Akuntan Maja</button>}
       {role === "OWNER" && <button type="button" onClick={accountantCemplang}><WalletCards size={14} /> Akuntan Cemplang</button>}

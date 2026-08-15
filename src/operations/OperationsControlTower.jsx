@@ -110,7 +110,7 @@ export default function OperationsControlTower({ date: initialDate }) {
     <div className="ops-shell">
       <div className="ops-heading">
         <div>
-          <span className="ops-kicker">OWNER CONTROL TOWER</span>
+          <span className="ops-kicker">YAYASAN CONTROL TOWER</span>
           <h2>MAJA & CEMPLANG — Status Terpisah</h2>
           <p>Setiap panel di bawah hanya berisi data site yang tertulis pada header. Tidak digabung menjadi satu angka.</p>
         </div>

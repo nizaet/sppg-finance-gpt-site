@@ -66,7 +66,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
 
   return <section className="ops-module">
     <div className="ops-module-header">
-      <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Chat grup Maja/Cemplang menjadi bukti penerimaan. Received qty dicatat sebagai layer terpisah dan tidak pernah menimpa planned qty atau PO qty.</p></div>
+      <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Input terkonfirmasi dari halaman ini maupun GPTS masuk ke riwayat PostgreSQL yang sama. Received qty tetap terpisah dan tidak pernah menimpa planned qty atau PO qty.</p></div>
       <div className="ops-inline-controls"><select value={activeSite} disabled={Boolean(fixedSite)} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
     </div>
 

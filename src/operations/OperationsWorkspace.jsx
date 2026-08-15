@@ -77,13 +77,12 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
         <div className="ops-brand">
           <span>SPPG</span>
           <strong>Pusat Operasional</strong>
-          <small>OWNER · MAJA + CEMPLANG</small>
+          <small>YAYASAN · MAJA + CEMPLANG</small>
         </div>
 
         <nav>
-          <button type="button" onClick={() => window.location.href = "/calculator"}>
-            <Calculator size={17} /> Kalkulator Maja & Cemplang
-          </button>
+          <a href="/dapur/maja"><Calculator size={17} /> Kalkulator Maja</a>
+          <a href="/dapur/cemplang"><Calculator size={17} /> Kalkulator Cemplang</a>
           {tabs.map(([id, label, Icon]) => (
             <button
               type="button"

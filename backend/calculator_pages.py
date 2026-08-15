@@ -138,6 +138,7 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       #loginOverlay, #openAdminSettingsBtn, #adminSettingsModal, #logoutBtn {{ display: none !important; }}
       #legacyDataPanel.legacy-panel-hidden {{ display: none !important; }}
       #legacyMainContent.legacy-main-expanded {{ width: 100% !important; max-width: 100% !important; min-width: 0 !important; flex: 1 1 100% !important; margin-left: 0 !important; }}
+      #legacyMainContent.legacy-main-expanded .desktop-wide-tabs {{ margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }}
       #railwayAppControls {{ margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; font-family: inherit; }}
       .railway-app-control {{ min-height: 2.4rem; border: 1px solid rgba(255,255,255,.45); border-radius: .5rem; padding: .5rem .75rem; color: white; background: rgba(255,255,255,.12); display: inline-flex; align-items: center; justify-content: center; gap: .45rem; font-family: inherit; font-size: .875rem; line-height: 1.25rem; font-weight: 600; white-space: nowrap; cursor: pointer; }}
       .railway-app-control:hover {{ background: rgba(255,255,255,.22); }}

@@ -84,7 +84,7 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
         <div>
           <span className="ops-kicker">MASTER VERSIONED</span>
           <h3>Vendor & Lead Time — EDITABLE</h3>
-          <p>Lead time boleh diubah OWNER. Perubahan dibuat sebagai rule efektif baru sehingga histori PO lama tidak ikut berubah.</p>
+          <p>Lead time boleh diubah YAYASAN. Perubahan dibuat sebagai rule efektif baru sehingga histori PO lama tidak ikut berubah.</p>
         </div>
         <div className="ops-inline-controls">
           <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select>

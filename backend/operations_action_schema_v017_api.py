@@ -19,8 +19,8 @@ def obj(properties: dict[str, Any], required: list[str] | None = None) -> dict[s
 
 def schema_v017() -> dict[str, Any]:
     payload = operations_schema_v0163()
-    payload["info"]["version"] = "0.17.0"
-    payload["info"]["description"] = "SPPG operations with safe historical PO and goods-receipt reconstruction, invoice parsing, payables, payments, and inventory."
+    payload["info"]["version"] = "0.17.1"
+    payload["info"]["description"] = "SPPG operations with safe current and historical receiving, invoice parsing, payables, payments, and inventory."
     components = payload.setdefault("components", {})
     components["schemas"] = {}
 
@@ -49,15 +49,77 @@ def schema_v017() -> dict[str, Any]:
     })
     receipt_preview = obj({
         "reported_item_name": {"type": "string"},
-        "matched_po_item_name": {"type": "string"},
+        "po_item_name": {"type": ["string", "null"]},
+        "purchase_order_item_id": {"type": ["integer", "null"]},
+        "matched": {"type": "boolean"},
         "match_confidence": {"type": "number"},
-        "po_qty": {"type": "number"},
+        "match_method": {"type": "string"},
+        "po_qty": {"type": ["number", "null"]},
         "received_qty": {"type": "number"},
-        "rejected_qty": {"type": "number"},
-        "accepted_qty": {"type": "number"},
-        "variance_qty": {"type": "number"},
+        "variance_qty": {"type": ["number", "null"]},
         "unit": {"type": ["string", "null"]},
     })
+
+    payload["paths"]["/v1/receiving/whatsapp"] = {
+        "post": {
+            "operationId": "previewOrRecordSppgGoodsReceiptFromMessage",
+            "summary": "Preview or record a current goods receipt from supplied message text",
+            "description": (
+                "Use only the receipt text supplied by the user. Always call with commit=false first. "
+                "Commit only after the PO and every item match safely or after the user supplies the exact purchase_order_id. "
+                "A committed receipt is stored in PostgreSQL and appears in Pusat Operasional > Penerimaan. "
+                "Never overwrite planned_qty or po_qty."
+            ),
+            "x-openai-isConsequential": True,
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": obj({
+                            "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
+                            "text": {"type": "string", "minLength": 1},
+                            "vendor_code": {"type": ["string", "null"]},
+                            "purchase_order_id": {"type": ["integer", "null"]},
+                            "received_at": {"type": ["string", "null"], "format": "date-time"},
+                            "source_external_id": {"type": ["string", "null"]},
+                            "source_uri": {"type": ["string", "null"]},
+                            "reporter": {"type": ["string", "null"]},
+                            "commit": {"type": "boolean", "default": False},
+                        }, ["site", "text", "commit"])
+                    }
+                },
+            },
+            "responses": {
+                "200": {
+                    "description": "Goods receipt preview or commit result",
+                    "content": {
+                        "application/json": {
+                            "schema": obj({
+                                "committed": {"type": "boolean"},
+                                "canCommit": {"type": "boolean"},
+                                "duplicate": {"type": ["boolean", "null"]},
+                                "site": {"type": "string"},
+                                "vendorCode": {"type": ["string", "null"]},
+                                "purchaseOrderId": {"type": ["integer", "null"]},
+                                "poCode": {"type": ["string", "null"]},
+                                "poMatchConfidence": {"type": ["number", "null"]},
+                                "requiresConfirmation": {"type": ["boolean", "null"]},
+                                "receiptId": {"type": ["integer", "null"]},
+                                "purchaseOrderStatus": {"type": ["string", "null"]},
+                                "matches": {"type": "array", "items": receipt_preview},
+                                "alternatives": {"type": "array", "items": obj({
+                                    "purchase_order_id": {"type": "integer"},
+                                    "po_code": {"type": "string"},
+                                    "vendor_code": {"type": "string"},
+                                    "score": {"type": "number"},
+                                })},
+                            })
+                        }
+                    },
+                }
+            },
+        }
+    }
 
     payload["paths"]["/v1/operations/history/import"] = {
         "post": {
@@ -123,4 +185,9 @@ def schema_v017() -> dict[str, Any]:
 
 @router.get("/schema/chatgpt-operations-v0170.json", include_in_schema=False)
 def chatgpt_operations_schema_v0170() -> JSONResponse:
+    return JSONResponse(schema_v017())
+
+
+@router.get("/schema/chatgpt-operations-v0171.json", include_in_schema=False)
+def chatgpt_operations_schema_v0171() -> JSONResponse:
     return JSONResponse(schema_v017())

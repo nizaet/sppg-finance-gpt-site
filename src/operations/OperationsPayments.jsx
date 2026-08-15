@@ -220,7 +220,7 @@ export default function OperationsPayments({ fixedSite = "" }) {
           <div>
             <span className="ops-kicker">PAYMENT EVIDENCE</span>
             <h3>Riwayat Pembayaran</h3>
-            <p>Baris di bawah hanya berasal dari record pembayaran. Adanya invoice atau permintaan bayar tidak dianggap sebagai pembayaran.</p>
+            <p>Baris di bawah berasal dari record pembayaran aplikasi maupun GPTS. Adanya invoice atau permintaan bayar tidak dianggap sebagai pembayaran.</p>
           </div>
         </div>
         <div className="ops-table-wrap">

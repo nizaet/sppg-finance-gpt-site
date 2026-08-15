@@ -21,6 +21,7 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "var __initial_auth_token = 'railway-session'" not in maja
     assert "spbg_firebase_connection_v1-maja" in maja
     assert "spbg_firebase_connection_v1-cemplang" in cemplang
+    assert "#legacyMainContent.legacy-main-expanded .desktop-wide-tabs" in maja
     assert "#loginOverlay" in maja
     assert "sppg_session_token_v1" in cemplang
 

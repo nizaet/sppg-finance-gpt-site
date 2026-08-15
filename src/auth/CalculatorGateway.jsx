@@ -23,7 +23,7 @@ function CalculatorCard({ site, url }) {
         </div>
       </div>
       <p style={{ color: "#5d6b65", lineHeight: 1.5 }}>
-        Akun {site} hanya memiliki akses ke kalkulator dapur ini. Pusat Operasional dan aplikasi Akuntan hanya untuk OWNER.
+        Akun {site} hanya memiliki akses ke kalkulator dapur ini. Pusat Operasional dan aplikasi Akuntan hanya untuk YAYASAN.
       </p>
       {ready ? (
         <button
