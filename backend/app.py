@@ -18,6 +18,7 @@ from backend.operational_api import router as operational_router
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.vendor_workflow_api import router as vendor_workflow_router
+from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
 
 app = FastAPI(title="SPPG Core API", version="0.16.1")
 app.include_router(reference_router)
@@ -112,6 +113,24 @@ def _chatgpt_operations_schema() -> dict[str, Any]:
 @app.get("/v1/schema/chatgpt-operations-v0161.json", include_in_schema=False)
 def chatgpt_operations_schema_json() -> JSONResponse:
     return JSONResponse(_chatgpt_operations_schema())
+
+
+# Compatibility aliases. The canonical schema routes live under /v1/schema,
+# but these aliases prevent the SPA fallback from being mistaken for an empty
+# OpenAPI document when a GPT Builder import omits the /v1 prefix.
+@app.get("/schema/chatgpt-operations-v0170.json", include_in_schema=False)
+def chatgpt_operations_schema_v0170_alias() -> JSONResponse:
+    return JSONResponse(schema_v0170())
+
+
+@app.get("/schema/chatgpt-operations-v0171.json", include_in_schema=False)
+def chatgpt_operations_schema_v0171_alias() -> JSONResponse:
+    return JSONResponse(schema_v0171())
+
+
+@app.get("/schema/chatgpt-operations-v0172.json", include_in_schema=False)
+def chatgpt_operations_schema_v0172_alias() -> JSONResponse:
+    return JSONResponse(schema_v0172())
 
 
 def empty_site(site: dict[str, str]) -> dict[str, Any]:
