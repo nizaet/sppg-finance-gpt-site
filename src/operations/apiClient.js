@@ -57,6 +57,7 @@ export const operationsApi = {
   commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
   getReceivingVariance: ({ site = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); return request(`/v1/receiving/variance?${q}`); },
   parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", { method: "POST", body: JSON.stringify(payload) }),
+  confirmVendorPayment: (payload, commit = false) => request("/v1/vendor-payments/confirm", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (status) q.set("status", status); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); return request(`/v1/vendor-payables?${q}`); },
   getVendorPayments: ({ status = "", site = "" } = {}) => { const q = new URLSearchParams(); if (status) q.set("status", status); if (site) q.set("site", site); return request(`/v1/vendor-payments?${q}`); },
   getInventoryBalances: ({ site, search = "", limit = 300 }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); return request(`/v1/inventory/balances?${q}`); },

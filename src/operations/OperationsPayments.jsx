@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Calculator, ClipboardCopy, MessageCircle, RefreshCw } from "lucide-react";
+import { Calculator, CheckCircle2, ClipboardCopy, MessageCircle, RefreshCw } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
@@ -36,6 +36,13 @@ export default function OperationsPayments({ fixedSite = "" }) {
   const [invoicePreview, setInvoicePreview] = useState(null);
   const [checkingInvoice, setCheckingInvoice] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
+  const [paymentInvoiceId, setPaymentInvoiceId] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentSource, setPaymentSource] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentEvidenceUri, setPaymentEvidenceUri] = useState("");
+  const [paymentPreview, setPaymentPreview] = useState(null);
+  const [savingPayment, setSavingPayment] = useState(false);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -77,6 +84,13 @@ export default function OperationsPayments({ fixedSite = "" }) {
     [outstanding]
   );
 
+  useEffect(() => {
+    if (!paymentInvoiceId && outstanding.length) {
+      setPaymentInvoiceId(String(outstanding[0].vendor_invoice_id));
+      setPaymentAmount(String(Number(outstanding[0].net_amount || 0)));
+    }
+  }, [outstanding, paymentInvoiceId]);
+
   const checkInvoice = async () => {
     if (!activeSite || !invoiceText.trim()) return;
     setCheckingInvoice(true);
@@ -115,6 +129,66 @@ export default function OperationsPayments({ fixedSite = "" }) {
     }
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
     setActionMessage(`WhatsApp ${invoiceVendor} dibuka dengan laporan pembayaran yang sudah dikoreksi.`);
+  };
+
+  const selectedPayable = outstanding.find((item) => String(item.vendor_invoice_id) === String(paymentInvoiceId));
+
+  const selectPayable = (value) => {
+    setPaymentInvoiceId(value);
+    const payable = outstanding.find((item) => String(item.vendor_invoice_id) === String(value));
+    setPaymentAmount(payable ? String(Number(payable.net_amount || 0)) : "");
+    setPaymentPreview(null);
+  };
+
+  const paymentPayload = () => ({
+    vendor_invoice_id: Number(paymentInvoiceId),
+    amount: Number(paymentAmount),
+    payment_source: paymentSource.trim() || null,
+    reference_number: paymentReference.trim() || null,
+    evidence_uri: paymentEvidenceUri.trim() || null,
+    source_external_id: paymentReference.trim() ? `payment:${paymentReference.trim()}` : null,
+  });
+
+  const previewPayment = async () => {
+    if (!paymentInvoiceId || Number(paymentAmount) <= 0) return;
+    setSavingPayment(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const preview = await operationsApi.confirmVendorPayment(paymentPayload(), false);
+      setPaymentPreview(preview);
+    } catch (err) {
+      setError(err.message || "Gagal memeriksa pembayaran");
+      setPaymentPreview(null);
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const commitPayment = async () => {
+    if (!paymentPreview?.canCommit) return;
+    if (!paymentReference.trim() && !paymentEvidenceUri.trim()) {
+      setError("Isi minimal nomor referensi transfer atau tautan bukti pembayaran sebelum konfirmasi.");
+      return;
+    }
+    if (!window.confirm(`Catat pembayaran ${selectedPayable?.vendor_code || "vendor"} sebesar ${money(paymentPreview.paymentAmount)}?\n\nStatus invoice akan berubah menjadi ${paymentPreview.payableStatusAfter}.`)) return;
+    setSavingPayment(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const result = await operationsApi.confirmVendorPayment(paymentPayload(), true);
+      setActionMessage(`Pembayaran tercatat. Status tagihan: ${result.payableStatusAfter}. Pencatatan ini belum otomatis membuat pengeluaran Akuntan.`);
+      setPaymentPreview(null);
+      setPaymentReference("");
+      setPaymentEvidenceUri("");
+      await load();
+      setPaymentInvoiceId("");
+      setPaymentAmount("");
+    } catch (err) {
+      setError(err.message || "Gagal mencatat pembayaran");
+    } finally {
+      setSavingPayment(false);
+    }
   };
 
   return (
@@ -184,6 +258,37 @@ export default function OperationsPayments({ fixedSite = "" }) {
             <div className="ops-muted">Laporan ini masih rancangan pembayaran. Status PAID hanya boleh berubah setelah ada bukti transfer/pembayaran.</div>
           </div>
         )}
+      </section>
+
+      <section className="ops-module">
+        <div className="ops-module-header">
+          <div>
+            <span className="ops-kicker">TRANSFER + BUKTI</span>
+            <h3>Catat Pembayaran Vendor</h3>
+            <p>Pilih tagihan yang sudah direkonsiliasi, masukkan nilai transfer dan bukti. Sistem selalu preview sebelum mengubah status invoice. Bukti dapat berupa tautan Drive/foto yang sudah Anda simpan.</p>
+          </div>
+        </div>
+        <div className="ops-form-grid">
+          <label>Tagihan<select value={paymentInvoiceId} onChange={(e) => selectPayable(e.target.value)}><option value="">Pilih tagihan</option>{outstanding.map((item) => <option key={item.vendor_invoice_id} value={item.vendor_invoice_id}>{item.vendor_code} · {item.invoice_number || item.po_code || `#${item.vendor_invoice_id}`} · {money(item.net_amount)}</option>)}</select></label>
+          <label>Nilai transfer<input type="number" min="0" step="1" value={paymentAmount} onChange={(e) => { setPaymentAmount(e.target.value); setPaymentPreview(null); }} /></label>
+          <label>Sumber pembayaran<input type="text" value={paymentSource} onChange={(e) => setPaymentSource(e.target.value)} placeholder="contoh: BCA Operasional / Kas" /></label>
+          <label>No. referensi transfer<input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Nomor referensi dari bank" /></label>
+          <label>Tautan bukti<input type="url" value={paymentEvidenceUri} onChange={(e) => setPaymentEvidenceUri(e.target.value)} placeholder="Link Drive/foto bukti transfer" /></label>
+        </div>
+        <div className="ops-row-actions">
+          <button type="button" onClick={previewPayment} disabled={savingPayment || !paymentInvoiceId || Number(paymentAmount) <= 0}><Calculator size={14} /> {savingPayment ? "Memeriksa..." : "Preview Pembayaran"}</button>
+          <button type="button" onClick={commitPayment} disabled={savingPayment || !paymentPreview?.canCommit}><CheckCircle2 size={14} /> Konfirmasi & Simpan</button>
+        </div>
+        {paymentPreview && (
+          <div className="ops-summary-strip">
+            <span>Vendor <strong>{paymentPreview.vendorCode}</strong></span>
+            <span>Sisa sebelum <strong>{money(paymentPreview.remainingBefore)}</strong></span>
+            <span>Dibayar <strong>{money(paymentPreview.paymentAmount)}</strong></span>
+            <span>Sisa sesudah <strong>{money(paymentPreview.remainingAfter)}</strong></span>
+            <span>Status setelah <strong>{paymentPreview.payableStatusAfter}</strong></span>
+          </div>
+        )}
+        {!outstanding.length && <div className="ops-notice">Tidak ada tagihan outstanding yang dapat dibayar.</div>}
       </section>
 
       <section className="ops-module">
