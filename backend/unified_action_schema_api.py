@@ -362,6 +362,110 @@ def _po_whatsapp_operation() -> dict[str, Any]:
     }
 
 
+def _stock_opname_operation() -> dict[str, Any]:
+    parsed_item = obj(
+        {
+            "areaCode": {"type": "string"},
+            "itemName": {"type": "string"},
+            "canonicalItemName": {"type": "string"},
+            "inventoryItemCode": {"type": ["string", "null"]},
+            "qty": {"type": "number"},
+            "unit": {"type": "string"},
+            "classificationStatus": {"type": "string"},
+            "classificationMethod": {"type": "string"},
+            "classificationConfidence": {"type": "number"},
+            "parseStatus": {"type": "string"},
+            "rawLine": {"type": "string"},
+            "warnings": {"type": "array", "items": {"type": "string"}},
+        }
+    )
+    return {
+        "post": {
+            "operationId": "previewOrRecordSppgStockOpnameFromWhatsApp",
+            "summary": "Preview or record a warehouse stock opname report",
+            "description": "Use commit=false first. Preserve raw names and mixed units. Record only after confirmation. Unmapped or ambiguous item types remain reviewable and incompatible units never reduce a PO.",
+            "x-openai-isConsequential": True,
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": obj(
+                            {
+                                "location": {"type": "string", "enum": ["KOPERASI", "MAJA", "CEMPLANG"]},
+                                "text": {"type": "string", "minLength": 1},
+                                "stock_date": {"type": ["string", "null"], "format": "date"},
+                                "source_external_id": {"type": ["string", "null"]},
+                                "reporter": {"type": ["string", "null"]},
+                                "actor": {"type": "string", "default": "chatgpt"},
+                                "commit": {"type": "boolean", "default": False},
+                            },
+                            ["location", "text", "commit"],
+                        )
+                    }
+                },
+            },
+            "responses": {
+                "200": {
+                    "description": "SO preview or persisted baseline",
+                    "content": {"application/json": {"schema": obj({
+                        "committed": {"type": "boolean"}, "canCommit": {"type": "boolean"},
+                        "stockOpnameId": {"type": ["integer", "null"]}, "location": {"type": "string"},
+                        "stockDate": {"type": "string", "format": "date"}, "itemCount": {"type": "integer"},
+                        "reviewCount": {"type": "integer"}, "unmappedCount": {"type": "integer"},
+                        "ambiguousCount": {"type": "integer"}, "warnings": {"type": "array", "items": {"type": "string"}},
+                        "items": {"type": "array", "items": parsed_item},
+                    })}},
+                }
+            },
+        }
+    }
+
+
+def _projected_inventory_operation() -> dict[str, Any]:
+    return {
+        "get": {
+            "operationId": "readSppgWarehouseStockAndPoProjection",
+            "summary": "Read actual and projected stock for a warehouse and PO date",
+            "description": "READ-ONLY. Returns the latest SO baseline, later stock facts, actual usage, planned depletion before forDate, confidence, and stock available to reduce that date's PO.",
+            "x-openai-isConsequential": False,
+            "parameters": [
+                {"in": "query", "name": "site", "required": True, "schema": {"type": "string", "enum": ["KOPERASI", "MAJA", "CEMPLANG"]}},
+                {"in": "query", "name": "forDate", "schema": {"type": "string", "format": "date"}},
+                {"in": "query", "name": "search", "schema": {"type": "string"}},
+                {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 300}},
+            ],
+            "responses": {"200": {"description": "Warehouse balances and projection basis", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        }
+    }
+
+
+def _inventory_master_operation() -> dict[str, Any]:
+    return {
+        "get": {
+            "operationId": "searchSppgInventoryItemMaster",
+            "summary": "Search canonical inventory item types and aliases",
+            "description": "READ-ONLY. Use this to classify reported brand or spelling variants by item type. Exact or contained aliases are safe; do not merge different item types.",
+            "x-openai-isConsequential": False,
+            "parameters": [{"in": "query", "name": "search", "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Canonical items and aliases", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        },
+        "post": {
+            "operationId": "previewOrSaveSppgInventoryItemMaster",
+            "summary": "Preview or save a canonical item type and aliases",
+            "description": "Use commit=false first. Save only item types, units, categories, and aliases explicitly supplied by the user. Brand aliases may map to one type; never merge changed item types.",
+            "x-openai-isConsequential": True,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
+                "code": {"type": ["string", "null"]}, "canonical_name": {"type": "string", "minLength": 1},
+                "category_code": {"type": ["string", "null"]}, "base_unit": {"type": ["string", "null"]},
+                "aliases": {"type": "array", "items": {"type": "string"}},
+                "metadata": {"type": "object", "additionalProperties": True},
+                "commit": {"type": "boolean", "default": False},
+            }, ["canonical_name", "commit"])}}},
+            "responses": {"200": {"description": "Master item preview or save result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        },
+    }
+
+
 def schema_v0180() -> dict[str, Any]:
     payload = deepcopy(schema_v0172())
     payload["info"] = {
@@ -380,6 +484,24 @@ def schema_v0180() -> dict[str, Any]:
     return payload
 
 
+def schema_v0181() -> dict[str, Any]:
+    payload = deepcopy(schema_v0180())
+    payload["info"] = {
+        "title": "SPPG Operations, Warehouse, and Accountant Bridge",
+        "version": "0.18.1",
+        "description": "The v0.18.0 workflow plus warehouse SO baselines, stock projections, and canonical inventory item aliases.",
+    }
+    payload["paths"]["/v1/inventory/stock-opname/whatsapp"] = _stock_opname_operation()
+    payload["paths"]["/v1/inventory/balances"] = _projected_inventory_operation()
+    payload["paths"]["/v1/inventory/items"] = _inventory_master_operation()
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
+
+
+@router.get("/schema/chatgpt-sppg-v0181.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0181() -> JSONResponse:
+    return JSONResponse(schema_v0181())

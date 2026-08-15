@@ -57,15 +57,27 @@ function safeVendorForPlanningItem(item, site) {
 function buildStockLookup(items = []) {
   const exact = new Map();
   const byName = new Map();
+  const entries = [];
   items.forEach((item) => {
-    const name = normalize(item.item_name);
+    const names = Array.from(new Set([item.item_name, ...(item.raw_item_names || [])].map(normalize).filter(Boolean)));
     const unit = normalizeUnit(item.unit);
-    const balance = Math.max(0, Number(item.balance || 0));
-    exact.set(`${name}|${unit}`, balance);
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push({ unit, balance });
+    const stock = {
+      balance: Math.max(0, Number(item.available_for_po ?? item.balance ?? 0)),
+      actualBalance: Number(item.actual_balance ?? item.balance ?? 0),
+      projectedBalance: Number(item.projected_balance ?? item.balance ?? 0),
+      plannedDepletion: Number(item.planned_depletion || 0),
+      stockAsOf: item.stock_as_of || null,
+      basis: item.stock_basis || "LEDGER_ONLY",
+      confidence: item.confidence || "LOW",
+    };
+    names.forEach((name) => {
+      exact.set(`${name}|${unit}`, stock);
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push({ unit, ...stock });
+      entries.push({ name, unit, stock });
+    });
   });
-  return { exact, byName };
+  return { exact, byName, entries };
 }
 
 function stockForItem(item, lookup) {
@@ -73,8 +85,14 @@ function stockForItem(item, lookup) {
   const unit = normalizeUnit(item.unit);
   const exact = lookup.exact.get(`${name}|${unit}`);
   if (exact != null) return exact;
+  const contained = (lookup.entries || []).filter((candidate) => candidate.unit === unit && candidate.name.length >= 4 && (` ${name} `.includes(` ${candidate.name} `) || ` ${candidate.name} `.includes(` ${name} `)));
+  if (contained.length) {
+    const longest = Math.max(...contained.map((candidate) => candidate.name.length));
+    const best = contained.filter((candidate) => candidate.name.length === longest);
+    if (best.length === 1) return best[0].stock;
+  }
   const candidates = lookup.byName.get(name) || [];
-  return candidates.length === 1 ? candidates[0].balance : 0;
+  return candidates.length === 1 ? candidates[0] : { balance: 0, actualBalance: 0, projectedBalance: 0, plannedDepletion: 0, stockAsOf: null, basis: "NO_MATCHING_STOCK", confidence: "LOW" };
 }
 
 async function copyText(text) {
@@ -110,21 +128,31 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const activeSite = fixedSite || site;
 
-  const applyPlanningSnapshot = (snapshot, inventoryItems = []) => {
+  const applyPlanningSnapshot = (snapshot, inventoryItems = [], cooperativeItems = []) => {
     setPlanningSnapshot(snapshot || null);
     const stockLookup = buildStockLookup(inventoryItems);
+    const cooperativeLookup = buildStockLookup(cooperativeItems);
     setDraftItems((snapshot?.items || []).map((item) => {
       const assignment = safeVendorForPlanningItem(item, activeSite);
       const planned = item.planned_qty == null ? 0 : Number(item.planned_qty);
       const stock = stockForItem(item, stockLookup);
-      const recommended = Math.max(0, Number((planned - stock).toFixed(4)));
+      const cooperativeStock = assignment.vendor === "KOPERASI" ? stockForItem(item, cooperativeLookup) : null;
+      const recommended = Math.max(0, Number((planned - stock.balance).toFixed(4)));
       return {
         planning_snapshot_item_id: item.id,
         item_code: item.item_code || null,
         item_name: item.item_name,
         category_code: item.category_code || "",
         planned_qty: planned,
-        stock_qty: stock,
+        stock_qty: stock.balance,
+        actual_stock_qty: stock.actualBalance,
+        projected_stock_qty: stock.projectedBalance,
+        planned_depletion_qty: stock.plannedDepletion,
+        stock_as_of: stock.stockAsOf,
+        stock_basis: stock.basis,
+        stock_confidence: stock.confidence,
+        cooperative_stock_qty: cooperativeStock?.balance ?? null,
+        cooperative_shortfall_qty: cooperativeStock ? Math.max(0, Number((recommended - cooperativeStock.balance).toFixed(4))) : null,
         recommended_po_qty: recommended,
         po_qty: recommended,
         unit: item.unit || "",
@@ -142,12 +170,13 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const [scheduleData, poData, snapshotsData, vendorsData, inventoryData] = await Promise.all([
+      const [scheduleData, poData, snapshotsData, vendorsData, inventoryData, cooperativeData] = await Promise.all([
         operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
         operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
         operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
         operationsApi.getReferenceVendors(activeSite),
-        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000 }),
+        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
+        operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
       ]);
       setSchedule(scheduleData?.items || []);
       setPurchaseOrders(poData?.items || []);
@@ -160,10 +189,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       const snapshots = snapshotsData?.items || [];
       if (!snapshots.length) {
-        applyPlanningSnapshot(null, inventoryData?.items || []);
+        applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
       } else {
         const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
-        applyPlanningSnapshot(detail, inventoryData?.items || []);
+        applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
       }
     } catch (err) {
       setError(err.message || "Gagal menarik planning Kalkulator / stok / jadwal PO");
@@ -222,7 +251,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           planning_price: item.planning_price,
           po_price: null,
           aliases: [],
-          notes: [item.notes, `stok_saat_draft=${item.stock_qty}`, `rekomendasi_po=${item.recommended_po_qty}`].filter(Boolean).join(" | ") || null,
+          notes: [item.notes, `stok_proyeksi_saat_draft=${item.stock_qty}`, `stok_aktual_terhitung=${item.actual_stock_qty}`, `so_terakhir=${item.stock_as_of || "tidak_ada"}`, `dasar_stok=${item.stock_basis}`, `keyakinan_stok=${item.stock_confidence}`, `rekomendasi_po=${item.recommended_po_qty}`, item.cooperative_stock_qty != null ? `stok_koperasi=${item.cooperative_stock_qty}` : ""].filter(Boolean).join(" | ") || null,
         })),
       });
       setMessage(`Draft PO ${result.poCode} rev ${result.revisionNo} berhasil dibuat. Belum dianggap terkirim ke vendor.`);
@@ -321,7 +350,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <div>
             <span className="ops-kicker">KALKULATOR + GUDANG → PO EDITABLE</span>
             <h3>Tarik Planning dan Susun PO Vendor</h3>
-            <p><strong>Rumus rekomendasi:</strong> Planning Qty − Stok Gudang tersedia. Hasil hanya rekomendasi. <strong>PO Qty tetap bebas Anda edit</strong> lebih rendah/tinggi tanpa mengubah planning Kalkulator maupun saldo gudang.</p>
+            <p><strong>Rumus rekomendasi:</strong> Planning Qty − stok proyeksi sebelum tanggal distribusi. Proyeksi berasal dari SO terakhir + movement/aktual − planning hari sebelumnya. <strong>PO Qty tetap bebas Anda edit</strong> tanpa mengubah Kalkulator atau histori SO.</p>
           </div>
           <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> {loading ? "Menarik..." : "Tarik Data Kalkulator + Stok"}</button>
         </div>
@@ -381,7 +410,13 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                             </td>
                             <td><strong>{item.item_name}</strong><div className="ops-muted">{item.category_code || "-"}</div></td>
                             <td>{qty(item.planned_qty)}</td>
-                            <td>{qty(item.stock_qty)}</td>
+                            <td>
+                              <strong>{qty(item.stock_qty)}</strong>
+                              <div className="ops-muted">Aktual terhitung {qty(item.actual_stock_qty)} · SO {item.stock_as_of || "belum ada"}</div>
+                              {item.planned_depletion_qty > 0 && <div className="ops-muted">− rencana sebelumnya {qty(item.planned_depletion_qty)}</div>}
+                              <div className="ops-muted">Keyakinan {item.stock_confidence}</div>
+                              {item.cooperative_stock_qty != null && <div className="ops-muted">Koperasi {qty(item.cooperative_stock_qty)}{item.cooperative_shortfall_qty > 0 ? ` · kurang ${qty(item.cooperative_shortfall_qty)}` : ""}</div>}
+                            </td>
                             <td><strong>{qty(item.recommended_po_qty)}</strong></td>
                             <td>
                               <div className="ops-row-actions">

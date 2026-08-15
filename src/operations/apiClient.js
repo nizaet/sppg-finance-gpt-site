@@ -60,7 +60,12 @@ export const operationsApi = {
   confirmVendorPayment: (payload, commit = false) => request("/v1/vendor-payments/confirm", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (status) q.set("status", status); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); return request(`/v1/vendor-payables?${q}`); },
   getVendorPayments: ({ status = "", site = "" } = {}) => { const q = new URLSearchParams(); if (status) q.set("status", status); if (site) q.set("site", site); return request(`/v1/vendor-payments?${q}`); },
-  getInventoryBalances: ({ site, search = "", limit = 300 }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); return request(`/v1/inventory/balances?${q}`); },
+  getInventoryBalances: ({ site, search = "", limit = 300, forDate = "" }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); if (forDate) q.set("forDate", forDate); return request(`/v1/inventory/balances?${q}`); },
+  previewStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
+  getStockOpnames: ({ location = "", limit = 50 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (location) q.set("location", location); return request(`/v1/inventory/stock-opnames?${q}`); },
+  getInventoryItems: (search = "") => { const q = new URLSearchParams(); if (search) q.set("search", search); return request(`/v1/inventory/items${q.toString() ? `?${q}` : ""}`); },
+  saveInventoryItem: (payload, commit = false) => request("/v1/inventory/items", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   syncCalculatorPlanning: ({ site, distributionDate }) => request("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) }),
   previewCalculatorPlanning: ({ site, distributionDate }) => { const q = new URLSearchParams({ site, distributionDate }); return request(`/v1/calculator-planning/preview?${q}`); },
   getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = true } = {}) => {
