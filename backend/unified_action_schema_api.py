@@ -374,6 +374,7 @@ def _stock_opname_operation() -> dict[str, Any]:
             "classificationStatus": {"type": "string"},
             "classificationMethod": {"type": "string"},
             "classificationConfidence": {"type": "number"},
+            "classificationSources": {"type": "array", "items": {"type": "string"}},
             "parseStatus": {"type": "string"},
             "rawLine": {"type": "string"},
             "warnings": {"type": "array", "items": {"type": "string"}},
@@ -466,6 +467,54 @@ def _inventory_master_operation() -> dict[str, Any]:
     }
 
 
+def _calculator_plan_preview_operation() -> dict[str, Any]:
+    summary_item = obj({
+        "client_key": {"type": "string", "minLength": 1},
+        "date": {"type": "string", "format": "date"},
+        "plan_name": {"type": "string"},
+        "item_hash": {"type": "string", "minLength": 8},
+        "menu_count": {"type": "integer", "minimum": 0},
+    }, ["client_key", "date", "item_hash"])
+    return {
+        "post": {
+            "operationId": "previewSppgCalculatorDailyPlanImport",
+            "summary": "Preview selectable daily plans without uploading full plan payloads",
+            "description": "READ-ONLY. Checks plan dates against one calculator. Existing dates are locked. Duplicate dates in the supplied file require the user to choose at most one plan.",
+            "x-openai-isConsequential": False,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
+                "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
+                "source_ref": {"type": "string", "minLength": 1},
+                "items": {"type": "array", "maxItems": 500, "items": summary_item},
+            }, ["site", "source_ref", "items"])}}},
+            "responses": {"200": {"description": "Plan import preview", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        }
+    }
+
+
+def _calculator_data_import_operation() -> dict[str, Any]:
+    import_item = obj({
+        "client_key": {"type": "string", "minLength": 1},
+        "payload": {"type": "object", "additionalProperties": True},
+    }, ["client_key", "payload"])
+    return {
+        "post": {
+            "operationId": "previewOrImportSelectedSppgCalculatorData",
+            "summary": "Preview or import selected calculator masters and daily plans",
+            "description": "Use commit=false first. With commit=true, only supplied records are written. Existing daily-plan dates are always skipped; changed masters require explicit user selection.",
+            "x-openai-isConsequential": True,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
+                "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
+                "data_type": {"type": "string", "enum": ["PRICES", "GRAMASI", "RECIPES", "DAILY_PLANS"]},
+                "source_ref": {"type": "string", "minLength": 1},
+                "items": {"type": "array", "maxItems": 500, "items": import_item},
+                "actor": {"type": "string", "default": "chatgpt"},
+                "commit": {"type": "boolean", "default": False},
+            }, ["site", "data_type", "source_ref", "items", "commit"])}}},
+            "responses": {"200": {"description": "Calculator data preview or import result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        }
+    }
+
+
 def schema_v0180() -> dict[str, Any]:
     payload = deepcopy(schema_v0172())
     payload["info"] = {
@@ -497,6 +546,18 @@ def schema_v0181() -> dict[str, Any]:
     return payload
 
 
+def schema_v0182() -> dict[str, Any]:
+    payload = deepcopy(schema_v0181())
+    payload["info"] = {
+        "title": "SPPG Operations, Calculator Data, Warehouse, and Accountant Bridge",
+        "version": "0.18.2",
+        "description": "The v0.18.1 workflow plus one-door calculator master imports, selectable daily-plan restore, and source-backed SO classification.",
+    }
+    payload["paths"]["/v1/calculator-data/plan-preview"] = _calculator_plan_preview_operation()
+    payload["paths"]["/v1/calculator-data/import"] = _calculator_data_import_operation()
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
@@ -505,3 +566,8 @@ def chatgpt_sppg_schema_v0180() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0181.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0181() -> JSONResponse:
     return JSONResponse(schema_v0181())
+
+
+@router.get("/schema/chatgpt-sppg-v0182.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0182() -> JSONResponse:
+    return JSONResponse(schema_v0182())

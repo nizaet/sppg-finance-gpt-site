@@ -3480,10 +3480,12 @@
             } else {
                 planSelectionList.innerHTML = filtered.map((item, idx) => `
                     <label class="flex items-start gap-3 border rounded-md p-3 hover:bg-gray-50 cursor-pointer">
-                        <input type="checkbox" class="plan-selection-checkbox mt-1" data-id="${item.__selectId}" ${item.__selected ? 'checked' : ''}>
+                        <input type="checkbox" class="plan-selection-checkbox mt-1" data-id="${item.__selectId}" ${item.__selected ? 'checked' : ''} ${item.__blockedExistingDate ? 'disabled' : ''}>
                         <div>
                             <div class="font-semibold text-gray-800">${getPlanDisplayLabel(item)}</div>
                             <div class="text-xs text-gray-500">${(item.recipes || []).length} menu · ${item.date || 'tanpa tanggal'}</div>
+                            ${item.__blockedExistingDate ? '<div class="text-xs font-bold text-red-600">Dilewati: tanggal ini sudah ada dan tidak akan ditimpa.</div>' : ''}
+                            ${item.__duplicateDate ? '<div class="text-xs font-bold text-amber-600">Tanggal ganda di file: pilih hanya satu rencana.</div>' : ''}
                         </div>
                     </label>
                 `).join('');
@@ -3491,7 +3493,15 @@
                     cb.onchange = (e) => {
                         const id = e.currentTarget.dataset.id;
                         const found = currentPlanSelectionItems.find(x => x.__selectId === id);
-                        if (found) found.__selected = e.currentTarget.checked;
+                        if (found) {
+                            if (e.currentTarget.checked && currentPlanSelectionMode === 'import' && found.__duplicateDate) {
+                                currentPlanSelectionItems.forEach(x => { if (x.date === found.date) x.__selected = false; });
+                                found.__selected = true;
+                                renderPlanSelectionList();
+                                return;
+                            }
+                            found.__selected = e.currentTarget.checked;
+                        }
                         updatePlanSelectionSummary();
                     };
                 });
@@ -3508,7 +3518,14 @@
         function openPlanSelectionModal(items, mode = 'export') {
             return new Promise(resolve => {
                 currentPlanSelectionMode = mode;
-                currentPlanSelectionItems = (items || []).map((item, index) => ({ ...item, __selectId: `${mode}_${index}_${String(item.id || item.planName || 'plan').replace(/[^a-zA-Z0-9_-]/g, '_')}`, __selected: true }));
+                const existingDates = new Set((savedPlans || []).map(x => String(x?.date || '').trim()).filter(Boolean));
+                const dateCounts = (items || []).reduce((acc, item) => { const d = String(item?.date || item?.tanggal || '').trim(); if (d) acc[d] = (acc[d] || 0) + 1; return acc; }, {});
+                currentPlanSelectionItems = (items || []).map((item, index) => {
+                    const normalized = normalizeImportedPlanShape(item, index);
+                    const blocked = mode === 'import' && existingDates.has(String(normalized.date || '').trim());
+                    const duplicate = mode === 'import' && Number(dateCounts[String(normalized.date || '').trim()] || 0) > 1;
+                    return { ...normalized, __selectId: `${mode}_${index}_${String(normalized.id || normalized.planName || 'plan').replace(/[^a-zA-Z0-9_-]/g, '_')}`, __blockedExistingDate: blocked, __duplicateDate: duplicate, __selected: mode === 'export' || (!blocked && !duplicate) };
+                });
                 currentPlanSelectionResolver = resolve;
                 const dated = currentPlanSelectionItems.map(x => x.date).filter(Boolean).sort();
                 if (planSelectionTitle) planSelectionTitle.textContent = mode === 'import' ? 'Pilih Rencana Harian yang Akan Diimport' : 'Pilih Rencana Harian yang Akan Diexport';
@@ -11010,21 +11027,33 @@ if (filePlans) {
                         throw new Error("File rencana kosong atau format tidak valid.");
                     }
 
-                    logActivity(`Memulai import ${data.length} rencana harian.`);
+                    const selectedData = (await openPlanSelectionModal(data.map((plan, index) => normalizeImportedPlanShape(plan, index)), 'import')) || [];
+                    if (!selectedData.length) logActivity('Tidak ada rencana yang dipilih; bagian rencana dilewati tanpa perubahan.');
+                    logActivity(`Memulai import ${selectedData.length} dari ${data.length} rencana harian terpilih.`);
 
                     let importedCount = 0;
                     const seenPlanTargets = new Set();
-                    for (const rawPlan of data) {
+                    const seenImportedDates = new Set();
+                    for (const rawPlan of selectedData) {
                         const plan = { ...(rawPlan || {}) };
 
-                        const existingPlanId = findExistingPlanIdForImport(plan);
-                        const newPlanId = existingPlanId || rawPlan?.id || `imported_plan_${Date.now()}_${Math.random().toString(36).substring(2,7)}`;
+                        const planDateKey = String(plan.date || plan.tanggal || '').trim();
+                        if (planDateKey && (savedPlans || []).some(existing => String(existing?.date || '').trim() === planDateKey)) {
+                            logActivity(`Dilewati ${planDateKey}: rencana tanggal tersebut sudah ada dan tidak boleh ditimpa.`);
+                            continue;
+                        }
+                        if (planDateKey && seenImportedDates.has(planDateKey)) {
+                            logActivity(`Dilewati ${planDateKey}: hanya satu rencana per tanggal yang boleh diimport.`);
+                            continue;
+                        }
+                        if (planDateKey) seenImportedDates.add(planDateKey);
+                        const newPlanId = `imported_plan_${Date.now()}_${Math.random().toString(36).substring(2,7)}`;
                         if (seenPlanTargets.has(newPlanId)) continue;
                         seenPlanTargets.add(newPlanId);
 
                         if (!plan.planName && plan.name) plan.planName = plan.name;
                         if (!plan.planName) plan.planName = 'Rencana';
-                        if (!existingPlanId && !String(plan.planName).includes('(Imported)')) {
+                        if (!String(plan.planName).includes('(Imported)')) {
                             plan.planName = `${plan.planName} (Imported)`;
                         }
 
@@ -11166,7 +11195,7 @@ if (filePlans) {
                 if (planSelectionEndDate) planSelectionEndDate.value = dated[dated.length - 1] || '';
                 renderPlanSelectionList();
             };
-            if (planSelectionSelectAllBtn) planSelectionSelectAllBtn.onclick = () => { currentPlanSelectionItems.forEach(x => x.__selected = true); renderPlanSelectionList(); };
+            if (planSelectionSelectAllBtn) planSelectionSelectAllBtn.onclick = () => { currentPlanSelectionItems.forEach(x => x.__selected = currentPlanSelectionMode !== 'import' || (!x.__blockedExistingDate && !x.__duplicateDate)); renderPlanSelectionList(); };
             if (planSelectionClearAllBtn) planSelectionClearAllBtn.onclick = () => { currentPlanSelectionItems.forEach(x => x.__selected = false); renderPlanSelectionList(); };
             if (planSelectionConfirmBtn) planSelectionConfirmBtn.onclick = () => closePlanSelectionModal(currentPlanSelectionItems.filter(x => x.__selected));
             

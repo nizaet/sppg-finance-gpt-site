@@ -16,6 +16,7 @@ from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
+from backend.calculator_data_api import router as calculator_data_router
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
@@ -34,6 +35,7 @@ operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_planning_bridge_router)
 operational_router.include_router(purchase_order_workflow_router)
+operational_router.include_router(calculator_data_router)
 
 # Preserve the legacy compatibility bundle used by existing clients.
 operational_router.include_router(vendor_payables_router)

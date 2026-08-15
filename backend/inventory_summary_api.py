@@ -71,7 +71,7 @@ def inventory_balances(
 
     with connection() as conn:
         with conn.cursor() as cur:
-            masters = load_item_matchers(cur)
+            masters = load_item_matchers(cur, None if location == "KOPERASI" else location)
             cur.execute(
                 """
                 select id,stock_date,warning_count,created_at

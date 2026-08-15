@@ -66,6 +66,9 @@ export const operationsApi = {
   getStockOpnames: ({ location = "", limit = 50 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (location) q.set("location", location); return request(`/v1/inventory/stock-opnames?${q}`); },
   getInventoryItems: (search = "") => { const q = new URLSearchParams(); if (search) q.set("search", search); return request(`/v1/inventory/items${q.toString() ? `?${q}` : ""}`); },
   saveInventoryItem: (payload, commit = false) => request("/v1/inventory/items", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
+  previewCalculatorPlans: (payload) => request("/v1/calculator-data/plan-preview", { method: "POST", body: JSON.stringify(payload) }),
+  previewCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
   syncCalculatorPlanning: ({ site, distributionDate }) => request("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) }),
   previewCalculatorPlanning: ({ site, distributionDate }) => { const q = new URLSearchParams({ site, distributionDate }); return request(`/v1/calculator-planning/preview?${q}`); },
   getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = true } = {}) => {

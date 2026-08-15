@@ -34,7 +34,17 @@ def normalize_location(value: str) -> str:
     return location
 
 
-def load_item_matchers(cur) -> list[dict[str, Any]]:
+SOURCE_PRIORITY = {
+    "INVENTORY_MASTER": 100,
+    "PRICE": 80,
+    "PLAN_ITEM": 75,
+    "PLANNING_SNAPSHOT": 75,
+    "RECIPE_INGREDIENT": 65,
+    "GRAMASI": 40,
+}
+
+
+def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
     cur.execute(
         """
         select m.code,m.canonical_name,m.normalized_canonical_name,m.category_code,m.base_unit,
@@ -46,13 +56,85 @@ def load_item_matchers(cur) -> list[dict[str, Any]]:
         order by length(m.normalized_canonical_name) desc,m.canonical_name
         """
     )
-    return cur.fetchall()
+    masters = []
+    for row in cur.fetchall():
+        masters.append({
+            **row,
+            "source_type": "INVENTORY_MASTER",
+            "source_refs": [f"inventory:{row['code']}"],
+            "priority": SOURCE_PRIORITY["INVENTORY_MASTER"],
+        })
+
+    catalog_params: list[Any] = []
+    catalog_site_sql = ""
+    if site in {"MAJA", "CEMPLANG"}:
+        catalog_site_sql = " and site=%s"
+        catalog_params.append(site)
+    cur.execute(
+        f"""
+        select source_type,normalized_name,min(canonical_name) as canonical_name,
+               max(category_code) filter (where category_code is not null) as category_code,
+               max(unit) filter (where unit is not null) as base_unit,
+               json_agg(distinct concat(source_type,':',source_document_key)) as source_refs
+        from calculator_master_catalog
+        where active=true and source_type in ('PRICE','GRAMASI','RECIPE_INGREDIENT','PLAN_ITEM')
+        {catalog_site_sql}
+        group by source_type,normalized_name
+        """,
+        catalog_params,
+    )
+    for row in cur.fetchall():
+        source_type = str(row["source_type"])
+        masters.append({
+            "code": None,
+            "canonical_name": row["canonical_name"],
+            "normalized_canonical_name": row["normalized_name"],
+            "category_code": row.get("category_code"),
+            "base_unit": row.get("base_unit"),
+            "aliases": [],
+            "source_type": source_type,
+            "source_refs": row.get("source_refs") or [],
+            "priority": SOURCE_PRIORITY.get(source_type, 10),
+        })
+
+    planning_params: list[Any] = []
+    planning_site_sql = ""
+    if site in {"MAJA", "CEMPLANG"}:
+        planning_site_sql = " and upper(ps.site)=%s"
+        planning_params.append(site)
+    cur.execute(
+        f"""
+        select lower(regexp_replace(trim(psi.item_name),'[^a-zA-Z0-9]+',' ','g')) as normalized_name,
+               min(psi.item_name) as canonical_name,
+               max(psi.category_code) filter (where psi.category_code is not null) as category_code,
+               max(psi.unit) filter (where psi.unit is not null) as base_unit,
+               json_agg(distinct concat('planning:',ps.site,':',ps.distribution_date)) as source_refs
+        from planning_snapshot_items psi
+        join planning_snapshots ps on ps.id=psi.planning_snapshot_id
+        where ps.status='ACTIVE' {planning_site_sql}
+        group by lower(regexp_replace(trim(psi.item_name),'[^a-zA-Z0-9]+',' ','g'))
+        """,
+        planning_params,
+    )
+    for row in cur.fetchall():
+        masters.append({
+            "code": None,
+            "canonical_name": row["canonical_name"],
+            "normalized_canonical_name": normalize_name(row["canonical_name"]),
+            "category_code": row.get("category_code"),
+            "base_unit": row.get("base_unit"),
+            "aliases": [],
+            "source_type": "PLANNING_SNAPSHOT",
+            "source_refs": row.get("source_refs") or [],
+            "priority": SOURCE_PRIORITY["PLANNING_SNAPSHOT"],
+        })
+    return masters
 
 
 def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
     normalized = normalize_name(raw_name)
-    exact: list[tuple[dict[str, Any], str]] = []
-    contained: list[tuple[int, dict[str, Any], str]] = []
+    exact: list[tuple[dict[str, Any], str, str]] = []
+    contained: list[tuple[int, dict[str, Any], str, str]] = []
     for master in masters:
         candidates = [(master["normalized_canonical_name"], "CANONICAL_EXACT")]
         candidates.extend((str(alias), "ALIAS_EXACT") for alias in (master.get("aliases") or []))
@@ -60,20 +142,43 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             if not candidate:
                 continue
             if normalized == candidate:
-                exact.append((master, method))
-            elif len(candidate) >= 4 and re.search(rf"(?:^| ){re.escape(candidate)}(?: |$)", normalized):
-                contained.append((len(candidate), master, "TYPE_IN_RAW_NAME"))
+                exact.append((master, method, candidate))
+            elif (
+                str(master.get("source_type") or "") != "GRAMASI"
+                and len(candidate) >= 4
+                and re.search(rf"(?:^| ){re.escape(candidate)}(?: |$)", normalized)
+            ):
+                contained.append((len(candidate), master, "TYPE_IN_RAW_NAME", candidate))
 
     if exact:
         matches = exact
     elif contained:
         longest = max(row[0] for row in contained)
-        matches = [(master, method) for length, master, method in contained if length == longest]
+        matches = [(master, method, candidate) for length, master, method, candidate in contained if length == longest]
     else:
         matches = []
-    unique = {row[0]["code"]: row for row in matches}
+
+    if matches:
+        highest_priority = max(int(row[0].get("priority") or 0) for row in matches)
+        preferred = [row for row in matches if int(row[0].get("priority") or 0) == highest_priority]
+        unique: dict[str, tuple[dict[str, Any], str, str]] = {}
+        for master, method, candidate in preferred:
+            identity = str(master.get("code") or master.get("normalized_canonical_name") or candidate)
+            unique[identity] = (master, method, candidate)
+    else:
+        unique = {}
+
     if len(unique) == 1:
-        master, method = next(iter(unique.values()))
+        master, method, _ = next(iter(unique.values()))
+        source_type = str(master.get("source_type") or "INVENTORY_MASTER")
+        all_sources: list[str] = []
+        canonical_norm = str(master.get("normalized_canonical_name") or "")
+        for candidate_master, _, _ in matches:
+            if str(candidate_master.get("normalized_canonical_name") or "") != canonical_norm:
+                continue
+            for source in candidate_master.get("source_refs") or []:
+                if source not in all_sources:
+                    all_sources.append(source)
         return {
             "inventoryItemCode": master["code"],
             "canonicalItemName": master["canonical_name"],
@@ -81,8 +186,9 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "categoryCode": master.get("category_code"),
             "baseUnit": master.get("base_unit"),
             "classificationStatus": "MATCHED",
-            "classificationMethod": method,
+            "classificationMethod": method if source_type == "INVENTORY_MASTER" else f"{source_type}_{method}",
             "classificationConfidence": 1.0 if exact else 0.9,
+            "classificationSources": all_sources,
         }
     if len(unique) > 1:
         return {
@@ -94,6 +200,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "classificationStatus": "AMBIGUOUS",
             "classificationMethod": "MULTIPLE_TYPE_MATCHES",
             "classificationConfidence": 0.0,
+            "classificationSources": sorted({source for master, _, _ in matches for source in (master.get("source_refs") or [])}),
         }
     return {
         "inventoryItemCode": None,
@@ -104,6 +211,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
         "classificationStatus": "UNMAPPED",
         "classificationMethod": "RAW_NAME_FALLBACK",
         "classificationConfidence": 0.5,
+        "classificationSources": [],
     }
 
 
@@ -315,7 +423,7 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
 
     with connection() as conn:
         with conn.cursor() as cur:
-            masters = load_item_matchers(cur)
+            masters = load_item_matchers(cur, None if location == "KOPERASI" else location)
             items = []
             unmapped = 0
             ambiguous = 0

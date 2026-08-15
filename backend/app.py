@@ -19,7 +19,7 @@ from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.vendor_workflow_api import router as vendor_workflow_router
 from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
-from backend.unified_action_schema_api import schema_v0180, schema_v0181
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182
 
 app = FastAPI(title="SPPG Core API", version="0.16.1")
 app.include_router(reference_router)
@@ -142,6 +142,11 @@ def chatgpt_sppg_schema_v0180_alias() -> JSONResponse:
 @app.get("/schema/chatgpt-sppg-v0181.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0181_alias() -> JSONResponse:
     return JSONResponse(schema_v0181())
+
+
+@app.get("/schema/chatgpt-sppg-v0182.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0182_alias() -> JSONResponse:
+    return JSONResponse(schema_v0182())
 
 
 def empty_site(site: dict[str, str]) -> dict[str, Any]:

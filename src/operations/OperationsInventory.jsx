@@ -129,7 +129,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
             <div className="ops-table-wrap">
               <table className="ops-table">
                 <thead><tr><th>Area</th><th>Nama dari SO</th><th>Jenis kanonik</th><th>Qty</th><th>Unit</th><th>Klasifikasi</th><th>Status parse</th></tr></thead>
-                <tbody>{preview.items?.map((item, idx) => <tr key={`${item.rawLine}-${idx}`}><td>{item.areaCode}</td><td><strong>{item.itemName}</strong></td><td>{item.canonicalItemName}</td><td>{qty(item.qty)}</td><td>{item.unit || "⚠ belum ada"}</td><td>{item.classificationStatus}<div className="ops-muted">{item.classificationMethod}</div></td><td>{item.parseStatus}</td></tr>)}</tbody>
+                <tbody>{preview.items?.map((item, idx) => <tr key={`${item.rawLine}-${idx}`}><td>{item.areaCode}</td><td><strong>{item.itemName}</strong></td><td>{item.canonicalItemName}</td><td>{qty(item.qty)}</td><td>{item.unit || "⚠ belum ada"}</td><td>{item.classificationStatus}<div className="ops-muted">{item.classificationMethod}</div>{item.classificationSources?.length > 0 && <div className="ops-muted">Dasar: {item.classificationSources.join(" · ")}</div>}</td><td>{item.parseStatus}</td></tr>)}</tbody>
               </table>
             </div>
           </div>

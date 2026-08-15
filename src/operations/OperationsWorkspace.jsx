@@ -3,6 +3,7 @@ import {
   Calculator,
   CalendarDays,
   FileSpreadsheet,
+  FolderUp,
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
@@ -22,12 +23,14 @@ const OperationsAccountantBgn = lazy(() => import("./OperationsAccountantBgn.jsx
 const OperationsVendorMaster = lazy(() => import("./OperationsVendorMaster.jsx"));
 const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
 const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
+const OperationsCalculatorData = lazy(() => import("./OperationsCalculatorData.jsx"));
 
 const tabs = [
   ["today", "Control Tower", LayoutDashboard],
   ["po", "PO Vendor", CalendarDays],
   ["receiving", "Penerimaan", PackageCheck],
   ["inventory", "Gudang", Warehouse],
+  ["calculator-data", "Data Kalkulator", FolderUp],
   ["payments", "Invoice & Pembayaran", WalletCards],
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
@@ -39,6 +42,7 @@ const moduleComponents = {
   po: OperationsPoPlanner,
   receiving: OperationsReceiving,
   inventory: OperationsInventory,
+  "calculator-data": OperationsCalculatorData,
   payments: OperationsPayments,
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
