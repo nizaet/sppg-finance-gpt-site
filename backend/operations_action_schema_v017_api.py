@@ -141,10 +141,9 @@ def _current_receiving_operation() -> dict[str, Any]:
             "operationId": "previewOrRecordSppgGoodsReceiptFromMessage",
             "summary": "Preview or record a current goods receipt from supplied message text",
             "description": (
-                "Use only the receipt text supplied by the user. Always call with commit=false first. "
-                "Commit only after the PO and every item match safely or after the user supplies the exact purchase_order_id. "
-                "A committed receipt is stored in PostgreSQL and appears in Pusat Operasional > Penerimaan. "
-                "Never overwrite planned_qty or po_qty."
+                "Preview supplied receiving text against an existing PO. Call commit=false first. "
+                "Commit only after exact PO/item matches or an explicit purchase_order_id. Committed data is stored in PostgreSQL "
+                "and shown in Pusat Operasional > Penerimaan; planned_qty and po_qty are never overwritten."
             ),
             "x-openai-isConsequential": True,
             "requestBody": {
@@ -224,11 +223,9 @@ def _chat_staging_operation() -> dict[str, Any]:
             "operationId": "stageSuppliedSppgWhatsAppActivityForReview",
             "summary": "Store supplied WhatsApp activity in the central review queue",
             "description": (
-                "Use for every operational WhatsApp message the user asks to record, including invoice, receiving, payment evidence, "
-                "PO revision, vendor price or availability change, quality reject, and pending approval. Preserve the exact supplied text. "
-                "This writes an idempotent candidate event to PostgreSQL and makes it visible in Pusat Operasional > Review; it does not "
-                "silently create or change a finance transaction, PO, receipt, payable, payment, or stock movement. After staging, use the "
-                "specific domain action when the user asks to record that domain transaction."
+                "Store exact WhatsApp/chat text as an idempotent candidate event in PostgreSQL for Pusat Operasional > Review. "
+                "Use for invoice, receiving, payment evidence, PO revision, price/availability change, reject, or pending approval. "
+                "Never changes finance, PO, receipt, payment, or stock records."
             ),
             # Staging is idempotent and never mutates a final ledger/domain
             # record. Domain commit actions remain consequential.

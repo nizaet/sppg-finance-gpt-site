@@ -38,3 +38,13 @@ def test_v0172_preserves_every_v0170_action_and_adds_staging_and_review():
 
     review = enhanced["paths"]["/v1/review-queue"]["get"]
     assert review["operationId"] == "listSppgPendingOperationalReviews"
+
+
+def test_v0172_endpoint_summaries_and_descriptions_fit_gpt_action_limits():
+    schema = schema_v017()
+    for methods in schema["paths"].values():
+        for operation in methods.values():
+            if not isinstance(operation, dict):
+                continue
+            assert len(operation.get("summary", "")) <= 300
+            assert len(operation.get("description", "")) <= 300
