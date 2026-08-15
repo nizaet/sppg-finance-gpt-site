@@ -215,6 +215,47 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
                             await signInAnonymously(auth);
                         }""",
     )
+    auth_start_marker = "        async function authWithFirebase() {"
+    auth_end_marker = "        function enableUI() {"
+    auth_start = html.find(auth_start_marker)
+    auth_end = html.find(auth_end_marker, auth_start)
+    if auth_start < 0 or auth_end < 0:
+        raise RuntimeError(f"legacy Firebase auth block was not found for {unit}")
+    secure_auth = """        async function authWithFirebase() {
+            logActivity("Mencoba otentikasi...");
+            const firebaseToken = await getInitialFirebaseAuthToken();
+            if (!firebaseToken) {
+                throw new Error("Custom Token Railway tidak tersedia. Silakan keluar lalu masuk kembali.");
+            }
+
+            // Firebase Auth is shared by both calculator pages because they use
+            // the same Firebase project. Always finish the requested-site sign-in
+            // before reading Firestore; an auth-state listener can otherwise
+            // resolve immediately with the previous kitchen's cached user.
+            logActivity("Mencoba login dengan Custom Token...");
+            const credential = await signInWithCustomToken(auth, firebaseToken);
+            const user = credential && credential.user;
+            if (!user) throw new Error("Firebase tidak mengembalikan pengguna setelah login.");
+
+            const tokenResult = await user.getIdTokenResult(true);
+            const claims = tokenResult && tokenResult.claims ? tokenResult.claims : {};
+            const expectedSite = String(window.__legacyUnitId || '').toUpperCase();
+            const actualSite = String(claims.sppg_site || '').toUpperCase();
+            const actualRole = String(claims.sppg_role || '').toUpperCase();
+            if (actualSite !== expectedSite) {
+                throw new Error(`Token Firebase salah dapur: diterima ${actualSite || '-'}, seharusnya ${expectedSite}.`);
+            }
+            if (actualRole !== 'OWNER' && actualRole !== expectedSite) {
+                throw new Error(`Role Firebase ${actualRole || '-'} tidak boleh membuka ${expectedSite}.`);
+            }
+
+            userId = user.uid;
+            logActivity(`Listener: Otentikasi berhasil. Site token: ${actualSite}.`);
+            return user;
+        }
+
+"""
+    html = html[:auth_start] + secure_auth + html[auth_end:]
     html = html.replace(
         "if (!db) db = getFirestore(app);",
         "if (!db) db = (window.__firestoreDatabaseId && window.__firestoreDatabaseId !== '(default)') ? getFirestore(app, window.__firestoreDatabaseId) : getFirestore(app);",

@@ -27,6 +27,12 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "/v1/firebase/custom-token?site=MAJA" in maja
     assert "/v1/firebase/custom-token?site=CEMPLANG" in cemplang
     assert "await signInWithCustomToken(auth, firebaseToken)" in cemplang
+    cemplang_auth = cemplang.split("async function authWithFirebase() {", 1)[1].split("function enableUI() {", 1)[0]
+    assert "onAuthStateChanged" not in cemplang_auth
+    assert "await signInWithCustomToken(auth, firebaseToken)" in cemplang_auth
+    assert "await user.getIdTokenResult(true)" in cemplang_auth
+    assert "claims.sppg_site" in cemplang_auth
+    assert "actualSite !== expectedSite" in cemplang_auth
 
 
 def test_auth_config_defaults_to_internal_calculator_routes(monkeypatch):
