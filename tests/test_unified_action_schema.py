@@ -115,3 +115,27 @@ def test_v0182_has_unique_operation_ids_and_fits_gpt_action_limits():
             for parameter in operation.get("parameters", []):
                 assert len(parameter.get("description", "")) <= 700
     assert len(operation_ids) == len(set(operation_ids))
+
+
+def test_v0182_new_action_response_objects_have_explicit_properties():
+    unified = schema_v0182()
+    contexts = [
+        ("/v1/inventory/balances", "get"),
+        ("/v1/inventory/items", "get"),
+        ("/v1/inventory/items", "post"),
+        ("/v1/calculator-data/plan-preview", "post"),
+        ("/v1/calculator-data/import", "post"),
+    ]
+
+    def assert_object_properties(schema):
+        schema_type = schema.get("type")
+        if schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type):
+            assert "properties" in schema
+            for child in schema["properties"].values():
+                assert_object_properties(child)
+        if schema_type == "array":
+            assert_object_properties(schema["items"])
+
+    for path, method in contexts:
+        response = unified["paths"][path][method]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert_object_properties(response)

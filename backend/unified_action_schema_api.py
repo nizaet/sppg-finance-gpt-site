@@ -423,6 +423,38 @@ def _stock_opname_operation() -> dict[str, Any]:
 
 
 def _projected_inventory_operation() -> dict[str, Any]:
+    balance_item = obj({
+        "item_name": {"type": "string"},
+        "inventory_item_code": {"type": ["string", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "area_codes": {"type": "array", "items": {"type": "string"}},
+        "raw_item_names": {"type": "array", "items": {"type": "string"}},
+        "classification_status": {"type": "string"},
+        "classification_method": {"type": "string"},
+        "so_qty": {"type": "number"},
+        "movement_delta": {"type": "number"},
+        "actual_usage_depletion": {"type": "number"},
+        "planned_depletion": {"type": "number"},
+        "balance": {"type": "number"},
+        "actual_balance": {"type": "number"},
+        "projected_balance": {"type": "number"},
+        "available_for_po": {"type": "number"},
+        "stock_as_of": {"type": ["string", "null"], "format": "date"},
+        "stock_basis": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+        "stock_age_days": {"type": ["integer", "null"]},
+    })
+    response_schema = obj({
+        "site": {"type": "string"},
+        "location": {"type": "string"},
+        "forDate": {"type": "string", "format": "date"},
+        "projectionThrough": {"type": "string", "format": "date"},
+        "timezone": {"type": "string"},
+        "latestStockOpnameId": {"type": ["integer", "null"]},
+        "latestStockOpnameDate": {"type": ["string", "null"], "format": "date"},
+        "items": {"type": "array", "items": balance_item},
+        "count": {"type": "integer"},
+    })
     return {
         "get": {
             "operationId": "readSppgWarehouseStockAndPoProjection",
@@ -435,12 +467,32 @@ def _projected_inventory_operation() -> dict[str, Any]:
                 {"in": "query", "name": "search", "schema": {"type": "string"}},
                 {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 300}},
             ],
-            "responses": {"200": {"description": "Warehouse balances and projection basis", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+            "responses": {"200": {"description": "Warehouse balances and projection basis", "content": {"application/json": {"schema": response_schema}}}},
         }
     }
 
 
 def _inventory_master_operation() -> dict[str, Any]:
+    master_item = obj({
+        "code": {"type": "string"},
+        "canonical_name": {"type": "string"},
+        "category_code": {"type": ["string", "null"]},
+        "base_unit": {"type": ["string", "null"]},
+        "active": {"type": "boolean"},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+    })
+    search_response = obj({
+        "items": {"type": "array", "items": master_item},
+        "count": {"type": "integer"},
+    })
+    save_response = obj({
+        "committed": {"type": "boolean"},
+        "code": {"type": "string"},
+        "canonicalName": {"type": "string"},
+        "categoryCode": {"type": ["string", "null"]},
+        "baseUnit": {"type": ["string", "null"]},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+    })
     return {
         "get": {
             "operationId": "searchSppgInventoryItemMaster",
@@ -448,7 +500,7 @@ def _inventory_master_operation() -> dict[str, Any]:
             "description": "READ-ONLY. Use this to classify reported brand or spelling variants by item type. Exact or contained aliases are safe; do not merge different item types.",
             "x-openai-isConsequential": False,
             "parameters": [{"in": "query", "name": "search", "schema": {"type": "string"}}],
-            "responses": {"200": {"description": "Canonical items and aliases", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+            "responses": {"200": {"description": "Canonical items and aliases", "content": {"application/json": {"schema": search_response}}}},
         },
         "post": {
             "operationId": "previewOrSaveSppgInventoryItemMaster",
@@ -462,7 +514,7 @@ def _inventory_master_operation() -> dict[str, Any]:
                 "metadata": {"type": "object", "additionalProperties": True},
                 "commit": {"type": "boolean", "default": False},
             }, ["canonical_name", "commit"])}}},
-            "responses": {"200": {"description": "Master item preview or save result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+            "responses": {"200": {"description": "Master item preview or save result", "content": {"application/json": {"schema": save_response}}}},
         },
     }
 
@@ -475,6 +527,28 @@ def _calculator_plan_preview_operation() -> dict[str, Any]:
         "item_hash": {"type": "string", "minLength": 8},
         "menu_count": {"type": "integer", "minimum": 0},
     }, ["client_key", "date", "item_hash"])
+    existing_plan = obj({
+        "documentId": {"type": "string"},
+        "planName": {"type": ["string", "null"]},
+    })
+    preview_row = obj({
+        "clientKey": {"type": "string"},
+        "date": {"type": "string"},
+        "planName": {"type": "string"},
+        "menuCount": {"type": "integer"},
+        "itemHash": {"type": "string"},
+        "status": {"type": "string"},
+        "selectable": {"type": "boolean"},
+        "defaultSelected": {"type": "boolean"},
+        "existingPlans": {"type": "array", "items": existing_plan},
+    })
+    response_schema = obj({
+        "committed": {"type": "boolean"},
+        "site": {"type": "string"},
+        "sourceRef": {"type": "string"},
+        "items": {"type": "array", "items": preview_row},
+        "rule": {"type": "string"},
+    })
     return {
         "post": {
             "operationId": "previewSppgCalculatorDailyPlanImport",
@@ -486,7 +560,7 @@ def _calculator_plan_preview_operation() -> dict[str, Any]:
                 "source_ref": {"type": "string", "minLength": 1},
                 "items": {"type": "array", "maxItems": 500, "items": summary_item},
             }, ["site", "source_ref", "items"])}}},
-            "responses": {"200": {"description": "Plan import preview", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+            "responses": {"200": {"description": "Plan import preview", "content": {"application/json": {"schema": response_schema}}}},
         }
     }
 
@@ -496,6 +570,38 @@ def _calculator_data_import_operation() -> dict[str, Any]:
         "client_key": {"type": "string", "minLength": 1},
         "payload": {"type": "object", "additionalProperties": True},
     }, ["client_key", "payload"])
+    existing_plan = obj({
+        "documentId": {"type": "string"},
+        "planName": {"type": ["string", "null"]},
+    })
+    result_item = obj({
+        "clientKey": {"type": "string"},
+        "recordKey": {"type": "string"},
+        "name": {"type": "string"},
+        "date": {"type": "string"},
+        "planName": {"type": ["string", "null"]},
+        "status": {"type": "string"},
+        "selectable": {"type": "boolean"},
+        "defaultSelected": {"type": "boolean"},
+        "sourceHash": {"type": "string"},
+        "itemHash": {"type": "string"},
+        "menuCount": {"type": "integer"},
+        "eventId": {"type": "integer"},
+        "targetPath": {"type": "string"},
+        "documentId": {"type": "string"},
+        "existingPlans": {"type": "array", "items": existing_plan},
+    })
+    response_schema = obj({
+        "committed": {"type": "boolean"},
+        "site": {"type": "string"},
+        "dataType": {"type": "string"},
+        "sourceRef": {"type": "string"},
+        "committedCount": {"type": "integer"},
+        "skippedCount": {"type": "integer"},
+        "items": {"type": "array", "items": result_item},
+        "skipped": {"type": "array", "items": result_item},
+        "rule": {"type": "string"},
+    })
     return {
         "post": {
             "operationId": "previewOrImportSelectedSppgCalculatorData",
@@ -510,7 +616,7 @@ def _calculator_data_import_operation() -> dict[str, Any]:
                 "actor": {"type": "string", "default": "chatgpt"},
                 "commit": {"type": "boolean", "default": False},
             }, ["site", "data_type", "source_ref", "items", "commit"])}}},
-            "responses": {"200": {"description": "Calculator data preview or import result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+            "responses": {"200": {"description": "Calculator data preview or import result", "content": {"application/json": {"schema": response_schema}}}},
         }
     }
 
