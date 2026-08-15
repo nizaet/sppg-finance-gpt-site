@@ -26,8 +26,19 @@ function detectType(items) {
   return "";
 }
 
+function normalizedForHash(value) {
+  if (Array.isArray(value)) return value.map(normalizedForHash);
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .filter((key) => !["createdAt", "updatedAt", "id"].includes(key))
+      .sort()
+      .reduce((result, key) => ({ ...result, [key]: normalizedForHash(value[key]) }), {});
+  }
+  return value;
+}
+
 async function digestItem(item) {
-  const bytes = new TextEncoder().encode(JSON.stringify(item));
+  const bytes = new TextEncoder().encode(JSON.stringify(normalizedForHash(item)));
   const hash = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -50,6 +61,10 @@ export default function OperationsCalculatorData() {
   const [message, setMessage] = useState("");
 
   const selectedCount = rows.filter((row) => row.selected).length;
+  const bulkSelectableRows = rows.filter((row) => (
+    row.selectable && (dataType === "DAILY_PLANS" || row.status === "NEW")
+  ));
+  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((row) => row.selected);
   const visibleRows = useMemo(() => {
     const needle = query.toLowerCase().trim();
     if (!needle) return rows;
@@ -142,12 +157,18 @@ export default function OperationsCalculatorData() {
       const target = current.find((row) => row.clientKey === clientKey);
       if (!target?.selectable) return current;
       const nextValue = !target.selected;
-      return current.map((row) => {
-        if (row.clientKey === clientKey) return { ...row, selected: nextValue };
-        if (nextValue && dataType === "DAILY_PLANS" && row.date && row.date === target.date) return { ...row, selected: false };
-        return row;
-      });
+      return current.map((row) => row.clientKey === clientKey ? { ...row, selected: nextValue } : row);
     });
+  };
+
+  const toggleAllSafe = () => {
+    const nextValue = !allBulkSelected;
+    setRows((current) => current.map((row) => ({
+      ...row,
+      selected: row.selectable && (dataType === "DAILY_PLANS" || row.status === "NEW")
+        ? nextValue
+        : row.selected,
+    })));
   };
 
   const selectNew = (includeChanged = false) => {
@@ -163,7 +184,7 @@ export default function OperationsCalculatorData() {
     const changed = selected.filter((row) => row.status === "CHANGED").length;
     const targetLabel = site === "BOTH" ? "Maja dan Cemplang" : site;
     const prompt = dataType === "DAILY_PLANS"
-      ? `Simpan ${selected.length} rencana baru ke Kalkulator ${site}? Tanggal yang sudah ada akan tetap dilewati dan tidak ditimpa.`
+      ? `Simpan ${selected.length} rencana ke Kalkulator ${site}? Beberapa rencana boleh memiliki tanggal sama. Dokumen lama dan isi identik tidak akan ditimpa.`
       : `Simpan ${selected.length} data ${TYPE_LABEL[dataType]} ke Kalkulator ${targetLabel}? ${changed} data lama yang dipilih akan diperbarui dan versi sebelumnya tetap tercatat di audit.`;
     if (!window.confirm(prompt)) return;
 
@@ -192,7 +213,7 @@ export default function OperationsCalculatorData() {
           skipped += Number(result.skippedCount || 0);
         }
       }
-      setMessage(`${committed} penulisan berhasil ke Kalkulator ${targetLabel}. ${skipped} dilewati. Tidak ada rencana lama yang ditimpa.`);
+      setMessage(`${committed} penulisan berhasil ke Kalkulator ${targetLabel}. ${skipped} dilewati karena tidak valid atau isinya sudah ada. Tidak ada rencana lama yang ditimpa.`);
       await preview();
     } catch (err) {
       setError(err.message || "Penyimpanan gagal.");
@@ -227,7 +248,7 @@ export default function OperationsCalculatorData() {
           <label>Jenis terdeteksi<input value={dataType ? TYPE_LABEL[dataType] : "Belum ada file"} disabled /></label>
         </div>
         <div className="ops-notice">
-          <strong>Aturan aman:</strong> rencana dengan tanggal yang sudah ada selalu dikunci dan dilewati. Jika satu file memiliki dua rencana pada tanggal yang sama, pilih hanya satu. Harga/resep/gramasi yang berubah tidak dipilih otomatis.
+          <strong>Aturan aman:</strong> beberapa rencana berbeda boleh memakai tanggal yang sama, misalnya menu reguler dan menu kering balita/busui/bumil. Rencana disimpan sebagai dokumen terpisah; isi yang identik dilewati dan dokumen lama tidak ditimpa. Harga/resep/gramasi yang berubah tidak dipilih otomatis.
         </div>
         <div className="ops-chat-actions">
           <button type="button" onClick={preview} disabled={loading || !site || !sourceItems.length}><UploadCloud size={15} /> {loading ? "Memeriksa…" : "Preview File"}</button>
@@ -240,22 +261,24 @@ export default function OperationsCalculatorData() {
           <div><span className="ops-kicker">PREVIEW BELUM MENULIS DATA</span><h3>Pilih Data yang Masuk</h3><p>{fileName} · {TYPE_LABEL[dataType]} · target {site}</p></div>
           <div className="ops-inline-controls">
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari tanggal / nama / status" />
-            <button type="button" onClick={() => selectNew(false)}>Pilih Data Baru</button>
+            {dataType === "DAILY_PLANS"
+              ? <button type="button" onClick={toggleAllSafe}>{allBulkSelected ? "Batalkan Semua Rencana" : "Pilih Semua Rencana"}</button>
+              : <button type="button" onClick={() => selectNew(false)}>Pilih Data Baru</button>}
             {dataType !== "DAILY_PLANS" && <button type="button" onClick={() => selectNew(true)}>Pilih Baru + Berubah</button>}
             <button type="button" onClick={() => setRows((current) => current.map((row) => ({ ...row, selected: false })))}>Kosongkan</button>
           </div>
         </div>
-        <div className="ops-summary-strip"><span>Total <strong>{rows.length}</strong></span><span>Terpilih <strong>{selectedCount}</strong></span><span>Data baru <strong>{rows.filter((row) => row.status === "NEW").length}</strong></span><span>Sudah ada <strong>{rows.filter((row) => row.status === "EXISTING_DATE").length}</strong></span><span>Berubah <strong>{rows.filter((row) => row.status === "CHANGED").length}</strong></span></div>
+        <div className="ops-summary-strip"><span>Total <strong>{rows.length}</strong></span><span>Terpilih <strong>{selectedCount}</strong></span><span>Data baru <strong>{rows.filter((row) => row.status === "NEW").length}</strong></span><span>Tambahan tanggal sama <strong>{rows.filter((row) => row.status === "ADDITIONAL_PLAN_SAME_DATE").length}</strong></span><span>Sudah ada persis <strong>{rows.filter((row) => row.status === "ALREADY_EXISTS").length}</strong></span><span>Berubah <strong>{rows.filter((row) => row.status === "CHANGED").length}</strong></span></div>
         <div className="ops-table-wrap">
           <table className="ops-table">
-            <thead><tr><th>Pilih</th><th>{dataType === "DAILY_PLANS" ? "Tanggal" : "Kunci"}</th><th>Nama</th><th>Status</th><th>Keterangan</th></tr></thead>
+            <thead><tr><th><label className="ops-checkbox-label"><input type="checkbox" checked={allBulkSelected} disabled={!bulkSelectableRows.length} onChange={toggleAllSafe} /> Pilih Semua</label></th><th>{dataType === "DAILY_PLANS" ? "Tanggal" : "Kunci"}</th><th>Nama</th><th>Status</th><th>Keterangan</th></tr></thead>
             <tbody>
               {visibleRows.map((row) => <tr key={row.clientKey}>
                 <td><input type="checkbox" checked={Boolean(row.selected)} disabled={!row.selectable} onChange={() => toggle(row.clientKey)} /></td>
                 <td><strong>{row.date || row.recordKey}</strong></td>
                 <td>{row.planName || row.name || "-"}{row.menuCount != null && <div className="ops-muted">{row.menuCount} menu</div>}</td>
                 <td>{row.status}{row.siteStatuses && <div className="ops-muted">Maja: {row.siteStatuses.MAJA} · Cemplang: {row.siteStatuses.CEMPLANG}</div>}</td>
-                <td>{row.status === "EXISTING_DATE" ? "Dikunci: tanggal sudah ada, tidak akan ditimpa." : row.status === "DUPLICATE_DATE_IN_FILE" ? "Ada lebih dari satu rencana pada tanggal ini; pilih satu saja." : row.status === "CHANGED" ? "Versi kalkulator berbeda; centang jika memang ingin memperbarui master." : row.status === "UNCHANGED" ? "Isinya sama; tidak perlu ditulis lagi." : "Siap dipilih."}</td>
+                <td>{row.status === "ALREADY_EXISTS" ? "Isi rencana yang sama sudah ada dan tidak akan ditulis ulang." : row.status === "ADDITIONAL_PLAN_SAME_DATE" ? "Tanggal sama diperbolehkan; akan disimpan sebagai rencana terpisah." : row.status === "DUPLICATE_CONTENT_IN_FILE" ? "Duplikat persis dalam file; cukup simpan satu." : row.status === "CHANGED" ? "Versi kalkulator berbeda; centang jika memang ingin memperbarui master." : row.status === "UNCHANGED" ? "Isinya sama; tidak perlu ditulis lagi." : "Siap dipilih."}</td>
               </tr>)}
               {!visibleRows.length && <tr><td colSpan="5" className="ops-empty-cell"><FileJson size={18} /> Tidak ada baris sesuai pencarian.</td></tr>}
             </tbody>

@@ -70,7 +70,7 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 1. Lokasi SO wajib `KOPERASI`, `MAJA`, atau `CEMPLANG`. Preview `previewOrRecordSppgStockOpnameFromWhatsApp`, `commit=false`. Klasifikasikan dari Master/Alias, Harga, resep, gramasi, dan rencana; merek beda boleh satu jenis, jenis beda jangan digabung. Jangan konversi pack/pcs/karung/kantong/ons/kg tanpa aturan. Commit setelah review.
 2. Baca stok/proyeksi dengan `readSppgWarehouseStockAndPoProjection`. Proyeksi bukan SO fisik. Rekomendasi PO = kebutuhan target − stok tersisa setelah rencana sebelumnya; jangan kurangi kebutuhan target dua kali.
 3. Harga/Resep/Gramasi: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`; target MAJA/CEMPLANG terpisah. Commit hanya item terpilih. `CHANGED` perlu persetujuan; `UNCHANGED/INVALID/duplikat` tidak ditulis.
-4. Rencana: `previewSppgCalculatorDailyPlanImport`; pengguna memilih tanggal. `EXISTING_DATE` tidak boleh ditimpa; duplikat tanggal dipilih satu. Import hanya pilihan sebagai `DAILY_PLANS`.
+4. Rencana: `previewSppgCalculatorDailyPlanImport`. Beberapa rencana berbeda boleh bertanggal sama dan dapat dipilih semua. Dokumen lama serta isi identik tidak ditimpa/duplikasi. Import hanya pilihan sebagai `DAILY_PLANS`.
 
 ## Arsip Google Drive
 

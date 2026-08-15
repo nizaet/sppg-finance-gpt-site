@@ -10,6 +10,9 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
@@ -60,6 +63,28 @@ def google_project_id() -> str:
     if explicit:
         return explicit
     return str(_service_account_info().get("project_id") or "sppg-finance-gpt")
+
+
+@lru_cache(maxsize=1)
+def firebase_admin_app():
+    try:
+        return firebase_admin.get_app("sppg-core")
+    except ValueError:
+        credential = firebase_credentials.Certificate(_service_account_info())
+        return firebase_admin.initialize_app(
+            credential,
+            {"projectId": google_project_id()},
+            name="sppg-core",
+        )
+
+
+def create_firebase_custom_token(uid: str, claims: dict[str, Any]) -> str:
+    token = firebase_auth.create_custom_token(
+        uid,
+        developer_claims=claims,
+        app=firebase_admin_app(),
+    )
+    return token.decode("utf-8") if isinstance(token, bytes) else str(token)
 
 
 @lru_cache(maxsize=4)

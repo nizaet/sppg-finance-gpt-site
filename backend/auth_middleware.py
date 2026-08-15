@@ -12,6 +12,7 @@ from backend.auth_api import auth_config, verify_session
 
 PUBLIC_PREFIXES = (
     "/v1/auth/",
+    "/v1/firebase/",
     "/v1/gpt/",
     "/v1/whatsapp/",
     "/v1/schema/",

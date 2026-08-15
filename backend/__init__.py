@@ -17,10 +17,12 @@ from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
+from backend.firebase_auth_api import router as firebase_auth_router
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
 operational_router.include_router(auth_router)
+operational_router.include_router(firebase_auth_router)
 
 # chat_router contains the domain router, restoring these live routes under /v1:
 # /parse-message, /goods-receipts, /actual-usage, /accountant-flow,

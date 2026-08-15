@@ -27,18 +27,23 @@ def test_content_compare_ignores_export_timestamps_and_ids():
     assert _same_content(old, new)
 
 
-def test_plan_preview_locks_existing_and_does_not_auto_select_duplicate(monkeypatch):
+def test_plan_preview_allows_distinct_plans_on_same_date_and_skips_exact_duplicates(monkeypatch):
     monkeypatch.setattr(
         "backend.calculator_data_api._existing_plan_dates",
-        lambda site: {"2026-08-16": [{"documentId": "old", "planName": "Lama"}]},
+        lambda site: {
+            "2026-08-16": [{"documentId": "old", "planName": "Lama", "itemHash": "a" * 8}],
+            "2026-08-17": [{"documentId": "regular", "planName": "Reguler", "itemHash": "z" * 8}],
+        },
     )
     rows = _plan_preview_rows("MAJA", [
         PlanPreviewItem(client_key="0", date="2026-08-16", plan_name="Existing", item_hash="a" * 8),
-        PlanPreviewItem(client_key="1", date="2026-08-17", plan_name="A", item_hash="b" * 8),
-        PlanPreviewItem(client_key="2", date="2026-08-17", plan_name="B", item_hash="c" * 8),
+        PlanPreviewItem(client_key="1", date="2026-08-17", plan_name="Menu Kering", item_hash="b" * 8),
+        PlanPreviewItem(client_key="2", date="2026-08-17", plan_name="Menu Tambahan", item_hash="c" * 8),
         PlanPreviewItem(client_key="3", date="2026-08-18", plan_name="New", item_hash="d" * 8),
+        PlanPreviewItem(client_key="4", date="2026-08-18", plan_name="New duplicate", item_hash="d" * 8),
     ])
-    assert rows[0]["status"] == "EXISTING_DATE" and rows[0]["selectable"] is False
-    assert rows[1]["status"] == "DUPLICATE_DATE_IN_FILE" and rows[1]["defaultSelected"] is False
-    assert rows[2]["status"] == "DUPLICATE_DATE_IN_FILE" and rows[2]["defaultSelected"] is False
+    assert rows[0]["status"] == "ALREADY_EXISTS" and rows[0]["selectable"] is False
+    assert rows[1]["status"] == "ADDITIONAL_PLAN_SAME_DATE" and rows[1]["defaultSelected"] is True
+    assert rows[2]["status"] == "ADDITIONAL_PLAN_SAME_DATE" and rows[2]["defaultSelected"] is True
     assert rows[3]["status"] == "NEW" and rows[3]["defaultSelected"] is True
+    assert rows[4]["status"] == "DUPLICATE_CONTENT_IN_FILE" and rows[4]["selectable"] is False

@@ -81,6 +81,17 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       var __siteAccessRole = {json.dumps(role)};
       window.__legacyUnitId = __legacyUnitId;
       window.__firestoreDatabaseId = {json.dumps(database_id)};
+      window.__railwayFirebaseTokenPromise = (async function () {{
+        var sessionToken = sessionStorage.getItem('sppg_session_token_v1') || localStorage.getItem('sppg_session_token_v1') || '';
+        if (!sessionToken) throw new Error('Sesi Railway tidak ditemukan. Silakan masuk ulang.');
+        var response = await fetch('/v1/firebase/custom-token?site={UNIT_CONFIG[unit]["label"]}', {{
+          headers: {{ Authorization: 'Bearer ' + sessionToken }},
+          credentials: 'same-origin'
+        }});
+        var payload = await response.json().catch(function () {{ return {{}}; }});
+        if (!response.ok || !payload.token) throw new Error(payload.detail || 'Firebase custom token tidak tersedia.');
+        return payload.token;
+      }})();
       sessionStorage.setItem('isLoggedIn', 'true');
       document.addEventListener('DOMContentLoaded', function () {{
         var heading = Array.from(document.querySelectorAll('h2')).find(function (item) {{
@@ -153,6 +164,56 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
     html = html.replace(
         "const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1';",
         f"const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1-{unit}';",
+    )
+    html = html.replace(
+        "        function formatFirebasePermissionError(err, authMode, parsed) {",
+        """        async function getInitialFirebaseAuthToken() {
+            const embedded = getInitialFirebaseAuthTokenSafe();
+            if (embedded) return embedded;
+            if (window.__railwayFirebaseTokenPromise) {
+                return String(await window.__railwayFirebaseTokenPromise || '');
+            }
+            return '';
+        }
+
+        function formatFirebasePermissionError(err, authMode, parsed) {""",
+    )
+    html = html.replace(
+        "            const token = getInitialFirebaseAuthTokenSafe();",
+        "            const token = await getInitialFirebaseAuthToken();",
+    )
+    html = html.replace(
+        """                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }""",
+        """                        const firebaseToken = await getInitialFirebaseAuthToken();
+                        if (firebaseToken) {
+                            await signInWithCustomToken(auth, firebaseToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }""",
+    )
+    legacy_main_auth = (
+        "                        if (typeof __initial_auth_token !== 'undefined') { \n"
+        "                            logActivity(\"Mencoba login dengan Custom Token...\"); \n"
+        "                            await signInWithCustomToken(auth, __initial_auth_token); \n"
+        "                        } else { \n"
+        "                            logActivity(\"Mencoba login secara anonim...\"); \n"
+        "                            await signInAnonymously(auth); \n"
+        "                        }"
+    )
+    html = html.replace(
+        legacy_main_auth,
+        """                        const firebaseToken = await getInitialFirebaseAuthToken();
+                        if (firebaseToken) {
+                            logActivity(\"Mencoba login dengan Custom Token...\");
+                            await signInWithCustomToken(auth, firebaseToken);
+                        } else {
+                            logActivity(\"Mencoba login secara anonim...\");
+                            await signInAnonymously(auth);
+                        }""",
     )
     html = html.replace(
         "if (!db) db = getFirestore(app);",

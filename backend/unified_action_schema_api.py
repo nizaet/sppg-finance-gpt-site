@@ -530,6 +530,7 @@ def _calculator_plan_preview_operation() -> dict[str, Any]:
     existing_plan = obj({
         "documentId": {"type": "string"},
         "planName": {"type": ["string", "null"]},
+        "itemHash": {"type": "string"},
     })
     preview_row = obj({
         "clientKey": {"type": "string"},
@@ -553,7 +554,7 @@ def _calculator_plan_preview_operation() -> dict[str, Any]:
         "post": {
             "operationId": "previewSppgCalculatorDailyPlanImport",
             "summary": "Preview selectable daily plans without uploading full plan payloads",
-            "description": "READ-ONLY. Checks plan dates against one calculator. Existing dates are locked. Duplicate dates in the supplied file require the user to choose at most one plan.",
+            "description": "READ-ONLY. Checks plan contents against one calculator. Distinct plans may share a date. Existing identical content and exact duplicates in the file are not selectable.",
             "x-openai-isConsequential": False,
             "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
                 "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},

@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "cemplang2",
+      "rules": "firestore.cemplang2.rules"
+    }
+  ]
+}

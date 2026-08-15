@@ -39,6 +39,7 @@ jobs:
               '/v1/auth/login',
               '/v1/auth/me',
               '/v1/auth/logout',
+              '/v1/firebase/custom-token',
               '/v1/events',
               '/v1/control-tower',
               '/v1/control-tower-v2',

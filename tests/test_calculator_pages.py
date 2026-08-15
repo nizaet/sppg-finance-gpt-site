@@ -24,6 +24,9 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "#legacyMainContent.legacy-main-expanded .desktop-wide-tabs" in maja
     assert "#loginOverlay" in maja
     assert "sppg_session_token_v1" in cemplang
+    assert "/v1/firebase/custom-token?site=MAJA" in maja
+    assert "/v1/firebase/custom-token?site=CEMPLANG" in cemplang
+    assert "await signInWithCustomToken(auth, firebaseToken)" in cemplang
 
 
 def test_auth_config_defaults_to_internal_calculator_routes(monkeypatch):

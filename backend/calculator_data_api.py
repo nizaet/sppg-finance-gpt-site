@@ -191,24 +191,31 @@ def _existing_plan_dates(site: str) -> dict[str, list[dict[str, Any]]]:
         dates.setdefault(plan_date, []).append({
             "documentId": snap.id,
             "planName": data.get("planName"),
+            "itemHash": _stable_hash(_strip_compare_noise(data)),
         })
     return dates
 
 
 def _plan_preview_rows(site: str, items: list[PlanPreviewItem]) -> list[dict[str, Any]]:
     existing = _existing_plan_dates(site)
-    date_counts = Counter(item.date.strip() for item in items if item.date.strip())
+    seen_in_file: set[tuple[str, str]] = set()
     rows: list[dict[str, Any]] = []
     for item in items:
         plan_date = item.date.strip()
+        item_key = (plan_date, item.item_hash)
+        existing_hashes = {str(plan.get("itemHash") or "") for plan in existing.get(plan_date, [])}
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", plan_date):
             status = "INVALID_DATE"
+        elif item.item_hash in existing_hashes:
+            status = "ALREADY_EXISTS"
+        elif item_key in seen_in_file:
+            status = "DUPLICATE_CONTENT_IN_FILE"
         elif plan_date in existing:
-            status = "EXISTING_DATE"
-        elif date_counts[plan_date] > 1:
-            status = "DUPLICATE_DATE_IN_FILE"
+            status = "ADDITIONAL_PLAN_SAME_DATE"
         else:
             status = "NEW"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", plan_date):
+            seen_in_file.add(item_key)
         rows.append({
             "clientKey": item.client_key,
             "date": plan_date,
@@ -216,8 +223,8 @@ def _plan_preview_rows(site: str, items: list[PlanPreviewItem]) -> list[dict[str
             "menuCount": item.menu_count,
             "itemHash": item.item_hash,
             "status": status,
-            "selectable": status in {"NEW", "DUPLICATE_DATE_IN_FILE"},
-            "defaultSelected": status == "NEW",
+            "selectable": status in {"NEW", "ADDITIONAL_PLAN_SAME_DATE"},
+            "defaultSelected": status in {"NEW", "ADDITIONAL_PLAN_SAME_DATE"},
             "existingPlans": existing.get(plan_date, []),
         })
     return rows
@@ -356,7 +363,7 @@ def preview_daily_plan_import(payload: PlanPreviewIn) -> dict[str, Any]:
         "sourceRef": payload.source_ref,
         "items": rows,
         "counts": dict(counts),
-        "rule": "Existing calculator dates are never overwritten. Choose at most one plan for each duplicate date.",
+        "rule": "Existing plan documents are never overwritten. Distinct plans may share one date; identical content is skipped.",
     }
 
 
@@ -410,13 +417,6 @@ def _commit_master(payload: CalculatorImportIn) -> dict[str, Any]:
 
 
 def _commit_plans(payload: CalculatorImportIn) -> dict[str, Any]:
-    dates = [str(item.payload.get("date") or "").strip() for item in payload.items]
-    duplicates = sorted(day for day, count in Counter(dates).items() if day and count > 1)
-    if duplicates:
-        raise HTTPException(409, detail={
-            "message": "select at most one daily plan for each date",
-            "duplicateDates": duplicates,
-        })
     _, _, root = _data_root(payload.site)
     plans = root.collection("dailyPlans")
     committed: list[dict[str, Any]] = []
@@ -427,12 +427,24 @@ def _commit_plans(payload: CalculatorImportIn) -> dict[str, Any]:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", plan_date):
             skipped.append({"clientKey": item.client_key, "date": plan_date, "status": "INVALID_DATE"})
             continue
-        existing = list(plans.where("date", "==", plan_date).limit(5).stream())
-        source_hash = _stable_hash(incoming)
-        if existing:
+        existing = list(plans.where("date", "==", plan_date).limit(50).stream())
+        source_hash = _stable_hash(_strip_compare_noise(incoming))
+        identical = next(
+            (
+                snap for snap in existing
+                if _same_content(snap.to_dict() or {}, incoming)
+            ),
+            None,
+        )
+        if identical is not None:
             skipped.append({
-                "clientKey": item.client_key, "date": plan_date, "status": "EXISTING_DATE",
-                "existingPlans": [{"documentId": snap.id, "planName": (snap.to_dict() or {}).get("planName")} for snap in existing],
+                "clientKey": item.client_key,
+                "date": plan_date,
+                "status": "ALREADY_EXISTS",
+                "existingPlans": [{
+                    "documentId": identical.id,
+                    "planName": (identical.to_dict() or {}).get("planName"),
+                }],
             })
             continue
         doc_id = f"imported_plan_{plan_date}_{source_hash[:12]}"
@@ -449,11 +461,13 @@ def _commit_plans(payload: CalculatorImportIn) -> dict[str, Any]:
             _audit_finish(event_id, "COMMITTED")
             committed.append({
                 "clientKey": item.client_key, "date": plan_date, "planName": incoming.get("planName"),
-                "status": "COMMITTED_NEW", "documentId": doc_id, "eventId": event_id,
+                "status": "COMMITTED_ADDITIONAL" if existing else "COMMITTED_NEW",
+                "documentId": doc_id,
+                "eventId": event_id,
             })
         except AlreadyExists:
             _audit_finish(event_id, "SKIPPED_EXISTING")
-            skipped.append({"clientKey": item.client_key, "date": plan_date, "status": "EXISTING_DATE"})
+            skipped.append({"clientKey": item.client_key, "date": plan_date, "status": "ALREADY_EXISTS"})
         except Exception as exc:
             _audit_finish(event_id, "FAILED", str(exc)[:1000])
             raise HTTPException(502, f"Firestore write failed for plan {plan_date}: {exc}") from exc
@@ -465,7 +479,7 @@ def _commit_plans(payload: CalculatorImportIn) -> dict[str, Any]:
         "skippedCount": len(skipped),
         "items": committed,
         "skipped": skipped,
-        "rule": "No existing calculator date was overwritten.",
+        "rule": "No existing plan document was overwritten. Distinct plans on the same date were stored separately.",
     }
 
 
