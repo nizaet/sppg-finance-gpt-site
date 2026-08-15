@@ -141,9 +141,8 @@ def _current_receiving_operation() -> dict[str, Any]:
             "operationId": "previewOrRecordSppgGoodsReceiptFromMessage",
             "summary": "Preview or record a current goods receipt from supplied message text",
             "description": (
-                "Preview supplied receiving text against an existing PO. Call commit=false first. "
-                "Commit only after exact PO/item matches or an explicit purchase_order_id. Committed data is stored in PostgreSQL "
-                "and shown in Pusat Operasional > Penerimaan; planned_qty and po_qty are never overwritten."
+                "Preview supplied receiving text against an existing PO with commit=false. Commit only after PO/items are confirmed. "
+                "Accepted qty creates idempotent warehouse stock movements; planned_qty and po_qty are never overwritten."
             ),
             "x-openai-isConsequential": True,
             "requestBody": {
@@ -181,6 +180,9 @@ def _current_receiving_operation() -> dict[str, Any]:
                                 "requiresConfirmation": {"type": ["boolean", "null"]},
                                 "receiptId": {"type": ["integer", "null"]},
                                 "purchaseOrderStatus": {"type": ["string", "null"]},
+                                "stockCommitted": {"type": ["boolean", "null"]},
+                                "stockInserted": {"type": ["integer", "null"]},
+                                "stockDuplicates": {"type": ["integer", "null"]},
                                 "matches": {"type": "array", "items": receipt_preview},
                                 "alternatives": {"type": "array", "items": obj({
                                     "purchase_order_id": {"type": "integer"},

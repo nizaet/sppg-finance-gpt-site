@@ -36,3 +36,16 @@ Ikan Dori:3 kantong"""
     assert any("Duplikat bawang merah" in warning for warning in result["warnings"])
     assert any(x["itemName"] == "Ayam fillet" and x["unit"] == "kg" and x["qty"] == 30 for x in result["items"])
     assert any(x["itemName"] == "Ayam potong" and x["unit"] == "kg" and x["qty"] == 54.76 for x in result["items"])
+
+
+def test_dimensions_are_item_identity_and_unit_is_a_valid_stock_unit():
+    result = parser.parse_stock_opname_text(
+        """*KANTOR*
+1. plastik item UK 90x120 : 1 unit
+2. plastik item UK 90x100 : 1 pack"""
+    )
+
+    assert [(item["itemName"], item["qty"], item["unit"], item["parseStatus"]) for item in result["items"]] == [
+        ("plastik item UK 90x120", 1.0, "unit", "READY"),
+        ("plastik item UK 90x100", 1.0, "pack", "READY"),
+    ]

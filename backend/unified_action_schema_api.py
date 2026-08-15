@@ -363,8 +363,24 @@ def _po_whatsapp_operation() -> dict[str, Any]:
 
 
 def _stock_opname_operation() -> dict[str, Any]:
+    reviewed_item = obj(
+        {
+            "client_key": {"type": "string"},
+            "include": {"type": "boolean", "default": True},
+            "area_code": {"type": ["string", "null"]},
+            "raw_item_name": {"type": "string", "minLength": 1},
+            "canonical_item_name": {"type": ["string", "null"]},
+            "inventory_item_code": {"type": ["string", "null"]},
+            "qty": {"type": "number", "minimum": 0},
+            "unit": {"type": ["string", "null"]},
+            "raw_line": {"type": ["string", "null"]},
+        },
+        ["client_key", "include", "raw_item_name", "qty"],
+    )
     parsed_item = obj(
         {
+            "clientKey": {"type": "string"},
+            "selected": {"type": "boolean"},
             "areaCode": {"type": "string"},
             "itemName": {"type": "string"},
             "canonicalItemName": {"type": "string"},
@@ -398,6 +414,7 @@ def _stock_opname_operation() -> dict[str, Any]:
                                 "source_external_id": {"type": ["string", "null"]},
                                 "reporter": {"type": ["string", "null"]},
                                 "actor": {"type": "string", "default": "chatgpt"},
+                                "reviewed_items": {"type": ["array", "null"], "items": reviewed_item},
                                 "commit": {"type": "boolean", "default": False},
                             },
                             ["location", "text", "commit"],
@@ -591,10 +608,15 @@ def _calculator_data_import_operation() -> dict[str, Any]:
         "targetPath": {"type": "string"},
         "documentId": {"type": "string"},
         "existingPlans": {"type": "array", "items": existing_plan},
+        "siteStatuses": {"type": "object", "properties": {
+            "MAJA": {"type": "string"}, "CEMPLANG": {"type": "string"},
+        }, "additionalProperties": False},
     })
     response_schema = obj({
         "committed": {"type": "boolean"},
         "site": {"type": "string"},
+        "sourceSite": {"type": "string"},
+        "targetSites": {"type": "array", "items": {"type": "string"}},
         "dataType": {"type": "string"},
         "sourceRef": {"type": "string"},
         "committedCount": {"type": "integer"},
@@ -602,16 +624,17 @@ def _calculator_data_import_operation() -> dict[str, Any]:
         "items": {"type": "array", "items": result_item},
         "skipped": {"type": "array", "items": result_item},
         "rule": {"type": "string"},
+        "dailyPlansChanged": {"type": "boolean"},
     })
     return {
         "post": {
             "operationId": "previewOrImportSelectedSppgCalculatorData",
             "summary": "Preview or import selected calculator masters and daily plans",
-            "description": "Use commit=false first. With commit=true, only supplied records are written. Existing daily-plan dates are always skipped; changed masters require explicit user selection.",
+            "description": "Use commit=false first. Master writes mirror to Maja+Cemplang; daily plans stay site-specific. Distinct plans may share a date; identical plans are skipped. CHANGED masters require selection.",
             "x-openai-isConsequential": True,
             "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
                 "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
-                "data_type": {"type": "string", "enum": ["PRICES", "GRAMASI", "RECIPES", "DAILY_PLANS"]},
+                "data_type": {"type": "string", "enum": ["PRICES", "GRAMASI", "RECIPES", "BUMBU", "DAILY_PLANS"]},
                 "source_ref": {"type": "string", "minLength": 1},
                 "items": {"type": "array", "maxItems": 500, "items": import_item},
                 "actor": {"type": "string", "default": "chatgpt"},

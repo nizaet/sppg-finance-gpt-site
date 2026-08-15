@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardPaste, RefreshCw, Search } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, Plus, RefreshCw, Save, Search, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const qty = (value) => Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
@@ -14,6 +14,9 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const [stockDate, setStockDate] = useState("");
   const [reporter, setReporter] = useState("");
   const [preview, setPreview] = useState(null);
+  const [reviewedItems, setReviewedItems] = useState([]);
+  const [masters, setMasters] = useState([]);
+  const [masterForm, setMasterForm] = useState({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -33,13 +36,15 @@ export default function OperationsInventory({ fixedSite = "" }) {
     setLoading(true);
     setError("");
     try {
-      const [data, opnameData] = await Promise.all([
+      const [data, opnameData, masterData] = await Promise.all([
         operationsApi.getInventoryBalances({ site: activeSite, search: searchValue, limit: 1000 }),
         operationsApi.getStockOpnames({ location: activeSite, limit: 12 }),
+        operationsApi.getInventoryItems(""),
       ]);
       setItems(data?.items || []);
       setBalanceMeta(data || null);
       setHistory(opnameData?.items || []);
+      setMasters(masterData?.items || []);
     } catch (err) {
       setError(err.message || "Gagal mengambil saldo gudang");
     } finally {
@@ -60,6 +65,19 @@ export default function OperationsInventory({ fixedSite = "" }) {
     try {
       const data = await operationsApi.previewStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, reporter: reporter || null });
       setPreview(data);
+      setReviewedItems((data?.items || []).map((item, index) => ({
+        client_key: String(item.clientKey ?? index),
+        include: item.selected !== false,
+        area_code: item.areaCode || "UNSPECIFIED",
+        raw_item_name: item.itemName || "",
+        canonical_item_name: item.canonicalItemName || item.itemName || "",
+        inventory_item_code: item.inventoryItemCode || "",
+        qty: Number(item.qty || 0),
+        unit: item.unit || "",
+        raw_line: item.rawLine || item.itemName || "",
+        classification_status: item.classificationStatus || "UNMAPPED",
+        classification_method: item.classificationMethod || "",
+      })));
       if (!stockDate && data?.stockDate) setStockDate(data.stockDate);
     } catch (err) {
       setError(err.message || "Gagal membaca laporan SO");
@@ -69,23 +87,69 @@ export default function OperationsInventory({ fixedSite = "" }) {
   };
 
   const commitSo = async () => {
-    if (!preview?.canCommit) return;
-    const warning = Number(preview.reviewCount || 0) + Number(preview.ambiguousCount || 0);
+    const selected = reviewedItems.filter((item) => item.include);
+    if (!preview?.canCommit || !selected.length) return;
+    const excluded = reviewedItems.length - selected.length;
     if (!window.confirm(
-      `Simpan SO ${activeSite} tanggal ${preview.stockDate} dengan ${preview.itemCount} komponen?\n\n` +
-      `${warning} komponen perlu perhatian dan ${preview.unmappedCount || 0} nama belum ada di Master Barang. Teks asli tetap disimpan; satuan yang tidak cocok tidak akan mengurangi PO.`
+      `Simpan SO ${activeSite} tanggal ${preview.stockDate} dengan ${selected.length} komponen terpilih?\n\n` +
+      `${excluded} komponen dikeluarkan. Nama kanonik, Master, qty, dan unit yang disimpan mengikuti hasil edit terakhir di tabel.`
     )) return;
     setSaving(true);
     setError("");
     setMessage("");
     try {
-      const data = await operationsApi.commitStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, reporter: reporter || null });
-      setMessage(data.duplicate ? `SO ini sudah pernah disimpan (#${data.stockOpnameId}).` : `SO ${activeSite} tersimpan sebagai baseline #${data.stockOpnameId}.`);
+      const data = await operationsApi.commitStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, reporter: reporter || null, reviewed_items: reviewedItems });
+      setMessage(data.duplicate ? `SO ini sudah pernah disimpan (#${data.stockOpnameId}).` : `SO ${activeSite} tersimpan sebagai baseline #${data.stockOpnameId}: ${data.itemCount} item masuk, ${excluded} item dikeluarkan.`);
       setPreview(null);
+      setReviewedItems([]);
       setSoText("");
       await load("");
     } catch (err) {
       setError(err.message || "Gagal menyimpan laporan SO");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateReviewed = (clientKey, patch) => {
+    setReviewedItems((current) => current.map((item) => item.client_key === clientKey ? { ...item, ...patch } : item));
+  };
+
+  const selectMaster = (clientKey, code) => {
+    const master = masters.find((item) => item.code === code);
+    if (!master) {
+      updateReviewed(clientKey, { inventory_item_code: "", classification_status: "USER_REVIEWED" });
+      return;
+    }
+    updateReviewed(clientKey, {
+      inventory_item_code: master.code,
+      canonical_item_name: master.canonical_name,
+      unit: master.base_unit || "",
+      classification_status: "MATCHED",
+      classification_method: "USER_SELECTED_MASTER",
+    });
+  };
+
+  const saveMaster = async () => {
+    if (!masterForm.canonical_name.trim()) return setError("Nama kanonik Master Barang wajib diisi.");
+    if (!window.confirm(`Simpan Master Barang “${masterForm.canonical_name}” beserta aliasnya?`)) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await operationsApi.saveInventoryItem({
+        code: masterForm.code.trim() || null,
+        canonical_name: masterForm.canonical_name.trim(),
+        category_code: masterForm.category_code.trim() || null,
+        base_unit: masterForm.base_unit.trim() || null,
+        aliases: masterForm.aliases.split(",").map((value) => value.trim()).filter(Boolean),
+      }, true);
+      const masterData = await operationsApi.getInventoryItems("");
+      setMasters(masterData?.items || []);
+      setMasterForm({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+      setMessage(`Master Barang ${result.canonicalName} (${result.code}) tersimpan. Sekarang dapat dipilih pada baris SO.`);
+    } catch (err) {
+      setError(err.message || "Gagal menyimpan Master Barang");
     } finally {
       setSaving(false);
     }
@@ -117,23 +181,46 @@ export default function OperationsInventory({ fixedSite = "" }) {
         <textarea className="ops-chat-input" rows="9" value={soText} onChange={(e) => { setSoText(e.target.value); setPreview(null); }} placeholder="Paste laporan SO BARANG dari WhatsApp di sini…" />
         <div className="ops-chat-actions">
           <button type="button" onClick={previewSo} disabled={saving || !soText.trim()}><ClipboardPaste size={15} /> {saving ? "Membaca…" : "Preview SO"}</button>
-          <button type="button" onClick={commitSo} disabled={saving || !preview?.canCommit}><CheckCircle2 size={15} /> Konfirmasi & Simpan Baseline</button>
+          <button type="button" onClick={commitSo} disabled={saving || !preview?.canCommit || !reviewedItems.some((item) => item.include)}><CheckCircle2 size={15} /> Simpan {reviewedItems.filter((item) => item.include).length} Item Terpilih</button>
         </div>
 
         {preview && (
           <div className="ops-draft-group">
             <div className="ops-summary-strip">
-              <span>Tanggal <strong>{preview.stockDate}</strong></span><span>Komponen <strong>{preview.itemCount}</strong></span><span>Perlu review <strong>{preview.reviewCount}</strong></span><span>Belum di Master <strong>{preview.unmappedCount}</strong></span>
+              <span>Tanggal <strong>{preview.stockDate}</strong></span><span>Komponen <strong>{reviewedItems.length}</strong></span><span>Dipilih <strong>{reviewedItems.filter((item) => item.include).length}</strong></span><span>Dikeluarkan <strong>{reviewedItems.filter((item) => !item.include).length}</strong></span>
             </div>
+            <div className="ops-notice">Item salah seperti “mi telur ayam” dapat dikeluarkan tanpa menahan item lain. Ukuran 90×120/90×100 tetap menjadi nama jenis plastik; qty dapat diedit sendiri.</div>
             {preview.warnings?.length > 0 && <div className="ops-notice">{preview.warnings.map((warning) => <div key={warning}>⚠ {warning}</div>)}</div>}
             <div className="ops-table-wrap">
               <table className="ops-table">
-                <thead><tr><th>Area</th><th>Nama dari SO</th><th>Jenis kanonik</th><th>Qty</th><th>Unit</th><th>Klasifikasi</th><th>Status parse</th></tr></thead>
-                <tbody>{preview.items?.map((item, idx) => <tr key={`${item.rawLine}-${idx}`}><td>{item.areaCode}</td><td><strong>{item.itemName}</strong></td><td>{item.canonicalItemName}</td><td>{qty(item.qty)}</td><td>{item.unit || "⚠ belum ada"}</td><td>{item.classificationStatus}<div className="ops-muted">{item.classificationMethod}</div>{item.classificationSources?.length > 0 && <div className="ops-muted">Dasar: {item.classificationSources.join(" · ")}</div>}</td><td>{item.parseStatus}</td></tr>)}</tbody>
+                <thead><tr><th>Simpan?</th><th>Area</th><th>Nama dari SO</th><th>Master Barang</th><th>Jenis kanonik — EDIT</th><th>Qty — EDIT</th><th>Unit — EDIT</th><th>Status</th></tr></thead>
+                <tbody>{reviewedItems.map((item) => <tr key={item.client_key}>
+                  <td><button type="button" onClick={() => updateReviewed(item.client_key, { include: !item.include })}>{item.include ? <XCircle size={14} /> : <Plus size={14} />} {item.include ? "Keluarkan" : "Masukkan"}</button></td>
+                  <td><input value={item.area_code} disabled={!item.include} onChange={(e) => updateReviewed(item.client_key, { area_code: e.target.value })} /></td>
+                  <td><strong>{item.raw_item_name}</strong><div className="ops-muted">{item.raw_line}</div></td>
+                  <td><select value={item.inventory_item_code} disabled={!item.include} onChange={(e) => selectMaster(item.client_key, e.target.value)}><option value="">Tanpa Master / nama manual</option>{masters.map((master) => <option key={master.code} value={master.code}>{master.canonical_name} · {master.base_unit || "-"}</option>)}</select></td>
+                  <td><input value={item.canonical_item_name} disabled={!item.include || Boolean(item.inventory_item_code)} onChange={(e) => updateReviewed(item.client_key, { canonical_item_name: e.target.value, classification_status: "USER_REVIEWED" })} /></td>
+                  <td><input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.qty} disabled={!item.include} onChange={(e) => updateReviewed(item.client_key, { qty: Number(e.target.value) })} /></td>
+                  <td><input value={item.unit} disabled={!item.include} onChange={(e) => updateReviewed(item.client_key, { unit: e.target.value })} placeholder="kg / pcs / unit / dus" /></td>
+                  <td>{item.include ? item.classification_status : "DIKELUARKAN"}<div className="ops-muted">{item.classification_method}</div></td>
+                </tr>)}</tbody>
               </table>
             </div>
           </div>
         )}
+      </section>
+
+      <section className="ops-module">
+        <div className="ops-module-header"><div><span className="ops-kicker">MASTER BARANG & ALIAS</span><h3>Tambah atau Perbarui Klasifikasi</h3><p>Contoh: buat “Mi telur ayam” sebagai jenis tersendiri lalu masukkan alias “mi telur”, “mie telur ayam”. Setelah disimpan, laporan berikutnya lebih cepat dikenali.</p></div></div>
+        <div className="ops-form-grid">
+          <label>Kode (opsional)<input value={masterForm.code} onChange={(e) => setMasterForm((current) => ({ ...current, code: e.target.value.toUpperCase() }))} placeholder="MI_TELUR_AYAM" /></label>
+          <label>Nama kanonik<input value={masterForm.canonical_name} onChange={(e) => setMasterForm((current) => ({ ...current, canonical_name: e.target.value }))} placeholder="Mi telur ayam" /></label>
+          <label>Kategori<input value={masterForm.category_code} onChange={(e) => setMasterForm((current) => ({ ...current, category_code: e.target.value.toUpperCase() }))} placeholder="BAHAN_KERING" /></label>
+          <label>Satuan dasar<input value={masterForm.base_unit} onChange={(e) => setMasterForm((current) => ({ ...current, base_unit: e.target.value }))} placeholder="dus / pcs / kg" /></label>
+          <label>Alias dipisah koma<input value={masterForm.aliases} onChange={(e) => setMasterForm((current) => ({ ...current, aliases: e.target.value }))} placeholder="mi telur, mie telur ayam" /></label>
+          <label>Aksi<div className="ops-row-actions"><button type="button" onClick={saveMaster} disabled={saving || !masterForm.canonical_name.trim()}><Save size={14} /> Simpan Master</button></div></label>
+        </div>
+        <div className="ops-summary-strip"><span>Master aktif <strong>{masters.length}</strong></span></div>
       </section>
 
       <section className="ops-module">

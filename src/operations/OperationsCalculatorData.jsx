@@ -6,19 +6,22 @@ const TYPE_LABEL = {
   PRICES: "Master Harga",
   GRAMASI: "Aturan Gramasi",
   RECIPES: "Master Resep",
+  BUMBU: "Master Bumbu",
   DAILY_PLANS: "Rencana Harian",
 };
 
 function extractItems(parsed) {
   if (Array.isArray(parsed)) return parsed;
-  for (const key of ["items", "data", "plans", "recipes", "prices", "gramasi"]) {
+  for (const key of ["items", "data", "plans", "recipes", "prices", "gramasi", "list", "bumbu"]) {
     if (Array.isArray(parsed?.[key])) return parsed[key];
   }
   return [];
 }
 
 function detectType(items) {
-  const first = items.find((item) => item && typeof item === "object") || {};
+  const firstValue = items.find((item) => item !== null && item !== undefined);
+  if (typeof firstValue === "string") return "BUMBU";
+  const first = firstValue && typeof firstValue === "object" ? firstValue : {};
   if ((first.date || first.tanggal) && (Array.isArray(first.recipes) || first.shoppingListJSON)) return "DAILY_PLANS";
   if (Array.isArray(first.ingredients)) return "RECIPES";
   if (Object.hasOwn(first, "price") || Object.hasOwn(first, "grams_per_unit")) return "PRICES";
@@ -83,9 +86,12 @@ export default function OperationsCalculatorData() {
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text());
-      const items = extractItems(parsed);
-      const detected = detectType(items);
-      if (!items.length || !detected) throw new Error("Format belum dikenali sebagai harga, gramasi, resep, atau rencana harian.");
+      const extracted = extractItems(parsed);
+      const detected = detectType(extracted);
+      const items = detected === "BUMBU"
+        ? extracted.map((item) => typeof item === "string" ? { name: item } : item)
+        : extracted;
+      if (!items.length || !detected) throw new Error("Format belum dikenali sebagai harga, gramasi, resep, bumbu, atau rencana harian.");
       setFileName(file.name);
       setSourceItems(items);
       setDataType(detected);
@@ -117,31 +123,12 @@ export default function OperationsCalculatorData() {
         result = await operationsApi.previewCalculatorPlans({ site, source_ref: fileName, items: summaries });
       } else {
         const payloadItems = sourceItems.map((item, index) => ({ client_key: String(index), payload: item }));
-        if (site === "BOTH") {
-          const [maja, cemplang] = await Promise.all(["MAJA", "CEMPLANG"].map((targetSite) => operationsApi.previewCalculatorImport({
-            site: targetSite, data_type: dataType, source_ref: fileName, items: payloadItems,
-          })));
-          const cemplangByKey = new Map((cemplang.items || []).map((row) => [row.clientKey, row]));
-          result = { items: (maja.items || []).map((majaRow) => {
-            const cemplangRow = cemplangByKey.get(majaRow.clientKey) || {};
-            const statuses = [majaRow.status, cemplangRow.status];
-            const status = statuses.includes("INVALID") ? "INVALID" : statuses.includes("DUPLICATE_KEY_IN_FILE") ? "DUPLICATE_KEY_IN_FILE" : statuses.includes("CHANGED") ? "CHANGED" : statuses.every((value) => value === "UNCHANGED") ? "UNCHANGED" : "NEW";
-            return {
-              ...majaRow,
-              status,
-              siteStatuses: { MAJA: majaRow.status, CEMPLANG: cemplangRow.status },
-              selectable: ["NEW", "CHANGED"].includes(status),
-              defaultSelected: status === "NEW",
-            };
-          }) };
-        } else {
-          result = await operationsApi.previewCalculatorImport({
-            site,
-            data_type: dataType,
-            source_ref: fileName,
-            items: payloadItems,
-          });
-        }
+        result = await operationsApi.previewCalculatorImport({
+          site: site === "BOTH" ? "MAJA" : site,
+          data_type: dataType,
+          source_ref: fileName,
+          items: payloadItems,
+        });
       }
       setRows((result.items || []).map((row) => ({ ...row, selected: Boolean(row.defaultSelected) })));
       setMessage(`Preview selesai. Tidak ada data yang ditulis. ${result.items?.length || 0} baris diperiksa.`);
@@ -182,7 +169,7 @@ export default function OperationsCalculatorData() {
     const selected = rows.filter((row) => row.selected);
     if (!selected.length) return setError("Centang data yang akan dimasukkan terlebih dahulu.");
     const changed = selected.filter((row) => row.status === "CHANGED").length;
-    const targetLabel = site === "BOTH" ? "Maja dan Cemplang" : site;
+    const targetLabel = dataType === "DAILY_PLANS" ? site : "Maja dan Cemplang";
     const prompt = dataType === "DAILY_PLANS"
       ? `Simpan ${selected.length} rencana ke Kalkulator ${site}? Beberapa rencana boleh memiliki tanggal sama. Dokumen lama dan isi identik tidak akan ditimpa.`
       : `Simpan ${selected.length} data ${TYPE_LABEL[dataType]} ke Kalkulator ${targetLabel}? ${changed} data lama yang dipilih akan diperbarui dan versi sebelumnya tetap tercatat di audit.`;
@@ -199,7 +186,7 @@ export default function OperationsCalculatorData() {
       const batchSize = dataType === "DAILY_PLANS" ? 5 : 25;
       let committed = 0;
       let skipped = 0;
-      const targetSites = site === "BOTH" ? ["MAJA", "CEMPLANG"] : [site];
+      const targetSites = dataType === "DAILY_PLANS" ? [site] : [site === "BOTH" ? "MAJA" : site];
       for (const targetSite of targetSites) {
         for (const batch of chunks(selectedItems, batchSize)) {
           const result = await operationsApi.commitCalculatorImport({
@@ -229,7 +216,7 @@ export default function OperationsCalculatorData() {
           <div>
             <span className="ops-kicker">SATU PINTU · FIRESTORE KALKULATOR + AUDIT PUSAT</span>
             <h3>Data Kalkulator</h3>
-            <p>Upload harga, gramasi, resep, atau rencana harian di sini. Preview dan pilihan target wajib dilakukan sebelum data masuk ke Kalkulator Maja atau Cemplang.</p>
+            <p>Harga, gramasi, resep, dan bumbu adalah master bersama: satu perubahan selalu ditulis ke Maja + Cemplang. Hanya rencana harian yang memilih satu dapur.</p>
           </div>
           <ShieldCheck size={34} />
         </div>
@@ -239,16 +226,16 @@ export default function OperationsCalculatorData() {
           <label>Target kalkulator
             <select value={site} onChange={(event) => { setSite(event.target.value); resetPreview(); }}>
               <option value="">— Pilih dapur —</option>
-              <option value="MAJA">Kalkulator Maja</option>
-              <option value="CEMPLANG">Kalkulator Cemplang</option>
-              <option value="BOTH">Maja + Cemplang (master saja)</option>
+              <option value="MAJA">Rencana harian Maja / sumber master Maja</option>
+              <option value="CEMPLANG">Rencana harian Cemplang / sumber master Cemplang</option>
+              <option value="BOTH">Maja + Cemplang (master bersama)</option>
             </select>
           </label>
           <label>File backup JSON<input type="file" accept=".json,application/json" onChange={chooseFile} /></label>
           <label>Jenis terdeteksi<input value={dataType ? TYPE_LABEL[dataType] : "Belum ada file"} disabled /></label>
         </div>
         <div className="ops-notice">
-          <strong>Aturan aman:</strong> beberapa rencana berbeda boleh memakai tanggal yang sama, misalnya menu reguler dan menu kering balita/busui/bumil. Rencana disimpan sebagai dokumen terpisah; isi yang identik dilewati dan dokumen lama tidak ditimpa. Harga/resep/gramasi yang berubah tidak dipilih otomatis.
+          <strong>Aturan aman:</strong> harga/resep/gramasi/bumbu selalu diperbarui ke kedua kalkulator dan versi sebelumnya tercatat di audit. Beberapa rencana berbeda boleh memakai tanggal yang sama; rencana tetap terpisah per dapur, isi identik dilewati, dan dokumen lama tidak ditimpa.
         </div>
         <div className="ops-chat-actions">
           <button type="button" onClick={preview} disabled={loading || !site || !sourceItems.length}><UploadCloud size={15} /> {loading ? "Memeriksa…" : "Preview File"}</button>

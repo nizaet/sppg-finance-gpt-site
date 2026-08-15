@@ -58,7 +58,9 @@ export default function OperationsReceiving({ fixedSite = "" }){
     try{
       const data=await operationsApi.commitWhatsAppReceipt({...payload,purchase_order_id:preview.purchaseOrderId});
       setPreview(data);
-      setMessage(data?.duplicate ? `Penerimaan sudah pernah tersimpan (ID ${data.receiptId}).` : `Penerimaan tersimpan. Receipt ID ${data.receiptId}; status PO ${data.purchaseOrderStatus}.`);
+      setMessage(data?.duplicate
+        ? `Penerimaan sudah pernah tersimpan (ID ${data.receiptId}); movement stok tetap dicek idempotent (${data.stockDuplicates || 0} sudah ada).`
+        : `Penerimaan tersimpan. Receipt ID ${data.receiptId}; status PO ${data.purchaseOrderStatus}; ${data.stockInserted || 0} item diterima masuk ke stok gudang.`);
       await load();
     }catch(e){setError(e.message||"Gagal menyimpan penerimaan");}
     finally{setSaving(false);}
@@ -66,7 +68,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
 
   return <section className="ops-module">
     <div className="ops-module-header">
-      <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Input terkonfirmasi dari halaman ini maupun GPTS masuk ke riwayat PostgreSQL yang sama. Received qty tetap terpisah dan tidak pernah menimpa planned qty atau PO qty.</p></div>
+      <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Input terkonfirmasi dari halaman ini maupun GPTS masuk ke riwayat PostgreSQL yang sama. Qty diterima yang disetujui otomatis menambah stok gudang; mengirim PO saja tidak menambah stok. Received qty tetap terpisah dan tidak menimpa planning atau PO.</p></div>
       <div className="ops-inline-controls"><select value={activeSite} disabled={Boolean(fixedSite)} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
     </div>
 

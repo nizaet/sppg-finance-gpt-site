@@ -13,6 +13,8 @@ def test_v017_schema_exposes_safe_current_receiving_and_payments():
     assert receiving["x-openai-isConsequential"] is True
     assert receiving_body["properties"]["commit"]["default"] is False
     assert set(receiving_body["required"]) == {"site", "text", "commit"}
+    receiving_response = receiving["responses"]["200"]["content"]["application/json"]["schema"]
+    assert "stockInserted" in receiving_response["properties"]
 
     payment = paths["/v1/vendor-payments/confirm"]["post"]
     payment_body = payment["requestBody"]["content"]["application/json"]["schema"]

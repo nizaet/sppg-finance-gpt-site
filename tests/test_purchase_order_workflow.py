@@ -5,6 +5,7 @@ import pytest
 from backend.purchase_order_workflow_api import (
     format_purchase_order_whatsapp,
     normalize_whatsapp_phone,
+    router,
 )
 
 
@@ -46,3 +47,13 @@ def test_purchase_order_whatsapp_message_is_canonical_and_uses_po_qty():
     assert "12,5 kg" in message
     assert "Wortel" not in message
     assert "planned_qty" not in message
+
+
+def test_purchase_order_routes_support_edit_delete_revision_and_cancel():
+    methods_by_path = {}
+    for route in router.routes:
+        methods_by_path.setdefault(route.path, set()).update(route.methods or [])
+    assert "PATCH" in methods_by_path["/purchase-orders/{purchase_order_id}"]
+    assert "DELETE" in methods_by_path["/purchase-orders/{purchase_order_id}"]
+    assert "POST" in methods_by_path["/purchase-orders/{purchase_order_id}/revise"]
+    assert "POST" in methods_by_path["/purchase-orders/{purchase_order_id}/cancel"]

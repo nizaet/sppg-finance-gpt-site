@@ -22,6 +22,7 @@ MIGRATIONS = [
     ROOT / "schema" / "accountant_excel_v020.sql",
     ROOT / "schema" / "inventory_stock_opname_v021.sql",
     ROOT / "schema" / "calculator_data_control_v022.sql",
+    ROOT / "schema" / "calculator_shared_master_v023.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 

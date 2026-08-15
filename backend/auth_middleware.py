@@ -121,6 +121,12 @@ class SppgAccessMiddleware:
             return
 
         scope.setdefault("state", {})["sppg_role"] = role
+        if path == "/v1/calculator-data/shared-master-sync" and method == "POST":
+            # A kitchen calculator may update only this narrowly scoped shared
+            # master bridge. The endpoint validates source_site and never accepts
+            # daily plans; all other operational APIs remain OWNER-only.
+            await self.app(scope, receive, send)
+            return
         if role == "OWNER":
             await self.app(scope, receive, send)
             return

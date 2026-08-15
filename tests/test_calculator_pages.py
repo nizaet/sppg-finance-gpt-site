@@ -33,6 +33,12 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "await user.getIdTokenResult(true)" in cemplang_auth
     assert "claims.sppg_site" in cemplang_auth
     assert "actualSite !== expectedSite" in cemplang_auth
+    assert "/v1/calculator-data/shared-master-sync" in maja
+    assert '"RECIPES", "UPSERT"' in maja
+    assert '"PRICES", "REPLACE"' in cemplang
+    assert '"GRAMASI", "DELETE"' in cemplang
+    assert '"BUMBU", "REPLACE"' in maja
+    assert "dailyPlans" not in maja.split("window.__syncSharedCalculatorMaster", 1)[1].split("document.addEventListener", 1)[0]
 
 
 def test_auth_config_defaults_to_internal_calculator_routes(monkeypatch):

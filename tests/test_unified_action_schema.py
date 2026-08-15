@@ -103,6 +103,10 @@ def test_v0182_preserves_v0181_and_adds_safe_calculator_imports():
     body = data_import["requestBody"]["content"]["application/json"]["schema"]
     assert set(body["required"]) == {"site", "data_type", "source_ref", "items", "commit"}
     assert "DAILY_PLANS" in body["properties"]["data_type"]["enum"]
+    assert "BUMBU" in body["properties"]["data_type"]["enum"]
+    opname = unified["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]
+    opname_body = opname["requestBody"]["content"]["application/json"]["schema"]
+    assert "reviewed_items" in opname_body["properties"]
 
 
 def test_v0182_has_unique_operation_ids_and_fits_gpt_action_limits():

@@ -55,7 +55,7 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 ## PO, penerimaan, invoice, dan pembayaran vendor
 
 1. PO resmi hanya PO `FINAL` dari `getFinalSppgPurchaseOrderWhatsAppMessage`. DRAFT/tidak ada = `PENDING APPROVAL`; finalkan di Pusat Kontrol. Tampilkan `message` persis. `readyToSend=false` berarti nomor belum siap.
-2. Barang datang: preview `previewOrRecordSppgGoodsReceiptFromMessage`, `commit=false`; tampilkan pasangan item, PO qty, received, variance, confidence. Commit hanya setelah cocok/terkonfirmasi; jangan ubah planned/PO qty.
+2. Barang datang: preview `previewOrRecordSppgGoodsReceiptFromMessage`, `commit=false`; tampilkan item, PO qty, received, variance, confidence. Commit setelah cocok; accepted qty masuk stok, planned/PO qty tetap.
 3. Invoice baru: `parseOnlySuppliedSppgVendorInvoiceText` hanya dari teks pengguna. Audit item, qty × harga, total tertulis, bruto, reject, netto; jangan koreksi diam-diam. Berikan balasan WhatsApp dari `paymentDraft`.
 4. Payable: cari ID PO/penerimaan nyata, lalu preview `processSppgVendorPayableFromReceipt`, `commit=false`. Pisahkan PO/received/invoiced/rejected qty. Commit hanya jika `canCommit=true` dan disetujui.
 5. Pembayaran: cari payable, preview `confirmSppgVendorPayment`, `commit=false`; tampilkan netto, sudah dibayar, transfer, dan sisa. Commit setelah bukti/konfirmasi. Pembayaran vendor tidak otomatis menjadi pengeluaran Akuntan; buat Akuntan hanya jika diminta.
@@ -67,9 +67,9 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 
 ## SO, stok, master, dan restore
 
-1. Lokasi SO wajib `KOPERASI`, `MAJA`, atau `CEMPLANG`. Preview `previewOrRecordSppgStockOpnameFromWhatsApp`, `commit=false`. Klasifikasikan dari Master/Alias, Harga, resep, gramasi, dan rencana; merek beda boleh satu jenis, jenis beda jangan digabung. Jangan konversi pack/pcs/karung/kantong/ons/kg tanpa aturan. Commit setelah review.
+1. SO: lokasi `KOPERASI`/`MAJA`/`CEMPLANG`; preview `commit=false`. Klasifikasikan dari Master/Alias, harga, resep, gramasi, dan rencana. Merek beda boleh satu jenis; jenis beda jangan digabung. Jangan konversi satuan tanpa aturan. Untuk koreksi/tolak, kirim seluruh `reviewed_items`; yang ditolak `include=false`. UNMAPPED yang ditolak tidak menahan item lain. Commit hanya pilihan terkonfirmasi.
 2. Baca stok/proyeksi dengan `readSppgWarehouseStockAndPoProjection`. Proyeksi bukan SO fisik. Rekomendasi PO = kebutuhan target − stok tersisa setelah rencana sebelumnya; jangan kurangi kebutuhan target dua kali.
-3. Harga/Resep/Gramasi: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`; target MAJA/CEMPLANG terpisah. Commit hanya item terpilih. `CHANGED` perlu persetujuan; `UNCHANGED/INVALID/duplikat` tidak ditulis.
+3. Harga/Resep/Gramasi/Bumbu: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`. Master selalu ke MAJA+CEMPLANG; hanya rencana yang terpisah. Commit pilihan saja; `CHANGED` perlu persetujuan, lainnya dilewati.
 4. Rencana: `previewSppgCalculatorDailyPlanImport`. Beberapa rencana berbeda boleh bertanggal sama dan dapat dipilih semua. Dokumen lama serta isi identik tidak ditimpa/duplikasi. Import hanya pilihan sebagai `DAILY_PLANS`.
 
 ## Arsip Google Drive

@@ -234,6 +234,71 @@ def stock_balance(cur, site: str, item_name: str) -> float:
     return float(cur.fetchone()["balance"] or 0)
 
 
+def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None = None) -> dict[str, Any]:
+    """Idempotently add accepted receipt quantities to the operational ledger."""
+    cur.execute(
+        """select gr.id,gr.received_at,po.site,po.vendor_code,po.production_cycle_id,po.po_code
+           from goods_receipts gr join purchase_orders po on po.id=gr.purchase_order_id
+           where gr.id=%s""",
+        (goods_receipt_id,),
+    )
+    receipt = cur.fetchone()
+    if not receipt:
+        raise HTTPException(404, "goods receipt not found")
+    site = str(receipt["site"] or "").upper()
+    if expected_site and site != str(expected_site).upper():
+        raise HTTPException(400, "site does not match goods receipt")
+    cur.execute(
+        """select gri.id as receipt_item_id,coalesce(gri.accepted_qty,gri.received_qty,0) as qty,
+                  gri.unit,poi.item_code,coalesce(poi.item_name,gri.reported_item_name) as item_name
+           from goods_receipt_items gri
+           left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
+           where gri.goods_receipt_id=%s order by gri.id""",
+        (goods_receipt_id,),
+    )
+    rows = cur.fetchall()
+    preview: list[dict[str, Any]] = []
+    inserted = 0
+    duplicates = 0
+    for row in rows:
+        amount = float(row["qty"] or 0)
+        if amount <= 0:
+            continue
+        key = f"goods-receipt-stock:{goods_receipt_id}:{row['receipt_item_id']}"
+        item = {
+            "sourceKey": key,
+            "itemName": row["item_name"],
+            "qty": amount,
+            "unit": row["unit"],
+            "fromLocation": "KOPERASI" if str(receipt["vendor_code"]).upper() == "KOPERASI" else f"VENDOR:{receipt['vendor_code']}",
+            "toLocation": site,
+        }
+        preview.append(item)
+        cur.execute("select id from inventory_movements where source_key=%s", (key,))
+        if cur.fetchone():
+            duplicates += 1
+            continue
+        cur.execute(
+            """insert into inventory_movements(
+                 movement_type,item_code,item_name,qty,unit,from_location,to_location,production_cycle_id,
+                 occurred_at,source_type,source_key,source_ref,notes
+               ) values ('PURCHASE_RECEIPT',%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
+            (
+                row["item_code"], row["item_name"], row["qty"], row["unit"], item["fromLocation"], site,
+                receipt["production_cycle_id"], receipt["received_at"], key,
+                f"receipt:{goods_receipt_id}", f"PO {receipt['po_code']}",
+            ),
+        )
+        inserted += 1
+    return {
+        "goodsReceiptId": goods_receipt_id,
+        "site": site,
+        "inserted": inserted,
+        "duplicates": duplicates,
+        "items": preview,
+    }
+
+
 class ReceiptToStockIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
     goods_receipt_id: int
@@ -279,32 +344,11 @@ def inventory_from_receipt(payload: ReceiptToStockIn) -> dict[str, Any]:
             if not payload.commit:
                 return {"committed": False, "canCommit": bool(preview), "goodsReceiptId": payload.goods_receipt_id, "items": preview}
 
-            inserted = 0
-            duplicates = 0
-            for row, item in zip(rows, preview):
-                cur.execute("select id from inventory_movements where source_key=%s", (item["sourceKey"],))
-                if cur.fetchone():
-                    duplicates += 1
-                    continue
-                cur.execute(
-                    """insert into inventory_movements(
-                         movement_type,item_code,item_name,qty,unit,from_location,to_location,production_cycle_id,
-                         occurred_at,source_type,source_key,source_ref,notes
-                       ) values ('PURCHASE_RECEIPT',%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
-                    (
-                        row["item_code"], row["item_name"], row["qty"], row["unit"],
-                        item["fromLocation"], payload.site, receipt["production_cycle_id"], receipt["received_at"],
-                        item["sourceKey"], f"receipt:{payload.goods_receipt_id}", f"PO {receipt['po_code']}",
-                    ),
-                )
-                inserted += 1
+            committed = commit_receipt_stock(cur, payload.goods_receipt_id, payload.site)
             conn.commit()
             return {
                 "committed": True,
-                "goodsReceiptId": payload.goods_receipt_id,
-                "inserted": inserted,
-                "duplicates": duplicates,
-                "items": preview,
+                **committed,
             }
 
 
@@ -396,6 +440,18 @@ def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
     return preview
 
 
+class StockOpnameReviewedItemIn(BaseModel):
+    client_key: str
+    include: bool = True
+    area_code: str | None = None
+    raw_item_name: str = Field(min_length=1)
+    canonical_item_name: str | None = None
+    inventory_item_code: str | None = None
+    qty: float = Field(ge=0)
+    unit: str | None = None
+    raw_line: str | None = None
+
+
 class StockOpnameWhatsAppIn(BaseModel):
     location: Literal["KOPERASI", "MAJA", "CEMPLANG"]
     text: str = Field(min_length=1)
@@ -403,6 +459,7 @@ class StockOpnameWhatsAppIn(BaseModel):
     source_external_id: str | None = None
     reporter: str | None = None
     actor: str = "operator"
+    reviewed_items: list[StockOpnameReviewedItemIn] | None = None
     commit: bool = False
 
 
@@ -427,19 +484,79 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
             items = []
             unmapped = 0
             ambiguous = 0
-            for item in parsed["items"]:
+            for index, item in enumerate(parsed["items"]):
                 classification = classify_item(item["itemName"], masters)
                 if classification["classificationStatus"] == "UNMAPPED":
                     unmapped += 1
                 elif classification["classificationStatus"] == "AMBIGUOUS":
                     ambiguous += 1
-                items.append({**item, **classification})
+                items.append({"clientKey": str(index), "selected": True, **item, **classification})
+
+            if payload.reviewed_items is not None:
+                reviewed: list[dict[str, Any]] = []
+                for supplied in payload.reviewed_items:
+                    if not supplied.include:
+                        continue
+                    raw_name = supplied.raw_item_name.strip()
+                    unit = canonical_unit(supplied.unit)
+                    classification = classify_item(supplied.canonical_item_name or raw_name, masters)
+                    if supplied.inventory_item_code:
+                        cur.execute(
+                            """select code,canonical_name,category_code,base_unit
+                               from inventory_item_master where code=%s and active=true""",
+                            (supplied.inventory_item_code.upper().strip(),),
+                        )
+                        master = cur.fetchone()
+                        if not master:
+                            raise HTTPException(400, f"Master Item {supplied.inventory_item_code} tidak ditemukan")
+                        classification.update({
+                            "inventoryItemCode": master["code"],
+                            "canonicalItemName": master["canonical_name"],
+                            "categoryCode": master["category_code"],
+                            "baseUnit": master["base_unit"],
+                            "classificationStatus": "MATCHED",
+                            "classificationMethod": "USER_SELECTED_MASTER",
+                            "classificationConfidence": 1.0,
+                            "classificationSources": [f"inventory:{master['code']}"],
+                        })
+                    elif supplied.canonical_item_name:
+                        classification.update({
+                            "canonicalItemName": supplied.canonical_item_name.strip(),
+                            "classificationStatus": "USER_REVIEWED",
+                            "classificationMethod": "USER_EDITED_CANONICAL_NAME",
+                            "classificationConfidence": 1.0,
+                        })
+                    warnings = [] if unit else ["Satuan belum ditetapkan oleh pengguna."]
+                    reviewed.append({
+                        "clientKey": supplied.client_key,
+                        "selected": True,
+                        "areaCode": supplied.area_code or "UNSPECIFIED",
+                        "itemName": raw_name,
+                        "normalizedItemName": normalize_name(raw_name),
+                        "qty": float(supplied.qty),
+                        "unit": unit,
+                        "parseStatus": "READY" if unit else "REVIEW",
+                        "rawLine": supplied.raw_line or raw_name,
+                        "warnings": warnings,
+                        **classification,
+                    })
+                items = reviewed
+                unmapped = sum(1 for item in items if item["classificationStatus"] == "UNMAPPED")
+                ambiguous = sum(1 for item in items if item["classificationStatus"] == "AMBIGUOUS")
 
             canonical = {
                 "location": location,
                 "stock_date": stock_date.isoformat(),
                 "source_external_id": payload.source_external_id,
                 "text": payload.text,
+                "reviewed_items": [
+                    {
+                        "key": item["clientKey"], "name": item["canonicalItemName"],
+                        "raw": item["itemName"], "qty": item["qty"], "unit": item["unit"],
+                        "master": item["inventoryItemCode"], "area": item["areaCode"],
+                    }
+                    for item in items
+                ],
             }
             source_key = "stock-opname:" + hashlib.sha256(
                 json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -453,8 +570,8 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                 "detectedStockDate": parsed["detectedStockDate"],
                 "sourceKey": source_key,
                 "itemCount": len(items),
-                "readyCount": parsed["readyCount"],
-                "reviewCount": parsed["reviewCount"],
+                "readyCount": sum(1 for item in items if item["parseStatus"] == "READY"),
+                "reviewCount": sum(1 for item in items if item["parseStatus"] != "READY"),
                 "unmappedCount": unmapped,
                 "ambiguousCount": ambiguous,
                 "warnings": parse_warnings,

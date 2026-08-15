@@ -47,6 +47,7 @@ UNIT_ALIASES = {
     "papan": "papan",
     "roll": "roll",
     "rol": "roll",
+    "unit": "unit",
 }
 
 SECTION_NAMES = {
@@ -58,7 +59,7 @@ SECTION_NAMES = {
 }
 
 QUANTITY_PATTERN = re.compile(
-    r"(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>kg|kgs|kilogram|kilograms|gram|grams|gr|pcs|pc|piece|pieces|pack|packs|dus|karton|karung|kantong|liter|litre|ltr|lt|l|ons|butir|botol|pouch|ikat|papan|roll|rol)?\b",
+    r"(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>kg|kgs|kilogram|kilograms|gram|grams|gr|pcs|pc|piece|pieces|pack|packs|dus|karton|karung|kantong|liter|litre|ltr|lt|l|ons|butir|botol|pouch|ikat|papan|roll|rol|unit)?\b",
     re.IGNORECASE,
 )
 
@@ -147,6 +148,14 @@ def parse_stock_opname_text(text: str) -> dict[str, Any]:
             continue
 
         matches = list(QUANTITY_PATTERN.finditer(line))
+        # Dimensions such as "plastik 90x120 : 1 pack" are part of the item
+        # identity, not stock quantities. When a separator exists, prefer the
+        # numeric components written after the final colon.
+        colon = line.rfind(":")
+        if colon >= 0:
+            after_separator = [match for match in matches if match.start() > colon]
+            if after_separator:
+                matches = after_separator
         if not matches:
             candidate = line.strip(" :;=-+")
             if candidate and len(candidate) <= 100:

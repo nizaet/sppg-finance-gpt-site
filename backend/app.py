@@ -21,7 +21,7 @@ from backend.vendor_workflow_api import router as vendor_workflow_router
 from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
 from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182
 
-app = FastAPI(title="SPPG Core API", version="0.16.1")
+app = FastAPI(title="SPPG Core API", version="0.16.2")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
@@ -99,7 +99,7 @@ def _chatgpt_operations_schema() -> dict[str, Any]:
         "openapi": full.get("openapi", "3.1.0"),
         "info": {
             "title": "SPPG Vendor and Inventory Operations",
-            "version": "0.16.1",
+            "version": "0.16.2",
             "description": (
                 "Vendor invoice parsing, payable reconciliation, operational stock, and vendor payment confirmation. "
                 "For newly supplied invoice text, always use parseOnlySuppliedSppgVendorInvoiceText and only the user's supplied text."
@@ -214,7 +214,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.16.1", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.16.2", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")

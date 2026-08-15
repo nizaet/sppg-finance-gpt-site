@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from decimal import Decimal
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.stock_opname_parser import canonical_unit
 
 router = APIRouter(tags=["purchase-order-workflow"])
 
@@ -126,6 +128,24 @@ class VendorWhatsAppUpdateIn(BaseModel):
     whatsapp_phone: str = Field(min_length=1, max_length=40)
 
 
+class PurchaseOrderEditItemIn(BaseModel):
+    item_code: str | None = None
+    item_name: str = Field(min_length=1)
+    planning_snapshot_item_id: int | None = None
+    planned_qty: float | None = None
+    po_qty: float = Field(ge=0)
+    unit: str | None = None
+    planning_price: float | None = Field(default=None, ge=0)
+    po_price: float | None = Field(default=None, ge=0)
+    aliases: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class PurchaseOrderEditIn(BaseModel):
+    vendor_code: str = Field(min_length=1)
+    items: list[PurchaseOrderEditItemIn] = Field(min_length=1)
+
+
 @router.post("/reference/vendors/{vendor_code}/whatsapp")
 def update_vendor_whatsapp(vendor_code: str, payload: VendorWhatsAppUpdateIn) -> dict[str, Any]:
     require_db()
@@ -169,6 +189,153 @@ def _load_po(cur, purchase_order_id: int) -> dict[str, Any]:
     return po
 
 
+def _has_receiving(cur, purchase_order_id: int) -> bool:
+    cur.execute("select exists(select 1 from goods_receipts where purchase_order_id=%s) as used", (purchase_order_id,))
+    return bool(cur.fetchone()["used"])
+
+
+@router.patch("/purchase-orders/{purchase_order_id}")
+def edit_purchase_order(purchase_order_id: int, payload: PurchaseOrderEditIn) -> dict[str, Any]:
+    """Edit only a DRAFT PO; final/sent POs must first become a new revision."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            po = _load_po(cur, purchase_order_id)
+            status = str(po.get("status") or "").upper()
+            if status != "DRAFT":
+                raise HTTPException(409, "PO final/terkirim tidak boleh ditimpa; gunakan Buat Revisi")
+            if _has_receiving(cur, purchase_order_id):
+                raise HTTPException(409, "PO yang sudah memiliki penerimaan tidak dapat diedit")
+            vendor = payload.vendor_code.upper().strip()
+            cur.execute("select code from entities where code=%s and active=true", (vendor,))
+            if not cur.fetchone():
+                raise HTTPException(404, "vendor tidak ditemukan")
+            cur.execute(
+                "update purchase_orders set vendor_code=%s,updated_at=now() where id=%s",
+                (vendor, purchase_order_id),
+            )
+            cur.execute("delete from purchase_order_items where purchase_order_id=%s", (purchase_order_id,))
+            for item in payload.items:
+                cur.execute(
+                    """insert into purchase_order_items(
+                         purchase_order_id,item_code,item_name,planning_snapshot_item_id,planned_qty,po_qty,unit,
+                         planning_price,po_price,item_aliases,notes
+                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)""",
+                    (
+                        purchase_order_id, item.item_code, item.item_name.strip(), item.planning_snapshot_item_id,
+                        item.planned_qty, item.po_qty, canonical_unit(item.unit), item.planning_price,
+                        item.po_price, json.dumps(item.aliases, ensure_ascii=False), item.notes,
+                    ),
+                )
+        conn.commit()
+    return {
+        "purchaseOrderId": purchase_order_id,
+        "poCode": po["po_code"],
+        "revisionNo": po["revision_no"],
+        "status": "DRAFT",
+        "vendorCode": vendor,
+        "itemCount": len(payload.items),
+        "changed": True,
+    }
+
+
+@router.delete("/purchase-orders/{purchase_order_id}")
+def delete_draft_purchase_order(purchase_order_id: int) -> dict[str, Any]:
+    """Hard-delete only an unsent DRAFT; finalized evidence is cancelled/revised instead."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            po = _load_po(cur, purchase_order_id)
+            if str(po.get("status") or "").upper() != "DRAFT":
+                raise HTTPException(409, "Hanya DRAFT yang dapat dihapus permanen; PO final gunakan Batalkan")
+            if _has_receiving(cur, purchase_order_id):
+                raise HTTPException(409, "PO yang sudah memiliki penerimaan tidak dapat dihapus")
+            cur.execute("delete from purchase_order_items where purchase_order_id=%s", (purchase_order_id,))
+            cur.execute("delete from purchase_orders where id=%s", (purchase_order_id,))
+        conn.commit()
+    return {"deleted": True, "purchaseOrderId": purchase_order_id, "poCode": po["po_code"]}
+
+
+@router.post("/purchase-orders/{purchase_order_id}/revise")
+def revise_purchase_order(purchase_order_id: int) -> dict[str, Any]:
+    """Create an editable DRAFT revision while preserving the prior final/sent PO."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            po = _load_po(cur, purchase_order_id)
+            status = str(po.get("status") or "").upper()
+            if status == "DRAFT":
+                return {
+                    "purchaseOrderId": po["id"], "poCode": po["po_code"],
+                    "revisionNo": po["revision_no"], "status": status, "changed": False,
+                }
+            if status not in {"FINALIZED", "SENT", "ACKNOWLEDGED"}:
+                raise HTTPException(409, f"PO status {status or '-'} tidak dapat direvisi")
+            if _has_receiving(cur, purchase_order_id):
+                raise HTTPException(409, "PO yang sudah memiliki penerimaan tidak dapat direvisi")
+            cur.execute(
+                "select id,po_code,revision_no from purchase_orders where supersedes_po_id=%s and status='DRAFT' order by revision_no desc limit 1",
+                (purchase_order_id,),
+            )
+            existing_draft = cur.fetchone()
+            if existing_draft:
+                return {
+                    "purchaseOrderId": existing_draft["id"], "poCode": existing_draft["po_code"],
+                    "revisionNo": existing_draft["revision_no"], "status": "DRAFT",
+                    "supersedesPurchaseOrderId": purchase_order_id, "changed": False,
+                }
+            cur.execute("select coalesce(max(revision_no),0)+1 as revision from purchase_orders where po_code=%s", (po["po_code"],))
+            revision = int(cur.fetchone()["revision"])
+            cur.execute(
+                """insert into purchase_orders(
+                     po_code,revision_no,production_cycle_id,site,vendor_code,status,supersedes_po_id,
+                     source_planning_snapshot_id,source_type,source_external_id,source_uri,source_hash,
+                     source_raw_text,historical_import
+                   ) values (%s,%s,%s,%s,%s,'DRAFT',%s,%s,%s,%s,%s,null,%s,%s)
+                   returning id""",
+                (
+                    po["po_code"], revision, po["production_cycle_id"], po["site"], po["vendor_code"], po["id"],
+                    po.get("source_planning_snapshot_id"), po.get("source_type"), po.get("source_external_id"),
+                    po.get("source_uri"), po.get("source_raw_text"), bool(po.get("historical_import")),
+                ),
+            )
+            new_id = cur.fetchone()["id"]
+            cur.execute(
+                """insert into purchase_order_items(
+                     purchase_order_id,item_code,item_name,planning_snapshot_item_id,planned_qty,po_qty,unit,
+                     planning_price,po_price,item_aliases,notes)
+                   select %s,item_code,item_name,planning_snapshot_item_id,planned_qty,po_qty,unit,
+                          planning_price,po_price,item_aliases,notes
+                   from purchase_order_items where purchase_order_id=%s""",
+                (new_id, purchase_order_id),
+            )
+        conn.commit()
+    return {
+        "purchaseOrderId": new_id,
+        "poCode": po["po_code"],
+        "revisionNo": revision,
+        "status": "DRAFT",
+        "supersedesPurchaseOrderId": purchase_order_id,
+        "changed": True,
+    }
+
+
+@router.post("/purchase-orders/{purchase_order_id}/cancel")
+def cancel_purchase_order(purchase_order_id: int) -> dict[str, Any]:
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            po = _load_po(cur, purchase_order_id)
+            status = str(po.get("status") or "").upper()
+            if status in {"CANCELLED", "SUPERSEDED"}:
+                return {"purchaseOrderId": po["id"], "status": status, "changed": False}
+            if status in {"PARTIAL_RECEIVED", "RECEIVED"} or _has_receiving(cur, purchase_order_id):
+                raise HTTPException(409, "PO yang sudah memiliki penerimaan tidak dapat dibatalkan")
+            cur.execute("update purchase_orders set status='CANCELLED',updated_at=now() where id=%s", (purchase_order_id,))
+        conn.commit()
+    return {"purchaseOrderId": purchase_order_id, "poCode": po["po_code"], "status": "CANCELLED", "changed": True}
+
+
 @router.post("/purchase-orders/{purchase_order_id}/finalize")
 def finalize_purchase_order(purchase_order_id: int) -> dict[str, Any]:
     require_db()
@@ -192,6 +359,11 @@ def finalize_purchase_order(purchase_order_id: int) -> dict[str, Any]:
                 (purchase_order_id,),
             )
             updated = cur.fetchone()
+            if po.get("supersedes_po_id"):
+                cur.execute(
+                    "update purchase_orders set status='SUPERSEDED',updated_at=now() where id=%s and status in ('FINALIZED','SENT','ACKNOWLEDGED')",
+                    (po["supersedes_po_id"],),
+                )
         conn.commit()
     return {
         "purchaseOrderId": updated["id"],

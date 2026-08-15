@@ -92,6 +92,26 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         if (!response.ok || !payload.token) throw new Error(payload.detail || 'Firebase custom token tidak tersedia.');
         return payload.token;
       }})();
+      window.__syncSharedCalculatorMaster = async function (dataType, operation, recordKey, payload) {{
+        var sessionToken = sessionStorage.getItem('sppg_session_token_v1') || localStorage.getItem('sppg_session_token_v1') || '';
+        if (!sessionToken) throw new Error('Sesi Railway tidak ditemukan untuk sinkronisasi master.');
+        var response = await fetch('/v1/calculator-data/shared-master-sync', {{
+          method: 'POST',
+          headers: {{ 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' }},
+          credentials: 'same-origin',
+          body: JSON.stringify({{
+            source_site: {json.dumps(UNIT_CONFIG[unit]["label"])},
+            data_type: dataType,
+            operation: operation,
+            record_key: recordKey || null,
+            payload: payload === undefined ? null : payload,
+            actor: 'calculator-' + {json.dumps(unit)}
+          }})
+        }});
+        var result = await response.json().catch(function () {{ return {{}}; }});
+        if (!response.ok || result.committed !== true) throw new Error(result.detail || 'Sinkronisasi master Maja + Cemplang gagal.');
+        return result;
+      }};
       sessionStorage.setItem('isLoggedIn', 'true');
       document.addEventListener('DOMContentLoaded', function () {{
         var heading = Array.from(document.querySelectorAll('h2')).find(function (item) {{
@@ -260,6 +280,60 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         "if (!db) db = getFirestore(app);",
         "if (!db) db = (window.__firestoreDatabaseId && window.__firestoreDatabaseId !== '(default)') ? getFirestore(app, window.__firestoreDatabaseId) : getFirestore(app);",
     )
+    shared_master_replacements = [
+        (
+            '                showMessage("Resep berhasil disimpan.", "success");',
+            '                await window.__syncSharedCalculatorMaster("RECIPES", "UPSERT", recipeId, { id: recipeId, ...recipeData });\n                showMessage("Resep tersimpan dan tersinkron ke Maja + Cemplang.", "success");',
+        ),
+        (
+            '                await deleteDoc(doc(db, `artifacts/${appId}/public/data/recipes`, recipeId));',
+            '                await deleteDoc(doc(db, `artifacts/${appId}/public/data/recipes`, recipeId));\n                await window.__syncSharedCalculatorMaster("RECIPES", "DELETE", recipeId, null);',
+        ),
+        (
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), masterPriceList);',
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), masterPriceList);\n                await window.__syncSharedCalculatorMaster("PRICES", "REPLACE", null, masterPriceList);',
+        ),
+        (
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [name]: exData }, { merge: true });',
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [name]: exData }, { merge: true });\n                await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", name, exData);',
+        ),
+        (
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [key]: masterPriceList[key] }, { merge: true });',
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [key]: masterPriceList[key] }, { merge: true });\n                await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key]);',
+        ),
+        (
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id), { id, name, kecil, besar });',
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id), { id, name, kecil, besar });\n                await window.__syncSharedCalculatorMaster("GRAMASI", "UPSERT", id, { id, name, kecil, besar });',
+        ),
+        (
+            '                await deleteDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id));',
+            '                await deleteDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id));\n                await window.__syncSharedCalculatorMaster("GRAMASI", "DELETE", id, null);',
+        ),
+        (
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/bumbuList`, \'default\'), { list: Array.from(bumbuList), rules: bumbuGramasiRules });',
+            '                await setDoc(doc(db, `artifacts/${appId}/public/data/bumbuList`, \'default\'), { list: Array.from(bumbuList), rules: bumbuGramasiRules });\n                await window.__syncSharedCalculatorMaster("BUMBU", "REPLACE", null, { list: Array.from(bumbuList), rules: bumbuGramasiRules });',
+        ),
+        (
+            '                            await setDoc(docRef, { ...aturan, id: id });',
+            '                            await setDoc(docRef, { ...aturan, id: id });\n                            await window.__syncSharedCalculatorMaster("GRAMASI", "UPSERT", id, { ...aturan, id: id });',
+        ),
+        (
+            '                        await setDoc(doc(db, `artifacts/${appId}/public/data/recipes`, recipeId), mergedRecipe, { merge: true });',
+            '                        await setDoc(doc(db, `artifacts/${appId}/public/data/recipes`, recipeId), mergedRecipe, { merge: true });\n                        await window.__syncSharedCalculatorMaster("RECIPES", "UPSERT", recipeId, { id: recipeId, ...mergedRecipe });',
+        ),
+        (
+            '                    await setDoc(docRef, currentPrices);',
+            '                    await setDoc(docRef, currentPrices);\n                    await window.__syncSharedCalculatorMaster("PRICES", "REPLACE", null, currentPrices);',
+        ),
+        (
+            '                    await setDoc(doc(db, `artifacts/${appId}/public/data/bumbuList`, \'default\'), { list: normalized });',
+            '                    await setDoc(doc(db, `artifacts/${appId}/public/data/bumbuList`, \'default\'), { list: normalized });\n                    await window.__syncSharedCalculatorMaster("BUMBU", "REPLACE", null, { list: normalized, rules: {} });',
+        ),
+    ]
+    for original, replacement in shared_master_replacements:
+        if original not in html:
+            raise RuntimeError(f"legacy shared-master hook was not found for {unit}: {original[:80]}")
+        html = html.replace(original, replacement)
     return html
 
 

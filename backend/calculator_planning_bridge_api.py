@@ -134,50 +134,88 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
 
 def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnapshotIn, dict[str, Any]]:
     app_id, doc_snap, plan, candidates = _daily_plan_matches(site, distribution_date)
-    shopping_json = plan.get("shoppingListJSON") or {}
-    shopping = shopping_json.get("shoppingList") or []
-    if not isinstance(shopping, list) or not shopping:
+    selected_candidates = [candidate for candidate in candidates if candidate["app_id"] == app_id]
+    source_plans = [
+        {
+            "documentId": candidate["doc"].id,
+            "planName": candidate["data"].get("planName"),
+            "updatedAt": _json_safe(candidate["updated_at"]),
+            "data": _json_safe(candidate["data"]),
+        }
+        for candidate in selected_candidates
+    ]
+    shopping_entries: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for candidate in selected_candidates:
+        shopping = ((candidate["data"].get("shoppingListJSON") or {}).get("shoppingList") or [])
+        if not isinstance(shopping, list):
+            continue
+        for raw in shopping:
+            if isinstance(raw, dict):
+                shopping_entries.append((raw, candidate))
+    if not shopping_entries:
         raise HTTPException(409, "rencana Kalkulator ditemukan tetapi daftar belanja masih kosong; hitung/finalkan belanja di Kalkulator terlebih dahulu")
 
-    items: list[PlanningItemIn] = []
+    combined: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     skipped: list[dict[str, Any]] = []
-    for idx, raw in enumerate(shopping):
-        if not isinstance(raw, dict):
-            skipped.append({"index": idx, "reason": "not_object"})
-            continue
+    for idx, (raw, candidate) in enumerate(shopping_entries):
         name = str(raw.get("item") or raw.get("name") or "").strip()
         planned_qty = _as_float(raw.get("jumlah"))
         if not name or planned_qty is None:
-            skipped.append({"index": idx, "item": name, "reason": "missing_name_or_qty"})
+            skipped.append({"index": idx, "item": name, "documentId": candidate["doc"].id, "reason": "missing_name_or_qty"})
             continue
         supplier_key = str(raw.get("supplierOverride") or "").strip()
         category = SUPPLIER_CATEGORY.get(supplier_key) or str(raw.get("category_code") or "").strip() or None
-        items.append(PlanningItemIn(
-            item_code=str(raw.get("item_code") or "").strip() or None,
-            item_name=name,
-            category_code=category,
-            planned_qty=planned_qty,
-            unit=str(raw.get("satuan") or "").strip() or None,
-            planning_price=_as_float(raw.get("harga_satuan")),
-            preferred_vendor_code=None,
-            notes=str(raw.get("note") or "").strip() or None,
-            source_payload=_json_safe(raw),
-        ))
+        unit = str(raw.get("satuan") or "").strip() or None
+        item_code = str(raw.get("item_code") or "").strip() or None
+        key = (name.lower(), str(unit or "").lower(), str(category or ""), str(item_code or ""))
+        entry = combined.setdefault(key, {
+            "item_code": item_code,
+            "item_name": name,
+            "category_code": category,
+            "planned_qty": 0.0,
+            "unit": unit,
+            "planning_price": _as_float(raw.get("harga_satuan")),
+            "preferred_vendor_code": None,
+            "notes": [],
+            "sources": [],
+        })
+        entry["planned_qty"] += planned_qty
+        if entry["planning_price"] is None:
+            entry["planning_price"] = _as_float(raw.get("harga_satuan"))
+        note = str(raw.get("note") or "").strip()
+        if note and note not in entry["notes"]:
+            entry["notes"].append(note)
+        entry["sources"].append({
+            "documentId": candidate["doc"].id,
+            "planName": candidate["data"].get("planName"),
+            "plannedQty": planned_qty,
+            "raw": _json_safe(raw),
+        })
 
-    updated = _plan_updated_at(plan)
-    plan_hash = hashlib.sha256(json.dumps(_json_safe(plan), sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    snapshot_key = f"calculator:{site.lower()}:{app_id}:{doc_snap.id}:{plan_hash}"
+    items = [PlanningItemIn(
+        item_code=entry["item_code"], item_name=entry["item_name"], category_code=entry["category_code"],
+        planned_qty=round(entry["planned_qty"], 4), unit=entry["unit"], planning_price=entry["planning_price"],
+        preferred_vendor_code=entry["preferred_vendor_code"], notes=" | ".join(entry["notes"]) or None,
+        source_payload={"combinedPlanCount": len(entry["sources"]), "sources": entry["sources"]},
+    ) for entry in combined.values()]
+
+    updated = max((candidate["updated_at"] for candidate in selected_candidates), default=_plan_updated_at(plan))
+    plan_hash = hashlib.sha256(json.dumps(source_plans, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    document_ids = sorted(candidate["doc"].id for candidate in selected_candidates)
+    snapshot_key = f"calculator:{site.lower()}:{app_id}:combined:{plan_hash}"
     source_payload = {
         "firestoreDatabase": SITE_TARGETS[site]["database_id"],
         "calculatorAppId": app_id,
         "dailyPlanDocumentId": doc_snap.id,
+        "dailyPlanDocumentIds": document_ids,
         "planName": plan.get("planName"),
+        "planNames": [candidate["data"].get("planName") for candidate in selected_candidates],
         "porsiKecil": plan.get("porsiKecil"),
         "porsiBesar": plan.get("porsiBesar"),
-        "shoppingListGrandTotal": shopping_json.get("grand_total_num"),
-        "recipes": _json_safe(plan.get("recipes") or []),
+        "shoppingListGrandTotal": sum(_as_float((candidate["data"].get("shoppingListJSON") or {}).get("grand_total_num")) or 0 for candidate in selected_candidates),
+        "recipes": [recipe for candidate in selected_candidates for recipe in _json_safe(candidate["data"].get("recipes") or [])],
         "sourceUpdatedAt": _json_safe(updated),
-        "sourceCandidateCount": len(candidates),
+        "sourceCandidateCount": len(selected_candidates),
         "skippedItems": skipped,
     }
     payload = PlanningSnapshotIn(
@@ -196,12 +234,14 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
         "distributionDate": distribution_date.isoformat(),
         "appId": app_id,
         "dailyPlanDocumentId": doc_snap.id,
+        "dailyPlanDocumentIds": document_ids,
         "planName": plan.get("planName"),
+        "planNames": [candidate["data"].get("planName") for candidate in selected_candidates],
         "porsiKecil": plan.get("porsiKecil"),
         "porsiBesar": plan.get("porsiBesar"),
         "itemCount": len(items),
         "skippedItems": skipped,
-        "grandTotal": shopping_json.get("grand_total_num"),
+        "grandTotal": source_payload["shoppingListGrandTotal"],
         "sourceUpdatedAt": _json_safe(updated),
         "snapshotKey": snapshot_key,
         "items": [x.model_dump() for x in items],

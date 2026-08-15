@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.inventory_api import commit_receipt_stock
 
 router = APIRouter(prefix="/v1", tags=["operational"])
 
@@ -428,7 +429,16 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
             cur.execute("select id from goods_receipts where source_key=%s", (key,))
             duplicate = cur.fetchone()
             if duplicate:
-                result.update({"committed": True, "duplicate": True, "receiptId": duplicate["id"]})
+                stock = commit_receipt_stock(cur, duplicate["id"], site)
+                conn.commit()
+                result.update({
+                    "committed": True,
+                    "duplicate": True,
+                    "receiptId": duplicate["id"],
+                    "stockCommitted": True,
+                    "stockInserted": stock["inserted"],
+                    "stockDuplicates": stock["duplicates"],
+                })
                 return result
 
             min_confidence = min(x["match_confidence"] for x in matches)
@@ -452,6 +462,8 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
                      item["match_confidence"], item["match_method"]),
                 )
 
+            stock = commit_receipt_stock(cur, receipt_id, site)
+
             # Determine status from cumulative accepted receipts; PO quantity itself is never overwritten.
             cur.execute(
                 """select poi.id,poi.po_qty,coalesce(sum(gri.accepted_qty),0) as received_total
@@ -466,7 +478,15 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
             new_status = "RECEIVED" if complete else "PARTIAL_RECEIVED"
             cur.execute("update purchase_orders set status=%s,updated_at=now() where id=%s", (new_status, po["id"]))
             conn.commit()
-            result.update({"committed": True, "duplicate": False, "receiptId": receipt_id, "purchaseOrderStatus": new_status})
+            result.update({
+                "committed": True,
+                "duplicate": False,
+                "receiptId": receipt_id,
+                "purchaseOrderStatus": new_status,
+                "stockCommitted": True,
+                "stockInserted": stock["inserted"],
+                "stockDuplicates": stock["duplicates"],
+            })
             return result
 
 

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ from backend.stock_opname_parser import canonical_unit, normalize_name
 # makes the frontend's POST requests fall through to the GET-only SPA route.
 router = APIRouter(tags=["calculator-data-control"])
 
-DATA_TYPES = {"PRICES", "GRAMASI", "RECIPES", "DAILY_PLANS"}
+DATA_TYPES = {"PRICES", "GRAMASI", "RECIPES", "BUMBU", "DAILY_PLANS"}
 
 
 class PlanPreviewItem(BaseModel):
@@ -44,11 +44,20 @@ class CalculatorImportItem(BaseModel):
 
 class CalculatorImportIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
-    data_type: Literal["PRICES", "GRAMASI", "RECIPES", "DAILY_PLANS"]
+    data_type: Literal["PRICES", "GRAMASI", "RECIPES", "BUMBU", "DAILY_PLANS"]
     source_ref: str = Field(min_length=1)
     items: list[CalculatorImportItem]
     actor: str = "operator"
     commit: bool = False
+
+
+class SharedMasterSyncIn(BaseModel):
+    source_site: Literal["MAJA", "CEMPLANG"]
+    data_type: Literal["PRICES", "GRAMASI", "RECIPES", "BUMBU"]
+    operation: Literal["UPSERT", "REPLACE", "DELETE"]
+    record_key: str | None = None
+    payload: Any = None
+    actor: str = "calculator"
 
 
 def _require_services() -> None:
@@ -80,6 +89,20 @@ def _firestore_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_firestore_value(v) for v in value]
     return value
+
+
+def _restore_iso_timestamps(payload: dict[str, Any]) -> dict[str, Any]:
+    result = dict(payload)
+    for key in ("createdAt", "updatedAt"):
+        value = result.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        result[key] = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return result
 
 
 def _stable_hash(payload: Any) -> str:
@@ -122,6 +145,8 @@ def _record_key(data_type: str, payload: dict[str, Any], client_key: str) -> str
         return str(payload.get("id") or _slug(str(payload.get("name") or ""), client_key))
     if data_type == "RECIPES":
         return str(payload.get("id") or _slug(str(payload.get("name") or ""), f"recipe_{client_key}"))
+    if data_type == "BUMBU":
+        return normalize_name(str(payload.get("name") or "")) or client_key
     return str(payload.get("date") or client_key)
 
 
@@ -140,6 +165,15 @@ def _load_master_state(site: str, data_type: str) -> tuple[Any, dict[str, Any]]:
     if data_type == "PRICES":
         snap = root.collection("masterData").document("priceList").get()
         return root, (snap.to_dict() or {}) if snap.exists else {}
+    if data_type == "BUMBU":
+        snap = root.collection("bumbuList").document("default").get()
+        data = (snap.to_dict() or {}) if snap.exists else {}
+        rules = data.get("rules") or {}
+        names = list(dict.fromkeys([*(data.get("list") or []), *rules.keys()]))
+        return root, {
+            normalize_name(str(name)): {"name": str(name), **(rules.get(name) or {})}
+            for name in names if str(name).strip()
+        }
     collection_name = "customGramasi" if data_type == "GRAMASI" else "recipes"
     state: dict[str, Any] = {}
     for snap in root.collection(collection_name).stream():
@@ -324,6 +358,121 @@ def _catalog_for_master(site: str, data_type: str, key: str, payload: dict[str, 
                 "payload": ingredient,
             })
         _catalog_replace(site, "RECIPE_INGREDIENT", key, ingredients)
+    elif data_type == "BUMBU":
+        _catalog_replace(site, "BUMBU", key, [{
+            "recordKey": key, "name": name, "unit": "gr", "payload": payload,
+        }])
+
+
+def _deactivate_catalog(site: str, source_type: str, record_key: str | None = None) -> None:
+    with connection() as conn:
+        with conn.cursor() as cur:
+            sql = "update calculator_master_catalog set active=false,updated_at=now() where site=%s and source_type=%s"
+            params: list[Any] = [site, source_type]
+            if record_key:
+                sql += " and record_key=%s"
+                params.append(record_key)
+            cur.execute(sql, params)
+        conn.commit()
+
+
+def _shared_master_target(root: Any, data_type: str, record_key: str | None):
+    if data_type == "PRICES":
+        return root.collection("masterData").document("priceList")
+    if data_type == "GRAMASI":
+        return root.collection("customGramasi").document(str(record_key or ""))
+    if data_type == "RECIPES":
+        return root.collection("recipes").document(str(record_key or ""))
+    return root.collection("bumbuList").document("default")
+
+
+@router.post("/calculator-data/shared-master-sync")
+def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request) -> dict[str, Any]:
+    """Mirror calculator master writes to Maja and Cemplang; never touch daily plans."""
+    _require_services()
+    role = str(getattr(request.state, "sppg_role", "") or "").upper()
+    if role and role not in {"OWNER", payload.source_site}:
+        raise HTTPException(403, "akun hanya boleh menyinkronkan master dari kalkulator sendiri")
+    if payload.data_type in {"GRAMASI", "RECIPES"} and not str(payload.record_key or "").strip():
+        raise HTTPException(400, "record_key wajib untuk gramasi/resep")
+    if payload.data_type == "PRICES" and payload.operation == "UPSERT" and not str(payload.record_key or "").strip():
+        raise HTTPException(400, "record_key wajib untuk update satu harga")
+    if payload.data_type == "BUMBU" and payload.operation != "REPLACE":
+        raise HTTPException(400, "bumbu wajib memakai REPLACE agar daftar kedua kalkulator identik")
+    if payload.operation == "DELETE" and payload.data_type in {"PRICES", "BUMBU"}:
+        raise HTTPException(400, "harga/bumbu memakai REPLACE agar daftar kedua kalkulator tetap identik")
+    if payload.operation != "DELETE" and not isinstance(payload.payload, dict):
+        raise HTTPException(400, "payload master wajib berupa object")
+
+    source_ref = f"calculator-live:{payload.source_site}:{payload.data_type.lower()}"
+    writes: list[dict[str, Any]] = []
+    source_type = {"PRICES": "PRICE", "GRAMASI": "GRAMASI", "RECIPES": "RECIPE", "BUMBU": "BUMBU"}[payload.data_type]
+    for target_site in ("MAJA", "CEMPLANG"):
+        _, _, root = _data_root(target_site)
+        target = _shared_master_target(root, payload.data_type, payload.record_key)
+        snap = target.get()
+        previous = snap.to_dict() if snap.exists else None
+        record_key = str(payload.record_key or "all")
+        imported = payload.payload if payload.operation != "DELETE" else {"deleted": True, "recordKey": record_key}
+        event_id = _audit_begin(
+            site=target_site, data_type=payload.data_type, record_key=record_key, record_date=None,
+            source_ref=source_ref, source_hash=_stable_hash(imported), target_path=target.path,
+            previous=previous, imported=imported, actor=payload.actor,
+        )
+        try:
+            if payload.operation == "DELETE":
+                target.delete()
+                _deactivate_catalog(target_site, source_type, record_key)
+                if payload.data_type == "RECIPES":
+                    with connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "update calculator_master_catalog set active=false,updated_at=now() where site=%s and source_type='RECIPE_INGREDIENT' and source_document_key=%s",
+                                (target_site, record_key),
+                            )
+                        conn.commit()
+            elif payload.data_type == "PRICES":
+                incoming = _firestore_value(payload.payload)
+                if payload.operation == "UPSERT":
+                    target.set({record_key: incoming}, merge=True)
+                    catalog_payload = {"name": record_key, **payload.payload}
+                    _catalog_for_master(target_site, "PRICES", record_key, catalog_payload)
+                else:
+                    target.set(incoming)
+                    _deactivate_catalog(target_site, "PRICE")
+                    for name, value in payload.payload.items():
+                        if isinstance(value, dict):
+                            _catalog_for_master(target_site, "PRICES", normalize_name(str(name)), {"name": str(name), **value})
+            elif payload.data_type == "BUMBU":
+                target.set(_firestore_value(payload.payload))
+                _deactivate_catalog(target_site, "BUMBU")
+                rules = payload.payload.get("rules") or {}
+                for name in payload.payload.get("list") or []:
+                    normalized = normalize_name(str(name))
+                    if normalized:
+                        _catalog_for_master(target_site, "BUMBU", normalized, {"name": str(name), **(rules.get(name) or {})})
+            else:
+                incoming = _restore_iso_timestamps(payload.payload)
+                if payload.data_type == "GRAMASI":
+                    incoming["id"] = record_key
+                elif payload.data_type == "RECIPES":
+                    incoming.pop("id", None)
+                target.set(_firestore_value(incoming), merge=True)
+                _catalog_for_master(target_site, payload.data_type, record_key, {**payload.payload, "id": record_key})
+            _audit_finish(event_id, "COMMITTED")
+            writes.append({"site": target_site, "path": target.path, "eventId": event_id})
+        except Exception as exc:
+            _audit_finish(event_id, "FAILED", str(exc)[:1000])
+            raise HTTPException(502, f"sinkronisasi master {target_site} gagal: {exc}") from exc
+    return {
+        "committed": True,
+        "sourceSite": payload.source_site,
+        "dataType": payload.data_type,
+        "operation": payload.operation,
+        "targetSites": ["MAJA", "CEMPLANG"],
+        "writes": writes,
+        "dailyPlansChanged": False,
+    }
 
 
 def _catalog_for_plan(site: str, document_id: str, payload: dict[str, Any]) -> None:
@@ -387,6 +536,21 @@ def _commit_master(payload: CalculatorImportIn) -> dict[str, Any]:
             target = root.collection("customGramasi").document(key)
             incoming["id"] = key
             firestore_payload = _firestore_value(incoming)
+        elif payload.data_type == "BUMBU":
+            previous = current.get(key)
+            target = root.collection("bumbuList").document("default")
+            incoming["name"] = str(incoming.get("name") or key).strip().lower()
+            current[key] = incoming
+            names = sorted({str(value.get("name") or state_key).strip().lower() for state_key, value in current.items()})
+            rules = {
+                str(value.get("name") or state_key).strip().lower(): {
+                    "kecil": value.get("kecil") or 0,
+                    "besar": value.get("besar") or 0,
+                }
+                for state_key, value in current.items()
+                if value.get("kecil") is not None or value.get("besar") is not None
+            }
+            firestore_payload = _firestore_value({"list": names, "rules": rules})
         else:
             previous = current.get(key)
             target = root.collection("recipes").document(key)
@@ -504,10 +668,40 @@ def preview_or_commit_calculator_data(payload: CalculatorImportIn) -> dict[str, 
             ) for item in payload.items]
             rows = _plan_preview_rows(payload.site, summaries)
         else:
-            rows = _preview_master(payload.site, payload.data_type, payload.items)
+            previews = {
+                target_site: _preview_master(target_site, payload.data_type, payload.items)
+                for target_site in ("MAJA", "CEMPLANG")
+            }
+            by_site = {
+                target_site: {row["clientKey"]: row for row in target_rows}
+                for target_site, target_rows in previews.items()
+            }
+            rows = []
+            for item in payload.items:
+                site_rows = [by_site[target_site][item.client_key] for target_site in ("MAJA", "CEMPLANG")]
+                statuses = [row["status"] for row in site_rows]
+                if "INVALID" in statuses:
+                    status = "INVALID"
+                elif "DUPLICATE_KEY_IN_FILE" in statuses:
+                    status = "DUPLICATE_KEY_IN_FILE"
+                elif "CHANGED" in statuses:
+                    status = "CHANGED"
+                elif all(value == "UNCHANGED" for value in statuses):
+                    status = "UNCHANGED"
+                else:
+                    status = "NEW"
+                rows.append({
+                    **site_rows[0],
+                    "status": status,
+                    "siteStatuses": {"MAJA": statuses[0], "CEMPLANG": statuses[1]},
+                    "selectable": status in {"NEW", "CHANGED"},
+                    "defaultSelected": status == "NEW",
+                })
         return {
             "committed": False,
-            "site": payload.site,
+            "site": payload.site if payload.data_type == "DAILY_PLANS" else "SHARED",
+            "sourceSite": payload.site,
+            "targetSites": [payload.site] if payload.data_type == "DAILY_PLANS" else ["MAJA", "CEMPLANG"],
             "dataType": payload.data_type,
             "sourceRef": payload.source_ref,
             "counts": dict(Counter(row["status"] for row in rows)),
@@ -516,4 +710,25 @@ def preview_or_commit_calculator_data(payload: CalculatorImportIn) -> dict[str, 
 
     if payload.data_type == "DAILY_PLANS":
         return _commit_plans(payload)
-    return _commit_master(payload)
+    target_results = [
+        _commit_master(payload.model_copy(update={"site": target_site}))
+        for target_site in ("MAJA", "CEMPLANG")
+    ]
+    return {
+        "committed": True,
+        "site": "SHARED",
+        "sourceSite": payload.site,
+        "targetSites": ["MAJA", "CEMPLANG"],
+        "dataType": payload.data_type,
+        "committedCount": sum(result["committedCount"] for result in target_results),
+        "skippedCount": sum(result["skippedCount"] for result in target_results),
+        "items": [
+            {**item, "site": result["site"]}
+            for result in target_results for item in result["items"]
+        ],
+        "skipped": [
+            {**item, "site": result["site"]}
+            for result in target_results for item in result["skipped"]
+        ],
+        "dailyPlansChanged": False,
+    }

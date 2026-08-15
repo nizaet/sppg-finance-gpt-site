@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.inventory_api import commit_receipt_stock
 
 router = APIRouter(tags=["domain"])
 
@@ -58,8 +59,15 @@ def create_goods_receipt(payload: GoodsReceiptIn) -> dict[str, Any]:
                     (receipt_id, item.purchase_order_item_id, item.received_qty, item.rejected_qty,
                      accepted, item.unit, item.quality_status, item.notes),
                 )
+            stock = commit_receipt_stock(cur, receipt_id)
             conn.commit()
-    return {"receiptId": receipt_id, "itemCount": len(payload.items)}
+    return {
+        "receiptId": receipt_id,
+        "itemCount": len(payload.items),
+        "stockCommitted": True,
+        "stockInserted": stock["inserted"],
+        "stockDuplicates": stock["duplicates"],
+    }
 
 
 @router.get("/goods-receipts")
