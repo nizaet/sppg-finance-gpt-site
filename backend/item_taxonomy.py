@@ -130,7 +130,10 @@ def vendor_for_item(name: Any, category: Any, site: str, preferred_vendor: Any =
     if family == "TOFU":
         return "HAJI_BADRI" if site_code == "CEMPLANG" else "KOPERASI"
     if family == "TEMPE":
-        if site_code == "MAJA":
+        # Operator-confirmed: Tempe is fulfilled by KOPERASI at both sites.
+        # Lead time remains site/item-specific and is resolved separately; in
+        # particular Cemplang must not borrow Tahu or generic Koperasi lead time.
+        if site_code in {"MAJA", "CEMPLANG"}:
             return "KOPERASI"
         preferred = str(preferred_vendor or "").upper().strip()
         return preferred or None
