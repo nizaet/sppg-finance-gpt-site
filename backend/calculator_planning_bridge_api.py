@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.google_services import SITE_TARGETS, firestore_client
+from backend.item_taxonomy import vendor_for_item
 from backend.planning_api import PlanningItemIn, PlanningSnapshotIn, ingest_planning_snapshot, get_planning_snapshot
 
 router = APIRouter(tags=["calculator-planning-bridge"])
@@ -167,6 +168,7 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
         category = SUPPLIER_CATEGORY.get(supplier_key) or str(raw.get("category_code") or "").strip() or None
         unit = str(raw.get("satuan") or "").strip() or None
         item_code = str(raw.get("item_code") or "").strip() or None
+        preferred_vendor = vendor_for_item(name, category, site, None)
         key = (name.lower(), str(unit or "").lower(), str(category or ""), str(item_code or ""))
         entry = combined.setdefault(key, {
             "item_code": item_code,
@@ -175,7 +177,7 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
             "planned_qty": 0.0,
             "unit": unit,
             "planning_price": _as_float(raw.get("harga_satuan")),
-            "preferred_vendor_code": None,
+            "preferred_vendor_code": preferred_vendor,
             "notes": [],
             "sources": [],
         })
