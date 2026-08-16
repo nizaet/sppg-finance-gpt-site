@@ -202,7 +202,8 @@ def po_reminders(
 
             po_sql = """
                 select po.id,po.po_code,upper(po.site) as site,upper(po.vendor_code) as vendor_code,
-                       upper(po.status) as status,coalesce(poc.distribution_date,pc.distribution_date) as distribution_date,
+                       upper(po.status) as status,po.created_at,po.finalized_at,po.sent_at,
+                       coalesce(poc.distribution_date,pc.distribution_date) as distribution_date,
                        coalesce((select array_agg(c.distribution_date order by c.distribution_date)
                                  from purchase_order_coverage c where c.purchase_order_id=po.id),
                                 array[pc.distribution_date]) as coverage_dates
@@ -215,15 +216,21 @@ def po_reminders(
             if normalized_site:
                 po_sql += " and upper(po.site)=%s"
                 po_params.append(normalized_site)
-            po_sql += " order by po.revision_no desc,po.created_at desc"
+            po_sql += " order by po.created_at desc,po.revision_no desc"
             cur.execute(po_sql, po_params)
             po_rows = cur.fetchall()
 
     existing: dict[tuple[str, str, date], dict[str, Any]] = {}
     for po in po_rows:
-        key = (po["site"], po["vendor_code"], po["distribution_date"])
-        if key not in existing and po["status"] not in {"CANCELLED", "SUPERSEDED"}:
-            existing[key] = po
+        if po["status"] in {"CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"}:
+            continue
+        # A range PO covers every date stored in purchase_order_coverage.  Map
+        # each one, not just the first row, so a sent multi-day PO cannot show
+        # as "Belum dibuat" on its second or third day.
+        for covered_date in po.get("coverage_dates") or [po["distribution_date"]]:
+            key = (po["site"], po["vendor_code"], covered_date)
+            if key not in existing:
+                existing[key] = po
 
     grouped: dict[tuple[str, str, date], dict[str, Any]] = {}
     for row in plan_rows:
@@ -284,6 +291,9 @@ def po_reminders(
             "purchase_order_id": po.get("id") if po else None,
             "po_code": po.get("po_code") if po else None,
             "coverage_dates": po.get("coverage_dates") if po else [],
+            "po_created_at": po.get("created_at") if po else None,
+            "po_finalized_at": po.get("finalized_at") if po else None,
+            "po_sent_at": po.get("sent_at") if po else None,
             "po_status": po_status,
             "reminder_status": reminder_status,
         })

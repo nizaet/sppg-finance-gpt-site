@@ -206,6 +206,15 @@ function coverageLabel(po) {
   return `${dates[0]} s.d. ${dates[dates.length - 1]}`;
 }
 
+function isActivePurchaseOrder(po) {
+  return !["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"].includes(String(po?.status || "").toUpperCase());
+}
+
+function compactTimestamp(value) {
+  if (!value) return "";
+  return String(value).replace("T", " ").replace(/\.\d+Z$/, " WIB");
+}
+
 function aggregateRangePoItems(candidates) {
   const grouped = new Map();
   candidates.forEach((row) => {
@@ -279,16 +288,13 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const [scheduleData, poData, snapshotsData, vendorsData, inventoryData, cooperativeData] = await Promise.all([
-        operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
+      // PO history must stay visible even when the selected calculator date
+      // genuinely has no plan.  It is a separate operational record.
+      const [poData, vendorsData, reminderData] = await Promise.all([
         operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
-        operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
         operationsApi.getReferenceVendors(activeSite),
-        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
-        operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
+        operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 }),
       ]);
-      const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
-      setSchedule(scheduleData?.items || []);
       setPurchaseOrders(poData?.items || []);
       setReminders(reminderData?.items || []);
 
@@ -304,15 +310,28 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setVendorPhones(phones);
       setPhoneValue(phones[phoneVendor] || "");
 
-      const snapshots = snapshotsData?.items || [];
-      if (!snapshots.length) {
-        applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
-      } else {
-        const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
-        applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
+      try {
+        const [scheduleData, snapshotsData, inventoryData, cooperativeData] = await Promise.all([
+          operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
+          operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
+          operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
+          operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
+        ]);
+        setSchedule(scheduleData?.items || []);
+        const snapshots = snapshotsData?.items || [];
+        if (!snapshots.length) {
+          applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
+        } else {
+          const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
+          applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
+        }
+      } catch (planningError) {
+        setSchedule([]);
+        applyPlanningSnapshot(null, [], []);
+        setError(`Rencana Kalkulator untuk tanggal ini belum tersedia. PO yang sudah tersimpan tetap ditampilkan. ${planningError.message || ""}`.trim());
       }
     } catch (err) {
-      setError(err.message || "Gagal menarik planning Kalkulator / stok / jadwal PO");
+      setError(err.message || "Gagal menarik daftar PO, vendor, atau pengingat");
     } finally {
       setLoading(false);
     }
@@ -371,6 +390,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           notes: [item.notes, `stok_proyeksi_saat_draft=${item.stock_qty}`, `stok_aktual_terhitung=${item.actual_stock_qty}`, `so_terakhir=${item.stock_as_of || "tidak_ada"}`, `dasar_stok=${item.stock_basis}`, `keyakinan_stok=${item.stock_confidence}`, `rekomendasi_po=${item.recommended_po_qty}`, item.cooperative_stock_qty != null ? `stok_koperasi=${item.cooperative_stock_qty}` : ""].filter(Boolean).join(" | ") || null,
         })),
       });
+      if (result?.alreadyExists) {
+        await refreshPurchaseOrders();
+        const dates = (result.duplicateCoverageDates || []).join(", ") || distributionDate;
+        setMessage(`PO sudah dibuat: ${result.poCode} rev ${result.revisionNo} (${result.status}) untuk ${dates}. Tidak dibuat duplikat; buka PO tersebut untuk edit atau revisi.`);
+        return;
+      }
       setMessage(`Draft PO ${result.poCode} rev ${result.revisionNo} berhasil dibuat. Belum dianggap terkirim ke vendor.`);
       const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 });
       setPurchaseOrders(poData?.items || []);
@@ -593,6 +618,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setError("Tidak ada item rentang yang dipilih untuk dibuatkan PO.");
       return;
     }
+    const existingCoverage = candidates
+      .map((row) => ({ date: row.date, po: activePoByVendorDate.get(`${rangeVendor}|${row.date}`) }))
+      .filter((row) => row.po);
+    if (existingCoverage.length) {
+      const labels = existingCoverage.map((row) => `${row.date}: ${row.po.po_code} (${row.po.status})`).join("; ");
+      setError(`PO tidak dibuat ulang karena cakupan sudah ada: ${labels}. Buka PO tersebut untuk edit atau buat revisi, agar qty tidak tergandakan.`);
+      return;
+    }
     const firstDate = candidates[0].date;
     const lastDate = candidates[candidates.length - 1].date;
     const aggregateItems = aggregateRangePoItems(candidates);
@@ -623,6 +656,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           items: row.selected.map(poItemPayload),
         })),
       });
+      if (result?.alreadyExists) {
+        await refreshPurchaseOrders();
+        const dates = (result.duplicateCoverageDates || []).join(", ") || `${firstDate} s.d. ${lastDate}`;
+        setMessage(`PO gabungan sudah ada: ${result.poCode} rev ${result.revisionNo} (${result.status}) untuk ${dates}. Tidak dibuat duplikat.`);
+        return;
+      }
       await refreshPurchaseOrders();
       const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
       setReminders(reminderData?.items || []);
@@ -672,6 +711,19 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     const revisions = new Map();
     purchaseOrders.forEach((po) => revisions.set(po.po_code, Math.max(Number(po.revision_no || 1), revisions.get(po.po_code) || 0)));
     return revisions;
+  }, [purchaseOrders]);
+  const activePoByVendorDate = useMemo(() => {
+    const found = new Map();
+    purchaseOrders.filter(isActivePurchaseOrder).forEach((po) => {
+      coverageDatesFor(po).forEach((coveredDate) => {
+        const key = `${String(po.vendor_code || "").toUpperCase()}|${coveredDate}`;
+        const prior = found.get(key);
+        const priorCreated = String(prior?.created_at || "");
+        const thisCreated = String(po.created_at || "");
+        if (!prior || thisCreated >= priorCreated) found.set(key, po);
+      });
+    });
+    return found;
   }, [purchaseOrders]);
 
   return (
@@ -724,18 +776,24 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
               <span>Belum ada vendor <strong>{draftItems.filter((x) => !x.vendor_code).length}</strong></span>
             </div>
 
-            {groupedDrafts.map((group) => (
-              <div className="ops-draft-group" key={group.vendor}>
+            {groupedDrafts.map((group) => {
+              const existingPo = activePoByVendorDate.get(`${group.vendor}|${distributionDate}`);
+              const existingStatus = String(existingPo?.status || "").toUpperCase();
+              return <div className="ops-draft-group" key={group.vendor}>
                 <div className="ops-draft-group-head">
                   <div>
                     <strong>{group.vendor === "UNASSIGNED" ? "⚠ Vendor belum ditentukan" : group.vendor}</strong>
                     <span>{group.items.length} item</span>
+                    {existingPo && <div className="ops-muted"><strong>PO sudah dibuat:</strong> {existingPo.po_code} · Rev {existingPo.revision_no} · {existingPo.status}. Tidak akan dibuat ulang.</div>}
                   </div>
-                  {group.vendor !== "UNASSIGNED" && (
+                  {group.vendor !== "UNASSIGNED" && !existingPo && (
                     <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Number(x.po_qty || 0) <= 0)}>
                       <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : "Buat Draft PO"}
                     </button>
                   )}
+                  {existingPo && <button type="button" onClick={() => existingStatus === "DRAFT" ? beginEditPo(existingPo) : viewPoDetail(existingPo)} disabled={actionId === existingPo.id}>
+                    {existingStatus === "DRAFT" ? <Pencil size={15} /> : <Eye size={15} />} {existingStatus === "DRAFT" ? "Buka & Edit PO" : "Lihat PO"}
+                  </button>}
                 </div>
                 <div className="ops-table-wrap">
                   <table className="ops-table">
@@ -782,8 +840,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     </tbody>
                   </table>
                 </div>
-              </div>
-            ))}
+              </div>;
+            })}
           </>
         )}
       </section>
@@ -819,12 +877,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       <section className="ops-module">
         <div className="ops-module-header">
-          <div><span className="ops-kicker">PENGINGAT OTOMATIS</span><h3>PO yang Harus Dikerjakan</h3><p>Pengingat dihitung dari planning aktif dan lead time vendor. PO yang sudah SENT tidak diingatkan lagi untuk tanggal yang sama.</p></div>
+          <div><span className="ops-kicker">PENGINGAT OTOMATIS</span><h3>PO yang Harus Dikerjakan</h3><p>Pengingat dihitung dari planning aktif dan lead time vendor. PO yang sudah dibuat tetap ditampilkan dengan nomor dan statusnya; hanya PO SENT yang tidak lagi menjadi tindakan.</p></div>
           <BellRing size={32} />
         </div>
         <div className="ops-summary-strip"><span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span><span>Cakupan <strong>21 hari</strong></span></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item</th><th>PO</th></tr></thead><tbody>
-          {reminders.map((item, index) => <tr key={`${item.vendor_code}-${item.distribution_date}-${index}`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.po_date || "Lead time belum ada"}</td><td>{item.vendor_name || item.vendor_code}</td><td>{item.cooking_date}</td><td>{item.distribution_date}</td><td>{item.item_count}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{(item.coverage_dates || []).length > 1 ? ` · mencakup ${item.coverage_dates.length} hari` : ""}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : "Belum dibuat"}</td></tr>)}
+          {reminders.map((item, index) => <tr key={`${item.vendor_code}-${item.distribution_date}-${index}`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.po_date || "Lead time belum ada"}</td><td>{item.vendor_name || item.vendor_code}</td><td>{item.cooking_date}</td><td>{item.distribution_date}</td><td>{item.item_count}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{(item.coverage_dates || []).length > 1 ? ` · mencakup ${item.coverage_dates.length} hari` : ""}</div><div className="ops-muted">{item.po_sent_at ? `Terkirim: ${compactTimestamp(item.po_sent_at)}` : `Sudah dibuat: ${compactTimestamp(item.po_created_at)}`}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : "Belum dibuat"}</td></tr>)}
           {!loading && reminders.length === 0 && <tr><td colSpan="7" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
         </tbody></table></div>
       </section>
@@ -864,6 +922,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           </div>
           <div className="ops-summary-strip">
             <span>Status <strong>{viewingPo.status}</strong></span>
+            <span>Jadwal kirim <strong>{viewingPo.scheduled_order_date || "Lead time belum diatur"}</strong></span>
+            <span>Masak <strong>{viewingPo.cooking_date || "-"}</strong></span>
             <span>Cakupan <strong>{coverageDatesFor(viewingPo).length} hari</strong></span>
             <span>Jenis barang <strong>{(viewingPo.items || []).length}</strong></span>
             <span>Total <strong>{money((viewingPo.items || []).reduce((sum, item) => sum + Number(item.po_qty || 0) * Number(item.po_price || 0), 0))}</strong></span>
@@ -896,7 +956,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>}
         <div className="ops-table-wrap">
           <table className="ops-table">
-            <thead><tr><th>Distribusi</th><th>PO</th><th>Vendor</th><th>Revisi</th><th>Item</th><th>Total PO</th><th>Status</th><th>Aksi</th></tr></thead>
+            <thead><tr><th>Distribusi</th><th>Jadwal Kirim PO</th><th>PO</th><th>Vendor</th><th>Revisi</th><th>Item</th><th>Total PO</th><th>Status</th><th>Aksi</th></tr></thead>
             <tbody>
               {purchaseOrders.map((po) => {
                 const status = String(po.status || "").toUpperCase();
@@ -904,7 +964,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                 const isHistory = ["CANCELLED", "SUPERSEDED"].includes(status);
                 return <tr key={po.id} className={isHistory ? "ops-history-row" : ""}>
                   <td><strong>{coverageLabel(po)}</strong>{coverageDatesFor(po).length > 1 && <div className="ops-muted">1 PO · {coverageDatesFor(po).length} hari</div>}</td>
-                  <td><strong>{po.po_code}</strong><div className="ops-muted">{po.sent_at ? `Sent: ${po.sent_at}` : "Belum ada bukti kirim"}</div></td>
+                  <td><strong>{po.scheduled_order_date || "Lead time belum diatur"}</strong><div className="ops-muted">Masak: {po.cooking_date || "-"}</div></td>
+                  <td><strong>{po.po_code}</strong><div className="ops-muted">{po.sent_at ? `Terkirim: ${compactTimestamp(po.sent_at)}` : "Belum ada bukti kirim"}</div></td>
                   <td>{po.vendor_code}</td>
                   <td><strong>Rev {po.revision_no}</strong><div className="ops-muted">{isLatestRevision ? "revisi terbaru" : "revisi lama"}</div></td>
                   <td>{po.item_count}</td>
@@ -925,7 +986,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                   </td>
                 </tr>;
               })}
-              {!loading && purchaseOrders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}
+              {!loading && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}
             </tbody>
           </table>
         </div>

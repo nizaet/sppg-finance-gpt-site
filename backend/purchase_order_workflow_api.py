@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.po_schedule import as_date, resolve_purchase_order_schedule
 from backend.stock_opname_parser import canonical_unit
 
 router = APIRouter(tags=["purchase-order-workflow"])
@@ -88,24 +89,47 @@ def _format_indonesian_date(value: date | None) -> str:
     )
 
 
+def _format_indonesian_date_range(values: list[Any]) -> str:
+    dates = sorted({value for value in (as_date(item) for item in values) if value is not None})
+    if not dates:
+        return "-"
+    if len(dates) == 1:
+        return _format_indonesian_date(dates[0])
+    return f"{_format_indonesian_date(dates[0])} s.d. {_format_indonesian_date(dates[-1])}"
+
+
 def format_purchase_order_whatsapp(po: dict[str, Any], vendor_name: str) -> str:
     """Build one canonical text used by both Pusat Kontrol and GPTS."""
     revision = int(po.get("revision_no") or 1)
     po_label = str(po.get("po_code") or "-")
     if revision > 1:
         po_label += f" / Rev {revision}"
-    coverage_dates = sorted({value for value in (po.get("coverage_dates") or []) if value})
+    coverage_dates = sorted({value for value in (as_date(item) for item in (po.get("coverage_dates") or [])) if value})
     if not coverage_dates and po.get("distribution_date"):
-        coverage_dates = [po["distribution_date"]]
+        distribution_date = as_date(po["distribution_date"])
+        coverage_dates = [distribution_date] if distribution_date else []
     if len(coverage_dates) > 1:
-        distribution_label = f"{_format_indonesian_date(coverage_dates[0])} s.d. {_format_indonesian_date(coverage_dates[-1])}"
+        distribution_label = _format_indonesian_date_range(coverage_dates)
         coverage_line = f"🗓 *Cakupan:* {len(coverage_dates)} hari distribusi — dikirim dalam satu PO"
     else:
         distribution_label = _format_indonesian_date(coverage_dates[0] if coverage_dates else po.get("distribution_date"))
         coverage_line = None
+
+    cooking_label = _format_indonesian_date_range(po.get("cooking_dates") or [po.get("cooking_date")])
+    scheduled_order_date = as_date(po.get("scheduled_order_date"))
+    lead_time = po.get("lead_time_days_before_cooking")
+    if scheduled_order_date is None:
+        send_line = "📤 *Kirim PO:* lead time vendor belum diatur"
+    elif lead_time is None:
+        send_line = f"📤 *Kirim PO:* {_format_indonesian_date(scheduled_order_date)}"
+    else:
+        send_line = f"📤 *Kirim PO:* {_format_indonesian_date(scheduled_order_date)} (H-{lead_time} dari masak)"
+
     lines = [
         f"🛒 *PO SPPG {str(po.get('site') or '').upper()}*",
         f"👤 *Vendor:* {vendor_name}",
+        send_line,
+        f"🍳 *Masak:* {cooking_label}",
         f"📅 *Untuk:* {distribution_label}",
         f"🧾 *No. PO:* {po_label}",
     ]
@@ -116,12 +140,7 @@ def format_purchase_order_whatsapp(po: dict[str, Any], vendor_name: str) -> str:
     for index, item in enumerate(included_items, start=1):
         amount = _format_qty(item.get("po_qty"))
         unit = str(item.get("unit") or "").strip()
-        lines.extend(
-            [
-                f"{index}. *{str(item.get('item_name') or '-').strip()}*",
-                f"   {amount}{f' {unit}' if unit else ''}",
-            ]
-        )
+        lines.append(f"   {index}. *{str(item.get('item_name') or '-').strip()}* : {amount}{f' {unit}' if unit else ''}")
     lines.extend(
         [
             "",
@@ -195,11 +214,7 @@ def _load_po(cur, purchase_order_id: int) -> dict[str, Any]:
     po = cur.fetchone()
     if not po:
         raise HTTPException(404, "purchase order not found")
-    cur.execute(
-        "select distribution_date from purchase_order_coverage where purchase_order_id=%s order by distribution_date",
-        (purchase_order_id,),
-    )
-    po["coverage_dates"] = [row["distribution_date"] for row in cur.fetchall()] or [po.get("distribution_date")]
+    po.update(resolve_purchase_order_schedule(cur, po))
     return po
 
 
@@ -491,6 +506,7 @@ def purchase_order_whatsapp_preview(
                 po = cur.fetchone()
                 if not po:
                     raise HTTPException(404, "PO final untuk site, vendor, dan tanggal tersebut belum ditemukan")
+                po.update(resolve_purchase_order_schedule(cur, po))
 
             status = str(po.get("status") or "").upper()
             if status not in FINAL_PO_STATUSES:
@@ -521,6 +537,10 @@ def purchase_order_whatsapp_preview(
         "distributionDate": po.get("distribution_date"),
         "coverageDates": po.get("coverage_dates") or [po.get("distribution_date")],
         "coverageDayCount": len(po.get("coverage_dates") or [po.get("distribution_date")]),
+        "cookingDate": po.get("cooking_date"),
+        "cookingDates": po.get("cooking_dates") or [],
+        "leadTimeDaysBeforeCooking": po.get("lead_time_days_before_cooking"),
+        "scheduledOrderDate": po.get("scheduled_order_date"),
         "status": status,
         "sentAt": po.get("sent_at"),
         "whatsappPhone": phone,

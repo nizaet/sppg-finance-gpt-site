@@ -80,7 +80,14 @@ export const operationsApi = {
   previewCalculatorPlanning: ({ site, distributionDate }) => { const q = new URLSearchParams({ site, distributionDate }); return request(`/v1/calculator-planning/preview?${q}`); },
   getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = true } = {}) => {
     if (syncCalculator && site && distributionDate) {
-      await doRequest("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) });
+      try {
+        await doRequest("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) });
+      } catch (err) {
+        // A calculator may legitimately have no plan for the chosen date.
+        // Continue to read the local planning/PO data instead of making the
+        // whole Control Tower look empty (including already-saved POs).
+        if (!String(err?.message || "").includes("SPPG Core API 404")) throw err;
+      }
     }
     const q = new URLSearchParams(); if (site) q.set("site", site); if (distributionDate) q.set("distributionDate", distributionDate); q.set("activeOnly", activeOnly ? "true" : "false");
     return request(`/v1/planning-snapshots?${q}`);

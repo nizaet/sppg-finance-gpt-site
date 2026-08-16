@@ -21,7 +21,7 @@ from backend.vendor_workflow_api import router as vendor_workflow_router
 from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
 from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184
 
-app = FastAPI(title="SPPG Core API", version="0.16.5")
+app = FastAPI(title="SPPG Core API", version="0.16.6")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)

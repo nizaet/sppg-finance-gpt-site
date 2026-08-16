@@ -33,6 +33,9 @@ def test_purchase_order_whatsapp_message_is_canonical_and_uses_po_qty():
         "po_code": "PO-MAJA-20260817-HOLIL",
         "revision_no": 2,
         "distribution_date": date(2026, 8, 17),
+        "cooking_date": date(2026, 8, 16),
+        "scheduled_order_date": date(2026, 8, 14),
+        "lead_time_days_before_cooking": 2,
         "items": [
             {"item_name": "Bawang Merah", "planned_qty": 20, "po_qty": 12.5, "unit": "kg"},
             {"item_name": "Wortel", "planned_qty": 10, "po_qty": 0, "unit": "kg"},
@@ -44,8 +47,10 @@ def test_purchase_order_whatsapp_message_is_canonical_and_uses_po_qty():
     assert "🛒 *PO SPPG MAJA*" in message
     assert "👤 *Vendor:* Haji Holil" in message
     assert "Senin, 17 Agustus 2026" in message
+    assert "📤 *Kirim PO:* Jumat, 14 Agustus 2026 (H-2 dari masak)" in message
+    assert "🍳 *Masak:* Minggu, 16 Agustus 2026" in message
     assert "PO-MAJA-20260817-HOLIL / Rev 2" in message
-    assert "12,5 kg" in message
+    assert "   1. *Bawang Merah* : 12,5 kg" in message
     assert "Wortel" not in message
     assert "planned_qty" not in message
 
@@ -57,6 +62,9 @@ def test_purchase_order_whatsapp_message_explains_multi_day_coverage():
         "revision_no": 1,
         "distribution_date": date(2026, 8, 18),
         "coverage_dates": [date(2026, 8, 18), date(2026, 8, 19)],
+        "cooking_dates": [date(2026, 8, 17), date(2026, 8, 18)],
+        "scheduled_order_date": date(2026, 8, 14),
+        "lead_time_days_before_cooking": 3,
         "items": [
             {"item_name": "Ayam Fillet", "po_qty": 60, "unit": "kg"},
             {"item_name": "Ayam Potong", "po_qty": 100, "unit": "kg"},
@@ -68,8 +76,9 @@ def test_purchase_order_whatsapp_message_explains_multi_day_coverage():
     assert "Selasa, 18 Agustus 2026 s.d. Rabu, 19 Agustus 2026" in message
     assert "Cakupan:* 2 hari distribusi" in message
     assert "DAFTAR PESANAN GABUNGAN" in message
-    assert "60 kg" in message
-    assert "100 kg" in message
+    assert "📤 *Kirim PO:* Jumat, 14 Agustus 2026 (H-3 dari masak)" in message
+    assert "   1. *Ayam Fillet* : 60 kg" in message
+    assert "   2. *Ayam Potong* : 100 kg" in message
 
 
 def test_purchase_order_routes_support_edit_delete_revision_and_cancel():

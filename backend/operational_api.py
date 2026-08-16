@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 from backend.inventory_api import commit_receipt_stock
+from backend.po_schedule import resolve_purchase_order_schedule
 
 router = APIRouter(prefix="/v1", tags=["operational"])
 
@@ -213,6 +214,48 @@ class PurchaseOrderCreateIn(BaseModel):
     coverage: list[PurchaseOrderCoverageIn] = Field(default_factory=list)
 
 
+ACTIVE_PO_STATUSES = ("DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED")
+
+
+def find_active_purchase_order_for_coverage(
+    cur: Any,
+    *,
+    site: str,
+    vendor: str,
+    coverage_dates: list[date],
+) -> dict[str, Any] | None:
+    """Find the current PO before a duplicate draft can be created.
+
+    A single range PO is represented by several coverage dates.  Matching any
+    one of those dates is enough to stop an accidental second PO; the operator
+    can open the result and edit/revise it instead.
+    """
+    cur.execute(
+        """select po.id,po.po_code,po.revision_no,po.site,po.vendor_code,po.status,
+                  po.sent_at,po.finalized_at,po.created_at,pc.distribution_date,pc.cooking_at
+           from purchase_orders po
+           join production_cycles pc on pc.id=po.production_cycle_id
+           where upper(po.site)=upper(%s)
+             and upper(po.vendor_code)=upper(%s)
+             and upper(po.status)=any(%s)
+             and (
+                pc.distribution_date=any(%s)
+                or exists(
+                    select 1 from purchase_order_coverage poc
+                    where poc.purchase_order_id=po.id
+                      and poc.distribution_date=any(%s)
+                )
+             )
+           order by po.created_at desc,po.revision_no desc
+           limit 1""",
+        (site, vendor, list(ACTIVE_PO_STATUSES), coverage_dates, coverage_dates),
+    )
+    existing = cur.fetchone()
+    if existing:
+        existing.update(resolve_purchase_order_schedule(cur, existing))
+    return existing
+
+
 @router.post("/purchase-orders")
 def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
     require_db()
@@ -226,6 +269,25 @@ def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
     cycle_code = f"{site}-{payload.distribution_date.strftime('%Y%m%d')}"
     with connection() as conn:
         with conn.cursor() as cur:
+            existing = find_active_purchase_order_for_coverage(
+                cur,
+                site=site,
+                vendor=vendor,
+                coverage_dates=coverage_dates,
+            )
+            if existing:
+                overlapping_dates = sorted(set(coverage_dates) & set(existing.get("coverage_dates") or []))
+                return {
+                    "alreadyExists": True,
+                    "purchaseOrderId": existing["id"],
+                    "poCode": existing["po_code"],
+                    "revisionNo": existing["revision_no"],
+                    "status": existing["status"],
+                    "coverageDates": existing.get("coverage_dates") or [],
+                    "duplicateCoverageDates": overlapping_dates,
+                    "scheduledOrderDate": existing.get("scheduled_order_date"),
+                    "sentAt": existing.get("sent_at"),
+                }
             cur.execute(
                 """insert into production_cycles(cycle_code,site,distribution_date,cooking_at,status)
                    values (%s,%s,%s,%s,'PLANNING')
@@ -281,6 +343,7 @@ def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
                     )
             conn.commit()
     return {
+        "alreadyExists": False,
         "purchaseOrderId": po_id, "poCode": payload.po_code, "revisionNo": revision,
         "status": payload.status, "itemCount": len(payload.items),
         "coverageDates": sorted(coverage_dates), "coverageDayCount": len(coverage_dates),
@@ -298,7 +361,7 @@ def list_purchase_orders(
     sql = """
         select po.id, po.po_code, po.revision_no, po.site, po.vendor_code, po.status,
                po.sent_at, po.acknowledged_at, po.finalized_at, po.created_at,
-               pc.distribution_date,
+               pc.distribution_date,pc.cooking_at,
                coalesce((select array_agg(poc.distribution_date order by poc.distribution_date)
                          from purchase_order_coverage poc where poc.purchase_order_id=po.id),
                         array[pc.distribution_date]) as coverage_dates,
@@ -325,7 +388,10 @@ def list_purchase_orders(
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
-            return {"items": cur.fetchall()}
+            items = cur.fetchall()
+            for item in items:
+                item.update(resolve_purchase_order_schedule(cur, item))
+            return {"items": items}
 
 
 @router.get("/purchase-orders/{purchase_order_id}")
@@ -342,6 +408,7 @@ def get_purchase_order(purchase_order_id: int) -> dict[str, Any]:
             po = cur.fetchone()
             if not po:
                 raise HTTPException(404, "purchase order not found")
+            po.update(resolve_purchase_order_schedule(cur, po))
             cur.execute("select * from purchase_order_items where purchase_order_id=%s order by id", (purchase_order_id,))
             po["items"] = cur.fetchall()
             cur.execute(
