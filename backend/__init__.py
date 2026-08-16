@@ -20,6 +20,7 @@ from backend.po_cleanup_api import router as po_cleanup_router
 from backend.po_reminder_action_api import router as po_reminder_action_router
 from backend.po_reminder_v2_api import router as po_reminder_v2_router
 from backend.po_reminder_v3_api import router as po_reminder_v3_router
+from backend.po_reminder_v4_api import router as po_reminder_v4_router
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
@@ -43,8 +44,10 @@ operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_planning_bridge_router)
 
-# v3 is the stock-aware lead-time reminder used by the current frontend.
-# Keep v2 routes mounted for compatibility with older clients/actions.
+# v4 is the strict stock-aware reminder used by the current frontend. It only
+# links a PO when distribution date + ingredient + unit + qty actually cover the
+# requirement, and it keeps Tempe procurement rules separate from Tahu.
+operational_router.include_router(po_reminder_v4_router)
 operational_router.include_router(po_reminder_v3_router)
 operational_router.include_router(po_reminder_action_router)
 operational_router.include_router(po_reminder_v2_router)
