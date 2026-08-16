@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from backend.db import connection, database_ready
+from backend.item_taxonomy import item_family, vendor_for_item
 
 router = APIRouter(tags=["po-reminder-v2"])
 
@@ -15,88 +16,34 @@ def _norm(value: Any) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", str(value or "").upper()).strip("_")
 
 
-def _semantic_vendor(item: dict[str, Any], site: str) -> str | None:
-    category = str(item.get("category_code") or "").lower()
-    name = str(item.get("item_name") or "").lower()
-    text = f"{category} {name}"
-    if re.search(r"\b(ayam|chicken)\b", text):
-        return "WIKIAN"
-    if re.search(r"\b(dori|ikan|fish)\b", text):
-        return "RUMAH_DUTA_PANGAN"
-    if re.search(r"\bberas\b", text):
-        return "DEDE"
-    if re.search(r"\b(gas|lpg)\b", text):
-        return "HERU"
-    if re.search(r"\btelur\b", text):
-        return "KOPERASI"
-    if re.search(r"\btahu\b", text):
-        return "HAJI_BADRI" if site == "CEMPLANG" else "KOPERASI"
-    if re.search(r"\btempe\b", text):
-        return "KOPERASI" if site == "MAJA" else None
-    if re.search(r"(bahan kering|sembako|dry goods|packaging)", category):
-        return "KOPERASI"
-    if re.search(r"(sayur|buah|bumbu|vegetable|fruit)", category):
-        return "HOLIL"
-    return None
-
-
-def _planned_vendor(item: dict[str, Any], site: str) -> str | None:
-    """Resolve the reminder vendor without trusting stale dedicated-vendor hints.
-
-    Dedicated vendors have a narrow product scope.  A stale preferred vendor in
-    an older planning snapshot must not create a false reminder (e.g. HAJI_BADRI
-    when there is no tahu, or RUMAH_DUTA_PANGAN when there is no fish).
-    Broader/manual vendor hints remain usable when they do not contradict the
-    product semantics.
-    """
-    semantic = _semantic_vendor(item, site)
-    preferred = str(item.get("preferred_vendor_code") or "").upper().strip()
-    if not preferred:
-        return semantic
-
-    dedicated = {
-        "WIKIAN": "WIKIAN",
-        "RUMAH_DUTA_PANGAN": "RUMAH_DUTA_PANGAN",
-        "DEDE": "DEDE",
-        "HERU": "HERU",
-        "HAJI_BADRI": "HAJI_BADRI",
-    }
-    if preferred in dedicated:
-        # Only accept a dedicated vendor when the current item's own category/name
-        # resolves to that same vendor.  Otherwise treat the hint as stale.
-        return preferred if semantic == dedicated[preferred] else semantic
-
-    # HOLIL/KOPERASI can legitimately cover broader families and manual mappings.
-    # If product semantics are known, prefer them over a contradictory old hint.
-    return semantic or preferred
-
-
 def _family_match(vendor: str, rule_category: Any, item_category: Any, item_name: Any) -> bool:
     rc = _norm(rule_category)
     ic = _norm(item_category)
-    text = f"{ic}_{_norm(item_name)}"
+    family = item_family(item_name, item_category)
     if not rc:
         return True
     if rc == ic:
         return True
     if vendor == "HOLIL":
-        return "SAYUR" in rc or "BUAH" in rc or "BUMBU" in rc
+        return family == "PRODUCE" and any(token in rc for token in ("SAYUR", "BUAH", "BUMBU"))
     if vendor == "WIKIAN":
-        return "AYAM" in rc
+        return family == "CHICKEN" and "AYAM" in rc
     if vendor == "RUMAH_DUTA_PANGAN":
-        return "IKAN" in rc or "DORI" in rc
+        return family == "FISH" and ("IKAN" in rc or "DORI" in rc)
     if vendor == "DEDE":
-        return "BERAS" in rc
+        return family == "RICE" and "BERAS" in rc
     if vendor == "HERU":
-        return "GAS" in rc or "LPG" in rc
+        return family == "GAS" and ("GAS" in rc or "LPG" in rc)
     if vendor == "HAJI_BADRI":
-        return "TAHU" in rc
+        return family == "TOFU" and "TAHU" in rc
     if vendor == "KOPERASI":
-        if "TELUR" in text:
+        if family == "EGG":
             return "TELUR" in rc
-        if "TEMPE" in text or "TAHU" in text:
+        if family in {"TEMPE", "TOFU"}:
             return "TEMPE" in rc or "TAHU" in rc
-        return "BAHAN_KERING" in rc or "KERING" in rc
+        if family == "DRY_GOODS":
+            return "BAHAN_KERING" in rc or "KERING" in rc or "SEMBAKO" in rc
+        return False
     return False
 
 
@@ -144,6 +91,14 @@ def _rule_for_item(
     return None
 
 
+def _prefer_po(current: dict[str, Any] | None, candidate: dict[str, Any]) -> dict[str, Any]:
+    if current is None:
+        return candidate
+    current_key = (str(current.get("created_at") or ""), int(current.get("revision_no") or 0))
+    candidate_key = (str(candidate.get("created_at") or ""), int(candidate.get("revision_no") or 0))
+    return candidate if candidate_key >= current_key else current
+
+
 @router.get("/po-reminders-v2")
 def po_reminders_v2(
     site: str = "",
@@ -153,9 +108,7 @@ def po_reminders_v2(
     target = as_of or date.today()
     tomorrow = target + timedelta(days=1)
     normalized_site = site.upper().strip()
-    if not database_ready() or (
-        normalized_site and normalized_site not in {"MAJA", "CEMPLANG"}
-    ):
+    if not database_ready() or (normalized_site and normalized_site not in {"MAJA", "CEMPLANG"}):
         return {
             "date": target,
             "horizonThrough": tomorrow,
@@ -165,13 +118,12 @@ def po_reminders_v2(
             "items": [],
         }
 
-    # The action window remains today + tomorrow, while planning is scanned far
-    # enough ahead to resolve H-1/H-2/H-3 vendor lead times.
     scan_until = target + timedelta(days=35)
     with connection() as conn:
         with conn.cursor() as cur:
             sql = """
-                select upper(ps.site) site,ps.distribution_date,
+                select ps.id snapshot_id,psi.id planning_item_id,
+                       upper(ps.site) site,ps.distribution_date,
                        coalesce(date(ps.cooking_at),ps.distribution_date-1) cooking_date,
                        psi.item_name,psi.category_code,psi.preferred_vendor_code,
                        coalesce(psi.planned_qty,0) planned_qty
@@ -200,18 +152,30 @@ def po_reminders_v2(
             )
             rules = cur.fetchall()
 
-            # A range PO may have its production-cycle date before today's action
-            # window but still cover a future distribution date. Include it when
-            # either its base cycle OR any explicit coverage date is in the scan.
             po_sql = """
                 select po.id,po.po_code,po.revision_no,upper(po.site) site,
                        upper(po.vendor_code) vendor_code,upper(po.status) status,
                        po.created_at,po.finalized_at,po.sent_at,
+                       po.source_planning_snapshot_id,
+                       pc.distribution_date base_distribution_date,
+                       date(pc.cooking_at) base_cooking_date,
                        coalesce(
                          (select array_agg(c.distribution_date order by c.distribution_date)
                           from purchase_order_coverage c where c.purchase_order_id=po.id),
                          array[pc.distribution_date]
-                       ) coverage_dates
+                       ) coverage_dates,
+                       coalesce(
+                         (select array_agg(distinct c.cooking_date order by c.cooking_date)
+                          from purchase_order_coverage c
+                          where c.purchase_order_id=po.id and c.cooking_date is not null),
+                         array[]::date[]
+                       ) coverage_cooking_dates,
+                       coalesce(
+                         (select array_agg(distinct c.planning_snapshot_id)
+                          from purchase_order_coverage c
+                          where c.purchase_order_id=po.id and c.planning_snapshot_id is not null),
+                         array[]::bigint[]
+                       ) coverage_snapshot_ids
                 from purchase_orders po
                 join production_cycles pc on pc.id=po.production_cycle_id
                 where (
@@ -221,9 +185,10 @@ def po_reminders_v2(
                         where c.purchase_order_id=po.id
                           and c.distribution_date between %s and %s
                     )
+                    or po.created_at::date between %s and %s
                 )
             """
-            po_params: list[Any] = [target, scan_until, target, scan_until]
+            po_params: list[Any] = [target - timedelta(days=7), scan_until, target - timedelta(days=7), scan_until, target - timedelta(days=7), tomorrow]
             if normalized_site:
                 po_sql += " and upper(po.site)=%s"
                 po_params.append(normalized_site)
@@ -231,19 +196,84 @@ def po_reminders_v2(
             cur.execute(po_sql, po_params)
             pos = cur.fetchall()
 
-    existing: dict[tuple[str, str, date], dict[str, Any]] = {}
+            po_ids = [int(po["id"]) for po in pos]
+            po_plan_items: dict[int, set[int]] = {po_id: set() for po_id in po_ids}
+            po_item_names: dict[int, set[str]] = {po_id: set() for po_id in po_ids}
+            if po_ids:
+                cur.execute(
+                    """
+                    select purchase_order_id,planning_snapshot_item_id,item_name
+                    from purchase_order_items
+                    where purchase_order_id=any(%s)
+                    """,
+                    (po_ids,),
+                )
+                for row in cur.fetchall():
+                    po_id = int(row["purchase_order_id"])
+                    if row.get("planning_snapshot_item_id") is not None:
+                        po_plan_items[po_id].add(int(row["planning_snapshot_item_id"]))
+                    if row.get("item_name"):
+                        po_item_names[po_id].add(str(row["item_name"]).strip())
+
+                cur.execute(
+                    """
+                    select poc.purchase_order_id,poci.planning_snapshot_item_id,poci.item_name
+                    from purchase_order_coverage poc
+                    join purchase_order_coverage_items poci on poci.purchase_order_coverage_id=poc.id
+                    where poc.purchase_order_id=any(%s)
+                    """,
+                    (po_ids,),
+                )
+                for row in cur.fetchall():
+                    po_id = int(row["purchase_order_id"])
+                    if row.get("planning_snapshot_item_id") is not None:
+                        po_plan_items[po_id].add(int(row["planning_snapshot_item_id"]))
+                    if row.get("item_name"):
+                        po_item_names[po_id].add(str(row["item_name"]).strip())
+
+    active_pos: list[dict[str, Any]] = []
     for po in pos:
         if po["status"] in {"CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"}:
             continue
-        for covered_date in po.get("coverage_dates") or []:
-            existing.setdefault(
-                (po["site"], po["vendor_code"], covered_date),
-                po,
-            )
+        po_id = int(po["id"])
+        po["planning_item_ids"] = po_plan_items.get(po_id, set())
+        po["item_names"] = po_item_names.get(po_id, set())
+        snapshot_ids = set(int(x) for x in (po.get("coverage_snapshot_ids") or []) if x is not None)
+        if po.get("source_planning_snapshot_id") is not None:
+            snapshot_ids.add(int(po["source_planning_snapshot_id"]))
+        po["planning_snapshot_ids"] = snapshot_ids
+        active_pos.append(po)
+
+    by_plan_item: dict[int, dict[str, Any]] = {}
+    by_snapshot_vendor: dict[tuple[int, str], dict[str, Any]] = {}
+    by_vendor_distribution: dict[tuple[str, str, date], dict[str, Any]] = {}
+    by_vendor_cooking: dict[tuple[str, str, date], dict[str, Any]] = {}
+    for po in active_pos:
+        for planning_item_id in po["planning_item_ids"]:
+            by_plan_item[planning_item_id] = _prefer_po(by_plan_item.get(planning_item_id), po)
+        for snapshot_id in po["planning_snapshot_ids"]:
+            key = (snapshot_id, po["vendor_code"])
+            by_snapshot_vendor[key] = _prefer_po(by_snapshot_vendor.get(key), po)
+        for distribution_date in po.get("coverage_dates") or [po.get("base_distribution_date")]:
+            if distribution_date:
+                key = (po["site"], po["vendor_code"], distribution_date)
+                by_vendor_distribution[key] = _prefer_po(by_vendor_distribution.get(key), po)
+        cooking_dates = [x for x in (po.get("coverage_cooking_dates") or []) if x]
+        if po.get("base_cooking_date"):
+            cooking_dates.append(po["base_cooking_date"])
+        for cooking_date in cooking_dates:
+            key = (po["site"], po["vendor_code"], cooking_date)
+            by_vendor_cooking[key] = _prefer_po(by_vendor_cooking.get(key), po)
 
     grouped: dict[tuple[str, str, date], dict[str, Any]] = {}
+    missing_lead_time_count = 0
     for row in plans:
-        vendor = _planned_vendor(row, row["site"])
+        vendor = vendor_for_item(
+            row.get("item_name"),
+            row.get("category_code"),
+            row["site"],
+            row.get("preferred_vendor_code"),
+        )
         if not vendor:
             continue
         rule = _rule_for_item(
@@ -255,6 +285,7 @@ def po_reminders_v2(
             row["cooking_date"],
         )
         if not rule or rule.get("lead_time_days_before_cooking") is None:
+            missing_lead_time_count += 1
             continue
 
         lead = int(rule["lead_time_days_before_cooking"])
@@ -274,13 +305,15 @@ def po_reminders_v2(
                 "distribution_dates": set(),
                 "cooking_dates": set(),
                 "item_names": set(),
-                "item_count": 0,
+                "families": set(),
+                "rows": [],
             },
         )
         group["distribution_dates"].add(row["distribution_date"])
         group["cooking_dates"].add(row["cooking_date"])
         group["item_names"].add(str(row.get("item_name") or "").strip())
-        group["item_count"] += 1
+        group["families"].add(item_family(row.get("item_name"), row.get("category_code")))
+        group["rows"].append(row)
 
     done = {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
     items: list[dict[str, Any]] = []
@@ -288,37 +321,52 @@ def po_reminders_v2(
         distributions = sorted(group.pop("distribution_dates"))
         cooks = sorted(group.pop("cooking_dates"))
         item_names = sorted(name for name in group.pop("item_names") if name)
-        linked: list[dict[str, Any]] = []
-        missing: list[date] = []
+        families = sorted(group.pop("families"))
+        rows = group.pop("rows")
 
-        for distribution_date in distributions:
-            po = existing.get(
-                (group["site"], group["vendor_code"], distribution_date)
-            )
+        linked: dict[int, dict[str, Any]] = {}
+        missing_item_names: list[str] = []
+        match_methods: set[str] = set()
+        for row in rows:
+            planning_item_id = int(row["planning_item_id"])
+            snapshot_id = int(row["snapshot_id"])
+            po = by_plan_item.get(planning_item_id)
+            method = "planning_item_id" if po else ""
+            if not po:
+                po = by_snapshot_vendor.get((snapshot_id, group["vendor_code"]))
+                method = "planning_snapshot" if po else ""
+            if not po:
+                po = by_vendor_distribution.get((group["site"], group["vendor_code"], row["distribution_date"]))
+                method = "vendor_distribution" if po else ""
+            if not po:
+                po = by_vendor_cooking.get((group["site"], group["vendor_code"], row["cooking_date"]))
+                method = "vendor_cooking" if po else ""
             if po:
-                linked.append(po)
+                linked[int(po["id"])] = po
+                match_methods.add(method)
             else:
-                missing.append(distribution_date)
+                missing_item_names.append(str(row.get("item_name") or "").strip())
 
-        unique = {int(po["id"]): po for po in linked}
-        po_list = list(unique.values())
+        po_list = list(linked.values())
         statuses = {po["status"] for po in po_list}
+        action_po = None
+        if po_list:
+            action_po = max(
+                po_list,
+                key=lambda po: (str(po.get("created_at") or ""), int(po.get("revision_no") or 0)),
+            )
 
-        if missing:
-            status = "DUE_TODAY" if group["po_date"] == target else "UPCOMING"
-            action_po = None
-        elif statuses and statuses.issubset(done):
+        all_items_covered = not missing_item_names and bool(rows)
+        if all_items_covered and statuses and statuses.issubset(done):
             status = "DONE"
-            action_po = po_list[0] if po_list else None
-        elif "FINALIZED" in statuses:
+        elif all_items_covered and "FINALIZED" in statuses:
             status = "READY_TO_SEND"
-            action_po = next(po for po in po_list if po["status"] == "FINALIZED")
-        elif "DRAFT" in statuses:
+            action_po = next((po for po in po_list if po["status"] == "FINALIZED"), action_po)
+        elif all_items_covered and "DRAFT" in statuses:
             status = "DRAFT_NEEDS_FINAL"
-            action_po = next(po for po in po_list if po["status"] == "DRAFT")
+            action_po = next((po for po in po_list if po["status"] == "DRAFT"), action_po)
         else:
             status = "DUE_TODAY" if group["po_date"] == target else "UPCOMING"
-            action_po = po_list[0] if po_list else None
 
         items.append(
             {
@@ -329,8 +377,16 @@ def po_reminders_v2(
                 "cooking_date": cooks[0] if cooks else None,
                 "cooking_dates": cooks,
                 "item_names": item_names,
-                "missing_distribution_dates": missing,
+                "item_families": families,
+                "item_count": len(rows),
+                "missing_item_names": sorted(set(x for x in missing_item_names if x)),
+                "missing_distribution_dates": sorted({
+                    row["distribution_date"]
+                    for row in rows
+                    if str(row.get("item_name") or "").strip() in missing_item_names
+                }),
                 "existing_po_count": len(po_list),
+                "po_match_methods": sorted(match_methods),
                 "purchase_order_id": action_po.get("id") if action_po else None,
                 "po_code": action_po.get("po_code") if action_po else None,
                 "po_status": action_po.get("status") if action_po else None,
@@ -347,15 +403,13 @@ def po_reminders_v2(
         "horizonThrough": tomorrow,
         "site": normalized_site or None,
         "dueCount": sum(
-            1
-            for x in items
+            1 for x in items
             if x["po_date"] == target and x["reminder_status"] in actionable
         ),
         "tomorrowCount": sum(
-            1
-            for x in items
-            if x["po_date"] == tomorrow
-            and x["reminder_status"] in actionable | {"UPCOMING"}
+            1 for x in items
+            if x["po_date"] == tomorrow and x["reminder_status"] in actionable | {"UPCOMING"}
         ),
+        "missingLeadTimeCount": missing_lead_time_count,
         "items": items,
     }
