@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from backend.po_reminder_completed_shortage import enrich_completed_po_shortages
+from backend.po_reminder_operational_reconcile import reconcile_operational_po_reminders
 from backend.po_reminder_v4_api import po_reminders_v4
 
 router = APIRouter(tags=["po-reminder-v3"])
@@ -17,12 +18,16 @@ def po_reminders_v3(
     as_of: date | None = Query(default=None, alias="date"),
     horizon_days: int = Query(default=2, ge=1, le=31, alias="horizonDays"),
 ) -> dict[str, Any]:
-    """Compatibility endpoint backed by the strict v4 reminder engine.
+    """Stable reminder endpoint with operational reconciliation.
 
-    v4 remains authoritative for planning, stock projection, lead time, and exact
-    shortage calculation. This compatibility layer only separates two states that
-    must not be conflated: the PO workflow may already be DONE/SENT while a residual
-    shortage still needs a reminder for revision/additional ordering.
+    v4 remains authoritative for planning, projected stock, and exact PO coverage.
+    The compatibility passes then apply two operator-confirmed rules without
+    mutating PO, inventory, receiving, invoice, or payment data:
+    - editable dedicated Tempe lead time is read from vendor_rules;
+    - genuine surplus from completed WIKIAN chicken POs closes older due shortages
+      FIFO after explicit dated coverage has been reserved first.
     """
-    payload = po_reminders_v4(site=site, as_of=as_of, horizon_days=horizon_days)
+    target = as_of or date.today()
+    payload = po_reminders_v4(site=site, as_of=target, horizon_days=horizon_days)
+    payload = reconcile_operational_po_reminders(payload, site, target)
     return enrich_completed_po_shortages(payload, site)
