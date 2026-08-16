@@ -23,12 +23,6 @@ function poCleanupVariant() {
       );
 
       replaceOnce(
-        "  const cancelPo = async (po) => {",
-        `  const deletePo = async (po) => {\n    const status = String(po?.status || "").toUpperCase();\n    const isTest = String(po?.po_code || "").toUpperCase().startsWith("TEST-");\n    const detail = isTest\n      ? "PO TEST akan dihapus permanen. Data receiving test dan movement stok test terkait juga dibersihkan jika belum memiliki invoice/payable vendor."\n      : status === "CANCELLED"\n        ? "PO CANCELLED akan dihapus permanen dari histori."\n        : "PO DRAFT akan dihapus permanen.";\n    if (!window.confirm(\`Hapus permanen \${po.po_code} rev \${po.revision_no}?\\n\\n\${detail}\\n\\nTindakan ini tidak dapat dibatalkan.\`)) return;\n    setActionId(po.id);\n    setError("");\n    try {\n      const result = await operationsApi.deletePurchaseOrder(po.id);\n      await refreshPurchaseOrders();\n      setMessage(\`\${po.po_code} rev \${po.revision_no} dihapus permanen\${result?.deletedGoodsReceipts ? \` beserta \${result.deletedGoodsReceipts} receiving test\` : ""}.\`);\n    } catch (err) {\n      setError(err.message || "Gagal menghapus PO");\n    } finally {\n      setActionId(null);\n    }\n  };\n\n  const cancelPo = async (po) => {`,
-        "delete action",
-      );
-
-      replaceOnce(
         `{REVISABLE_PO_STATUSES.has(status) && <button type="button" onClick={() => cancelPo(po)} disabled={actionId === po.id}><XCircle size={14} /> Batalkan</button>}`,
         `{REVISABLE_PO_STATUSES.has(status) && <button type="button" onClick={() => cancelPo(po)} disabled={actionId === po.id}><XCircle size={14} /> Batalkan</button>}\n                      {canDeletePo(po) && <button type="button" className="danger" onClick={() => deletePo(po)} disabled={actionId === po.id}><Trash2 size={14} /> Hapus</button>}`,
         "delete button",
