@@ -22,3 +22,11 @@
 - Documented archive responsibilities and ingest rules in `operations/drive_archive_v01.md`.
 - Added deployment environment placeholders for Drive folder mapping without committing live folder IDs to the public repository.
 - PostgreSQL remains the transactional source of truth; Drive remains the evidence/archive layer.
+
+## 2026-08-16 — PO reminder strict coverage + Tempe split
+- Corrected PO reminder semantics: a PO only covers a requirement when site, vendor, distribution date, item type, canonical unit, and quantity match. Same-vendor/latest-PO and same-send-date fallbacks are forbidden.
+- Open/overdue/upcoming requirements no longer display an unrelated PO code. Partial exact coverage is tracked separately and does not mark the requirement complete.
+- Preserved projected stock value `available_for_po=0` instead of incorrectly falling back to physical balance.
+- Confirmed Tempe Maja vendor Koperasi with H-4 lead time, separated from Tahu. Tahu Maja preserves the prior H-2 rule after the legacy combined rule is retired.
+- Confirmed Tempe Cemplang vendor Koperasi. Its dedicated lead time remains intentionally unset until configured; it must not borrow Tahu or generic Koperasi lead time.
+- Added regression tests covering wrong-date SENT POs, insufficient quantities, finalized/draft states, Tempe site rules, and zero projected stock.
