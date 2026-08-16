@@ -19,6 +19,7 @@ from backend.calculator_planning_bridge_api import router as calculator_planning
 from backend.po_cleanup_api import router as po_cleanup_router
 from backend.po_reminder_action_api import router as po_reminder_action_router
 from backend.po_reminder_v2_api import router as po_reminder_v2_router
+from backend.po_reminder_v3_api import router as po_reminder_v3_router
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
@@ -42,9 +43,9 @@ operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_planning_bridge_router)
 
-# The action-checklist route intentionally owns /po-reminders-v2 first. FastAPI
-# resolves matching routes in registration order. The older strict-coverage
-# implementation remains mounted behind it as a compatibility fallback/reference.
+# v3 is the stock-aware lead-time reminder used by the current frontend.
+# Keep v2 routes mounted for compatibility with older clients/actions.
+operational_router.include_router(po_reminder_v3_router)
 operational_router.include_router(po_reminder_action_router)
 operational_router.include_router(po_reminder_v2_router)
 
