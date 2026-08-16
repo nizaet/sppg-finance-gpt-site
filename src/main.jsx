@@ -9,10 +9,15 @@ applyAppTheme();
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
 const isCalculatorRoute = pathname === "/calculator" || pathname.startsWith("/calculator/");
+const isCemplangAccountantRoute = pathname === "/accountant/cemplang" || pathname.startsWith("/accountant/cemplang/");
 
 const OperationsApp = lazy(() => import("./operations/OperationsWorkspace.jsx"));
 const AccountantApp = lazy(() => Promise.all([
   import("./App.jsx"),
+  import("./styles.css"),
+]).then(([appModule]) => ({ default: appModule.default })));
+const CemplangAccountantApp = lazy(() => Promise.all([
+  import("./App.jsx?cemplang-accountant"),
   import("./styles.css"),
 ]).then(([appModule]) => ({ default: appModule.default })));
 
@@ -46,7 +51,11 @@ function RoutedApp({ role, config }) {
 
   return (
     <Suspense fallback={<BootFallback />}>
-      {isOperationsRoute ? <OperationsApp accessRole="OWNER" /> : <AccountantApp accessRole="OWNER" />}
+      {isOperationsRoute
+        ? <OperationsApp accessRole="OWNER" />
+        : isCemplangAccountantRoute
+          ? <CemplangAccountantApp accessRole="OWNER" />
+          : <AccountantApp accessRole="OWNER" />}
     </Suspense>
   );
 }
