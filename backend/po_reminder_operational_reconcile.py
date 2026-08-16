@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from backend.db import connection, database_ready
-from backend.item_taxonomy import stock_type
+from backend.item_taxonomy import item_family
 from backend.stock_opname_parser import canonical_unit
 
 DONE_PO_STATUSES = {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
@@ -35,9 +35,9 @@ def _timing_status(po_date: date, target: date) -> str:
     return "UPCOMING"
 
 
-def _stock_key(name: Any, unit: Any) -> tuple[str, str]:
-    typed = stock_type(name)
-    return str(typed.get("code") or ""), canonical_unit(unit) or ""
+def _wikian_key(name: Any, unit: Any) -> tuple[str, str]:
+    """WIKIAN pools chicken cuts by family, but never across different units."""
+    return item_family(name, None), canonical_unit(unit) or ""
 
 
 def _recount(payload: dict[str, Any], target: date) -> dict[str, Any]:
@@ -73,12 +73,7 @@ def apply_tempe_configured_leads(
     target: date,
     lead_by_cooking_date: dict[date, int],
 ) -> dict[str, Any]:
-    """Replace the legacy MAJA Tempe H-4 display with the configured rule.
-
-    The v4 engine still performs the authoritative stock/coverage calculation. This
-    pass only corrects the reminder due date/status when the operator has edited the
-    dedicated TEMPE vendor rule in Vendor & Lead Time.
-    """
+    """Use the operator-edited dedicated TEMPE lead instead of the legacy H-4."""
     result = deepcopy(payload)
     changed = False
     for item in result.get("items") or []:
@@ -122,27 +117,29 @@ def _requirement_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
         parent_po_date = _as_date(parent.get("po_date"))
         if parent_po_date is None:
             continue
+        parent_families = {str(value or "").upper() for value in (parent.get("item_families") or [])}
         for detail in parent.get("requirement_details") or []:
             recommended = max(0.0, float(detail.get("recommended_po_qty") or 0.0))
             if recommended <= EPSILON:
                 continue
-            type_code = str(detail.get("stock_type_code") or "").strip()
+            detail_families = {str(value or "").upper() for value in (detail.get("item_families") or [])}
+            family = "CHICKEN" if "CHICKEN" in (detail_families | parent_families) else ""
             unit = canonical_unit(detail.get("unit")) or ""
             distribution_date = _as_date(detail.get("distribution_date"))
-            if not type_code or distribution_date is None:
+            if family != "CHICKEN" or distribution_date is None:
                 continue
             nodes.append({
                 "parent": parent,
                 "detail": detail,
                 "po_date": parent_po_date,
                 "distribution_date": distribution_date,
-                "type_code": type_code,
+                "family": family,
                 "unit": unit,
                 "recommended": recommended,
                 "allocated_done": 0.0,
                 "contributors": [],
             })
-    nodes.sort(key=lambda node: (node["po_date"], node["distribution_date"], node["type_code"], node["unit"]))
+    nodes.sort(key=lambda node: (node["po_date"], node["distribution_date"], node["family"], node["unit"]))
     return nodes
 
 
@@ -163,13 +160,13 @@ def apply_wikian_batch_fifo(
     direct_items: list[dict[str, Any]],
     coverage_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Reconcile WIKIAN SENT quantity across overdue + due-today chicken needs.
+    """Use genuine surplus from completed WIKIAN POs to close older due needs.
 
-    WIKIAN is intentionally special: the operator may send one combined chicken PO
-    whose aggregate qty is larger than the requirement on its header distribution
-    date. Exact per-date coverage is honoured first. Only genuine surplus is then
-    applied FIFO to older requirements whose PO date was already due when that PO
-    was sent. Stored PO/receiving data are never mutated by this reminder-only pass.
+    Exact dated coverage is reserved first. Only aggregate qty left after satisfying
+    those explicit dates is treated as surplus. That surplus is applied FIFO to
+    older chicken requirements whose PO date was already due when the PO was sent.
+    Daging Ayam and chicken-cut labels are pooled as CHICKEN when the unit matches.
+    This changes reminder semantics only; PO, receiving and inventory rows stay intact.
     """
     if not completed_pos:
         return payload
@@ -178,12 +175,25 @@ def apply_wikian_batch_fifo(
     if not nodes:
         return payload
 
-    direct_by_po: dict[int, list[dict[str, Any]]] = {}
+    direct_totals: dict[int, dict[tuple[str, str], float]] = {}
     for item in direct_items:
-        direct_by_po.setdefault(int(item["purchase_order_id"]), []).append(item)
-    coverage_by_po: dict[int, list[dict[str, Any]]] = {}
+        po_id = int(item["purchase_order_id"])
+        key = _wikian_key(item.get("item_name"), item.get("unit"))
+        if key[0] != "CHICKEN":
+            continue
+        bucket = direct_totals.setdefault(po_id, {})
+        bucket[key] = round(bucket.get(key, 0.0) + max(0.0, float(item.get("po_qty") or 0.0)), 4)
+
+    coverage_totals: dict[int, dict[tuple[str, str, date], float]] = {}
     for item in coverage_items:
-        coverage_by_po.setdefault(int(item["purchase_order_id"]), []).append(item)
+        po_id = int(item["purchase_order_id"])
+        distribution_date = _as_date(item.get("distribution_date"))
+        key = _wikian_key(item.get("item_name"), item.get("unit"))
+        if distribution_date is None or key[0] != "CHICKEN":
+            continue
+        cov_key = (key[0], key[1], distribution_date)
+        bucket = coverage_totals.setdefault(po_id, {})
+        bucket[cov_key] = round(bucket.get(cov_key, 0.0) + max(0.0, float(item.get("po_qty") or 0.0)), 4)
 
     pos = sorted(
         completed_pos,
@@ -200,33 +210,26 @@ def apply_wikian_batch_fifo(
         effective_date = _as_date(po.get("effective_date") or po.get("sent_at") or po.get("created_at"))
         if effective_date is None or effective_date > target:
             continue
-        for direct in direct_by_po.get(po_id, []):
-            type_code, unit = _stock_key(direct.get("item_name"), direct.get("unit"))
-            pool = max(0.0, float(direct.get("po_qty") or 0.0))
-            if pool <= EPSILON or not type_code:
+        for (family, unit), raw_total in direct_totals.get(po_id, {}).items():
+            pool = max(0.0, float(raw_total))
+            if pool <= EPSILON:
                 continue
 
-            # Reserve quantity for dates explicitly attached to this PO first.
-            explicit_rows = []
-            for coverage in coverage_by_po.get(po_id, []):
-                cov_type, cov_unit = _stock_key(coverage.get("item_name"), coverage.get("unit"))
-                if (cov_type, cov_unit) != (type_code, unit):
-                    continue
-                explicit_rows.append(coverage)
-            explicit_rows.sort(key=lambda row: _as_date(row.get("distribution_date")) or date.max)
-
-            for coverage in explicit_rows:
+            explicit = [
+                (distribution_date, qty)
+                for (cov_family, cov_unit, distribution_date), qty in coverage_totals.get(po_id, {}).items()
+                if (cov_family, cov_unit) == (family, unit)
+            ]
+            explicit.sort(key=lambda row: row[0])
+            for distribution_date, raw_explicit_qty in explicit:
                 if pool <= EPSILON:
                     break
-                distribution_date = _as_date(coverage.get("distribution_date"))
-                explicit_qty = min(pool, max(0.0, float(coverage.get("po_qty") or 0.0)))
-                if distribution_date is None or explicit_qty <= EPSILON:
-                    continue
+                explicit_qty = min(pool, max(0.0, float(raw_explicit_qty)))
                 matching = [
                     node
                     for node in nodes
                     if node["distribution_date"] == distribution_date
-                    and (node["type_code"], node["unit"]) == (type_code, unit)
+                    and (node["family"], node["unit"]) == (family, unit)
                 ]
                 for node in matching:
                     if explicit_qty <= EPSILON or pool <= EPSILON:
@@ -235,12 +238,11 @@ def apply_wikian_batch_fifo(
                     explicit_qty -= used
                     pool -= used
 
-            # Genuine surplus from a completed chicken PO closes oldest due needs.
             if pool > EPSILON:
                 eligible = [
                     node
                     for node in nodes
-                    if (node["type_code"], node["unit"]) == (type_code, unit)
+                    if (node["family"], node["unit"]) == (family, unit)
                     and node["po_date"] <= effective_date
                     and node["allocated_done"] + EPSILON < node["recommended"]
                 ]
@@ -263,7 +265,7 @@ def apply_wikian_batch_fifo(
         detail["covered_po_qty"] = round(effective_covered, 4)
         detail["remaining_po_qty"] = new_remaining
         detail["batch_completed_po_qty"] = round(allocated, 4)
-        detail["batch_coverage_basis"] = "WIKIAN_SENT_SURPLUS_FIFO"
+        detail["batch_coverage_basis"] = "WIKIAN_SENT_SURPLUS_FIFO_CHICKEN_FAMILY"
         if allocated + EPSILON >= node["recommended"]:
             detail["coverage_stage"] = "DONE"
         parent = node["parent"]
@@ -367,13 +369,19 @@ def _load_tempe_leads(cur: Any, site: str, payload: dict[str, Any]) -> dict[date
     return result
 
 
-def _load_wikian_completed(cur: Any, site: str, payload: dict[str, Any], target: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _load_wikian_completed(
+    cur: Any,
+    site: str,
+    payload: dict[str, Any],
+    target: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     distribution_dates = sorted({
-        _as_date(detail.get("distribution_date"))
+        value
         for item in (payload.get("items") or [])
         if str(item.get("vendor_code") or "").upper() == "WIKIAN"
         for detail in (item.get("requirement_details") or [])
-        if _as_date(detail.get("distribution_date")) is not None
+        for value in [_as_date(detail.get("distribution_date"))]
+        if value is not None
     })
     if not distribution_dates:
         return [], [], []
