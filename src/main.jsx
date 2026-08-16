@@ -4,13 +4,20 @@ import AuthGate from "./auth/AuthGate.jsx";
 
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
+const isCemplangAccountantRoute =
+  pathname === "/accountant/cemplang" || pathname.startsWith("/accountant/cemplang/");
 
 const RootComponent = isOperationsRoute
   ? lazy(() => import("./operations/OperationsWorkspace.jsx"))
-  : lazy(() => Promise.all([
-      import("./App.jsx"),
-      import("./styles.css"),
-    ]).then(([appModule]) => ({ default: appModule.default })));
+  : isCemplangAccountantRoute
+    ? lazy(() => Promise.all([
+        import("./App.jsx?cemplang-accountant"),
+        import("./styles.css"),
+      ]).then(([appModule]) => ({ default: appModule.default })))
+    : lazy(() => Promise.all([
+        import("./App.jsx"),
+        import("./styles.css"),
+      ]).then(([appModule]) => ({ default: appModule.default })));
 
 function BootFallback({ text = "Memuat SPPG…" }) {
   return (
