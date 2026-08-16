@@ -1,0 +1,24 @@
+name: PO Reminder Regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - llm-wiki-v0
+      - fix/po-reminder-coverage-tempe-v2
+
+jobs:
+  po-reminder-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Run strict PO reminder tests
+        run: python -m unittest -v tests.test_po_reminder_v4
+      - name: Compile reminder and planning bridge modules
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/migrate.py
+      - name: Assert stable frontend endpoint anchor
+        run: grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
