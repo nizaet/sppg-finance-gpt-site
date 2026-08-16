@@ -427,6 +427,15 @@ body {
 .ops-badge-type { opacity: 0.72; }
 .ops-active-row { background: rgba(21, 128, 61, 0.09); }
 .ops-active-row td:first-child { box-shadow: inset 3px 0 #22c55e; }
+.ops-stock-card { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin: 0 0 12px; padding: 14px; border: 1px solid rgba(74, 222, 128, 0.3); border-radius: 12px; background: rgba(21, 128, 61, 0.1); }
+.ops-stock-card strong { display: block; margin-top: 3px; font-size: 17px; }
+.ops-stock-card p { margin: 5px 0 0; font-size: 12px; opacity: 0.72; }
+.ops-stock-card .ops-summary-strip { margin: 0; justify-content: flex-end; }
+.ops-stock-history { border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-input); overflow: hidden; }
+.ops-stock-history summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 13px 15px; font-weight: 800; list-style: none; }
+.ops-stock-history summary span { margin-left: auto; font-size: 11px; font-weight: 500; opacity: 0.62; }
+.ops-stock-history-content { padding: 0 14px 14px; }
+.ops-danger-button { color: #fecaca !important; border-color: rgba(248, 113, 113, 0.42) !important; background: rgba(153, 27, 27, 0.18) !important; }
 .ops-history-row { opacity: 0.62; }
 
 html[data-app-theme="light"] {
@@ -475,3 +484,11 @@ html[data-app-theme="light"] .ops-error { background: #fff1f2; color: #9f1239; b
 html[data-app-theme="light"] .ops-notice { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
 html[data-app-theme="light"] .ops-badge-active { background: #dcfce7; color: #166534; }
 html[data-app-theme="light"] .ops-badge-latest { background: #dbeafe; color: #1e40af; }
+html[data-app-theme="light"] .ops-stock-card { background: #ecfdf5; border-color: #bbf7d0; }
+html[data-app-theme="light"] .ops-stock-history { background: var(--ops-input); border-color: var(--ops-border); }
+html[data-app-theme="light"] .ops-danger-button { color: #b91c1c !important; background: #fff1f2 !important; border-color: #fecdd3 !important; }
+
+@media (max-width: 900px) {
+  .ops-stock-card { align-items: flex-start; flex-direction: column; }
+  .ops-stock-card .ops-summary-strip { justify-content: flex-start; }
+}

@@ -53,6 +53,32 @@ def test_dimensions_are_item_identity_and_unit_is_a_valid_stock_unit():
     ]
 
 
+def test_dashboard_stock_format_reads_date_zeroes_and_local_package_units():
+    result = parser.parse_stock_opname_text(
+        """so 14 agustus 2026
+*#_DASHBOARD STOK DAPUR_#*
+• BAKING POWDER = *0*
+• PEMASAK KAMBING = *6 BALL*
+• KALDU JAMUR TOTOLE = *6 BUNGKUS*
+• KECAP MANIS @5,7 KG = *1 DRIGENT*
+• KETUMBAR @500 GR = *11 PAK*
+• BERAS = *2 KARUNG*"""
+    )
+
+    by_name = {item["itemName"]: item for item in result["items"]}
+    assert result["detectedStockDate"] == "2026-08-14"
+    assert by_name["BAKING POWDER"]["qty"] == 0.0
+    assert by_name["PEMASAK KAMBING"]["unit"] == "ball"
+    assert by_name["KALDU JAMUR TOTOLE"]["unit"] == "bungkus"
+    assert by_name["KECAP MANIS @5,7 KG"]["unit"] == "jerigen"
+    assert by_name["KETUMBAR @500 GR"]["unit"] == "pack"
+    assert by_name["BERAS"]["unit"] == "karung"
+
+
 def test_stock_opname_history_exposes_detail_for_safe_correction():
     paths = {route.path for route in inventory_router.routes}
     assert "/v1/inventory/stock-opnames/{stock_opname_id}" in paths
+    assert any(
+        route.path == "/v1/inventory/stock-opnames/{stock_opname_id}" and "DELETE" in route.methods
+        for route in inventory_router.routes
+    )

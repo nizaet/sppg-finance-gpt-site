@@ -186,6 +186,10 @@ def test_v0184_exposes_multi_day_po_coverage_without_losing_previous_actions():
     unified = schema_v0184()
     assert unified["info"]["version"] == "0.18.4"
     assert "/v1/inventory/stock-opname/whatsapp" in unified["paths"]
+    opname_description = unified["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]["description"]
+    assert "replaces the prior physical count" in opname_description
+    assert "qty 0" in opname_description
+    assert len(opname_description) <= 300
     response = unified["paths"]["/v1/po-whatsapp-preview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert response["properties"]["coverageDates"]["type"] == "array"
     assert response["properties"]["coverageDayCount"]["type"] == "integer"

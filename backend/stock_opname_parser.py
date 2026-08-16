@@ -43,6 +43,13 @@ UNIT_ALIASES = {
     "butir": "butir",
     "botol": "botol",
     "pouch": "pouch",
+    "ball": "ball",
+    "bungkus": "bungkus",
+    "pak": "pack",
+    "jerigen": "jerigen",
+    "dirigen": "jerigen",
+    "drigen": "jerigen",
+    "drigent": "jerigen",
     "ikat": "ikat",
     "papan": "papan",
     "roll": "roll",
@@ -59,7 +66,7 @@ SECTION_NAMES = {
 }
 
 QUANTITY_PATTERN = re.compile(
-    r"(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>kg|kgs|kilogram|kilograms|gram|grams|gr|pcs|pc|piece|pieces|pack|packs|dus|karton|karung|kantong|liter|litre|ltr|lt|l|ons|butir|botol|pouch|ikat|papan|roll|rol|unit)?\b",
+    r"(?P<qty>\d+(?:[\.,]\d+)?)\s*(?P<unit>kg|kgs|kilogram|kilograms|gram|grams|gr|pcs|pc|piece|pieces|pack|packs|pak|dus|karton|karung|kantong|liter|litre|ltr|lt|l|ons|butir|botol|pouch|ball|bungkus|jerigen|dirigen|drigen|drigent|ikat|papan|roll|rol|unit)?\b",
     re.IGNORECASE,
 )
 
@@ -83,7 +90,7 @@ def parse_decimal(value: str) -> float:
 
 def extract_stock_date(text: str) -> date | None:
     match = re.search(
-        r"\b(?:tgl|tanggal)\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b",
+        r"\b(?:tgl|tanggal|so(?:\s+barang)?)\s*[:\-]?\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b",
         text,
         re.IGNORECASE,
     )
@@ -103,7 +110,7 @@ def _clean_line(raw: str) -> str:
     line = re.sub(r"^\[[^\]]+\]\s*[^:]{1,80}:\s*", "", line)
     line = re.sub(r"^[\-•*\s]+", "", line)
     line = re.sub(r"^\d+\s*[\.\)]\s*", "", line)
-    line = line.replace("⁠", "").strip()
+    line = line.replace("⁠", "").replace("*", "").replace("_", "").strip()
     return line
 
 
@@ -113,7 +120,7 @@ def _section_for(line: str) -> str | None:
 
 
 def _item_name_before_quantity(line: str, match: re.Match[str]) -> str:
-    name = line[: match.start()].strip(" :;=-+")
+    name = line[: match.start()].strip(" :;=-+*_")
     return re.sub(r"\s+", " ", name).strip()
 
 
@@ -144,16 +151,16 @@ def parse_stock_opname_text(text: str) -> dict[str, Any]:
         normalized_line = normalize_name(line.replace("*", ""))
         if not normalized_line or normalized_line in {"so barang"}:
             continue
-        if re.search(r"\b(?:tgl|tanggal)\b", line, re.IGNORECASE):
+        if re.search(r"\b(?:so|tgl|tanggal)\s*[:\-]?\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}\b", line, re.IGNORECASE):
             continue
 
         matches = list(QUANTITY_PATTERN.finditer(line))
         # Dimensions such as "plastik 90x120 : 1 pack" are part of the item
         # identity, not stock quantities. When a separator exists, prefer the
         # numeric components written after the final colon.
-        colon = line.rfind(":")
-        if colon >= 0:
-            after_separator = [match for match in matches if match.start() > colon]
+        separator = max(line.rfind(":"), line.rfind("="))
+        if separator >= 0:
+            after_separator = [match for match in matches if match.start() > separator]
             if after_separator:
                 matches = after_separator
         if not matches:

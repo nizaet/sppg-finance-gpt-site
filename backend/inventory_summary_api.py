@@ -77,6 +77,7 @@ def inventory_balances(
                 select id,stock_date,warning_count,source_external_id,created_at
                 from stock_opnames
                 where location_code=%s and stock_date <= %s
+                  and coalesce(status,'ACTIVE')='ACTIVE'
                 order by stock_date desc,created_at desc limit 1
                 """,
                 (location, target_date),
@@ -89,6 +90,7 @@ def inventory_balances(
                     select id,source_external_id,created_at
                     from stock_opnames
                     where location_code=%s and stock_date=%s
+                      and coalesce(status,'ACTIVE')='ACTIVE'
                     order by created_at desc,id desc
                     """,
                     (location, latest_so["stock_date"]),

@@ -710,6 +710,11 @@ def schema_v0184() -> dict[str, Any]:
         "version": "0.18.4",
         "description": "The v0.18.3 workflow plus multi-day purchase-order coverage in one canonical vendor message.",
     }
+    stock_opname = payload["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]
+    stock_opname["description"] = (
+        "One WhatsApp SO is one physical stock snapshot. Preview once then commit once; Never split by area or mapping. "
+        "A newer SO replaces the prior physical count, not adds to it. Keep qty 0 even without a unit; preserve raw name and mixed units."
+    )
     return payload
 
 

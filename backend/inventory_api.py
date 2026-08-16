@@ -463,6 +463,23 @@ class StockOpnameWhatsAppIn(BaseModel):
     commit: bool = False
 
 
+def _replacement_source_ids(source_external_id: str | None) -> list[int]:
+    """Return evidence rows replaced by an operator correction/consolidation.
+
+    The marker is generated only by the Operations UI.  Keeping this parser
+    deliberately narrow prevents an arbitrary source ID from suppressing SO
+    evidence in the active stock calculation.
+    """
+    source = str(source_external_id or "").strip()
+    correction = re.fullmatch(r"correction:(\d+)", source)
+    if correction:
+        return [int(correction.group(1))]
+    consolidated = re.fullmatch(r"consolidated:\d{4}-\d{2}-\d{2}:(\d+(?:-\d+)*)", source)
+    if consolidated:
+        return [int(value) for value in consolidated.group(1).split("-")]
+    return []
+
+
 @router.post("/inventory/stock-opname/whatsapp")
 def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
     require_db()
@@ -581,9 +598,21 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                 return result
             if not items:
                 raise HTTPException(400, "no stock items were parsed")
-            cur.execute("select id from stock_opnames where source_key=%s", (source_key,))
+            cur.execute("select id,status from stock_opnames where source_key=%s", (source_key,))
             duplicate = cur.fetchone()
             if duplicate:
+                if str(duplicate.get("status") or "ACTIVE").upper() == "VOIDED":
+                    cur.execute(
+                        """
+                        update stock_opnames
+                        set status='ACTIVE', voided_at=null, void_reason=null
+                        where id=%s
+                        """,
+                        (duplicate["id"],),
+                    )
+                    conn.commit()
+                    result.update({"committed": True, "duplicate": False, "restored": True, "stockOpnameId": duplicate["id"]})
+                    return result
                 result.update({"committed": True, "duplicate": True, "stockOpnameId": duplicate["id"]})
                 return result
             cur.execute(
@@ -609,23 +638,48 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                      item["classificationStatus"], item["classificationMethod"], item["classificationConfidence"],
                      item["parseStatus"], item["rawLine"], json.dumps(item["warnings"], ensure_ascii=False)),
                 )
+            replaced_ids = _replacement_source_ids(payload.source_external_id)
+            if replaced_ids:
+                cur.execute(
+                    """
+                    update stock_opnames
+                    set status='SUPERSEDED', superseded_by_stock_opname_id=%s
+                    where id = any(%s) and id <> %s
+                      and location_code=%s and stock_date=%s
+                      and coalesce(status,'ACTIVE')='ACTIVE'
+                    """,
+                    (opname_id, replaced_ids, opname_id, location, stock_date),
+                )
             conn.commit()
-            result.update({"committed": True, "duplicate": False, "stockOpnameId": opname_id})
+            result.update({
+                "committed": True,
+                "duplicate": False,
+                "stockOpnameId": opname_id,
+                "supersededStockOpnameIds": replaced_ids,
+            })
             return result
 
 
 @router.get("/inventory/stock-opnames")
-def stock_opnames(location: str = "", limit: int = Query(default=50, ge=1, le=250)) -> dict[str, Any]:
+def stock_opnames(
+    location: str = "",
+    limit: int = Query(default=50, ge=1, le=250),
+    include_archived: bool = Query(default=False, alias="includeArchived"),
+) -> dict[str, Any]:
     require_db()
     sql = """
         select so.id,so.location_code,so.site,so.stock_date,so.source_type,so.source_external_id,
-               so.reporter,so.warning_count,so.created_by,so.created_at,count(soi.id) as item_count
+               so.reporter,so.warning_count,so.created_by,so.created_at,
+               coalesce(so.status,'ACTIVE') as status,so.superseded_by_stock_opname_id,
+               so.voided_at,so.void_reason,count(soi.id) as item_count
         from stock_opnames so left join stock_opname_items soi on soi.stock_opname_id=so.id where true
     """
     params: list[Any] = []
     if location.strip():
         sql += " and so.location_code=%s"
         params.append(normalize_location(location))
+    if not include_archived:
+        sql += " and coalesce(so.status,'ACTIVE')='ACTIVE'"
     sql += " group by so.id order by so.stock_date desc,so.created_at desc limit %s"
     params.append(limit)
     with connection() as conn:
@@ -644,7 +698,8 @@ def stock_opname_detail(stock_opname_id: int) -> dict[str, Any]:
             cur.execute(
                 """
                 select id,location_code,site,stock_date,source_type,source_external_id,source_key,
-                       reporter,raw_text,warning_count,created_by,created_at
+                       reporter,raw_text,warning_count,created_by,created_at,
+                       coalesce(status,'ACTIVE') as status,superseded_by_stock_opname_id,voided_at,void_reason
                 from stock_opnames where id=%s
                 """,
                 (stock_opname_id,),
@@ -664,6 +719,50 @@ def stock_opname_detail(stock_opname_id: int) -> dict[str, Any]:
             )
             items = cur.fetchall()
     return {"stockOpname": opname, "items": items, "itemCount": len(items)}
+
+
+@router.delete("/inventory/stock-opnames/{stock_opname_id}")
+def delete_stock_opname(
+    stock_opname_id: int,
+    reason: str = Query(default="", max_length=240),
+) -> dict[str, Any]:
+    """Remove an incorrect SO from the active stock calculation.
+
+    This is intentionally a soft delete: raw WhatsApp evidence and the item
+    snapshot remain available to audit, but the SO can no longer become the
+    physical stock used by balance or PO calculations.
+    """
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select id,location_code,stock_date,coalesce(status,'ACTIVE') as status
+                from stock_opnames where id=%s
+                """,
+                (stock_opname_id,),
+            )
+            opname = cur.fetchone()
+            if not opname:
+                raise HTTPException(404, "stock opname not found")
+            if str(opname["status"]).upper() != "ACTIVE":
+                raise HTTPException(409, "stock opname is already archived and cannot be deleted again")
+            cur.execute(
+                """
+                update stock_opnames
+                set status='VOIDED', voided_at=now(), void_reason=%s
+                where id=%s
+                """,
+                (reason.strip() or "Dihapus dari stok aktif melalui Pusat Operasional", stock_opname_id),
+            )
+        conn.commit()
+    return {
+        "deleted": True,
+        "stockOpnameId": stock_opname_id,
+        "location": opname["location_code"],
+        "stockDate": opname["stock_date"],
+        "message": "SO dikeluarkan dari stok aktif. Bukti mentah tetap tersimpan untuk audit.",
+    }
 
 
 class UsageIn(BaseModel):
