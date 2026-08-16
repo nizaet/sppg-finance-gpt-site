@@ -47,3 +47,15 @@ do update set
   effective_to = excluded.effective_to,
   evidence_ref = excluded.evidence_ref,
   notes = excluded.notes;
+
+-- Existing active calculator snapshots may predate the corrected taxonomy and
+-- therefore have no preferred vendor on Tempe rows. Backfill only ACTIVE planning
+-- data; historical PO/receiving/invoice rows are deliberately untouched.
+update planning_snapshot_items psi
+set preferred_vendor_code = 'KOPERASI'
+from planning_snapshots ps
+where ps.id = psi.planning_snapshot_id
+  and ps.status = 'ACTIVE'
+  and upper(ps.site) in ('MAJA','CEMPLANG')
+  and lower(coalesce(psi.item_name,'')) ~ '(^|[^a-z])tempe([^a-z]|$)'
+  and coalesce(upper(psi.preferred_vendor_code),'') <> 'KOPERASI';
