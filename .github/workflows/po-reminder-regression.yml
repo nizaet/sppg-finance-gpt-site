@@ -6,6 +6,7 @@ on:
     branches:
       - llm-wiki-v0
       - fix/po-reminder-coverage-tempe-v2
+      - fix/po-reminder-completed-shortage-20260816
 
 jobs:
   po-reminder-regression:
@@ -33,9 +34,11 @@ jobs:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
       - name: Run strict PO reminder tests
-        run: python -m unittest -v tests.test_po_reminder_v4
+        run: |
+          python -m unittest -v tests.test_po_reminder_v4
+          python -m unittest -v tests.test_po_reminder_completed_shortage
       - name: Compile reminder and planning bridge modules
-        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/migrate.py
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/migrate.py
       - name: Validate migration and dedicated Tempe rules
         run: |
           python -m backend.migrate
