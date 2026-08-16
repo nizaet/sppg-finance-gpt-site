@@ -6,6 +6,11 @@ function poPlannerVariant() {
     name: "sppg-po-planner-ui",
     enforce: "pre",
     transform(code, id) {
+      if (id.includes("/src/operations/apiClient.js")) {
+        const next = code.replace("/v1/po-reminders?", "/v1/po-reminders-v2?");
+        if (next === code) throw new Error("[po-planner] Missing reminder API anchor");
+        return { code: next, map: null };
+      }
       if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
 
       let next = code;
