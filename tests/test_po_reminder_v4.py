@@ -27,9 +27,9 @@ class StrictCoverageRegressionTests(unittest.TestCase):
     def test_same_vendor_sent_po_for_wrong_distribution_does_not_cover_tomorrow(self):
         """Regression: today's same-vendor PO must not attach to tomorrow's need."""
         sent = self._po(1, "SENT", "PO-MAJA-20260818-KOPERASI")
-        exact_qty = {(1, date(2026, 8, 18), "TEMPE", "KG"): 100.0}
+        exact_qty = {(1, date(2026, 8, 18), "TEMPE", "kg"): 100.0}
         result = _coverage_stage(
-            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "KG", 50.0
+            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "kg", 50.0
         )
         self.assertEqual(result["stage"], "OPEN")
         self.assertEqual(result["covered_qty"], 0.0)
@@ -39,9 +39,9 @@ class StrictCoverageRegressionTests(unittest.TestCase):
 
     def test_sent_exact_distribution_item_unit_and_qty_is_done(self):
         sent = self._po(2, "SENT")
-        exact_qty = {(2, date(2026, 8, 20), "TEMPE", "KG"): 50.0}
+        exact_qty = {(2, date(2026, 8, 20), "TEMPE", "kg"): 50.0}
         result = _coverage_stage(
-            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "KG", 50.0
+            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "kg", 50.0
         )
         self.assertEqual(result["stage"], "DONE")
         self.assertEqual(result["remaining_qty"], 0.0)
@@ -49,9 +49,9 @@ class StrictCoverageRegressionTests(unittest.TestCase):
 
     def test_sent_exact_but_insufficient_qty_remains_open_and_has_no_action_po(self):
         sent = self._po(3, "SENT")
-        exact_qty = {(3, date(2026, 8, 20), "TEMPE", "KG"): 20.0}
+        exact_qty = {(3, date(2026, 8, 20), "TEMPE", "kg"): 20.0}
         result = _coverage_stage(
-            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "KG", 50.0
+            [sent], exact_qty, date(2026, 8, 20), "TEMPE", "kg", 50.0
         )
         self.assertEqual(result["stage"], "OPEN")
         self.assertEqual(result["covered_qty"], 20.0)
@@ -62,8 +62,8 @@ class StrictCoverageRegressionTests(unittest.TestCase):
     def test_finalized_exact_coverage_requires_send(self):
         po = self._po(4, "FINALIZED")
         result = _coverage_stage(
-            [po], {(4, date(2026, 8, 20), "TEMPE", "KG"): 50.0},
-            date(2026, 8, 20), "TEMPE", "KG", 50.0,
+            [po], {(4, date(2026, 8, 20), "TEMPE", "kg"): 50.0},
+            date(2026, 8, 20), "TEMPE", "kg", 50.0,
         )
         self.assertEqual(result["stage"], "READY_TO_SEND")
         self.assertEqual(result["action_po"]["id"], 4)
@@ -71,8 +71,8 @@ class StrictCoverageRegressionTests(unittest.TestCase):
     def test_draft_exact_coverage_requires_finalize(self):
         po = self._po(5, "DRAFT")
         result = _coverage_stage(
-            [po], {(5, date(2026, 8, 20), "TEMPE", "KG"): 50.0},
-            date(2026, 8, 20), "TEMPE", "KG", 50.0,
+            [po], {(5, date(2026, 8, 20), "TEMPE", "kg"): 50.0},
+            date(2026, 8, 20), "TEMPE", "kg", 50.0,
         )
         self.assertEqual(result["stage"], "DRAFT_NEEDS_FINAL")
         self.assertEqual(result["action_po"]["id"], 5)
@@ -156,7 +156,7 @@ class ProjectionRegressionTests(unittest.TestCase):
         with patch("backend.po_reminder_v4_api.inventory_balances_v2", return_value=payload):
             lookup, basis = _projection_lookup("MAJA", date(2026, 8, 20))
         self.assertEqual(basis, "TEST")
-        self.assertEqual(lookup[("TEMPE", "KG")], 0.0)
+        self.assertEqual(lookup[("TEMPE", "kg")], 0.0)
 
 
 class CompatibilityRegressionTests(unittest.TestCase):
