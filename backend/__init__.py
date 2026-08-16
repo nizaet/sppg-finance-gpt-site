@@ -10,6 +10,7 @@ from backend.inventory_api import router as inventory_router
 from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
 from backend.inventory_summary_api import router as inventory_summary_router
+from backend.inventory_projection_v2_api import router as inventory_projection_v2_router
 from backend.auth_api import router as auth_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
@@ -34,6 +35,7 @@ operational_router.include_router(chat_router)
 # Read-only projections and owner-side workflow controls.
 operational_router.include_router(control_tower_router)
 operational_router.include_router(inventory_summary_router)
+operational_router.include_router(inventory_projection_v2_router)
 operational_router.include_router(accountant_excel_router)
 operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
