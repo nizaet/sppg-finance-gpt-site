@@ -11,6 +11,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.google_services import GoogleServicesNotConfigured, create_firebase_custom_token
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 ROLES = ("OWNER", "MAJA", "CEMPLANG")
@@ -145,6 +147,35 @@ def me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     return {
         "role": payload["role"],
         "expiresAt": payload["exp"],
+    }
+
+
+@router.get("/firebase-token/cemplang")
+def cemplang_accountant_firebase_token(
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    """Bridge an authenticated OWNER session to Firebase Auth for Cemplang only."""
+    role = session_role(authorization)
+    if role != "OWNER":
+        raise HTTPException(403, "OWNER access required for Cemplang accountant Firebase")
+
+    try:
+        custom_token = create_firebase_custom_token(
+            uid="sppg-owner-cemplang-accountant",
+            claims={
+                "sppg_site": "CEMPLANG",
+                "sppg_role": "OWNER",
+            },
+        )
+    except GoogleServicesNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(503, f"Firebase custom token configuration error: {exc}") from exc
+
+    return {
+        "customToken": custom_token,
+        "site": "CEMPLANG",
+        "role": "OWNER",
     }
 
 
