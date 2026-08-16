@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from backend.operations_action_schema_v017_api import schema_v0172
-from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183
 
 
 def test_v0180_preserves_v0172_and_adds_accountant_and_final_po_actions():
@@ -168,3 +168,15 @@ def test_v0182_gpts_instructions_keep_canonical_accountant_rules_and_fit_limit()
         assert f"`{category}`" in instructions
     assert "SPPG_DRIVE_RAW_CHAT_FOLDER_ID" in instructions
     assert "Jika `SYNCED`, transaksi berhasil" in instructions
+    assert "satu pesan = satu preview dan satu commit/`stockOpnameId`" in instructions
+
+
+def test_v0183_preserves_v0182_and_forbids_split_stock_opname_commits():
+    previous = schema_v0182()
+    unified = schema_v0183()
+    assert unified["info"]["version"] == "0.18.3"
+    assert unified["paths"] == previous["paths"]
+    description = unified["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]["description"]
+    assert "one baseline" in description
+    assert "Never split" in description
+    assert len(description) <= 300

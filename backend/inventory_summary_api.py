@@ -74,7 +74,7 @@ def inventory_balances(
             masters = load_item_matchers(cur, None if location == "KOPERASI" else location)
             cur.execute(
                 """
-                select id,stock_date,warning_count,created_at
+                select id,stock_date,warning_count,source_external_id,created_at
                 from stock_opnames
                 where location_code=%s and stock_date <= %s
                 order by stock_date desc,created_at desc limit 1
@@ -82,20 +82,36 @@ def inventory_balances(
                 (location, target_date),
             )
             latest_so = cur.fetchone()
+            same_date_opnames: list[dict[str, Any]] = []
+            if latest_so:
+                cur.execute(
+                    """
+                    select id,source_external_id,created_at
+                    from stock_opnames
+                    where location_code=%s and stock_date=%s
+                    order by created_at desc,id desc
+                    """,
+                    (location, latest_so["stock_date"]),
+                )
+                same_date_opnames = cur.fetchall()
 
             rows: dict[tuple[str, str], dict[str, Any]] = {}
             if latest_so:
                 cur.execute(
                     """
-                    select area_code,raw_item_name,qty,unit
+                    select area_code,raw_item_name,canonical_item_name,inventory_item_code,qty,unit
                     from stock_opname_items where stock_opname_id=%s order by id
                     """,
                     (latest_so["id"],),
                 )
                 for item in cur.fetchall():
-                    normalized, unit, match = _key(item["raw_item_name"], item["unit"], masters)
+                    # A human-reviewed canonical name is the persisted truth for
+                    # the baseline. Reclassifying only the raw WhatsApp label can
+                    # turn “Mama Lemon” back into fruit or “mi telur” into egg.
+                    baseline_name = item["canonical_item_name"] or item["raw_item_name"]
+                    normalized, unit, match = _key(baseline_name, item["unit"], masters)
                     key = (normalized, unit)
-                    row = rows.setdefault(key, _new_row(item["raw_item_name"], unit, match))
+                    row = rows.setdefault(key, _new_row(baseline_name, unit, match))
                     row["so_qty"] += float(item["qty"] or 0)
                     if item["area_code"] and item["area_code"] not in row["area_codes"]:
                         row["area_codes"].append(item["area_code"])
@@ -216,6 +232,13 @@ def inventory_balances(
         "timezone": timezone_name,
         "latestStockOpnameId": latest_so["id"] if latest_so else None,
         "latestStockOpnameDate": stock_date,
+        "sameDateStockOpnameIds": [row["id"] for row in same_date_opnames],
+        "sameDateStockOpnameCount": len(same_date_opnames),
+        "baselineNeedsConsolidation": bool(
+            latest_so
+            and len(same_date_opnames) > 1
+            and not str(latest_so.get("source_external_id") or "").startswith("consolidated:")
+        ),
         "items": items,
         "count": len(items),
     }

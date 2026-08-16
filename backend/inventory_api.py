@@ -635,6 +635,37 @@ def stock_opnames(location: str = "", limit: int = Query(default=50, ge=1, le=25
     return {"items": rows, "count": len(rows)}
 
 
+@router.get("/inventory/stock-opnames/{stock_opname_id}")
+def stock_opname_detail(stock_opname_id: int) -> dict[str, Any]:
+    """Return immutable SO evidence plus the editable canonical item snapshot."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select id,location_code,site,stock_date,source_type,source_external_id,source_key,
+                       reporter,raw_text,warning_count,created_by,created_at
+                from stock_opnames where id=%s
+                """,
+                (stock_opname_id,),
+            )
+            opname = cur.fetchone()
+            if not opname:
+                raise HTTPException(404, "stock opname not found")
+            cur.execute(
+                """
+                select id,stock_opname_id,area_code,inventory_item_code,canonical_item_name,
+                       raw_item_name,normalized_raw_name,qty,unit,classification_status,
+                       classification_method,classification_confidence,parse_status,raw_line,
+                       warnings,created_at
+                from stock_opname_items where stock_opname_id=%s order by id
+                """,
+                (stock_opname_id,),
+            )
+            items = cur.fetchall()
+    return {"stockOpname": opname, "items": items, "itemCount": len(items)}
+
+
 class UsageIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
     item_name: str = Field(min_length=1)

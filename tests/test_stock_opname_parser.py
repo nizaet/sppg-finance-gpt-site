@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+from backend.inventory_api import router as inventory_router
+
 
 SPEC = importlib.util.spec_from_file_location(
     "stock_opname_parser",
@@ -49,3 +51,8 @@ def test_dimensions_are_item_identity_and_unit_is_a_valid_stock_unit():
         ("plastik item UK 90x120", 1.0, "unit", "READY"),
         ("plastik item UK 90x100", 1.0, "pack", "READY"),
     ]
+
+
+def test_stock_opname_history_exposes_detail_for_safe_correction():
+    paths = {route.path for route in inventory_router.routes}
+    assert "/v1/inventory/stock-opnames/{stock_opname_id}" in paths

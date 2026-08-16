@@ -400,7 +400,7 @@ def _stock_opname_operation() -> dict[str, Any]:
         "post": {
             "operationId": "previewOrRecordSppgStockOpnameFromWhatsApp",
             "summary": "Preview or record a warehouse stock opname report",
-            "description": "Use commit=false first. Preserve raw names and mixed units. Record only after confirmation. Unmapped or ambiguous item types remain reviewable and incompatible units never reduce a PO.",
+            "description": "One WhatsApp SO must remain one baseline: preview once, then commit once with every reviewed_items row. Never split by area or mapping status. Manual canonical names are allowed; preserve raw names and mixed units.",
             "x-openai-isConsequential": True,
             "requestBody": {
                 "required": True,
@@ -469,6 +469,9 @@ def _projected_inventory_operation() -> dict[str, Any]:
         "timezone": {"type": "string"},
         "latestStockOpnameId": {"type": ["integer", "null"]},
         "latestStockOpnameDate": {"type": ["string", "null"], "format": "date"},
+        "sameDateStockOpnameIds": {"type": "array", "items": {"type": "integer"}},
+        "sameDateStockOpnameCount": {"type": "integer"},
+        "baselineNeedsConsolidation": {"type": "boolean"},
         "items": {"type": "array", "items": balance_item},
         "count": {"type": "integer"},
     })
@@ -688,6 +691,16 @@ def schema_v0182() -> dict[str, Any]:
     return payload
 
 
+def schema_v0183() -> dict[str, Any]:
+    payload = deepcopy(schema_v0182())
+    payload["info"] = {
+        "title": "SPPG Operations, Calculator Data, Warehouse, and Accountant Bridge",
+        "version": "0.18.3",
+        "description": "The v0.18.2 workflow plus single-baseline SO enforcement and editable warehouse correction support.",
+    }
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
@@ -701,3 +714,8 @@ def chatgpt_sppg_schema_v0181() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0182.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0182() -> JSONResponse:
     return JSONResponse(schema_v0182())
+
+
+@router.get("/schema/chatgpt-sppg-v0183.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0183() -> JSONResponse:
+    return JSONResponse(schema_v0183())

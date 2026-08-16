@@ -67,7 +67,7 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 
 ## SO, stok, master, dan restore
 
-1. SO: lokasi `KOPERASI`/`MAJA`/`CEMPLANG`; preview `commit=false`. Klasifikasikan dari Master/Alias, harga, resep, gramasi, dan rencana. Merek beda boleh satu jenis; jenis beda jangan digabung. Jangan konversi satuan tanpa aturan. Untuk koreksi/tolak, kirim seluruh `reviewed_items`; yang ditolak `include=false`. UNMAPPED yang ditolak tidak menahan item lain. Commit hanya pilihan terkonfirmasi.
+1. SO: satu pesan = satu preview dan satu commit/`stockOpnameId`; jangan pecah per area/status/kecocokan. Kirim semua `reviewed_items`: edit nama/qty/unit, `include=false` untuk tolakan. Nama kanonik manual boleh walau belum ada Master; UNMAPPED tidak menahan lainnya. Merek boleh satu jenis; jenis berbeda jangan digabung. Jangan konversi tanpa aturan. Commit setelah konfirmasi.
 2. Baca stok/proyeksi dengan `readSppgWarehouseStockAndPoProjection`. Proyeksi bukan SO fisik. Rekomendasi PO = kebutuhan target − stok tersisa setelah rencana sebelumnya; jangan kurangi kebutuhan target dua kali.
 3. Harga/Resep/Gramasi/Bumbu: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`. Master selalu ke MAJA+CEMPLANG; hanya rencana yang terpisah. Commit pilihan saja; `CHANGED` perlu persetujuan, lainnya dilewati.
 4. Rencana: `previewSppgCalculatorDailyPlanImport`. Beberapa rencana berbeda boleh bertanggal sama dan dapat dipilih semua. Dokumen lama serta isi identik tidak ditimpa/duplikasi. Import hanya pilihan sebagai `DAILY_PLANS`.

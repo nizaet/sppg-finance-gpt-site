@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardPaste, Plus, RefreshCw, Save, Search, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, Pencil, Plus, RefreshCw, Save, Search, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const qty = (value) => Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
@@ -15,6 +15,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const [reporter, setReporter] = useState("");
   const [preview, setPreview] = useState(null);
   const [reviewedItems, setReviewedItems] = useState([]);
+  const [sourceExternalId, setSourceExternalId] = useState("");
   const [masters, setMasters] = useState([]);
   const [masterForm, setMasterForm] = useState({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
   const [loading, setLoading] = useState(false);
@@ -38,7 +39,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
     try {
       const [data, opnameData, masterData] = await Promise.all([
         operationsApi.getInventoryBalances({ site: activeSite, search: searchValue, limit: 1000 }),
-        operationsApi.getStockOpnames({ location: activeSite, limit: 12 }),
+        operationsApi.getStockOpnames({ location: activeSite, limit: 50 }),
         operationsApi.getInventoryItems(""),
       ]);
       setItems(data?.items || []);
@@ -65,6 +66,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
     try {
       const data = await operationsApi.previewStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, reporter: reporter || null });
       setPreview(data);
+      setSourceExternalId("");
       setReviewedItems((data?.items || []).map((item, index) => ({
         client_key: String(item.clientKey ?? index),
         include: item.selected !== false,
@@ -98,14 +100,56 @@ export default function OperationsInventory({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const data = await operationsApi.commitStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, reporter: reporter || null, reviewed_items: reviewedItems });
+      const data = await operationsApi.commitStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, source_external_id: sourceExternalId || null, reporter: reporter || null, reviewed_items: reviewedItems });
       setMessage(data.duplicate ? `SO ini sudah pernah disimpan (#${data.stockOpnameId}).` : `SO ${activeSite} tersimpan sebagai baseline #${data.stockOpnameId}: ${data.itemCount} item masuk, ${excluded} item dikeluarkan.`);
       setPreview(null);
       setReviewedItems([]);
       setSoText("");
+      setSourceExternalId("");
       await load("");
     } catch (err) {
       setError(err.message || "Gagal menyimpan laporan SO");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const detailItems = (detail) => (detail?.items || []).map((item) => ({
+    client_key: `${detail.stockOpname.id}:${item.id}`,
+    include: true,
+    area_code: item.area_code || "UNSPECIFIED",
+    raw_item_name: item.raw_item_name || item.canonical_item_name || "",
+    canonical_item_name: item.canonical_item_name || item.raw_item_name || "",
+    inventory_item_code: item.inventory_item_code || "",
+    qty: Number(item.qty || 0),
+    unit: item.unit || "",
+    raw_line: item.raw_line || item.raw_item_name || "",
+    classification_status: item.classification_status || "USER_REVIEWED",
+    classification_method: item.classification_method || "BASELINE_CORRECTION",
+  }));
+
+  const openBaselineCorrection = async (row, mergeSameDate = false) => {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const targets = mergeSameDate ? history.filter((item) => String(item.stock_date) === String(row.stock_date)) : [row];
+      const details = await Promise.all(targets.map((item) => operationsApi.getStockOpname(item.id)));
+      const correctedItems = details.flatMap(detailItems);
+      if (!correctedItems.length) throw new Error("Baseline SO tidak memiliki item.");
+      const ids = details.map((detail) => detail.stockOpname.id);
+      setSoText(details.map((detail) => detail.stockOpname.raw_text || "").filter(Boolean).join("\n\n--- GABUNGAN SO ---\n\n"));
+      setStockDate(String(row.stock_date));
+      setReporter(details.map((detail) => detail.stockOpname.reporter).filter(Boolean)[0] || "");
+      setReviewedItems(correctedItems);
+      setPreview({ canCommit: true, stockDate: String(row.stock_date), items: correctedItems, warnings: [] });
+      setSourceExternalId(mergeSameDate ? `consolidated:${row.stock_date}:${ids.join("-")}` : `correction:${row.id}`);
+      setMessage(mergeSameDate
+        ? `${details.length} baseline tanggal ${row.stock_date} dibuka menjadi satu koreksi. Periksa item, keluarkan duplikat bila ada, lalu simpan satu baseline gabungan.`
+        : `Baseline #${row.id} dibuka sebagai koreksi. Bukti lama tidak dihapus; hasil edit akan menjadi baseline terbaru.`);
+      window.setTimeout(() => document.getElementById("inventory-so-entry")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    } catch (err) {
+      setError(err.message || "Gagal membuka baseline SO");
     } finally {
       setSaving(false);
     }
@@ -155,12 +199,23 @@ export default function OperationsInventory({ fixedSite = "" }) {
     }
   };
 
+  const editMaster = (master) => {
+    setMasterForm({
+      code: master.code || "",
+      canonical_name: master.canonical_name || "",
+      category_code: master.category_code || "",
+      base_unit: master.base_unit || "",
+      aliases: (master.aliases || []).join(", "),
+    });
+    setMessage(`Master ${master.canonical_name} dibuka untuk diedit.`);
+  };
+
   const negativeCount = useMemo(() => items.filter((x) => Number(x.projected_balance ?? x.balance ?? 0) < 0).length, [items]);
   const lowConfidenceCount = useMemo(() => items.filter((x) => x.confidence === "LOW").length, [items]);
 
   return (
     <div className="ops-domain-stack">
-      <section className="ops-module">
+      <section className="ops-module" id="inventory-so-entry">
         <div className="ops-module-header">
           <div>
             <span className="ops-kicker">STOCK OPNAME WHATSAPP → BASELINE GUDANG</span>
@@ -178,7 +233,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
           <label>Pelapor<input value={reporter} onChange={(e) => setReporter(e.target.value)} placeholder="contoh: Bidin" /></label>
           <label>Lokasi<input value={activeSite === "KOPERASI" ? "Gudang Koperasi" : `Gudang Dapur ${activeSite}`} disabled /></label>
         </div>
-        <textarea className="ops-chat-input" rows="9" value={soText} onChange={(e) => { setSoText(e.target.value); setPreview(null); }} placeholder="Paste laporan SO BARANG dari WhatsApp di sini…" />
+        <textarea className="ops-chat-input" rows="9" value={soText} onChange={(e) => { setSoText(e.target.value); setPreview(null); setSourceExternalId(""); }} placeholder="Paste laporan SO BARANG dari WhatsApp di sini…" />
         <div className="ops-chat-actions">
           <button type="button" onClick={previewSo} disabled={saving || !soText.trim()}><ClipboardPaste size={15} /> {saving ? "Membaca…" : "Preview SO"}</button>
           <button type="button" onClick={commitSo} disabled={saving || !preview?.canCommit || !reviewedItems.some((item) => item.include)}><CheckCircle2 size={15} /> Simpan {reviewedItems.filter((item) => item.include).length} Item Terpilih</button>
@@ -221,6 +276,12 @@ export default function OperationsInventory({ fixedSite = "" }) {
           <label>Aksi<div className="ops-row-actions"><button type="button" onClick={saveMaster} disabled={saving || !masterForm.canonical_name.trim()}><Save size={14} /> Simpan Master</button></div></label>
         </div>
         <div className="ops-summary-strip"><span>Master aktif <strong>{masters.length}</strong></span></div>
+        <div className="ops-table-wrap">
+          <table className="ops-table">
+            <thead><tr><th>Kode</th><th>Nama Master</th><th>Kategori</th><th>Satuan</th><th>Alias</th><th>Aksi</th></tr></thead>
+            <tbody>{masters.map((master) => <tr key={master.code}><td>{master.code}</td><td><strong>{master.canonical_name}</strong></td><td>{master.category_code || "-"}</td><td>{master.base_unit || "-"}</td><td>{(master.aliases || []).join(" · ") || "-"}</td><td><button type="button" onClick={() => editMaster(master)}><Pencil size={14} /> Edit Master</button></td></tr>)}</tbody>
+          </table>
+        </div>
       </section>
 
       <section className="ops-module">
@@ -239,6 +300,13 @@ export default function OperationsInventory({ fixedSite = "" }) {
         <div className="ops-summary-strip">
           <span>Item <strong>{items.length}</strong></span><span>SO terakhir <strong>{balanceMeta?.latestStockOpnameDate || "belum ada"}</strong></span><span>Proyeksi s.d. <strong>{balanceMeta?.projectionThrough || "-"}</strong></span><span>Saldo negatif <strong>{negativeCount}</strong></span><span>Keyakinan rendah <strong>{lowConfidenceCount}</strong></span>
         </div>
+        {balanceMeta?.baselineNeedsConsolidation && <div className="ops-error">
+          Terdeteksi {balanceMeta.sameDateStockOpnameCount} baseline terpisah pada {balanceMeta.latestStockOpnameDate}. Saldo saat ini hanya memakai baseline paling baru sehingga item terlihat sedikit.
+          <div className="ops-row-actions"><button type="button" onClick={() => {
+            const row = history.find((item) => String(item.stock_date) === String(balanceMeta.latestStockOpnameDate));
+            if (row) openBaselineCorrection(row, true);
+          }} disabled={saving}><Plus size={14} /> Gabungkan dan Koreksi Semua SO Tanggal Ini</button></div>
+        </div>}
         <div className="ops-table-wrap">
           <table className="ops-table">
             <thead><tr><th>Barang</th><th>SO</th><th>Movement</th><th>Pemakaian Aktual</th><th>Pemakaian Rencana</th><th>Aktual Terhitung</th><th>Proyeksi</th><th>Unit</th><th>Dasar</th></tr></thead>
@@ -252,7 +320,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
 
       <section className="ops-module">
         <div className="ops-module-header"><div><span className="ops-kicker">HISTORI BASELINE</span><h3>SO Terakhir</h3><p>Setiap SO disimpan sebagai bukti baru; laporan lama tidak ditimpa.</p></div></div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Tanggal</th><th>Lokasi</th><th>Pelapor</th><th>Komponen</th><th>Peringatan</th><th>Disimpan</th></tr></thead><tbody>{history.map((row) => <tr key={row.id}><td><strong>{row.stock_date}</strong></td><td>{row.location_code}</td><td>{row.reporter || "-"}</td><td>{row.item_count}</td><td>{row.warning_count}</td><td>{row.created_at}</td></tr>)}{!loading && history.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Belum ada SO tersimpan.</td></tr>}</tbody></table></div>
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>ID</th><th>Tanggal</th><th>Lokasi</th><th>Pelapor</th><th>Komponen</th><th>Peringatan</th><th>Disimpan</th><th>Aksi</th></tr></thead><tbody>{history.map((row) => <tr key={row.id}><td>#{row.id}</td><td><strong>{row.stock_date}</strong></td><td>{row.location_code}</td><td>{row.reporter || "-"}</td><td>{row.item_count}</td><td>{row.warning_count}</td><td>{row.created_at}</td><td><div className="ops-row-actions"><button type="button" onClick={() => openBaselineCorrection(row, false)} disabled={saving}><Pencil size={14} /> Buka & Koreksi</button><button type="button" onClick={() => openBaselineCorrection(row, true)} disabled={saving}><Plus size={14} /> Gabungkan Tanggal</button></div></td></tr>)}{!loading && history.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada SO tersimpan.</td></tr>}</tbody></table></div>
       </section>
     </div>
   );
