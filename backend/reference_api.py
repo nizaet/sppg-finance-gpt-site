@@ -160,31 +160,81 @@ def _planned_vendor(item: dict[str, Any], site: str) -> str | None:
     return None
 
 
+def _reminder_rule_for_item(
+    rules: list[dict[str, Any]],
+    *,
+    vendor: str,
+    site: str,
+    category: str | None,
+    cooking_date: date,
+) -> dict[str, Any] | None:
+    candidates = [
+        rule for rule in rules
+        if str(rule["vendor_code"]).upper() == vendor
+        and (rule.get("site_code") is None or str(rule["site_code"]).upper() == site)
+        and (rule.get("category_code") is None or str(rule["category_code"]).lower() == str(category or "").lower())
+        and rule["effective_from"] <= cooking_date
+        and (rule.get("effective_to") is None or rule["effective_to"] >= cooking_date)
+    ]
+    candidates.sort(
+        key=lambda rule: (
+            rule.get("site_code") is not None,
+            rule.get("category_code") is not None,
+        ),
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
 @router.get("/po-reminders")
 def po_reminders(
     site: str = "",
     as_of: date | None = Query(default=None, alias="date"),
-    horizon_days: int = Query(default=14, ge=1, le=31, alias="horizonDays"),
+    horizon_days: int = Query(default=2, ge=1, le=31, alias="horizonDays"),
 ) -> dict[str, Any]:
-    """Show upcoming/due PO work from active planning and versioned lead times."""
+    """Return PO work due today and tomorrow, grouped by vendor + PO date.
+
+    Planning is scanned farther ahead because a vendor can have H-2/H-3 lead
+    time, but the returned action window is intentionally only two PO dates:
+    today (H-0) and tomorrow (H+1). Zero-quantity planning lines never create a
+    reminder. Missing lead-time rules are excluded from these action boxes
+    because they have no defensible PO date.
+    """
     target_date = as_of or date.today()
+    tomorrow = target_date + timedelta(days=1)
     if not database_ready():
-        return {"date": target_date, "items": []}
+        return {
+            "date": target_date,
+            "horizonThrough": tomorrow,
+            "site": site.upper().strip() or None,
+            "dueCount": 0,
+            "tomorrowCount": 0,
+            "missingLeadTimeCount": 0,
+            "items": [],
+        }
+
     normalized_site = site.upper().strip()
     if normalized_site and normalized_site not in {"MAJA", "CEMPLANG"}:
-        return {"date": target_date, "items": []}
-    until = target_date + timedelta(days=horizon_days)
+        return {"date": target_date, "horizonThrough": tomorrow, "items": []}
+
+    # The display window is two PO dates, but planning must be scanned farther
+    # ahead to catch H-2/H-3 orders whose distribution happens later.
+    scan_until = target_date + timedelta(days=max(14, horizon_days + 7))
+
     with connection() as conn:
         with conn.cursor() as cur:
             sql = """
                 select ps.id as snapshot_id,upper(ps.site) as site,ps.distribution_date,
                        coalesce(date(ps.cooking_at),ps.distribution_date-1) as cooking_date,
-                       psi.item_name,psi.category_code,psi.preferred_vendor_code
+                       psi.item_name,psi.category_code,psi.preferred_vendor_code,
+                       coalesce(psi.planned_qty,0) as planned_qty
                 from planning_snapshots ps
                 join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
-                where ps.status='ACTIVE' and ps.distribution_date between %s and %s
+                where ps.status='ACTIVE'
+                  and ps.distribution_date between %s and %s
+                  and coalesce(psi.planned_qty,0) > 0
             """
-            params: list[Any] = [target_date, until]
+            params: list[Any] = [target_date, scan_until]
             if normalized_site:
                 sql += " and upper(ps.site)=%s"
                 params.append(normalized_site)
@@ -196,13 +246,14 @@ def po_reminders(
                    from vendor_rules vr join entities e on e.code=vr.vendor_code
                    where vr.effective_from <= %s
                      and (vr.effective_to is null or vr.effective_to >= %s)""",
-                (until, target_date),
+                (scan_until, target_date),
             )
             rules = cur.fetchall()
 
             po_sql = """
-                select po.id,po.po_code,upper(po.site) as site,upper(po.vendor_code) as vendor_code,
-                       upper(po.status) as status,po.created_at,po.finalized_at,po.sent_at,
+                select po.id,po.po_code,po.revision_no,upper(po.site) as site,
+                       upper(po.vendor_code) as vendor_code,upper(po.status) as status,
+                       po.created_at,po.finalized_at,po.sent_at,
                        coalesce(poc.distribution_date,pc.distribution_date) as distribution_date,
                        coalesce((select array_agg(c.distribution_date order by c.distribution_date)
                                  from purchase_order_coverage c where c.purchase_order_id=po.id),
@@ -212,7 +263,7 @@ def po_reminders(
                 left join purchase_order_coverage poc on poc.purchase_order_id=po.id
                 where coalesce(poc.distribution_date,pc.distribution_date) between %s and %s
             """
-            po_params: list[Any] = [target_date, until]
+            po_params: list[Any] = [target_date, scan_until]
             if normalized_site:
                 po_sql += " and upper(po.site)=%s"
                 po_params.append(normalized_site)
@@ -224,84 +275,144 @@ def po_reminders(
     for po in po_rows:
         if po["status"] in {"CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"}:
             continue
-        # A range PO covers every date stored in purchase_order_coverage.  Map
-        # each one, not just the first row, so a sent multi-day PO cannot show
-        # as "Belum dibuat" on its second or third day.
         for covered_date in po.get("coverage_dates") or [po["distribution_date"]]:
             key = (po["site"], po["vendor_code"], covered_date)
             if key not in existing:
                 existing[key] = po
 
     grouped: dict[tuple[str, str, date], dict[str, Any]] = {}
+    missing_lead_time_count = 0
+
     for row in plan_rows:
         row_site = row["site"]
         vendor = _planned_vendor(row, row_site)
         if not vendor:
             continue
+
         cook = row["cooking_date"]
         category = row.get("category_code")
-        candidates = [
-            rule for rule in rules
-            if str(rule["vendor_code"]).upper() == vendor
-            and (rule.get("site_code") is None or str(rule["site_code"]).upper() == row_site)
-            and (rule.get("category_code") is None or str(rule["category_code"]).lower() == str(category or "").lower())
-            and rule["effective_from"] <= cook
-            and (rule.get("effective_to") is None or rule["effective_to"] >= cook)
-        ]
-        candidates.sort(key=lambda rule: (rule.get("site_code") is not None, rule.get("category_code") is not None), reverse=True)
-        rule = candidates[0] if candidates else None
-        lead = int(rule["lead_time_days_before_cooking"]) if rule and rule.get("lead_time_days_before_cooking") is not None else None
-        key = (row_site, vendor, row["distribution_date"])
-        group = grouped.setdefault(key, {
-            "site": row_site,
-            "vendor_code": vendor,
-            "vendor_name": rule.get("vendor_name") if rule else vendor,
-            "distribution_date": row["distribution_date"],
-            "cooking_date": cook,
-            "lead_time_days_before_cooking": lead,
-            "po_date": cook - timedelta(days=lead) if lead is not None else None,
-            "item_count": 0,
-        })
-        group["item_count"] += 1
-        if lead is not None and (group["lead_time_days_before_cooking"] is None or lead > group["lead_time_days_before_cooking"]):
-            group["lead_time_days_before_cooking"] = lead
-            group["po_date"] = cook - timedelta(days=lead)
+        rule = _reminder_rule_for_item(
+            rules,
+            vendor=vendor,
+            site=row_site,
+            category=category,
+            cooking_date=cook,
+        )
+        lead = (
+            int(rule["lead_time_days_before_cooking"])
+            if rule and rule.get("lead_time_days_before_cooking") is not None
+            else None
+        )
+        if lead is None:
+            missing_lead_time_count += 1
+            continue
 
-    items = []
-    for key, item in grouped.items():
-        po = existing.get(key)
-        po_status = po.get("status") if po else None
-        po_date = item.get("po_date")
-        if po_status in {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}:
+        po_date = cook - timedelta(days=lead)
+        if po_date not in {target_date, tomorrow}:
+            continue
+
+        key = (row_site, vendor, po_date)
+        group = grouped.setdefault(
+            key,
+            {
+                "site": row_site,
+                "vendor_code": vendor,
+                "vendor_name": rule.get("vendor_name") if rule else vendor,
+                "lead_time_days_before_cooking": lead,
+                "po_date": po_date,
+                "distribution_dates": set(),
+                "cooking_dates": set(),
+                "item_count": 0,
+            },
+        )
+        group["distribution_dates"].add(row["distribution_date"])
+        group["cooking_dates"].add(cook)
+        group["item_count"] += 1
+        # If mixed categories for one vendor land on the same PO date, retain
+        # the longest lead time as the visible safety basis.
+        group["lead_time_days_before_cooking"] = max(
+            int(group["lead_time_days_before_cooking"]),
+            lead,
+        )
+
+    done_statuses = {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
+    items: list[dict[str, Any]] = []
+
+    for _, group in grouped.items():
+        distribution_dates = sorted(group.pop("distribution_dates"))
+        cooking_dates = sorted(group.pop("cooking_dates"))
+        linked: list[dict[str, Any]] = []
+        missing_dates: list[date] = []
+
+        for distribution_date in distribution_dates:
+            po = existing.get((group["site"], group["vendor_code"], distribution_date))
+            if po:
+                linked.append(po)
+            else:
+                missing_dates.append(distribution_date)
+
+        unique_pos: dict[int, dict[str, Any]] = {}
+        for po in linked:
+            unique_pos[int(po["id"])] = po
+        po_list = list(unique_pos.values())
+        statuses = {str(po.get("status") or "").upper() for po in po_list}
+
+        action_po = None
+        for wanted in ("FINALIZED", "DRAFT"):
+            action_po = next((po for po in po_list if po.get("status") == wanted), None)
+            if action_po:
+                break
+        if action_po is None and po_list:
+            action_po = po_list[0]
+
+        all_dates_covered = not missing_dates and len(distribution_dates) > 0
+        if all_dates_covered and statuses and statuses.issubset(done_statuses):
             reminder_status = "DONE"
-        elif po_status == "FINALIZED":
+        elif "FINALIZED" in statuses:
             reminder_status = "READY_TO_SEND"
-        elif po_status == "DRAFT":
+        elif "DRAFT" in statuses:
             reminder_status = "DRAFT_NEEDS_FINAL"
-        elif po_date is None:
-            reminder_status = "LEAD_TIME_MISSING"
-        elif po_date < target_date:
-            reminder_status = "OVERDUE"
-        elif po_date == target_date:
+        elif group["po_date"] == target_date:
             reminder_status = "DUE_TODAY"
         else:
             reminder_status = "UPCOMING"
-        items.append({
-            **item,
-            "purchase_order_id": po.get("id") if po else None,
-            "po_code": po.get("po_code") if po else None,
-            "coverage_dates": po.get("coverage_dates") if po else [],
-            "po_created_at": po.get("created_at") if po else None,
-            "po_finalized_at": po.get("finalized_at") if po else None,
-            "po_sent_at": po.get("sent_at") if po else None,
-            "po_status": po_status,
-            "reminder_status": reminder_status,
-        })
-    items.sort(key=lambda item: (item.get("po_date") or date.max, item["vendor_name"], item["distribution_date"]))
+
+        items.append(
+            {
+                **group,
+                "distribution_date": distribution_dates[0] if distribution_dates else None,
+                "distribution_dates": distribution_dates,
+                "coverage_dates": distribution_dates,
+                "cooking_date": cooking_dates[0] if cooking_dates else None,
+                "cooking_dates": cooking_dates,
+                "planned_distribution_count": len(distribution_dates),
+                "covered_distribution_count": len(distribution_dates) - len(missing_dates),
+                "missing_distribution_dates": missing_dates,
+                "existing_po_count": len(po_list),
+                "purchase_order_id": action_po.get("id") if action_po else None,
+                "po_code": action_po.get("po_code") if action_po else None,
+                "po_created_at": action_po.get("created_at") if action_po else None,
+                "po_finalized_at": action_po.get("finalized_at") if action_po else None,
+                "po_sent_at": action_po.get("sent_at") if action_po else None,
+                "po_status": action_po.get("status") if action_po else None,
+                "reminder_status": reminder_status,
+            }
+        )
+
+    items.sort(key=lambda item: (item["po_date"], item["vendor_name"]))
+    actionable = {"DUE_TODAY", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"}
     return {
         "date": target_date,
-        "horizonThrough": until,
+        "horizonThrough": tomorrow,
         "site": normalized_site or None,
-        "dueCount": sum(1 for item in items if item["reminder_status"] in {"DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"}),
+        "dueCount": sum(
+            1 for item in items
+            if item["po_date"] == target_date and item["reminder_status"] in actionable
+        ),
+        "tomorrowCount": sum(
+            1 for item in items
+            if item["po_date"] == tomorrow and item["reminder_status"] in actionable | {"UPCOMING"}
+        ),
+        "missingLeadTimeCount": missing_lead_time_count,
         "items": items,
     }
