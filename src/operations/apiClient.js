@@ -43,7 +43,7 @@ export const operationsApi = {
   getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return request(`/v1/control-tower-v2?${q}`); },
   getPoCalendar: ({ from, to, site }) => { const q = new URLSearchParams({ from, to }); if (site) q.set("site", site); return request(`/v1/po-calendar?${q}`); },
   previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => { const q = new URLSearchParams({ distributionDate }); if (cookingDate) q.set("cookingDate", cookingDate); if (site) q.set("site", site); return request(`/v1/po-schedule/preview?${q}`); },
-  getPoReminders: ({ site = "", date = "", horizonDays = 14 } = {}) => { const q = new URLSearchParams({ horizonDays: String(horizonDays) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v4?${q}`); },
+  getPoReminders: ({ site = "", date = "", horizonDays = 14 } = {}) => { const q = new URLSearchParams({ horizonDays: String(horizonDays) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v3?${q}`); },
   getReferenceSites: () => request("/v1/reference/sites"),
   getReferenceVendors: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/reference/vendors${q.toString() ? `?${q}` : ""}`); },
   updateVendorLeadTime: (payload) => request("/v1/reference/vendor-rules/lead-time", { method: "POST", body: JSON.stringify(payload) }),
