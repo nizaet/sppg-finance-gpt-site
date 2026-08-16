@@ -14,7 +14,14 @@ TARGET = date(2026, 8, 16)
 
 def chicken_reminder(po_date: date, distribution_date: date, name: str, recommended: float, *, covered: float = 0.0):
     remaining = max(0.0, recommended - min(recommended, covered))
-    status = "DONE" if remaining == 0 else ("OVERDUE" if po_date < TARGET else "DUE_TODAY")
+    if remaining == 0:
+        status = "DONE"
+    elif po_date < TARGET:
+        status = "OVERDUE"
+    elif po_date == TARGET:
+        status = "DUE_TODAY"
+    else:
+        status = "UPCOMING"
     return {
         "site": "MAJA",
         "vendor_code": "WIKIAN",
@@ -152,12 +159,10 @@ class WikianBatchReconcileTests(unittest.TestCase):
         pos, direct, coverage = sent_po(400.0)
         result = apply_wikian_batch_fifo(payload, TARGET, pos, direct, coverage)
         by_date = {item["distribution_date"]: item for item in result["items"]}
-        self.assertEqual(by_date[date(2026, 8, 21)]["reminder_status"], "DUE_TODAY" if False else "DUE_TODAY")
-        # The helper above labels non-overdue as DUE_TODAY; what matters here is
-        # that no completed qty was inferred for an order date after Aug 16.
-        detail_21 = by_date[date(2026, 8, 21)]["requirement_details"][0]
-        self.assertEqual(detail_21["remaining_po_qty"], 100.0)
-        self.assertFalse(by_date[date(2026, 8, 21)].get("wikian_batch_reconciled", False))
+        future = by_date[date(2026, 8, 21)]
+        self.assertEqual(future["reminder_status"], "UPCOMING")
+        self.assertEqual(future["requirement_details"][0]["remaining_po_qty"], 100.0)
+        self.assertFalse(future.get("wikian_batch_reconciled", False))
 
 
 if __name__ == "__main__":
