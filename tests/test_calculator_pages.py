@@ -39,6 +39,9 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert '"GRAMASI", "DELETE"' in cemplang
     assert '"BUMBU", "REPLACE"' in maja
     assert "dailyPlans" not in maja.split("window.__syncSharedCalculatorMaster", 1)[1].split("document.addEventListener", 1)[0]
+    assert "sppg_app_theme_v1" in maja
+    assert "Tema Terang" in maja
+    assert 'html[data-app-theme="dark"] body' in cemplang
 
 
 def test_auth_config_defaults_to_internal_calculator_routes(monkeypatch):

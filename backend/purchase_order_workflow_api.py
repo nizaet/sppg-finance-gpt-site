@@ -94,15 +94,24 @@ def format_purchase_order_whatsapp(po: dict[str, Any], vendor_name: str) -> str:
     po_label = str(po.get("po_code") or "-")
     if revision > 1:
         po_label += f" / Rev {revision}"
+    coverage_dates = sorted({value for value in (po.get("coverage_dates") or []) if value})
+    if not coverage_dates and po.get("distribution_date"):
+        coverage_dates = [po["distribution_date"]]
+    if len(coverage_dates) > 1:
+        distribution_label = f"{_format_indonesian_date(coverage_dates[0])} s.d. {_format_indonesian_date(coverage_dates[-1])}"
+        coverage_line = f"🗓 *Cakupan:* {len(coverage_dates)} hari distribusi — dikirim dalam satu PO"
+    else:
+        distribution_label = _format_indonesian_date(coverage_dates[0] if coverage_dates else po.get("distribution_date"))
+        coverage_line = None
     lines = [
         f"🛒 *PO SPPG {str(po.get('site') or '').upper()}*",
         f"👤 *Vendor:* {vendor_name}",
-        f"📅 *Untuk:* {_format_indonesian_date(po.get('distribution_date'))}",
+        f"📅 *Untuk:* {distribution_label}",
         f"🧾 *No. PO:* {po_label}",
-        "",
-        "📦 *DAFTAR PESANAN*",
-        "",
     ]
+    if coverage_line:
+        lines.append(coverage_line)
+    lines.extend(["", "📦 *DAFTAR PESANAN GABUNGAN*" if len(coverage_dates) > 1 else "📦 *DAFTAR PESANAN*", ""])
     included_items = [item for item in (po.get("items") or []) if Decimal(str(item.get("po_qty") or 0)) > 0]
     for index, item in enumerate(included_items, start=1):
         amount = _format_qty(item.get("po_qty"))
@@ -186,6 +195,11 @@ def _load_po(cur, purchase_order_id: int) -> dict[str, Any]:
     po = cur.fetchone()
     if not po:
         raise HTTPException(404, "purchase order not found")
+    cur.execute(
+        "select distribution_date from purchase_order_coverage where purchase_order_id=%s order by distribution_date",
+        (purchase_order_id,),
+    )
+    po["coverage_dates"] = [row["distribution_date"] for row in cur.fetchall()] or [po.get("distribution_date")]
     return po
 
 
@@ -309,6 +323,46 @@ def revise_purchase_order(purchase_order_id: int) -> dict[str, Any]:
                    from purchase_order_items where purchase_order_id=%s""",
                 (new_id, purchase_order_id),
             )
+            cur.execute(
+                """insert into purchase_order_coverage(
+                     purchase_order_id,distribution_date,cooking_date,planning_snapshot_id)
+                   select %s,distribution_date,cooking_date,planning_snapshot_id
+                   from purchase_order_coverage where purchase_order_id=%s""",
+                (new_id, purchase_order_id),
+            )
+            cur.execute(
+                """insert into purchase_order_coverage_items(
+                     purchase_order_coverage_id,planning_snapshot_item_id,item_code,item_name,planned_qty,po_qty,unit)
+                   select new_cov.id,old_item.planning_snapshot_item_id,old_item.item_code,old_item.item_name,
+                          old_item.planned_qty,old_item.po_qty,old_item.unit
+                   from purchase_order_coverage old_cov
+                   join purchase_order_coverage new_cov
+                     on new_cov.purchase_order_id=%s and new_cov.distribution_date=old_cov.distribution_date
+                   join purchase_order_coverage_items old_item
+                     on old_item.purchase_order_coverage_id=old_cov.id
+                   where old_cov.purchase_order_id=%s""",
+                (new_id, purchase_order_id),
+            )
+            cur.execute("select exists(select 1 from purchase_order_coverage where purchase_order_id=%s) as covered", (new_id,))
+            if not cur.fetchone()["covered"]:
+                cur.execute(
+                    """insert into purchase_order_coverage(
+                         purchase_order_id,distribution_date,cooking_date,planning_snapshot_id)
+                       values (%s,%s,%s,%s) returning id""",
+                    (
+                        new_id, po.get("distribution_date"),
+                        po.get("cooking_at").date() if po.get("cooking_at") else None,
+                        po.get("source_planning_snapshot_id"),
+                    ),
+                )
+                fallback_coverage_id = cur.fetchone()["id"]
+                cur.execute(
+                    """insert into purchase_order_coverage_items(
+                         purchase_order_coverage_id,planning_snapshot_item_id,item_code,item_name,planned_qty,po_qty,unit)
+                       select %s,planning_snapshot_item_id,item_code,item_name,planned_qty,po_qty,unit
+                       from purchase_order_items where purchase_order_id=%s""",
+                    (fallback_coverage_id, new_id),
+                )
         conn.commit()
     return {
         "purchaseOrderId": new_id,
@@ -425,11 +479,14 @@ def purchase_order_whatsapp_preview(
                        join production_cycles pc on pc.id=po.production_cycle_id
                        where upper(po.site)=upper(%s)
                          and upper(po.vendor_code)=upper(%s)
-                         and pc.distribution_date=%s
+                         and (pc.distribution_date=%s or exists(
+                           select 1 from purchase_order_coverage poc
+                           where poc.purchase_order_id=po.id and poc.distribution_date=%s
+                         ))
                          and upper(po.status)=any(%s)
                        order by po.revision_no desc,po.created_at desc
                        limit 1""",
-                    (site.strip(), vendor.strip(), distribution_date, sorted(FINAL_PO_STATUSES)),
+                    (site.strip(), vendor.strip(), distribution_date, distribution_date, sorted(FINAL_PO_STATUSES)),
                 )
                 po = cur.fetchone()
                 if not po:
@@ -462,6 +519,8 @@ def purchase_order_whatsapp_preview(
         "vendorCode": po["vendor_code"],
         "vendorName": entity.get("name") or po["vendor_code"],
         "distributionDate": po.get("distribution_date"),
+        "coverageDates": po.get("coverage_dates") or [po.get("distribution_date")],
+        "coverageDayCount": len(po.get("coverage_dates") or [po.get("distribution_date")]),
         "status": status,
         "sentAt": po.get("sent_at"),
         "whatsappPhone": phone,

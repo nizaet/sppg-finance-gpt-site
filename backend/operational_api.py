@@ -194,6 +194,13 @@ class PurchaseOrderItemIn(BaseModel):
     notes: str | None = None
 
 
+class PurchaseOrderCoverageIn(BaseModel):
+    distribution_date: date
+    cooking_date: date | None = None
+    source_planning_snapshot_id: int | None = None
+    items: list[PurchaseOrderItemIn] = Field(min_length=1)
+
+
 class PurchaseOrderCreateIn(BaseModel):
     po_code: str = Field(min_length=1)
     site: Literal["MAJA", "CEMPLANG"]
@@ -203,6 +210,7 @@ class PurchaseOrderCreateIn(BaseModel):
     source_planning_snapshot_id: int | None = None
     status: Literal["DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED"] = "DRAFT"
     items: list[PurchaseOrderItemIn] = Field(min_length=1)
+    coverage: list[PurchaseOrderCoverageIn] = Field(default_factory=list)
 
 
 @router.post("/purchase-orders")
@@ -210,6 +218,11 @@ def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
     require_db()
     site = normalize_site(payload.site)
     vendor = payload.vendor_code.upper().strip()
+    coverage_dates = [row.distribution_date for row in payload.coverage] or [payload.distribution_date]
+    if len(set(coverage_dates)) != len(coverage_dates):
+        raise HTTPException(400, "tanggal cakupan PO tidak boleh duplikat")
+    if min(coverage_dates) != payload.distribution_date:
+        raise HTTPException(400, "distribution_date PO harus tanggal pertama dalam cakupan")
     cycle_code = f"{site}-{payload.distribution_date.strftime('%Y%m%d')}"
     with connection() as conn:
         with conn.cursor() as cur:
@@ -241,8 +254,37 @@ def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
                      item.planned_qty, item.po_qty, canonical_unit(item.unit), item.planning_price,
                      item.po_price, json.dumps(item.aliases, ensure_ascii=False), item.notes),
                 )
+            coverage_rows = payload.coverage or [PurchaseOrderCoverageIn(
+                distribution_date=payload.distribution_date,
+                cooking_date=payload.cooking_at.date() if payload.cooking_at else None,
+                source_planning_snapshot_id=payload.source_planning_snapshot_id,
+                items=payload.items,
+            )]
+            for coverage in coverage_rows:
+                cur.execute(
+                    """insert into purchase_order_coverage(
+                         purchase_order_id,distribution_date,cooking_date,planning_snapshot_id
+                       ) values (%s,%s,%s,%s) returning id""",
+                    (po_id, coverage.distribution_date, coverage.cooking_date, coverage.source_planning_snapshot_id),
+                )
+                coverage_id = cur.fetchone()["id"]
+                for item in coverage.items:
+                    cur.execute(
+                        """insert into purchase_order_coverage_items(
+                             purchase_order_coverage_id,planning_snapshot_item_id,item_code,item_name,
+                             planned_qty,po_qty,unit
+                           ) values (%s,%s,%s,%s,%s,%s,%s)""",
+                        (
+                            coverage_id, item.planning_snapshot_item_id, item.item_code,
+                            item.item_name.strip(), item.planned_qty, item.po_qty, canonical_unit(item.unit),
+                        ),
+                    )
             conn.commit()
-    return {"purchaseOrderId": po_id, "poCode": payload.po_code, "revisionNo": revision, "status": payload.status, "itemCount": len(payload.items)}
+    return {
+        "purchaseOrderId": po_id, "poCode": payload.po_code, "revisionNo": revision,
+        "status": payload.status, "itemCount": len(payload.items),
+        "coverageDates": sorted(coverage_dates), "coverageDayCount": len(coverage_dates),
+    }
 
 
 @router.get("/purchase-orders")
@@ -256,11 +298,16 @@ def list_purchase_orders(
     sql = """
         select po.id, po.po_code, po.revision_no, po.site, po.vendor_code, po.status,
                po.sent_at, po.acknowledged_at, po.finalized_at, po.created_at,
-               pc.distribution_date, count(poi.id) as item_count,
-               coalesce(sum(poi.po_qty * coalesce(poi.po_price,0)),0) as po_total
+               pc.distribution_date,
+               coalesce((select array_agg(poc.distribution_date order by poc.distribution_date)
+                         from purchase_order_coverage poc where poc.purchase_order_id=po.id),
+                        array[pc.distribution_date]) as coverage_dates,
+               coalesce((select count(*) from purchase_order_coverage poc where poc.purchase_order_id=po.id),1) as coverage_day_count,
+               (select count(*) from purchase_order_items poi where poi.purchase_order_id=po.id) as item_count,
+               coalesce((select sum(poi.po_qty * coalesce(poi.po_price,0))
+                         from purchase_order_items poi where poi.purchase_order_id=po.id),0) as po_total
         from purchase_orders po
         left join production_cycles pc on pc.id=po.production_cycle_id
-        left join purchase_order_items poi on poi.purchase_order_id=po.id
         where true
     """
     params: list[Any] = []
@@ -273,7 +320,7 @@ def list_purchase_orders(
     if status:
         sql += " and upper(po.status)=upper(%s)"
         params.append(status)
-    sql += " group by po.id,pc.id order by pc.distribution_date desc nulls last, po.created_at desc limit %s"
+    sql += " order by pc.distribution_date desc nulls last, po.created_at desc limit %s"
     params.append(limit)
     with connection() as conn:
         with conn.cursor() as cur:
@@ -297,6 +344,30 @@ def get_purchase_order(purchase_order_id: int) -> dict[str, Any]:
                 raise HTTPException(404, "purchase order not found")
             cur.execute("select * from purchase_order_items where purchase_order_id=%s order by id", (purchase_order_id,))
             po["items"] = cur.fetchall()
+            cur.execute(
+                """select id,distribution_date,cooking_date,planning_snapshot_id
+                   from purchase_order_coverage where purchase_order_id=%s
+                   order by distribution_date""",
+                (purchase_order_id,),
+            )
+            coverage = cur.fetchall()
+            if not coverage:
+                coverage = [{
+                    "id": None, "distribution_date": po.get("distribution_date"),
+                    "cooking_date": po.get("cooking_at").date() if po.get("cooking_at") else None,
+                    "planning_snapshot_id": po.get("source_planning_snapshot_id"), "items": po["items"],
+                }]
+            else:
+                for row in coverage:
+                    cur.execute(
+                        """select id,planning_snapshot_item_id,item_code,item_name,planned_qty,po_qty,unit
+                           from purchase_order_coverage_items
+                           where purchase_order_coverage_id=%s order by id""",
+                        (row["id"],),
+                    )
+                    row["items"] = cur.fetchall()
+            po["coverage"] = coverage
+            po["coverage_dates"] = [row["distribution_date"] for row in coverage]
             return po
 
 

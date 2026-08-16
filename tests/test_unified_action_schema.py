@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from backend.operations_action_schema_v017_api import schema_v0172
-from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184
 
 
 def test_v0180_preserves_v0172_and_adds_accountant_and_final_po_actions():
@@ -180,3 +180,12 @@ def test_v0183_preserves_v0182_and_forbids_split_stock_opname_commits():
     assert "one baseline" in description
     assert "Never split" in description
     assert len(description) <= 300
+
+
+def test_v0184_exposes_multi_day_po_coverage_without_losing_previous_actions():
+    unified = schema_v0184()
+    assert unified["info"]["version"] == "0.18.4"
+    assert "/v1/inventory/stock-opname/whatsapp" in unified["paths"]
+    response = unified["paths"]["/v1/po-whatsapp-preview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response["properties"]["coverageDates"]["type"] == "array"
+    assert response["properties"]["coverageDayCount"]["type"] == "integer"

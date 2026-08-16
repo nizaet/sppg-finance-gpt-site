@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardPaste, Pencil, Plus, RefreshCw, Save, Search, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, Eye, GitMerge, Pencil, Plus, RefreshCw, Save, Search, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const qty = (value) => Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
+const localDateTime = (value) => value ? new Date(value).toLocaleString("id-ID", {
+  timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+}) : "-";
 
 export default function OperationsInventory({ fixedSite = "" }) {
   const [site, setSite] = useState(fixedSite || "MAJA");
@@ -22,6 +25,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [selectedBaselineIds, setSelectedBaselineIds] = useState([]);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) {
@@ -45,6 +49,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
       setItems(data?.items || []);
       setBalanceMeta(data || null);
       setHistory(opnameData?.items || []);
+      setSelectedBaselineIds([]);
       setMasters(masterData?.items || []);
     } catch (err) {
       setError(err.message || "Gagal mengambil saldo gudang");
@@ -101,7 +106,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
     setMessage("");
     try {
       const data = await operationsApi.commitStockOpname({ location: activeSite, text: soText, stock_date: stockDate || null, source_external_id: sourceExternalId || null, reporter: reporter || null, reviewed_items: reviewedItems });
-      setMessage(data.duplicate ? `SO ini sudah pernah disimpan (#${data.stockOpnameId}).` : `SO ${activeSite} tersimpan sebagai baseline #${data.stockOpnameId}: ${data.itemCount} item masuk, ${excluded} item dikeluarkan.`);
+      setMessage(data.duplicate ? `SO ini sudah pernah disimpan (#${data.stockOpnameId}).` : `SO ${activeSite} tersimpan sebagai SO AKTIF baru #${data.stockOpnameId}: ${data.itemCount} item masuk, ${excluded} item dikeluarkan. Versi lama tetap menjadi histori dan tidak dihitung sebagai saldo aktif.`);
       setPreview(null);
       setReviewedItems([]);
       setSoText("");
@@ -128,12 +133,12 @@ export default function OperationsInventory({ fixedSite = "" }) {
     classification_method: item.classification_method || "BASELINE_CORRECTION",
   }));
 
-  const openBaselineCorrection = async (row, mergeSameDate = false) => {
+  const openBaselineCorrection = async (row, mergeSameDate = false, explicitRows = null) => {
     setSaving(true);
     setError("");
     setMessage("");
     try {
-      const targets = mergeSameDate ? history.filter((item) => String(item.stock_date) === String(row.stock_date)) : [row];
+      const targets = explicitRows || (mergeSameDate ? history.filter((item) => String(item.stock_date) === String(row.stock_date)) : [row]);
       const details = await Promise.all(targets.map((item) => operationsApi.getStockOpname(item.id)));
       const correctedItems = details.flatMap(detailItems);
       if (!correctedItems.length) throw new Error("Baseline SO tidak memiliki item.");
@@ -143,8 +148,9 @@ export default function OperationsInventory({ fixedSite = "" }) {
       setReporter(details.map((detail) => detail.stockOpname.reporter).filter(Boolean)[0] || "");
       setReviewedItems(correctedItems);
       setPreview({ canCommit: true, stockDate: String(row.stock_date), items: correctedItems, warnings: [] });
-      setSourceExternalId(mergeSameDate ? `consolidated:${row.stock_date}:${ids.join("-")}` : `correction:${row.id}`);
-      setMessage(mergeSameDate
+      const isMerge = mergeSameDate || targets.length > 1;
+      setSourceExternalId(isMerge ? `consolidated:${row.stock_date}:${ids.join("-")}` : `correction:${row.id}`);
+      setMessage(isMerge
         ? `${details.length} baseline tanggal ${row.stock_date} dibuka menjadi satu koreksi. Periksa item, keluarkan duplikat bila ada, lalu simpan satu baseline gabungan.`
         : `Baseline #${row.id} dibuka sebagai koreksi. Bukti lama tidak dihapus; hasil edit akan menjadi baseline terbaru.`);
       window.setTimeout(() => document.getElementById("inventory-so-entry")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -212,6 +218,48 @@ export default function OperationsInventory({ fixedSite = "" }) {
 
   const negativeCount = useMemo(() => items.filter((x) => Number(x.projected_balance ?? x.balance ?? 0) < 0).length, [items]);
   const lowConfidenceCount = useMemo(() => items.filter((x) => x.confidence === "LOW").length, [items]);
+  const historyRows = useMemo(() => {
+    const byDate = new Map();
+    history.forEach((row) => {
+      const key = String(row.stock_date || "");
+      if (!byDate.has(key)) byDate.set(key, []);
+      byDate.get(key).push(row);
+    });
+    return history.map((row) => {
+      const versions = byDate.get(String(row.stock_date || "")) || [];
+      const index = versions.findIndex((item) => item.id === row.id);
+      const source = String(row.source_external_id || "");
+      return {
+        ...row,
+        version_no: Math.max(1, versions.length - index),
+        version_count: versions.length,
+        is_date_latest: index === 0,
+        is_balance_active: Number(row.id) === Number(balanceMeta?.latestStockOpnameId),
+        result_type: source.startsWith("consolidated:") ? "HASIL GABUNGAN" : source.startsWith("correction:") ? "HASIL KOREKSI" : "INPUT SO",
+      };
+    });
+  }, [history, balanceMeta?.latestStockOpnameId]);
+
+  const toggleBaselineSelection = (row) => {
+    setSelectedBaselineIds((current) => {
+      if (current.includes(row.id)) return current.filter((id) => id !== row.id);
+      const selectedRows = history.filter((item) => current.includes(item.id));
+      if (selectedRows.length && String(selectedRows[0].stock_date) !== String(row.stock_date)) {
+        setMessage(`Pilihan dipindahkan ke tanggal ${row.stock_date}. SO yang digabungkan wajib berasal dari tanggal yang sama.`);
+        return [row.id];
+      }
+      return [...current, row.id];
+    });
+  };
+
+  const mergeSelectedBaselines = () => {
+    const selected = history.filter((row) => selectedBaselineIds.includes(row.id));
+    if (selected.length < 2) {
+      setError("Pilih minimal dua versi SO pada tanggal yang sama untuk digabungkan.");
+      return;
+    }
+    openBaselineCorrection(selected[0], false, selected);
+  };
 
   return (
     <div className="ops-domain-stack">
@@ -319,8 +367,18 @@ export default function OperationsInventory({ fixedSite = "" }) {
       </section>
 
       <section className="ops-module">
-        <div className="ops-module-header"><div><span className="ops-kicker">HISTORI BASELINE</span><h3>SO Terakhir</h3><p>Setiap SO disimpan sebagai bukti baru; laporan lama tidak ditimpa.</p></div></div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>ID</th><th>Tanggal</th><th>Lokasi</th><th>Pelapor</th><th>Komponen</th><th>Peringatan</th><th>Disimpan</th><th>Aksi</th></tr></thead><tbody>{history.map((row) => <tr key={row.id}><td>#{row.id}</td><td><strong>{row.stock_date}</strong></td><td>{row.location_code}</td><td>{row.reporter || "-"}</td><td>{row.item_count}</td><td>{row.warning_count}</td><td>{row.created_at}</td><td><div className="ops-row-actions"><button type="button" onClick={() => openBaselineCorrection(row, false)} disabled={saving}><Pencil size={14} /> Buka & Koreksi</button><button type="button" onClick={() => openBaselineCorrection(row, true)} disabled={saving}><Plus size={14} /> Gabungkan Tanggal</button></div></td></tr>)}{!loading && history.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada SO tersimpan.</td></tr>}</tbody></table></div>
+        <div className="ops-module-header"><div><span className="ops-kicker">VERSI & STATUS SO</span><h3>Histori Stock Opname</h3><p>Saldo hanya memakai satu baris berlabel <strong>AKTIF UNTUK SALDO</strong>. Baris lain adalah bukti/versi lama dan tidak dijumlahkan otomatis.</p></div><div className="ops-row-actions"><button type="button" onClick={mergeSelectedBaselines} disabled={saving || selectedBaselineIds.length < 2}><GitMerge size={14} /> Preview Gabungan ({selectedBaselineIds.length})</button><button type="button" onClick={() => setSelectedBaselineIds([])} disabled={!selectedBaselineIds.length}>Bersihkan Pilihan</button></div></div>
+        <div className="ops-notice"><strong>Cara pakai:</strong> Jika beberapa input pada tanggal yang sama adalah potongan laporan yang harus menjadi satu SO, centang semuanya lalu klik <strong>Preview Gabungan</strong>. Periksa duplikat, kemudian simpan; hasil baru otomatis menjadi SO aktif.</div>
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Pilih</th><th>Status</th><th>Versi</th><th>Tanggal SO</th><th>Isi</th><th>Pelapor</th><th>Disimpan</th><th>Aksi</th></tr></thead><tbody>{historyRows.map((row) => <tr key={row.id} className={row.is_balance_active ? "ops-active-row" : ""}>
+          <td><input type="checkbox" checked={selectedBaselineIds.includes(row.id)} onChange={() => toggleBaselineSelection(row)} aria-label={`Pilih SO ${row.id}`} /></td>
+          <td><div className="ops-status-stack">{row.is_balance_active ? <span className="ops-badge ops-badge-active">AKTIF UNTUK SALDO</span> : row.is_date_latest ? <span className="ops-badge ops-badge-latest">TERBARU TANGGAL INI</span> : <span className="ops-badge">VERSI LAMA</span>}<span className="ops-badge ops-badge-type">{row.result_type}</span></div></td>
+          <td><strong>v{row.version_no}</strong><div className="ops-muted">#{row.id} · dari {row.version_count} versi</div></td>
+          <td><strong>{row.stock_date}</strong><div className="ops-muted">{row.location_code}</div></td>
+          <td><strong>{row.item_count} komponen</strong><div className="ops-muted">{row.warning_count} peringatan</div></td>
+          <td>{row.reporter || "-"}</td>
+          <td>{localDateTime(row.created_at)}<div className="ops-muted">WIB</div></td>
+          <td><div className="ops-row-actions"><button type="button" onClick={() => openBaselineCorrection(row, false)} disabled={saving}>{row.is_balance_active ? <Eye size={14} /> : <Pencil size={14} />} {row.is_balance_active ? "Lihat & Koreksi" : "Buka & Jadikan Aktif"}</button></div></td>
+        </tr>)}{!loading && history.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada SO tersimpan.</td></tr>}</tbody></table></div>
       </section>
     </div>
   );

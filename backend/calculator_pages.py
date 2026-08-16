@@ -81,6 +81,15 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       var __siteAccessRole = {json.dumps(role)};
       window.__legacyUnitId = __legacyUnitId;
       window.__firestoreDatabaseId = {json.dumps(database_id)};
+      var __appThemeKey = 'sppg_app_theme_v1';
+      var __appTheme = localStorage.getItem(__appThemeKey) || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      function applySharedAppTheme(theme) {{
+        __appTheme = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.dataset.appTheme = __appTheme;
+        document.documentElement.style.colorScheme = __appTheme;
+        localStorage.setItem(__appThemeKey, __appTheme);
+      }}
+      applySharedAppTheme(__appTheme);
       window.__railwayFirebaseTokenPromise = (async function () {{
         var sessionToken = sessionStorage.getItem('sppg_session_token_v1') || localStorage.getItem('sppg_session_token_v1') || '';
         if (!sessionToken) throw new Error('Sesi Railway tidak ditemukan. Silakan masuk ulang.');
@@ -147,6 +156,20 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
           }});
           applyPanelState();
         }}
+        var themeButton = document.createElement('button');
+        themeButton.type = 'button';
+        themeButton.className = 'railway-app-control';
+        function renderThemeButton() {{
+          themeButton.innerHTML = __appTheme === 'dark'
+            ? '<i class="fas fa-sun"></i><span>Tema Terang</span>'
+            : '<i class="fas fa-moon"></i><span>Tema Gelap</span>';
+        }}
+        themeButton.addEventListener('click', function () {{
+          applySharedAppTheme(__appTheme === 'dark' ? 'light' : 'dark');
+          renderThemeButton();
+        }});
+        renderThemeButton();
+        controls.appendChild(themeButton);
         {owner_control}
         var logoutButton = document.createElement('button');
         logoutButton.type = 'button';
@@ -174,6 +197,25 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       .railway-app-control {{ min-height: 2.4rem; border: 1px solid rgba(255,255,255,.45); border-radius: .5rem; padding: .5rem .75rem; color: white; background: rgba(255,255,255,.12); display: inline-flex; align-items: center; justify-content: center; gap: .45rem; font-family: inherit; font-size: .875rem; line-height: 1.25rem; font-weight: 600; white-space: nowrap; cursor: pointer; }}
       .railway-app-control:hover {{ background: rgba(255,255,255,.22); }}
       .railway-app-control.railway-logout {{ border-color: #fca5a5; background: #dc2626; }}
+      html[data-app-theme="dark"] body {{ background: #08111f !important; color: #e5edf7 !important; }}
+      html[data-app-theme="dark"] .bg-white,
+      html[data-app-theme="dark"] .bg-gray-50,
+      html[data-app-theme="dark"] .bg-gray-100 {{ background-color: #0f1b2d !important; }}
+      html[data-app-theme="dark"] .desktop-wide-tabs {{ background: #08111f !important; }}
+      html[data-app-theme="dark"] .text-gray-900,
+      html[data-app-theme="dark"] .text-gray-800,
+      html[data-app-theme="dark"] .text-gray-700,
+      html[data-app-theme="dark"] .text-gray-600 {{ color: #dbe7f5 !important; }}
+      html[data-app-theme="dark"] .text-gray-500 {{ color: #9fb0c7 !important; }}
+      html[data-app-theme="dark"] .border-gray-100,
+      html[data-app-theme="dark"] .border-gray-200,
+      html[data-app-theme="dark"] .border-gray-300 {{ border-color: #334155 !important; }}
+      html[data-app-theme="dark"] input,
+      html[data-app-theme="dark"] select,
+      html[data-app-theme="dark"] textarea {{ background: #0b1627 !important; color: #e5edf7 !important; border-color: #475569 !important; }}
+      html[data-app-theme="dark"] table thead,
+      html[data-app-theme="dark"] table th {{ background: #13233a !important; color: #e5edf7 !important; }}
+      html[data-app-theme="dark"] table td {{ border-color: #26364d !important; }}
       @media (max-width: 639px) {{
         #railwayAppControls {{ width: 100%; margin: .65rem 0 0; justify-content: stretch; }}
         .railway-app-control {{ flex: 1 1 auto; min-height: 2.65rem; font-size: .8rem; }}

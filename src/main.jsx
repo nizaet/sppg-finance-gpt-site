@@ -2,6 +2,9 @@ import React, { Suspense, lazy, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import AuthGate from "./auth/AuthGate.jsx";
 import CalculatorGateway from "./auth/CalculatorGateway.jsx";
+import { applyAppTheme } from "./theme.js";
+
+applyAppTheme();
 
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
@@ -15,7 +18,7 @@ const AccountantApp = lazy(() => Promise.all([
 
 function BootFallback({ text = "Memuat SPPG…" }) {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#08111f", color: "#e5edf7", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--app-bg, #08111f)", color: "var(--app-text, #e5edf7)", fontFamily: "Inter, system-ui, sans-serif" }}>
       {text}
     </div>
   );

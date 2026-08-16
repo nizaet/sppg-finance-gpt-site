@@ -7,11 +7,14 @@ import {
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
+  Moon,
   PackageCheck,
   Store,
+  Sun,
   WalletCards,
   Warehouse,
 } from "lucide-react";
+import { useAppTheme } from "../theme.js";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import "./workspace.css";
 
@@ -58,6 +61,7 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const role = String(accessRole || "OWNER").toUpperCase();
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
+  const [theme, setTheme] = useAppTheme();
 
   // Defense in depth: site roles should have been routed to /calculator by main.jsx.
   if (role !== "OWNER") {
@@ -99,6 +103,11 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
             </button>
           ))}
         </nav>
+
+        <button className="ops-theme-toggle" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          {theme === "dark" ? "Gunakan Tema Terang" : "Gunakan Tema Gelap"}
+        </button>
 
         <div className="ops-sidebar-note">
           <strong>Alur:</strong> Kalkulator → planning → kurangi stok gudang → PO editable → invoice vendor → pembayaran → Excel akuntan → maker/approval BGN.

@@ -347,6 +347,8 @@ def _po_whatsapp_operation() -> dict[str, Any]:
                                     "vendorCode": {"type": "string"},
                                     "vendorName": {"type": "string"},
                                     "distributionDate": {"type": "string", "format": "date"},
+                                    "coverageDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                                    "coverageDayCount": {"type": "integer"},
                                     "status": {"type": "string"},
                                     "whatsappPhone": {"type": ["string", "null"]},
                                     "readyToSend": {"type": "boolean"},
@@ -701,6 +703,16 @@ def schema_v0183() -> dict[str, Any]:
     return payload
 
 
+def schema_v0184() -> dict[str, Any]:
+    payload = deepcopy(schema_v0183())
+    payload["info"] = {
+        "title": "SPPG Operations, Calculator Data, Warehouse, and Accountant Bridge",
+        "version": "0.18.4",
+        "description": "The v0.18.3 workflow plus multi-day purchase-order coverage in one canonical vendor message.",
+    }
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
@@ -719,3 +731,8 @@ def chatgpt_sppg_schema_v0182() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0183.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0183() -> JSONResponse:
     return JSONResponse(schema_v0183())
+
+
+@router.get("/schema/chatgpt-sppg-v0184.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0184() -> JSONResponse:
+    return JSONResponse(schema_v0184())

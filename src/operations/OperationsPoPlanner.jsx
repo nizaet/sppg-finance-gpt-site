@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BellRing, CalendarDays, CheckCircle2, ClipboardCopy, Layers3, MessageCircle, Pencil, RefreshCw, RotateCcw, Save, Send, ShoppingCart, Trash2, XCircle } from "lucide-react";
+import { BellRing, CalendarDays, CheckCircle2, ChevronDown, ClipboardCopy, Eye, Layers3, MessageCircle, Pencil, RefreshCw, RotateCcw, Save, Send, ShoppingCart, Trash2, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -193,6 +193,43 @@ function poItemPayload(item) {
   };
 }
 
+function coverageDatesFor(po) {
+  const dates = Array.isArray(po?.coverage_dates) ? po.coverage_dates.filter(Boolean) : [];
+  if (dates.length) return dates.map(String).sort();
+  return po?.distribution_date ? [String(po.distribution_date)] : [];
+}
+
+function coverageLabel(po) {
+  const dates = coverageDatesFor(po);
+  if (!dates.length) return "-";
+  if (dates.length === 1) return dates[0];
+  return `${dates[0]} s.d. ${dates[dates.length - 1]}`;
+}
+
+function aggregateRangePoItems(candidates) {
+  const grouped = new Map();
+  candidates.forEach((row) => {
+    row.selected.forEach((item) => {
+      const key = `${String(item.item_code || normalize(item.item_name))}|${normalizeUnit(item.unit)}`;
+      const current = grouped.get(key);
+      if (!current) {
+        grouped.set(key, {
+          ...poItemPayload(item),
+          planning_snapshot_item_id: null,
+          planned_qty: Number(item.planned_qty || 0),
+          po_qty: Number(item.po_qty || 0),
+          notes: `Cakupan ${row.date}: ${qty(item.po_qty)} ${item.unit || ""}`.trim(),
+        });
+        return;
+      }
+      current.planned_qty = Number((Number(current.planned_qty || 0) + Number(item.planned_qty || 0)).toFixed(4));
+      current.po_qty = Number((Number(current.po_qty || 0) + Number(item.po_qty || 0)).toFixed(4));
+      current.notes = `${current.notes}; ${row.date}: ${qty(item.po_qty)} ${item.unit || ""}`.trim();
+    });
+  });
+  return Array.from(grouped.values());
+}
+
 export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [distributionDate, setDistributionDate] = useState(today());
   const [cookingDate, setCookingDate] = useState(today());
@@ -220,6 +257,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [rangeVendor, setRangeVendor] = useState("WIKIAN");
   const [rangeRows, setRangeRows] = useState([]);
   const [rangeLoading, setRangeLoading] = useState(false);
+  const [viewingPo, setViewingPo] = useState(null);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -432,6 +470,22 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     }
   };
 
+  const viewPoDetail = async (poOrId) => {
+    const poId = typeof poOrId === "object" ? poOrId.id : poOrId;
+    if (!poId) return;
+    setActionId(poId);
+    setError("");
+    try {
+      const detail = await operationsApi.getPurchaseOrder(poId);
+      setViewingPo(detail);
+      window.setTimeout(() => document.getElementById("po-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    } catch (err) {
+      setError(err.message || "Gagal membuka rincian PO");
+    } finally {
+      setActionId(null);
+    }
+  };
+
   const savePoEdit = async () => {
     if (!editingPo) return;
     const lines = editItems.filter((item) => String(item.item_name || "").trim() && Number(item.po_qty || 0) > 0);
@@ -539,30 +593,40 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setError("Tidak ada item rentang yang dipilih untuk dibuatkan PO.");
       return;
     }
-    if (!window.confirm(`Buat ${candidates.length} DRAFT PO ${rangeVendor}, masing-masing terpisah per tanggal distribusi?\n\nPemisahan tanggal diperlukan agar penerimaan dan stok tidak bercampur.`)) return;
+    const firstDate = candidates[0].date;
+    const lastDate = candidates[candidates.length - 1].date;
+    const aggregateItems = aggregateRangePoItems(candidates);
+    if (!window.confirm(
+      `Buat 1 DRAFT PO GABUNGAN ${rangeVendor} untuk ${candidates.length} tanggal distribusi?\n\n` +
+      `${aggregateItems.length} jenis barang akan dijumlahkan dalam satu pesan vendor. Rincian qty per tanggal tetap disimpan untuk pengingat, audit, dan penerimaan.`
+    )) return;
     setRangeLoading(true);
     setError("");
     setMessage("");
     try {
-      const created = [];
-      for (const row of candidates) {
-        const code = `PO-${activeSite}-${row.date.replaceAll("-", "")}-${rangeVendor}`;
-        const result = await operationsApi.createPurchaseOrder({
-          po_code: code,
-          site: activeSite,
-          vendor_code: rangeVendor,
+      const codeDate = firstDate === lastDate
+        ? firstDate.replaceAll("-", "")
+        : `${firstDate.replaceAll("-", "")}-${lastDate.replaceAll("-", "")}`;
+      const result = await operationsApi.createPurchaseOrder({
+        po_code: `PO-${activeSite}-${codeDate}-${rangeVendor}`,
+        site: activeSite,
+        vendor_code: rangeVendor,
+        distribution_date: firstDate,
+        cooking_at: `${shiftDate(firstDate, -1)}T03:00:00+07:00`,
+        source_planning_snapshot_id: candidates[0].snapshot.id,
+        status: "DRAFT",
+        items: aggregateItems,
+        coverage: candidates.map((row) => ({
           distribution_date: row.date,
-          cooking_at: `${shiftDate(row.date, -1)}T03:00:00+07:00`,
+          cooking_date: shiftDate(row.date, -1),
           source_planning_snapshot_id: row.snapshot.id,
-          status: "DRAFT",
           items: row.selected.map(poItemPayload),
-        });
-        created.push(result);
-      }
+        })),
+      });
       await refreshPurchaseOrders();
       const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
       setReminders(reminderData?.items || []);
-      setMessage(`${created.length} DRAFT PO ${rangeVendor} berhasil dibuat untuk ${candidates.map((row) => row.date).join(", ")}.`);
+      setMessage(`1 DRAFT PO gabungan ${result.poCode} berhasil dibuat. Cakupan ${candidates.length} hari: ${candidates.map((row) => row.date).join(", ")}.`);
     } catch (err) {
       setError(err.message || "Gagal membuat PO rentang tanggal");
     } finally {
@@ -604,6 +668,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const reducedByStock = draftItems.filter((x) => Number(x.stock_qty || 0) > 0 && Number(x.recommended_po_qty) < Number(x.planned_qty)).length;
   const manuallyEdited = draftItems.filter((x) => Number(x.po_qty) !== Number(x.recommended_po_qty)).length;
+  const latestPoRevision = useMemo(() => {
+    const revisions = new Map();
+    purchaseOrders.forEach((po) => revisions.set(po.po_code, Math.max(Number(po.revision_no || 1), revisions.get(po.po_code) || 0)));
+    return revisions;
+  }, [purchaseOrders]);
 
   return (
     <div className="ops-domain-stack">
@@ -721,7 +790,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       <section className="ops-module">
         <div className="ops-module-header">
-          <div><span className="ops-kicker">PO AYAM / BERAS / IKAN BEBERAPA HARI</span><h3>Tarik Planning Berdasarkan Rentang Tanggal</h3><p>Pilih vendor dan sampai 7 tanggal distribusi. Qty setiap tanggal tetap dapat diedit; sistem membuat DRAFT terpisah per tanggal agar penerimaan dan stok tidak bercampur.</p></div>
+          <div><span className="ops-kicker">PO AYAM / BERAS / IKAN BEBERAPA HARI</span><h3>Buat Satu PO Gabungan Beberapa Hari</h3><p>Pilih vendor dan sampai 7 tanggal distribusi. Qty tiap tanggal tetap dapat diedit, lalu barang sejenis dijumlahkan menjadi <strong>satu PO dan satu pesan WhatsApp</strong>. Rincian harian tetap tersimpan.</p></div>
           <Layers3 size={32} />
         </div>
         <div className="ops-form-grid">
@@ -731,7 +800,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>
         <div className="ops-chat-actions">
           <button type="button" onClick={loadRange} disabled={rangeLoading}><RefreshCw size={15} /> {rangeLoading ? "Menarik…" : "Tarik Tanggal Terpilih"}</button>
-          <button type="button" onClick={createRangeDrafts} disabled={rangeLoading || !rangeRows.some((row) => row.items.some((item) => !item.excluded && Number(item.po_qty || 0) > 0))}><ShoppingCart size={15} /> Buat Draft PO per Tanggal</button>
+          <button type="button" onClick={createRangeDrafts} disabled={rangeLoading || !rangeRows.some((row) => row.items.some((item) => !item.excluded && Number(item.po_qty || 0) > 0))}><ShoppingCart size={15} /> Buat 1 Draft PO Gabungan</button>
         </div>
         {rangeRows.map((row) => (
           <div className="ops-draft-group" key={row.date}>
@@ -755,7 +824,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>
         <div className="ops-summary-strip"><span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span><span>Cakupan <strong>21 hari</strong></span></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item</th><th>PO</th></tr></thead><tbody>
-          {reminders.map((item, index) => <tr key={`${item.vendor_code}-${item.distribution_date}-${index}`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.po_date || "Lead time belum ada"}</td><td>{item.vendor_name || item.vendor_code}</td><td>{item.cooking_date}</td><td>{item.distribution_date}</td><td>{item.item_count}</td><td>{item.po_status || "Belum dibuat"}</td></tr>)}
+          {reminders.map((item, index) => <tr key={`${item.vendor_code}-${item.distribution_date}-${index}`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.po_date || "Lead time belum ada"}</td><td>{item.vendor_name || item.vendor_code}</td><td>{item.cooking_date}</td><td>{item.distribution_date}</td><td>{item.item_count}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{(item.coverage_dates || []).length > 1 ? ` · mencakup ${item.coverage_dates.length} hari` : ""}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : "Belum dibuat"}</td></tr>)}
           {!loading && reminders.length === 0 && <tr><td colSpan="7" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
         </tbody></table></div>
       </section>
@@ -788,6 +857,29 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         <div className="ops-module-header">
           <div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah.</p></div>
         </div>
+        {viewingPo && <div className="ops-po-detail" id="po-detail-panel">
+          <div className="ops-draft-group-head">
+            <div><strong>{viewingPo.po_code} · Rev {viewingPo.revision_no}</strong><span>{viewingPo.vendor_code} · {viewingPo.status} · {coverageLabel(viewingPo)}</span></div>
+            <button type="button" onClick={() => setViewingPo(null)}><XCircle size={14} /> Tutup Rincian</button>
+          </div>
+          <div className="ops-summary-strip">
+            <span>Status <strong>{viewingPo.status}</strong></span>
+            <span>Cakupan <strong>{coverageDatesFor(viewingPo).length} hari</strong></span>
+            <span>Jenis barang <strong>{(viewingPo.items || []).length}</strong></span>
+            <span>Total <strong>{money((viewingPo.items || []).reduce((sum, item) => sum + Number(item.po_qty || 0) * Number(item.po_price || 0), 0))}</strong></span>
+          </div>
+          <h4>Total yang Dikirim ke Vendor</h4>
+          <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>Qty Gabungan</th><th>Unit</th><th>Harga</th><th>Jumlah</th></tr></thead><tbody>
+            {(viewingPo.items || []).map((item) => <tr key={item.id}><td><strong>{item.item_name}</strong></td><td>{qty(item.po_qty)}</td><td>{item.unit || "-"}</td><td>{item.po_price == null ? "-" : money(item.po_price)}</td><td>{item.po_price == null ? "-" : money(Number(item.po_qty || 0) * Number(item.po_price || 0))}</td></tr>)}
+          </tbody></table></div>
+          <h4>Rincian Asal per Tanggal</h4>
+          <div className="ops-coverage-grid">{(viewingPo.coverage || []).map((day) => <details key={String(day.distribution_date)} open>
+            <summary><CalendarDays size={15} /> Distribusi {String(day.distribution_date)} <span>{(day.items || []).length} item</span><ChevronDown size={14} /></summary>
+            <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>Qty Hari Ini</th><th>Unit</th></tr></thead><tbody>
+              {(day.items || []).map((item, index) => <tr key={`${day.distribution_date}-${item.id || index}`}><td>{item.item_name}</td><td>{qty(item.po_qty)}</td><td>{item.unit || "-"}</td></tr>)}
+            </tbody></table></div>
+          </details>)}</div>
+        </div>}
         {editingPo && <div className="ops-draft-group">
           <div className="ops-draft-group-head"><div><strong>Edit {editingPo.po_code} · Rev {editingPo.revision_no}</strong><span>PO ini tetap DRAFT sampai difinalkan kembali.</span></div><button type="button" onClick={() => { setEditingPo(null); setEditItems([]); }}><XCircle size={14} /> Tutup</button></div>
           <div className="ops-form-grid"><label>Vendor<select value={editVendor} onChange={(e) => setEditVendor(e.target.value)}>{vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}</select></label></div>
@@ -808,16 +900,19 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             <tbody>
               {purchaseOrders.map((po) => {
                 const status = String(po.status || "").toUpperCase();
-                return <tr key={po.id}>
-                  <td>{po.distribution_date || "-"}</td>
+                const isLatestRevision = Number(po.revision_no || 1) === Number(latestPoRevision.get(po.po_code) || 1);
+                const isHistory = ["CANCELLED", "SUPERSEDED"].includes(status);
+                return <tr key={po.id} className={isHistory ? "ops-history-row" : ""}>
+                  <td><strong>{coverageLabel(po)}</strong>{coverageDatesFor(po).length > 1 && <div className="ops-muted">1 PO · {coverageDatesFor(po).length} hari</div>}</td>
                   <td><strong>{po.po_code}</strong><div className="ops-muted">{po.sent_at ? `Sent: ${po.sent_at}` : "Belum ada bukti kirim"}</div></td>
                   <td>{po.vendor_code}</td>
-                  <td>{po.revision_no}</td>
+                  <td><strong>Rev {po.revision_no}</strong><div className="ops-muted">{isLatestRevision ? "revisi terbaru" : "revisi lama"}</div></td>
                   <td>{po.item_count}</td>
                   <td>{money(po.po_total)}</td>
-                  <td>{po.status}</td>
+                  <td><div className="ops-status-stack"><span className={`ops-badge ${isHistory ? "" : status === "DRAFT" ? "ops-badge-latest" : "ops-badge-active"}`}>{isHistory ? "HISTORI" : status === "DRAFT" ? "PERLU FINAL" : "PO AKTIF"}</span><span className="ops-badge ops-badge-type">{po.status}</span></div></td>
                   <td>
                     <div className="ops-row-actions">
+                      <button type="button" onClick={() => viewPoDetail(po)} disabled={actionId === po.id}><Eye size={14} /> Lihat Detail</button>
                       {status === "DRAFT" && <button type="button" onClick={() => beginEditPo(po)} disabled={actionId === po.id}><Pencil size={14} /> Edit</button>}
                       {status === "DRAFT" && <button type="button" onClick={() => deletePo(po)} disabled={actionId === po.id}><Trash2 size={14} /> Hapus</button>}
                       {status === "DRAFT" && <button type="button" onClick={() => finalizePo(po)} disabled={actionId === po.id}><CheckCircle2 size={14} /> Finalkan</button>}

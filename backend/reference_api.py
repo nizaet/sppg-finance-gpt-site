@@ -201,10 +201,15 @@ def po_reminders(
             rules = cur.fetchall()
 
             po_sql = """
-                select po.id,upper(po.site) as site,upper(po.vendor_code) as vendor_code,
-                       upper(po.status) as status,pc.distribution_date
-                from purchase_orders po join production_cycles pc on pc.id=po.production_cycle_id
-                where pc.distribution_date between %s and %s
+                select po.id,po.po_code,upper(po.site) as site,upper(po.vendor_code) as vendor_code,
+                       upper(po.status) as status,coalesce(poc.distribution_date,pc.distribution_date) as distribution_date,
+                       coalesce((select array_agg(c.distribution_date order by c.distribution_date)
+                                 from purchase_order_coverage c where c.purchase_order_id=po.id),
+                                array[pc.distribution_date]) as coverage_dates
+                from purchase_orders po
+                join production_cycles pc on pc.id=po.production_cycle_id
+                left join purchase_order_coverage poc on poc.purchase_order_id=po.id
+                where coalesce(poc.distribution_date,pc.distribution_date) between %s and %s
             """
             po_params: list[Any] = [target_date, until]
             if normalized_site:
@@ -277,6 +282,8 @@ def po_reminders(
         items.append({
             **item,
             "purchase_order_id": po.get("id") if po else None,
+            "po_code": po.get("po_code") if po else None,
+            "coverage_dates": po.get("coverage_dates") if po else [],
             "po_status": po_status,
             "reminder_status": reminder_status,
         })
