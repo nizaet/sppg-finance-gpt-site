@@ -3,9 +3,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import time
 from functools import lru_cache
 from typing import Any
 
+from google.auth import crypt, jwt
 from google.cloud import firestore
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -15,6 +17,10 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/drive",
 ]
+
+FIREBASE_CUSTOM_TOKEN_AUDIENCE = (
+    "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit"
+)
 
 SITE_TARGETS = {
     "MAJA": {
@@ -60,6 +66,33 @@ def google_project_id() -> str:
     if explicit:
         return explicit
     return str(_service_account_info().get("project_id") or "sppg-finance-gpt")
+
+
+def create_firebase_custom_token(uid: str, claims: dict[str, Any]) -> str:
+    """Create a Firebase custom token using the existing Google service account.
+
+    This is intentionally server-only. It bridges the already-authenticated SPPG
+    OWNER session to Firebase Auth so Firestore Security Rules can evaluate
+    request.auth.token without exposing the service-account private key.
+    """
+    uid_value = str(uid or "").strip()
+    if not uid_value or len(uid_value) > 128:
+        raise ValueError("Firebase uid must contain 1-128 characters")
+
+    info = _service_account_info()
+    signer = crypt.RSASigner.from_service_account_info(info)
+    now = int(time.time())
+    payload = {
+        "iss": info["client_email"],
+        "sub": info["client_email"],
+        "aud": FIREBASE_CUSTOM_TOKEN_AUDIENCE,
+        "iat": now,
+        "exp": now + 3600,
+        "uid": uid_value,
+        "claims": dict(claims or {}),
+    }
+    token = jwt.encode(signer, payload)
+    return token.decode("utf-8") if isinstance(token, bytes) else str(token)
 
 
 @lru_cache(maxsize=4)
