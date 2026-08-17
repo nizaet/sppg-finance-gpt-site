@@ -18,7 +18,7 @@ import { useAppTheme } from "../theme.js";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import "./workspace.css";
 
-const OperationsPoPlanner = lazy(() => import("./OperationsPoPlanner.jsx"));
+const OperationsPoPlanner = lazy(() => import("./OperationsPoWorkspace.jsx"));
 const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
 const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
