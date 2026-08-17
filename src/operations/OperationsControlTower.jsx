@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarDays, CheckCircle2, RefreshCw, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, PackageCheck, RefreshCw, WalletCards } from "lucide-react";
 import { operationsApi, hasOperationsBackend } from "./apiClient";
 import { mockControlTower } from "./mockControlTower";
 import "./operations.css";
 
 const metricDefs = [
-  ["poDueToday", "PO Hari Ini", CalendarDays],
-  ["poOverdue", "PO Terlambat", AlertTriangle],
+  ["poDueToday", "PO Harus Dikerjakan Hari Ini", CalendarDays],
+  ["poOverdue", "PO Benar-benar Terlambat", AlertTriangle],
+  ["poShortage", "PO Sudah Dilakukan · Cek Sisa", AlertTriangle],
+  ["receiptsToday", "Barang Datang Hari Ini", PackageCheck],
+  ["receivingIssues", "Penerimaan Ada Selisih", AlertTriangle],
   ["paymentsDue", "Pembayaran Jatuh Tempo", WalletCards],
   ["reviewQueue", "Perlu Review", CheckCircle2],
 ];
 
 const laneLabels = {
-  procurement: "PO Vendor",
+  procurement: "PO Vendor — sama dengan Pengingat PO",
+  receiving: "Penerimaan / Barang Datang — termasuk GPTS",
   payments: "Invoice & Pembayaran Vendor",
   accountant: "Akuntan",
   bgn: "Maker / Approval / BGN",
@@ -67,6 +71,7 @@ function SitePanel({ site, date }) {
         </div>
         <span>{date}</span>
       </div>
+      {site.procurementError && <div className="ops-error" style={{ margin: 12 }}>Pengingat PO gagal direkonsiliasi: {site.procurementError}</div>}
       <div className="ops-metrics">
         {metricDefs.map(([key, label, Icon]) => <Metric key={key} value={site.summary?.[key]} label={label} Icon={Icon} />)}
       </div>
@@ -106,13 +111,20 @@ export default function OperationsControlTower({ date: initialDate }) {
     return [...rows].sort((a, b) => siteCode(a) === "MAJA" ? -1 : siteCode(b) === "MAJA" ? 1 : 0);
   }, [data]);
 
+  const build = data?.buildInfo || {};
+  const commit = String(build.commit || "");
+  const buildLabel = build.branch || commit || build.service
+    ? `${build.branch || "branch ?"} · ${commit ? commit.slice(0, 10) : "commit ?"}${build.service ? ` · ${build.service}` : ""}`
+    : "build Railway belum melaporkan branch/commit";
+
   return (
     <div className="ops-shell">
       <div className="ops-heading">
         <div>
-          <span className="ops-kicker">YAYASAN CONTROL TOWER</span>
+          <span className="ops-kicker">YAYASAN CONTROL TOWER — LIVE DOMAIN STATE</span>
           <h2>MAJA & CEMPLANG — Status Terpisah</h2>
-          <p>Setiap panel di bawah hanya berisi data site yang tertulis pada header. Tidak digabung menjadi satu angka.</p>
+          <p>PO dibaca dari mesin Pengingat PO/lead time yang sama. Penerimaan dibaca dari tabel yang sama dengan GPTS dan halaman Penerimaan. SENT tidak dianggap terlambat hanya karena tanggal distribusinya lewat.</p>
+          <p className="ops-muted"><strong>Build:</strong> {buildLabel}</p>
         </div>
         <div className="ops-toolbar">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+import os
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.db import connection, database_ready
+from backend.po_reminder_v3_api import po_reminders_v3
 
 router = APIRouter(tags=["control-tower"])
 
@@ -14,7 +16,6 @@ SITE_DEFS = [
     {"siteId": "sppg-cemplang2-gpt-site", "siteLabel": "SPPG CEMPLANG 2", "dbSite": "CEMPLANG"},
 ]
 
-DONE_PO = ("RECEIVED", "CANCELLED", "CANCELED", "SUPERSEDED", "CLOSED")
 DONE_PAYABLE = ("PAID", "RECONCILED", "CLOSED", "CANCELLED", "CANCELED")
 
 
@@ -25,11 +26,15 @@ def empty_site(site: dict[str, str]) -> dict[str, Any]:
         "summary": {
             "poDueToday": 0,
             "poOverdue": 0,
+            "poShortage": 0,
+            "receiptsToday": 0,
+            "receivingIssues": 0,
             "paymentsDue": 0,
             "reviewQueue": 0,
         },
         "lanes": {
             "procurement": [],
+            "receiving": [],
             "payments": [],
             "accountant": [],
             "bgn": [],
@@ -53,22 +58,168 @@ def _site_defs(site: str) -> list[dict[str, str]]:
     return [x for x in SITE_DEFS if x["dbSite"] == value]
 
 
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _short_date_list(item: dict[str, Any], plural_key: str, singular_key: str) -> str:
+    values = [str(x) for x in (item.get(plural_key) or []) if x]
+    if values:
+        return ", ".join(values)
+    value = item.get(singular_key)
+    return str(value) if value else "-"
+
+
+def _procurement_view(reminder_payload: dict[str, Any], target_date: date) -> tuple[dict[str, int], list[dict[str, Any]]]:
+    """Translate the authoritative PO-reminder state into Control Tower rows.
+
+    Ordering work and receiving work are intentionally separate. A SENT,
+    ACKNOWLEDGED, PARTIAL_RECEIVED or RECEIVED PO is not an overdue *ordering*
+    task. If planning later reveals a residual shortage, it is shown amber as
+    CEK SISA rather than red as if no PO had ever been sent.
+    """
+    summary = {"poDueToday": 0, "poOverdue": 0, "poShortage": 0}
+    lanes: list[tuple[int, date, dict[str, Any]]] = []
+
+    for index, item in enumerate(reminder_payload.get("items") or []):
+        status = str(item.get("reminder_status") or "").upper()
+        po_date = _as_date(item.get("po_date")) or date.max
+        shortage_after_po = bool(item.get("po_already_done") and item.get("shortage_only"))
+        is_done = status == "DONE" or bool(item.get("reminder_override"))
+
+        if shortage_after_po and not is_done:
+            summary["poShortage"] += 1
+            badge = "CEK SISA"
+            severity = "warning"
+            priority = 1
+        elif is_done:
+            badge = "SELESAI"
+            severity = "success"
+            priority = 6
+        else:
+            overdue = status == "OVERDUE" or (
+                status in {"DRAFT_NEEDS_FINAL", "READY_TO_SEND"} and po_date < target_date
+            )
+            due_today = status == "DUE_TODAY" or (
+                status in {"DRAFT_NEEDS_FINAL", "READY_TO_SEND"} and po_date == target_date
+            )
+            if overdue:
+                summary["poOverdue"] += 1
+                badge = "TERLAMBAT"
+                severity = "warning"
+                priority = 0
+            elif due_today:
+                summary["poDueToday"] += 1
+                badge = "HARI INI"
+                severity = "info"
+                priority = 2
+            elif status == "DRAFT_NEEDS_FINAL":
+                badge = "FINALISASI"
+                severity = "warning"
+                priority = 3
+            elif status == "READY_TO_SEND":
+                badge = "KIRIM PO"
+                severity = "info"
+                priority = 3
+            elif status == "LEAD_TIME_MISSING":
+                badge = "LEAD TIME?"
+                severity = "warning"
+                priority = 4
+            else:
+                badge = "AKAN DATANG"
+                severity = "info"
+                priority = 5
+
+        vendor = item.get("vendor_name") or item.get("vendor_code") or "Vendor"
+        po_code = item.get("po_code")
+        po_status = str(item.get("po_status") or "").upper()
+        missing_names = item.get("missing_item_names") or item.get("item_names") or []
+        item_text = ", ".join(str(x) for x in missing_names[:4] if x)
+        if len(missing_names) > 4:
+            item_text += f" +{len(missing_names) - 4}"
+        distribution_text = _short_date_list(item, "distribution_dates", "distribution_date")
+        cooking_text = _short_date_list(item, "cooking_dates", "cooking_date")
+        po_text = f" · {po_code} ({po_status})" if po_code else ""
+        shortage_text = " · masih ada sisa kebutuhan" if shortage_after_po else ""
+        detail_text = f" · {item_text}" if item_text else ""
+
+        lane = {
+            "id": item.get("purchase_order_id") or item.get("reminder_key") or f"reminder-{index}",
+            "title": f"{vendor}{po_text}",
+            "subtitle": (
+                f"Pesan {item.get('po_date') or '-'} · Masak {cooking_text} · "
+                f"Distribusi {distribution_text}{detail_text}{shortage_text}"
+            ),
+            "status": badge,
+            "severity": severity,
+            "reminderStatus": status,
+            "purchaseOrderId": item.get("purchase_order_id"),
+            "poCode": po_code,
+            "poStatus": po_status or None,
+            "shortageOnly": shortage_after_po,
+            "reminderOverride": bool(item.get("reminder_override")),
+        }
+        lanes.append((priority, po_date, lane))
+
+    lanes.sort(key=lambda row: (row[0], row[1], str(row[2].get("title") or "")))
+    # Keep active/problem rows visible first, but retain a few green completed
+    # rows so the operator can see that the tower is actually synchronized.
+    return summary, [row[2] for row in lanes[:12]]
+
+
+def _build_info() -> dict[str, Any]:
+    return {
+        "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or None,
+        "branch": os.getenv("RAILWAY_GIT_BRANCH") or os.getenv("GIT_BRANCH") or None,
+        "service": os.getenv("RAILWAY_SERVICE_NAME") or None,
+    }
+
+
 @router.get("/control-tower-v2")
 def control_tower_v2(
     target_date: date = Query(alias="date"),
     site: str = "",
 ) -> dict[str, Any]:
-    """Read-only operational control tower built from committed domain state.
+    """Read-only control tower built from the same committed operational state.
 
-    Metrics intentionally use actual PO/payable/accountant/BGN records. Planning
-    estimates are not rewritten or inferred here, and historical-import POs do
-    not become permanent overdue work items. The optional site filter is used by
-    MAJA/CEMPLANG role sessions so the UI does not request the other site's data.
+    PO ordering uses the strict lead-time reminder engine, not distribution date.
+    Receiving is read from the same goods_receipts tables used by GPTS and the
+    Penerimaan page. Finance/accountant/BGN remain separate domain lanes.
     """
     definitions = _site_defs(site)
     sites = [empty_site(x) for x in definitions]
+    build_info = _build_info()
     if not database_ready():
-        return {"date": target_date.isoformat(), "databaseReady": False, "sites": sites}
+        return {
+            "date": target_date.isoformat(),
+            "databaseReady": False,
+            "buildInfo": build_info,
+            "sites": sites,
+        }
+
+    # Resolve procurement before the broad dashboard query so it uses exactly
+    # the same v3 compatibility/override semantics as the PO reminder screen.
+    for definition, out in zip(definitions, sites):
+        try:
+            reminders = po_reminders_v3(site=definition["dbSite"], as_of=target_date, horizon_days=7)
+            procurement_summary, procurement_lane = _procurement_view(reminders, target_date)
+            out["summary"].update(procurement_summary)
+            out["lanes"]["procurement"] = procurement_lane
+            out["poReminderDate"] = reminders.get("date")
+            out["poReminderHorizonThrough"] = reminders.get("horizonThrough")
+        except Exception as exc:
+            # Other lanes must remain available if reminder reconciliation has a
+            # temporary data issue. Expose the type, not sensitive internals.
+            out["procurementError"] = type(exc).__name__
 
     try:
         with connection() as conn:
@@ -84,41 +235,74 @@ def control_tower_v2(
                     )
                     out["summary"]["reviewQueue"] = int(cur.fetchone()["n"] or 0)
 
+                    # Same tables written by /v1/receiving/whatsapp (GPTS) and
+                    # /v1/goods-receipts (manual/domain). This makes receiving
+                    # visible in the Control Tower instead of hiding it elsewhere.
                     cur.execute(
-                        """select
-                               count(*) filter (where pc.distribution_date=%s) as due_today,
-                               count(*) filter (where pc.distribution_date<%s) as overdue
-                           from purchase_orders po
-                           join production_cycles pc on pc.id=po.production_cycle_id
-                           where upper(coalesce(po.site,''))=%s
-                             and coalesce(po.historical_import,false)=false
-                             and upper(coalesce(po.status,'')) <> all(%s)""",
-                        (target_date, target_date, db_site, list(DONE_PO)),
+                        """
+                        select
+                          count(distinct gr.id) as receipts_today,
+                          count(distinct gr.id) filter (
+                            where exists (
+                              select 1 from goods_receipt_items issue
+                              where issue.goods_receipt_id=gr.id
+                                and (coalesce(issue.rejected_qty,0)>0 or coalesce(issue.variance_qty,0)<0)
+                            )
+                          ) as receiving_issues
+                        from goods_receipts gr
+                        join purchase_orders po on po.id=gr.purchase_order_id
+                        where upper(coalesce(po.site,''))=%s
+                          and gr.received_at::date=%s
+                        """,
+                        (db_site, target_date),
                     )
-                    po_counts = cur.fetchone()
-                    out["summary"]["poDueToday"] = int(po_counts["due_today"] or 0)
-                    out["summary"]["poOverdue"] = int(po_counts["overdue"] or 0)
+                    receipt_counts = cur.fetchone() or {}
+                    out["summary"]["receiptsToday"] = int(receipt_counts.get("receipts_today") or 0)
+                    out["summary"]["receivingIssues"] = int(receipt_counts.get("receiving_issues") or 0)
 
                     cur.execute(
-                        """select po.id,po.po_code,po.vendor_code,po.status,pc.distribution_date
-                           from purchase_orders po
-                           join production_cycles pc on pc.id=po.production_cycle_id
-                           where upper(coalesce(po.site,''))=%s
-                             and coalesce(po.historical_import,false)=false
-                             and pc.distribution_date<=%s
-                             and upper(coalesce(po.status,'')) <> all(%s)
-                           order by (pc.distribution_date<%s) desc,pc.distribution_date,po.created_at desc
-                           limit 8""",
-                        (db_site, target_date, list(DONE_PO), target_date),
+                        """
+                        select gr.id,gr.receipt_code,gr.received_at,gr.source_type,
+                               gr.source_external_id,gr.reporter,gr.match_status,gr.match_confidence,
+                               po.id as purchase_order_id,po.po_code,po.vendor_code,po.status as po_status,
+                               count(gri.id) as item_count,
+                               coalesce(sum(gri.received_qty),0) as received_qty_total,
+                               coalesce(sum(gri.accepted_qty),0) as accepted_qty_total,
+                               coalesce(sum(gri.rejected_qty),0) as rejected_qty_total,
+                               count(gri.id) filter (
+                                 where coalesce(gri.rejected_qty,0)>0 or coalesce(gri.variance_qty,0)<0
+                               ) as issue_item_count
+                        from goods_receipts gr
+                        join purchase_orders po on po.id=gr.purchase_order_id
+                        left join goods_receipt_items gri on gri.goods_receipt_id=gr.id
+                        where upper(coalesce(po.site,''))=%s
+                        group by gr.id,po.id
+                        order by gr.received_at desc nulls last,gr.id desc
+                        limit 8
+                        """,
+                        (db_site,),
                     )
                     for row in cur.fetchall():
-                        overdue = row["distribution_date"] < target_date
-                        out["lanes"]["procurement"].append({
+                        issues = int(row["issue_item_count"] or 0)
+                        source = str(row["source_type"] or "MANUAL").upper()
+                        reporter = str(row["reporter"] or "-")
+                        when = row["received_at"].isoformat() if row["received_at"] else "-"
+                        out["lanes"]["receiving"].append({
                             "id": row["id"],
                             "title": f"{row['vendor_code']} · {row['po_code']}",
-                            "subtitle": f"Distribusi {row['distribution_date'].isoformat()} · status {row['status']}",
-                            "status": "TERLAMBAT" if overdue else "HARI INI",
-                            "severity": "warning" if overdue else "info",
+                            "subtitle": (
+                                f"Terima {when} · {row['item_count']} item · "
+                                f"accepted {float(row['accepted_qty_total'] or 0):g} · "
+                                f"source {source} · pelapor {reporter}"
+                            ),
+                            "status": "ADA SELISIH" if issues else "TERCATAT",
+                            "severity": "warning" if issues else "success",
+                            "sourceType": source,
+                            "sourceExternalId": row["source_external_id"],
+                            "purchaseOrderId": row["purchase_order_id"],
+                            "poStatus": row["po_status"],
+                            "matchStatus": row["match_status"],
+                            "matchConfidence": row["match_confidence"],
                         })
 
                     cur.execute(
@@ -206,7 +390,12 @@ def control_tower_v2(
                             "severity": severity,
                         })
 
-        return {"date": target_date.isoformat(), "databaseReady": True, "sites": sites}
+        return {
+            "date": target_date.isoformat(),
+            "databaseReady": True,
+            "buildInfo": build_info,
+            "sites": sites,
+        }
     except HTTPException:
         raise
     except Exception as exc:
