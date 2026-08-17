@@ -5,9 +5,10 @@ from typing import Any
 
 from backend.db import connection, database_ready
 
-# A reminder can still be late/due/upcoming because there is a residual shortage,
-# while the original PO workflow itself is already completed. Keep those two
-# concepts separate so a SENT PO is never presented as "belum dibuat" again.
+# A reminder can still have a residual shortage while the original PO workflow
+# itself is already completed. Those rows must not stay in the ordering queue
+# (OVERDUE / DUE_TODAY), otherwise a SENT PO is presented as work that still
+# needs to be ordered. They are moved to SHORTAGE_REVIEW instead.
 DONE_PO_STATUSES = {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
 SHORTAGE_REMINDER_STATUSES = {"OVERDUE", "DUE_TODAY", "UPCOMING"}
 EPSILON = 0.0001
@@ -144,11 +145,12 @@ def apply_completed_po_shortage_semantics(
     payload: dict[str, Any],
     completed_lookup: dict[tuple[str, str, date], dict[str, Any]],
 ) -> dict[str, Any]:
-    """Expose a completed PO while preserving the residual shortage reminder.
+    """Move residual shortage after a completed PO into a review-only state.
 
-    reminder_status keeps its timing meaning (OVERDUE/DUE_TODAY/UPCOMING). The new
-    po_workflow_status tells the UI that the PO itself is already done and this row
-    is only a shortage/revision warning.
+    ``shortage_reminder_status`` preserves the original timing state for audit,
+    while ``reminder_status=SHORTAGE_REVIEW`` removes the row from the actual
+    ordering backlog. A SENT PO therefore cannot simultaneously be shown as
+    "Terlambat" or "Kirim hari ini" merely because planning later sees a gap.
     """
     items = payload.get("items") or []
     changed = False
@@ -178,6 +180,7 @@ def apply_completed_po_shortage_semantics(
                     "po_already_done": True,
                     "shortage_only": True,
                     "shortage_reminder_status": reminder_status,
+                    "reminder_status": "SHORTAGE_REVIEW",
                     "shortage_item_names": missing_names,
                     "shortage_distribution_dates": sorted({
                         _as_date(value) for value in (item.get("missing_distribution_dates") or dates)
@@ -186,7 +189,8 @@ def apply_completed_po_shortage_semantics(
                     "shortage_qty_total": remaining_qty,
                     "po_coverage_dates": completed_po.get("po_coverage_dates") or [],
                     "reminder_message": (
-                        "PO sudah dilakukan; pengingat ini hanya untuk sisa kebutuhan yang belum tercakup."
+                        "PO sudah dilakukan. Sisa kebutuhan dikeluarkan dari antrean PO dan hanya perlu dicek: "
+                        "biarkan jika pengurangan memang disengaja, atau koreksi stok dapur bila SO belum terisi."
                     ),
                 })
                 shortage_count += 1
