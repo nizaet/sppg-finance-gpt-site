@@ -8,6 +8,7 @@ on:
       - fix/po-reminder-coverage-tempe-v2
       - fix/po-reminder-completed-shortage-20260816
       - fix/po-reminder-wikian-tempe-sync-20260816
+      - feat/po-ux-split-override-colors-20260817
 
 jobs:
   po-reminder-regression:
@@ -39,8 +40,9 @@ jobs:
           python -m unittest -v tests.test_po_reminder_v4
           python -m unittest -v tests.test_po_reminder_completed_shortage
           python -m unittest -v tests.test_po_reminder_operational_reconcile
+          python -m unittest -v tests.test_po_reminder_tools
       - name: Compile reminder and planning bridge modules
-        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/migrate.py
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_tools_api.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
       - name: Validate migration and dedicated Tempe rules
         run: |
           python -m backend.migrate
@@ -61,10 +63,19 @@ jobs:
                       (row['site_code'], row['category_code']): row['lead_time_days_before_cooking']
                       for row in cur.fetchall()
                   }
+                  cur.execute("select to_regclass('public.po_reminder_overrides') as table_name")
+                  override_table = cur.fetchone()['table_name']
           assert rules[('MAJA','TEMPE')] == 4, rules
           assert rules[('MAJA','TAHU')] == 2, rules
           assert rules[('CEMPLANG','TEMPE')] is None, rules
+          assert override_table == 'po_reminder_overrides', override_table
           print('procurement migration rules ok:', rules)
+          print('override table ok:', override_table)
           PY
-      - name: Assert stable frontend endpoint anchor
-        run: grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
+      - name: Validate split same-vendor order support
+        run: python -m unittest -v tests.test_po_split_integration
+      - name: Assert stable frontend endpoints
+        run: |
+          grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
+          grep -q '/v1/po-reminders/override' src/operations/apiClient.js
+          grep -q '/v1/purchase-orders/split' src/operations/apiClient.js
