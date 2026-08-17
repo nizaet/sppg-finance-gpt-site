@@ -123,7 +123,7 @@ replace_between(
     path,
     "  const load = async () => {\n",
     "  const groupedDrafts = useMemo(() => {\n",
-    new_load_block + "  const groupedDrafts = useMemo(() => {\n",
+    new_load_block,
 )
 
 replace_once(
