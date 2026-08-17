@@ -117,7 +117,7 @@ export const operationsApi = {
   createAccountantInvoice: (payload) => request("/v1/accountant-invoices", { method: "POST", body: JSON.stringify(payload) }),
   getBgnFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/bgn-flow${q.toString() ? `?${q}` : ""}`); },
   createBgnMaker: (payload) => request("/v1/bgn-makers", { method: "POST", body: JSON.stringify(payload) }),
-  createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: "{}" }),
+  createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: JSON.stringify(payload) }),
   createBgnReceipt: (payload) => request("/v1/bgn-receipts", { method: "POST", body: JSON.stringify(payload) }),
   createSettlement: (payload) => request("/v1/settlements", { method: "POST", body: JSON.stringify(payload) }),
   getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
