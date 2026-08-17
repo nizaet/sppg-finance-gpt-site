@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import {
   Calculator,
   CalendarDays,
@@ -62,6 +62,20 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
   const [theme, setTheme] = useAppTheme();
+
+  useEffect(() => {
+    document.title = "Pusat Operasional | SPPG";
+    ["icon", "shortcut icon"].forEach((rel) => {
+      let link = document.querySelector(`link[rel='${rel}']`);
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = rel;
+        document.head.appendChild(link);
+      }
+      link.href = "/favicon-operations.svg?v=27";
+      link.type = "image/svg+xml";
+    });
+  }, []);
 
   // Defense in depth: site roles should have been routed to /calculator by main.jsx.
   if (role !== "OWNER") {
