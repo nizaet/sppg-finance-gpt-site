@@ -18,8 +18,8 @@ function poReminderActionsVisible() {
 
       replaceOnce(
         `  const [reminders, setReminders] = useState([]);`,
-        `  const [reminders, setReminders] = useState([]);\n  const [deliveryAlerts, setDeliveryAlerts] = useState([]);`,
-        "delivery alert state",
+        `  const [reminders, setReminders] = useState([]);\n  const [deliveryAlerts, setDeliveryAlerts] = useState([]);\n  const [poSearch, setPoSearch] = useState("");\n  const [showArchivedPo, setShowArchivedPo] = useState(false);`,
+        "delivery alert and archive state",
       );
 
       replaceOnce(
@@ -31,6 +31,18 @@ function poReminderActionsVisible() {
       next = next.replaceAll(
         `operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 })`,
         `operationsApi.getPurchaseOrders({ site: activeSite, limit: 80, fromDate: shiftDate(today(), -1), toDate: shiftDate(today(), 7) })`,
+      );
+
+      replaceOnce(
+        `  const refreshPurchaseOrders = async () => {\n    const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 80, fromDate: shiftDate(today(), -1), toDate: shiftDate(today(), 7) });\n    setPurchaseOrders(poData?.items || []);\n  };`,
+        `  const refreshPurchaseOrders = async (options = {}) => {\n    const search = options.search ?? poSearch;\n    const includeArchived = options.includeArchived ?? (showArchivedPo || Boolean(String(search || "").trim()));\n    const dateWindow = String(search || "").trim() ? {} : { fromDate: shiftDate(today(), -1), toDate: shiftDate(today(), 7) };\n    const poData = await operationsApi.getPurchaseOrders({\n      site: activeSite,\n      limit: 80,\n      search,\n      includeArchived,\n      ...dateWindow,\n    });\n    setPurchaseOrders(poData?.items || []);\n  };`,
+        "archive-aware PO refresh",
+      );
+
+      replaceOnce(
+        `<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah.</p></div>`,
+        `<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Default hanya PO aktif H-1 s.d. H+7. PO RECEIVED dan H+2 masuk arsip, tapi tetap bisa dicari.</p><div className="ops-form-grid" data-po-archive-search="v16"><label>Cari PO / barang / vendor<input value={poSearch} onChange={(e) => setPoSearch(e.target.value)} placeholder="contoh: Holil, Jeruk, PO-MAJA..." /></label><label>Arsip<div className="ops-row-actions"><input type="checkbox" checked={showArchivedPo} onChange={(e) => setShowArchivedPo(e.target.checked)} /> Tampilkan arsip</div></label><label>Aksi<div className="ops-row-actions"><button type="button" onClick={() => refreshPurchaseOrders({ search: poSearch, includeArchived: showArchivedPo || Boolean(poSearch.trim()) })}><RefreshCw size={14} /> Cari / Refresh</button></div></label></div></div>`,
+        "PO archive search controls",
       );
 
       const returnAnchor = `  return (\n    <div className="ops-domain-stack">`;
