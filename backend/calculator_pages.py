@@ -73,8 +73,13 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         controls.appendChild(operationsButton);
         """
 
+    calculator_favicon = "/favicon-calc-cemplang.svg?v=27" if unit == "cemplang" else "/favicon-calc-maja.svg?v=27"
+    calculator_title = "Kalkulator Cemplang | SPPG" if unit == "cemplang" else "Kalkulator Maja | SPPG"
     boot = f"""
+    <link rel="icon" type="image/svg+xml" href="{calculator_favicon}" />
+    <link rel="shortcut icon" type="image/svg+xml" href="{calculator_favicon}" />
     <script>
+      document.title = {json.dumps(calculator_title)};
       var __legacyUnitId = {json.dumps(unit)};
       var __app_id = {json.dumps(app_id)};
       var __firebase_config = JSON.stringify({firebase_json});

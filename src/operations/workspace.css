@@ -492,3 +492,67 @@ html[data-app-theme="light"] .ops-danger-button { color: #b91c1c !important; bac
   .ops-stock-card { align-items: flex-start; flex-direction: column; }
   .ops-stock-card .ops-summary-strip { justify-content: flex-start; }
 }
+
+
+/* PO visual language v0.27: stock, reminder state, and completed workflows */
+.ops-row-has-stock { background: rgba(16, 185, 129, 0.075); }
+.ops-row-has-stock td:first-child { box-shadow: inset 3px 0 #10b981; }
+.ops-row-covered { background: rgba(34, 197, 94, 0.14); }
+.ops-row-covered td:first-child { box-shadow: inset 4px 0 #22c55e; }
+.ops-stock-positive { color: #86efac; font-size: 13px; }
+.ops-stock-badge { display: inline-flex; margin-top: 4px; border-radius: 999px; padding: 3px 7px; font-size: 9px; font-weight: 850; letter-spacing: .025em; border: 1px solid transparent; }
+.ops-stock-partial { color: #a7f3d0; background: rgba(5, 150, 105, .22); border-color: rgba(52, 211, 153, .35); }
+.ops-stock-covered { color: #bbf7d0; background: rgba(21, 128, 61, .28); border-color: rgba(74, 222, 128, .42); }
+.ops-qty-math { display: grid; gap: 4px; width: 118px; }
+.ops-qty-math .ops-qty-input { width: 118px; }
+.ops-qty-math-buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.ops-qty-math-buttons button { min-width: 0 !important; padding: 3px 0 !important; border-radius: 5px !important; font-size: 12px !important; font-weight: 900; }
+.ops-button-primary { border-color: rgba(96, 165, 250, .52) !important; background: rgba(30, 64, 175, .32) !important; color: #dbeafe !important; }
+.ops-button-success { border-color: rgba(74, 222, 128, .45) !important; background: rgba(21, 128, 61, .25) !important; color: #dcfce7 !important; }
+.ops-reminder-pill { display: inline-flex; border-radius: 999px; padding: 5px 8px; font-size: 10px; font-weight: 850; border: 1px solid transparent; white-space: nowrap; }
+.ops-pill-green { color: #dcfce7; background: rgba(21, 128, 61, .3); border-color: rgba(74, 222, 128, .42); }
+.ops-pill-amber { color: #fef3c7; background: rgba(180, 83, 9, .28); border-color: rgba(251, 191, 36, .45); }
+.ops-pill-red { color: #fee2e2; background: rgba(153, 27, 27, .3); border-color: rgba(248, 113, 113, .48); }
+.ops-pill-blue { color: #dbeafe; background: rgba(30, 64, 175, .28); border-color: rgba(96, 165, 250, .44); }
+.ops-pill-purple { color: #f3e8ff; background: rgba(107, 33, 168, .28); border-color: rgba(192, 132, 252, .42); }
+.ops-reminder-done { background: rgba(21, 128, 61, .12); }
+.ops-reminder-done td:first-child { box-shadow: inset 4px 0 #22c55e; }
+.ops-reminder-shortage { background: rgba(180, 83, 9, .12); }
+.ops-reminder-shortage td:first-child { box-shadow: inset 4px 0 #f59e0b; }
+.ops-reminder-overdue { background: rgba(153, 27, 27, .095); }
+.ops-reminder-overdue td:first-child { box-shadow: inset 4px 0 #ef4444; }
+.ops-reminder-today { background: rgba(180, 83, 9, .08); }
+.ops-reminder-today td:first-child { box-shadow: inset 4px 0 #f59e0b; }
+.ops-reminder-upcoming, .ops-reminder-ready { background: rgba(30, 64, 175, .07); }
+.ops-reminder-upcoming td:first-child, .ops-reminder-ready td:first-child { box-shadow: inset 3px 0 #3b82f6; }
+.ops-reminder-draft { background: rgba(107, 33, 168, .075); }
+.ops-reminder-draft td:first-child { box-shadow: inset 3px 0 #a855f7; }
+.ops-shortage-qty { margin-top: 5px; color: #fbbf24; font-weight: 800; }
+.ops-shortage-qty small { opacity: .65; font-weight: 500; }
+.ops-item-list { max-width: 360px; line-height: 1.35; }
+.ops-summary-green { border-color: rgba(74, 222, 128, .38) !important; background: rgba(21, 128, 61, .16) !important; }
+.ops-po-row-done { background: rgba(21, 128, 61, .1); }
+.ops-po-row-done td:first-child { box-shadow: inset 4px 0 #22c55e; }
+.ops-po-row-draft { background: rgba(180, 83, 9, .07); }
+.ops-po-row-draft td:first-child { box-shadow: inset 3px 0 #f59e0b; }
+.ops-po-row-ready { background: rgba(30, 64, 175, .07); }
+.ops-po-row-ready td:first-child { box-shadow: inset 3px 0 #3b82f6; }
+
+html[data-app-theme="light"] .ops-row-has-stock { background: #f0fdf4; }
+html[data-app-theme="light"] .ops-row-covered { background: #dcfce7; }
+html[data-app-theme="light"] .ops-stock-positive { color: #15803d; }
+html[data-app-theme="light"] .ops-stock-partial { color: #047857; background: #d1fae5; border-color: #a7f3d0; }
+html[data-app-theme="light"] .ops-stock-covered { color: #166534; background: #dcfce7; border-color: #bbf7d0; }
+html[data-app-theme="light"] .ops-button-primary { color: #1e40af !important; background: #dbeafe !important; border-color: #93c5fd !important; }
+html[data-app-theme="light"] .ops-button-success { color: #166534 !important; background: #dcfce7 !important; border-color: #86efac !important; }
+html[data-app-theme="light"] .ops-pill-green { color: #166534; background: #dcfce7; border-color: #86efac; }
+html[data-app-theme="light"] .ops-pill-amber { color: #92400e; background: #fef3c7; border-color: #fcd34d; }
+html[data-app-theme="light"] .ops-pill-red { color: #991b1b; background: #fee2e2; border-color: #fca5a5; }
+html[data-app-theme="light"] .ops-pill-blue { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+html[data-app-theme="light"] .ops-pill-purple { color: #6b21a8; background: #f3e8ff; border-color: #d8b4fe; }
+html[data-app-theme="light"] .ops-reminder-done, html[data-app-theme="light"] .ops-po-row-done { background: #f0fdf4; }
+html[data-app-theme="light"] .ops-reminder-shortage, html[data-app-theme="light"] .ops-reminder-today, html[data-app-theme="light"] .ops-po-row-draft { background: #fffbeb; }
+html[data-app-theme="light"] .ops-reminder-overdue { background: #fff1f2; }
+html[data-app-theme="light"] .ops-reminder-upcoming, html[data-app-theme="light"] .ops-reminder-ready, html[data-app-theme="light"] .ops-po-row-ready { background: #eff6ff; }
+html[data-app-theme="light"] .ops-reminder-draft { background: #faf5ff; }
+html[data-app-theme="light"] .ops-shortage-qty { color: #b45309; }

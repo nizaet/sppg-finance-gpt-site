@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BellRing, CalendarDays, CheckCircle2, ChevronDown, ClipboardCopy, Eye, Layers3, MessageCircle, Pencil, RefreshCw, RotateCcw, Save, Send, ShoppingCart, Trash2, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import PoQtyMath from "./PoQtyMath.jsx";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
@@ -215,6 +216,43 @@ function compactTimestamp(value) {
   return String(value).replace("T", " ").replace(/\.\d+Z$/, " WIB");
 }
 
+function poItemSlug(value) {
+  return normalize(value).toUpperCase().replace(/\s+/g, "-").slice(0, 22) || "ITEM";
+}
+
+function itemSplitPoCode(site, distributionDate, item) {
+  return `PO-${site}-${String(distributionDate || "").replaceAll("-", "")}-${String(item.vendor_code || "").toUpperCase()}-ITEM-${poItemSlug(item.item_name)}`;
+}
+
+function remainingReminderQty(item) {
+  return Number((item.requirement_details || []).reduce((sum, detail) => sum + Math.max(0, Number(detail.remaining_po_qty || 0)), 0).toFixed(4));
+}
+
+function reminderVisual(item) {
+  const status = String(item.reminder_status || "").toUpperCase();
+  if (item.reminder_override || status === "DONE") {
+    return { rowClass: "ops-reminder-done", pillClass: "ops-pill-green", label: item.reminder_override_label || "Selesai / sudah dikirim" };
+  }
+  if (item.po_already_done && item.shortage_only) {
+    return { rowClass: "ops-reminder-shortage", pillClass: "ops-pill-amber", label: "PO sudah dilakukan · cek sisa" };
+  }
+  if (status === "OVERDUE") return { rowClass: "ops-reminder-overdue", pillClass: "ops-pill-red", label: "Terlambat" };
+  if (status === "DUE_TODAY") return { rowClass: "ops-reminder-today", pillClass: "ops-pill-amber", label: "Kirim hari ini" };
+  if (status === "UPCOMING") return { rowClass: "ops-reminder-upcoming", pillClass: "ops-pill-blue", label: "Akan datang" };
+  if (status === "READY_TO_SEND") return { rowClass: "ops-reminder-ready", pillClass: "ops-pill-blue", label: "Siap dikirim" };
+  if (status === "DRAFT_NEEDS_FINAL") return { rowClass: "ops-reminder-draft", pillClass: "ops-pill-purple", label: "Draft perlu difinalkan" };
+  return { rowClass: "", pillClass: "", label: REMINDER_LABELS[status] || status || "-" };
+}
+
+function poRowClass(status, isHistory) {
+  if (isHistory) return "ops-history-row";
+  const normalized = String(status || "").toUpperCase();
+  if (["SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"].includes(normalized)) return "ops-po-row-done";
+  if (normalized === "DRAFT") return "ops-po-row-draft";
+  if (normalized === "FINALIZED") return "ops-po-row-ready";
+  return "";
+}
+
 function aggregateRangePoItems(candidates) {
   const grouped = new Map();
   candidates.forEach((row) => {
@@ -267,6 +305,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [rangeRows, setRangeRows] = useState([]);
   const [rangeLoading, setRangeLoading] = useState(false);
   const [viewingPo, setViewingPo] = useState(null);
+  const [reminderActionKey, setReminderActionKey] = useState("");
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -277,6 +316,16 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   }, [phoneVendor, vendorPhones]);
 
   const activeSite = fixedSite || site;
+
+  const findActiveItemSplitPo = (item, forDate = distributionDate) => {
+    const expected = itemSplitPoCode(activeSite, forDate, item);
+    return purchaseOrders.find((po) => isActivePurchaseOrder(po) && String(po.po_code || "") === expected) || null;
+  };
+
+  const refreshReminders = async () => {
+    const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
+    setReminders(reminderData?.items || []);
+  };
 
   const applyPlanningSnapshot = (snapshot, inventoryItems = [], cooperativeItems = []) => {
     setPlanningSnapshot(snapshot || null);
@@ -355,7 +404,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const createVendorPo = async (vendor) => {
     if (!planningSnapshot?.id || !vendor || vendor === "UNASSIGNED") return;
-    const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0);
+    const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0 && !findActiveItemSplitPo(item, distributionDate));
     if (!lines.length) return;
 
     const code = `PO-${activeSite}-${distributionDate.replaceAll("-", "")}-${vendor}`;
@@ -369,7 +418,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const result = await operationsApi.createPurchaseOrder({
+      const result = await operationsApi.createSplitPurchaseOrder({
         po_code: code,
         site: activeSite,
         vendor_code: vendor,
@@ -403,6 +452,163 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setError(err.message || "Gagal membuat draft PO");
     } finally {
       setCreatingVendor("");
+    }
+  };
+
+  const createSingleItemPo = async (item) => {
+    if (!planningSnapshot?.id || !item?.vendor_code || Number(item.po_qty || 0) <= 0) return;
+    const existingSplit = findActiveItemSplitPo(item, distributionDate);
+    if (existingSplit) {
+      await viewPoDetail(existingSplit);
+      return;
+    }
+    const broadPo = activePoByVendorDate.get(`${item.vendor_code}|${distributionDate}`);
+    if (broadPo && !window.confirm(`${broadPo.po_code} (${broadPo.status}) sudah ada untuk vendor/tanggal ini. Buat PO item terpisah hanya jika ini memang pesanan tambahan atau berbeda lead time. Lanjut?`)) return;
+    if (!window.confirm(`Buat DRAFT PO SENDIRI untuk ${item.item_name}?\n\nQty: ${qty(item.po_qty)} ${item.unit || ""}\nVendor: ${item.vendor_code}\nDistribusi: ${distributionDate}\n\nItem ini tidak akan ikut PO gabungan pada sesi ini.`)) return;
+
+    const code = itemSplitPoCode(activeSite, distributionDate, item);
+    setCreatingVendor(`${item.vendor_code}:${item.planning_snapshot_item_id}`);
+    setError("");
+    setMessage("");
+    try {
+      const line = { ...poItemPayload(item), notes: [item.notes, "PO item terpisah berdasarkan lead time/item"].filter(Boolean).join(" | ") || null };
+      const result = await operationsApi.createSplitPurchaseOrder({
+        po_code: code,
+        site: activeSite,
+        vendor_code: item.vendor_code,
+        distribution_date: distributionDate,
+        cooking_at: cookingDate ? `${cookingDate}T03:00:00+07:00` : null,
+        source_planning_snapshot_id: planningSnapshot.id,
+        status: "DRAFT",
+        items: [line],
+        coverage: [{
+          distribution_date: distributionDate,
+          cooking_date: cookingDate || shiftDate(distributionDate, -1),
+          source_planning_snapshot_id: planningSnapshot.id,
+          items: [line],
+        }],
+      });
+      updateDraftItem(item.planning_snapshot_item_id, { excluded: true, split_po_code: result.poCode });
+      await refreshPurchaseOrders();
+      await refreshReminders();
+      setMessage(`${result.poCode} dibuat khusus ${item.item_name}. Item ini sekarang terpisah dari PO ${item.vendor_code} lainnya.`);
+    } catch (err) {
+      setError(err.message || "Gagal membuat PO item terpisah");
+    } finally {
+      setCreatingVendor("");
+    }
+  };
+
+  const createReminderShortagePo = async (item) => {
+    const details = (item.requirement_details || []).filter((detail) => Number(detail.remaining_po_qty || 0) > 0);
+    if (!details.length) {
+      setError("Tidak ada sisa qty reminder yang dapat ditarik menjadi PO.");
+      return;
+    }
+    const coverageMap = new Map();
+    details.forEach((detail) => {
+      const distribution = String(detail.distribution_date || item.distribution_date || "");
+      if (!distribution) return;
+      const names = (detail.item_names || []).filter(Boolean);
+      const line = {
+        item_code: null,
+        item_name: names[0] || detail.stock_type_code || "Item kekurangan",
+        planning_snapshot_item_id: null,
+        planned_qty: Number(detail.recommended_po_qty || 0),
+        po_qty: Number(detail.remaining_po_qty || 0),
+        unit: detail.unit || null,
+        planning_price: null,
+        po_price: null,
+        aliases: names.slice(1),
+        notes: `PO kekurangan dari reminder ${item.reminder_key || "-"}`,
+      };
+      const row = coverageMap.get(distribution) || {
+        distribution_date: distribution,
+        cooking_date: String((detail.cooking_dates || [])[0] || item.cooking_date || shiftDate(distribution, -1)),
+        source_planning_snapshot_id: null,
+        items: [],
+      };
+      row.items.push(line);
+      coverageMap.set(distribution, row);
+    });
+    const coverage = Array.from(coverageMap.values()).sort((a, b) => a.distribution_date.localeCompare(b.distribution_date));
+    if (!coverage.length) return;
+    const aggregate = new Map();
+    coverage.forEach((row) => row.items.forEach((line) => {
+      const key = `${normalize(line.item_name)}|${normalizeUnit(line.unit)}`;
+      const current = aggregate.get(key);
+      if (!current) aggregate.set(key, { ...line });
+      else current.po_qty = Number((Number(current.po_qty || 0) + Number(line.po_qty || 0)).toFixed(4));
+    }));
+    const suffix = String(item.reminder_key || "REMINDER").slice(-8).toUpperCase();
+    const code = `PO-${activeSite}-${coverage[0].distribution_date.replaceAll("-", "")}-${item.vendor_code}-KURANG-${suffix}`;
+    if (!window.confirm(`Buat DRAFT PO dari sisa kekurangan ${item.vendor_name || item.vendor_code}?\n\n${details.length} kebutuhan, total sisa ${qty(remainingReminderQty(item))} (sesuai unit masing-masing). Hanya qty yang belum tercakup yang ditarik.`)) return;
+    setReminderActionKey(item.reminder_key || code);
+    setError("");
+    setMessage("");
+    try {
+      const result = await operationsApi.createSplitPurchaseOrder({
+        po_code: code,
+        site: activeSite,
+        vendor_code: item.vendor_code,
+        distribution_date: coverage[0].distribution_date,
+        cooking_at: `${coverage[0].cooking_date}T03:00:00+07:00`,
+        source_planning_snapshot_id: null,
+        status: "DRAFT",
+        items: Array.from(aggregate.values()),
+        coverage,
+      });
+      await refreshPurchaseOrders();
+      await refreshReminders();
+      setMessage(`${result.poCode} berhasil dibuat dari sisa kekurangan reminder. Silakan cek/edit lalu finalkan.`);
+    } catch (err) {
+      setError(err.message || "Gagal membuat PO dari kekurangan reminder");
+    } finally {
+      setReminderActionKey("");
+    }
+  };
+
+  const saveReminderOverride = async (item, resolution) => {
+    if (!item.reminder_key) return;
+    const label = resolution === "SUFFICIENT" ? "SUDAH MENCUKUPI" : "PO SUDAH DILAKUKAN MANUAL";
+    if (!window.confirm(`${label}?\n\nReminder ini akan ditutup dan berwarna hijau. Data planning, stok gudang, dan PO yang sudah ada TIDAK diubah.`)) return;
+    const note = window.prompt("Catatan / referensi (opsional):", "") ?? "";
+    setReminderActionKey(item.reminder_key);
+    setError("");
+    setMessage("");
+    try {
+      await operationsApi.overridePoReminder({
+        site: activeSite,
+        reminder_key: item.reminder_key,
+        vendor_code: item.vendor_code,
+        resolution,
+        note: note || null,
+        metadata: {
+          po_date: item.po_date || null,
+          distribution_dates: item.distribution_dates || [],
+          item_names: item.missing_item_names?.length ? item.missing_item_names : item.item_names || [],
+        },
+      });
+      await refreshReminders();
+      setMessage(resolution === "SUFFICIENT" ? "Reminder ditutup: kebutuhan dikonfirmasi sudah mencukupi." : "Reminder ditutup: PO manual dikonfirmasi sudah dilakukan.");
+    } catch (err) {
+      setError(err.message || "Gagal menyimpan override reminder");
+    } finally {
+      setReminderActionKey("");
+    }
+  };
+
+  const clearReminderOverride = async (item) => {
+    if (!item.reminder_key || !window.confirm("Batalkan override ini dan kembalikan reminder ke hasil perhitungan sistem?")) return;
+    setReminderActionKey(item.reminder_key);
+    try {
+      await operationsApi.clearPoReminderOverride(item.reminder_key);
+      await refreshReminders();
+      setMessage("Override dibatalkan. Reminder kembali mengikuti perhitungan sistem.");
+    } catch (err) {
+      setError(err.message || "Gagal membatalkan override");
+    } finally {
+      setReminderActionKey("");
     }
   };
 
@@ -612,7 +818,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const createRangeDrafts = async () => {
     const candidates = rangeRows.map((row) => ({
       ...row,
-      selected: row.items.filter((item) => !item.excluded && Number(item.po_qty || 0) > 0),
+      selected: row.items.filter((item) => !item.excluded && Number(item.po_qty || 0) > 0 && !findActiveItemSplitPo(item, row.date)),
     })).filter((row) => row.snapshot && row.selected.length);
     if (!candidates.length) {
       setError("Tidak ada item rentang yang dipilih untuk dibuatkan PO.");
@@ -640,7 +846,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       const codeDate = firstDate === lastDate
         ? firstDate.replaceAll("-", "")
         : `${firstDate.replaceAll("-", "")}-${lastDate.replaceAll("-", "")}`;
-      const result = await operationsApi.createPurchaseOrder({
+      const result = await operationsApi.createSplitPurchaseOrder({
         po_code: `PO-${activeSite}-${codeDate}-${rangeVendor}`,
         site: activeSite,
         vendor_code: rangeVendor,
@@ -714,7 +920,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   }, [purchaseOrders]);
   const activePoByVendorDate = useMemo(() => {
     const found = new Map();
-    purchaseOrders.filter(isActivePurchaseOrder).forEach((po) => {
+    purchaseOrders.filter((po) => isActivePurchaseOrder(po) && !String(po.po_code || "").includes("-ITEM-")).forEach((po) => {
       coverageDatesFor(po).forEach((coveredDate) => {
         const key = `${String(po.vendor_code || "").toUpperCase()}|${coveredDate}`;
         const prior = found.get(key);
@@ -801,18 +1007,29 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     <tbody>
                       {group.items.map((item) => {
                         const isManual = Number(item.po_qty) !== Number(item.recommended_po_qty);
+                        const splitPo = findActiveItemSplitPo(item, distributionDate);
+                        const hasStock = Number(item.stock_qty || 0) > 0;
+                        const coveredByStock = hasStock && Number(item.recommended_po_qty || 0) <= 0;
                         return (
-                          <tr key={item.planning_snapshot_item_id}>
+                          <tr key={item.planning_snapshot_item_id} className={coveredByStock ? "ops-row-covered" : hasStock ? "ops-row-has-stock" : ""}>
                             <td>
-                              <button type="button" onClick={() => updateDraftItem(item.planning_snapshot_item_id, { excluded: !item.excluded })} title={item.excluded ? "Masukkan kembali ke PO" : "Hapus item dari PO ini"}>
-                                {item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}
-                              </button>
-                              {item.excluded && <div className="ops-muted">Tidak dipesan</div>}
+                              {splitPo ? <>
+                                <span className="ops-stock-badge ops-stock-covered">✓ PO sendiri</span>
+                                <div className="ops-muted">{splitPo.po_code}</div>
+                                <button type="button" onClick={() => viewPoDetail(splitPo)}><Eye size={13} /> Lihat</button>
+                              </> : <>
+                                <button type="button" onClick={() => updateDraftItem(item.planning_snapshot_item_id, { excluded: !item.excluded })} title={item.excluded ? "Masukkan kembali ke PO" : "Hapus item dari PO ini"}>
+                                  {item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}
+                                </button>
+                                {item.excluded && <div className="ops-muted">Tidak dipesan</div>}
+                                {!item.excluded && item.vendor_code && Number(item.po_qty || 0) > 0 && <button className="ops-button-primary" type="button" onClick={() => createSingleItemPo(item)} disabled={creatingVendor === `${item.vendor_code}:${item.planning_snapshot_item_id}`}><ShoppingCart size={13} /> PO Sendiri</button>}
+                              </>}
                             </td>
                             <td><strong>{item.item_name}</strong><div className="ops-muted">{item.category_code || "-"}</div></td>
                             <td>{qty(item.planned_qty)}</td>
                             <td>
-                              <strong>{qty(item.stock_qty)}</strong>
+                              <strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>
+                              {Number(item.stock_qty || 0) > 0 && <div><span className={`ops-stock-badge ${Number(item.recommended_po_qty || 0) <= 0 ? "ops-stock-covered" : "ops-stock-partial"}`}>{Number(item.recommended_po_qty || 0) <= 0 ? "✓ CUKUP DARI GUDANG" : "✓ ADA STOK"}</span></div>}
                               <div className="ops-muted">Aktual terhitung {qty(item.actual_stock_qty)} · SO {item.stock_as_of || "belum ada"}</div>
                               {item.planned_depletion_qty > 0 && <div className="ops-muted">− rencana sebelumnya {qty(item.planned_depletion_qty)}</div>}
                               <div className="ops-muted">Keyakinan {item.stock_confidence}</div>
@@ -821,7 +1038,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                             <td><strong>{qty(item.recommended_po_qty)}</strong></td>
                             <td>
                               <div className="ops-row-actions">
-                                <input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty} disabled={item.excluded} onChange={(e) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: Number(e.target.value) })} />
+                                <PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(splitPo)} title={item.item_name} onChange={(value) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: value })} />
                                 {isManual && <button type="button" title="Kembalikan ke rekomendasi" onClick={() => updateDraftItem(item.planning_snapshot_item_id, { po_qty: item.recommended_po_qty })}><RotateCcw size={13} /></button>}
                               </div>
                               {isManual && <div className="ops-muted">Manual override</div>}
@@ -864,10 +1081,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <div className="ops-draft-group" key={row.date}>
             <div className="ops-draft-group-head"><div><strong>Distribusi {row.date}</strong><span>{row.snapshot ? `${row.items.length} item ${rangeVendor}` : "Planning belum ada"}</span></div></div>
             {row.snapshot && <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Ikut PO?</th><th>Item</th><th>Planning</th><th>Stok</th><th>Rekomendasi</th><th>PO Qty — EDIT</th><th>Unit</th></tr></thead><tbody>
-              {row.items.map((item) => <tr key={`${row.date}-${item.planning_snapshot_item_id}`}>
+              {row.items.map((item) => <tr key={`${row.date}-${item.planning_snapshot_item_id}`} className={Number(item.stock_qty || 0) > 0 ? Number(item.recommended_po_qty || 0) <= 0 ? "ops-row-covered" : "ops-row-has-stock" : ""}>
                 <td><button type="button" onClick={() => updateRangeItem(row.date, item.planning_snapshot_item_id, { excluded: !item.excluded })}>{item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}</button></td>
-                <td><strong>{item.item_name}</strong></td><td>{qty(item.planned_qty)}</td><td>{qty(item.stock_qty)}</td><td>{qty(item.recommended_po_qty)}</td>
-                <td><input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty} disabled={item.excluded} onChange={(e) => updateRangeItem(row.date, item.planning_snapshot_item_id, { po_qty: Number(e.target.value) })} /></td><td>{item.unit || "-"}</td>
+                <td><strong>{item.item_name}</strong>{findActiveItemSplitPo(item, row.date) && <div><span className="ops-stock-badge ops-stock-covered">✓ PO sendiri sudah ada</span></div>}</td><td>{qty(item.planned_qty)}</td><td><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong></td><td>{qty(item.recommended_po_qty)}</td>
+                <td><PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(findActiveItemSplitPo(item, row.date))} title={`${item.item_name} ${row.date}`} onChange={(value) => updateRangeItem(row.date, item.planning_snapshot_item_id, { po_qty: value })} /></td><td>{item.unit || "-"}</td>
               </tr>)}
               {!row.items.length && <tr><td colSpan="7" className="ops-empty-cell">Tidak ada item yang terhubung ke vendor {rangeVendor} pada tanggal ini.</td></tr>}
             </tbody></table></div>}
@@ -877,13 +1094,38 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       <section className="ops-module">
         <div className="ops-module-header">
-          <div><span className="ops-kicker">PENGINGAT OTOMATIS</span><h3>PO yang Harus Dikerjakan</h3><p>Pengingat dihitung dari planning aktif dan lead time vendor. PO yang sudah dibuat tetap ditampilkan dengan nomor dan statusnya; hanya PO SENT yang tidak lagi menjadi tindakan.</p></div>
+          <div><span className="ops-kicker">PENGINGAT OTOMATIS</span><h3>PO yang Harus Dikerjakan</h3><p>Hijau = selesai. Kuning = PO sudah dilakukan tetapi masih ada sisa yang perlu dicek. Merah = terlambat dan belum selesai. Override hanya menutup reminder; tidak mengubah planning, stok, atau PO.</p></div>
           <BellRing size={32} />
         </div>
-        <div className="ops-summary-strip"><span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span><span>Cakupan <strong>21 hari</strong></span></div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item</th><th>PO</th></tr></thead><tbody>
-          {reminders.map((item, index) => <tr key={`${item.vendor_code}-${item.distribution_date}-${index}`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.po_date || "Lead time belum ada"}</td><td>{item.vendor_name || item.vendor_code}</td><td>{item.cooking_date}</td><td>{item.distribution_date}</td><td>{item.item_count}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{(item.coverage_dates || []).length > 1 ? ` · mencakup ${item.coverage_dates.length} hari` : ""}</div><div className="ops-muted">{item.po_sent_at ? `Terkirim: ${compactTimestamp(item.po_sent_at)}` : `Sudah dibuat: ${compactTimestamp(item.po_created_at)}`}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : "Belum dibuat"}</td></tr>)}
-          {!loading && reminders.length === 0 && <tr><td colSpan="7" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
+        <div className="ops-summary-strip">
+          <span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span>
+          <span className="ops-summary-green">Selesai <strong>{reminders.filter((item) => item.reminder_status === "DONE").length}</strong></span>
+          <span>Cakupan <strong>21 hari</strong></span>
+        </div>
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item / Sisa</th><th>PO</th><th>Aksi</th></tr></thead><tbody>
+          {reminders.map((item, index) => {
+            const visual = reminderVisual(item);
+            const remaining = remainingReminderQty(item);
+            const names = (item.missing_item_names?.length ? item.missing_item_names : item.item_names || []).filter(Boolean);
+            const actionableShortage = ["OVERDUE", "DUE_TODAY"].includes(String(item.reminder_status || "").toUpperCase()) && remaining > 0;
+            return <tr className={visual.rowClass} key={item.reminder_key || `${item.vendor_code}-${item.distribution_date}-${index}`}>
+              <td><span className={`ops-reminder-pill ${visual.pillClass}`}>{visual.label}</span>{item.reminder_override && <div className="ops-muted">Asal: {REMINDER_LABELS[item.override_original_status] || item.override_original_status}</div>}</td>
+              <td><strong>{item.po_date || "Lead time belum ada"}</strong></td>
+              <td>{item.vendor_name || item.vendor_code}</td>
+              <td>{(item.cooking_dates || []).join(", ") || item.cooking_date || "-"}</td>
+              <td>{(item.distribution_dates || []).join(", ") || item.distribution_date || "-"}</td>
+              <td><strong>{names.length || item.item_count || 0}</strong>{names.length > 0 && <div className="ops-muted ops-item-list">{names.join(", ")}</div>}{remaining > 0 && <div className="ops-shortage-qty">Sisa qty: {qty(remaining)} <small>(unit mengikuti item)</small></div>}</td>
+              <td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{item.po_already_done && item.shortage_only ? " · PO sudah dilakukan" : ""}</div><div className="ops-muted">{item.po_sent_at ? `Terkirim: ${compactTimestamp(item.po_sent_at)}` : `Sudah dibuat: ${compactTimestamp(item.po_created_at)}`}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : item.manual_po_confirmed ? <span className="ops-stock-badge ops-stock-covered">✓ PO manual dikonfirmasi</span> : <span className="ops-muted">Belum ada PO aplikasi</span>}</td>
+              <td><div className="ops-row-actions">
+                {item.reminder_override ? <button type="button" onClick={() => clearReminderOverride(item)} disabled={reminderActionKey === item.reminder_key}><RotateCcw size={13} /> Batalkan Override</button> : <>
+                  {actionableShortage && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> {item.po_already_done ? "Buat PO Kekurangan" : "Buat PO"}</button>}
+                  {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "SUFFICIENT")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah mencukupi</button>}
+                  {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "MANUAL_PO")} disabled={reminderActionKey === item.reminder_key}><Send size={13} /> PO manual sudah dilakukan</button>}
+                </>}
+              </div></td>
+            </tr>;
+          })}
+          {!loading && reminders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
         </tbody></table></div>
       </section>
 
@@ -946,7 +1188,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Harga PO</th><th>Aksi</th></tr></thead><tbody>
             {editItems.map((item, index) => <tr key={`${item.id || "new"}-${index}`}>
               <td><input value={item.item_name || ""} onChange={(e) => setEditItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_name: e.target.value } : row))} /></td>
-              <td><input className="ops-qty-input" type="number" min="0" step="0.0001" value={item.po_qty ?? 0} onChange={(e) => setEditItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, po_qty: Number(e.target.value) } : row))} /></td>
+              <td><PoQtyMath value={item.po_qty ?? 0} title={item.item_name || "PO Qty"} onChange={(value) => setEditItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, po_qty: value } : row))} /></td>
               <td><input value={item.unit || ""} onChange={(e) => setEditItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unit: e.target.value } : row))} /></td>
               <td><input className="ops-qty-input" type="number" min="0" value={item.po_price ?? ""} onChange={(e) => setEditItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, po_price: e.target.value === "" ? null : Number(e.target.value) } : row))} /></td>
               <td><button type="button" onClick={() => setEditItems((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={14} /> Hapus Baris</button></td>
@@ -962,7 +1204,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                 const status = String(po.status || "").toUpperCase();
                 const isLatestRevision = Number(po.revision_no || 1) === Number(latestPoRevision.get(po.po_code) || 1);
                 const isHistory = ["CANCELLED", "SUPERSEDED"].includes(status);
-                return <tr key={po.id} className={isHistory ? "ops-history-row" : ""}>
+                return <tr key={po.id} className={poRowClass(status, isHistory)}>
                   <td><strong>{coverageLabel(po)}</strong>{coverageDatesFor(po).length > 1 && <div className="ops-muted">1 PO · {coverageDatesFor(po).length} hari</div>}</td>
                   <td><strong>{po.scheduled_order_date || "Lead time belum diatur"}</strong><div className="ops-muted">Masak: {po.cooking_date || "-"}</div></td>
                   <td><strong>{po.po_code}</strong><div className="ops-muted">{po.sent_at ? `Terkirim: ${compactTimestamp(po.sent_at)}` : "Belum ada bukti kirim"}</div></td>
@@ -970,7 +1212,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                   <td><strong>Rev {po.revision_no}</strong><div className="ops-muted">{isLatestRevision ? "revisi terbaru" : "revisi lama"}</div></td>
                   <td>{po.item_count}</td>
                   <td>{money(po.po_total)}</td>
-                  <td><div className="ops-status-stack"><span className={`ops-badge ${isHistory ? "" : status === "DRAFT" ? "ops-badge-latest" : "ops-badge-active"}`}>{isHistory ? "HISTORI" : status === "DRAFT" ? "PERLU FINAL" : "PO AKTIF"}</span><span className="ops-badge ops-badge-type">{po.status}</span></div></td>
+                  <td><div className="ops-status-stack"><span className={`ops-badge ${isHistory ? "" : status === "DRAFT" ? "ops-badge-latest" : "ops-badge-active"}`}>{isHistory ? "HISTORI" : status === "DRAFT" ? "PERLU FINAL" : ["SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"].includes(status) ? "✓ SELESAI" : "SIAP KIRIM"}</span><span className="ops-badge ops-badge-type">{po.status}</span></div></td>
                   <td>
                     <div className="ops-row-actions">
                       <button type="button" onClick={() => viewPoDetail(po)} disabled={actionId === po.id}><Eye size={14} /> Lihat Detail</button>

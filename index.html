@@ -1,31 +1,21 @@
 <!doctype html>
 <html lang="id">
   <head>
-    <!-- STATIC FAVICON V8.5 -->
-    <link id="app-favicon"
-          rel="icon"
-          type="image/svg+xml"
-          href="/favicon-maja.svg?v=85" />
-
-    <link id="app-shortcut-icon"
-          rel="shortcut icon"
-          href="/favicon-maja.svg?v=85" />
-
+    <!-- ROUTE-AWARE FAVICON V9.0 -->
+    <link id="app-favicon" rel="icon" type="image/svg+xml" href="/favicon-accountant-maja.svg?v=90" />
+    <link id="app-shortcut-icon" rel="shortcut icon" type="image/svg+xml" href="/favicon-accountant-maja.svg?v=90" />
     <script>
       (function () {
-        var host = window.location.hostname.toLowerCase();
-
-        var isCemplang =
-          host === "sppg-finance-gpt-site-production-fc7e.up.railway.app";
-
-        var icon = isCemplang
-          ? "/favicon-cemplang.svg?v=85"
-          : "/favicon-maja.svg?v=85";
-
-        var title = isCemplang
-          ? "Cemplang 2 | SPPG Finance"
-          : "Maja | SPPG Finance";
-
+        var path = window.location.pathname.toLowerCase();
+        var icon = "/favicon-accountant-maja.svg?v=90";
+        var title = "Akuntan Maja | SPPG";
+        if (path === "/operations" || path.indexOf("/operations/") === 0) {
+          icon = "/favicon-operations.svg?v=90";
+          title = "Pusat Operasional | SPPG";
+        } else if (path === "/accountant/cemplang" || path.indexOf("/accountant/cemplang/") === 0) {
+          icon = "/favicon-accountant-cemplang.svg?v=90";
+          title = "Akuntan Cemplang | SPPG";
+        }
         document.getElementById("app-favicon").href = icon;
         document.getElementById("app-shortcut-icon").href = icon;
         document.title = title;
