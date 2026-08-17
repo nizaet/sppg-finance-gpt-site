@@ -20,6 +20,7 @@ const requiredMarkers = [
   "data-po-reminder-actions",
   "data-editable-stock",
   "data-delivery-alerts",
+  "data-po-archive-search",
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",
