@@ -75,6 +75,22 @@ jobs:
           print('procurement migration rules ok:', rules)
           print('override table ok:', override_table)
           PY
+      - name: Exercise synchronized Control Tower SQL
+        run: |
+          python - <<'PY'
+          from datetime import date
+          from backend.control_tower_api import control_tower_v2
+
+          payload = control_tower_v2(target_date=date(2026, 8, 17), site='CEMPLANG')
+          assert payload['databaseReady'] is True, payload
+          assert len(payload['sites']) == 1, payload
+          site = payload['sites'][0]
+          assert 'procurement' in site['lanes'], site
+          assert 'receiving' in site['lanes'], site
+          assert 'receiptsToday' in site['summary'], site
+          assert 'poShortage' in site['summary'], site
+          print('control tower synchronized query ok')
+          PY
       - name: Validate split same-vendor order support
         run: python -m unittest -v tests.test_po_split_integration
       - name: Assert stable frontend endpoints
