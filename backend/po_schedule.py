@@ -14,6 +14,19 @@ from backend.item_taxonomy import item_family
 from backend.po_reminder_v2_api import _norm, _rule_for_item
 
 
+_ITEM_RULE_CATEGORY = {
+    "EGG": "TELUR",
+    "TEMPE": "TEMPE",
+    "TOFU": "TAHU",
+    "DRY_GOODS": "BAHAN_KERING",
+    "CHICKEN": "AYAM",
+    "FISH": "IKAN",
+    "RICE": "BERAS",
+    "GAS": "GAS",
+    "PRODUCE": "SAYUR_BUAH",
+}
+
+
 def as_date(value: Any) -> date | None:
     """Normalize a PostgreSQL/FastAPI date value without guessing a date."""
     if isinstance(value, datetime):
@@ -57,7 +70,12 @@ def _item_rule(rules: list[dict[str, Any]], vendor: str, site: str, item_name: s
     family = item_family(item_name)
     if vendor == "KOPERASI" and site == "CEMPLANG" and family == "TEMPE":
         return _dedicated_cemplang_tempe_rule(rules, cook)
-    return _rule_for_item(rules, vendor, site, family, item_name, cook)
+
+    # Use the domain category name as a scoring hint.  This makes a dedicated
+    # TELUR rule outrank legacy combined rules such as TELUR_TAHU_TEMPE, while
+    # preserving family matching as a fallback for older data.
+    category_hint = _ITEM_RULE_CATEGORY.get(family, family)
+    return _rule_for_item(rules, vendor, site, category_hint, item_name, cook)
 
 
 def _fallback_vendor_schedule(cur: Any, po: dict[str, Any], cooking_dates: list[date]) -> tuple[int | None, date | None]:
