@@ -42,7 +42,7 @@ function poReminderActionsVisible() {
       next = next.replace(returnAnchor, `${helperBlock}${returnAnchor}`);
 
       const stockDisplay = `<strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>`;
-      const editableStockDisplay = `<div data-editable-stock="v16"><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong><PoQtyMath value={item.stock_qty} title={\`Stok gudang ${item.item_name}\`} onChange={(value) => updateDraftStockQty(item.planning_snapshot_item_id, item.planned_qty, value)} /></div>`;
+      const editableStockDisplay = `<div data-editable-stock="v16"><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong><PoQtyMath value={item.stock_qty} title={"Stok gudang " + item.item_name} onChange={(value) => updateDraftStockQty(item.planning_snapshot_item_id, item.planned_qty, value)} /></div>`;
       replaceOnce(stockDisplay, editableStockDisplay, "editable daily stock qty");
 
       const reminderStart = next.indexOf('<span className="ops-kicker">PENGINGAT PO BERDASARKAN LEAD TIME</span>');
@@ -53,19 +53,15 @@ function poReminderActionsVisible() {
 
       let reminderBlock = next.slice(reminderStart, nextSection);
       const shortageCell = `<strong>{reminderNames(item).length || item.item_count}</strong>{reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}`;
-      const shortageCellWithQty = `<strong>{reminderShortageLines(item).length || reminderNames(item).length || item.item_count}</strong>{reminderShortageLines(item).length > 0 ? <div className="ops-muted">{reminderShortageLines(item).map((line) => <div key={\`${line.name}-${line.unit}\`}><strong>{line.name}</strong> kurang {qty(line.qty)} {line.unit} <span className={\`ops-reminder-pill ${line.state === "ORDERED_PARTIAL" || line.state === "IN_APP_PARTIAL" ? "ops-pill-amber" : "ops-pill-red"}\`}>{line.state === "ORDERED_PARTIAL" ? "SUDAH DIPESAN · SISA" : line.state === "IN_APP_PARTIAL" ? "PO APLIKASI BELUM CUKUP" : "BELUM DIPESAN"}</span></div>)}</div> : reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}`;
+      const shortageCellWithQty = `<strong>{reminderShortageLines(item).length || reminderNames(item).length || item.item_count}</strong>{reminderShortageLines(item).length > 0 ? <div className="ops-muted">{reminderShortageLines(item).map((line) => <div key={line.name + "-" + line.unit}><strong>{line.name}</strong> kurang {qty(line.qty)} {line.unit} <span className={"ops-reminder-pill " + (line.state === "ORDERED_PARTIAL" || line.state === "IN_APP_PARTIAL" ? "ops-pill-amber" : "ops-pill-red")}>{line.state === "ORDERED_PARTIAL" ? "SUDAH DIPESAN · SISA" : line.state === "IN_APP_PARTIAL" ? "PO APLIKASI BELUM CUKUP" : "BELUM DIPESAN"}</span></div>)}</div> : reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}`;
       reminderBlock = reminderBlock.replaceAll(shortageCell, shortageCellWithQty);
 
       const alertBlockAnchor = `        </div>\n\n        {reminderOverdue.length > 0 && <div className="ops-draft-group">`;
       const alertBlock = `        </div>\n        {deliveryAlerts.length > 0 && <div className="ops-error" data-delivery-alerts="v16"><strong>⚠ Peringatan barang belum datang setelah jam 17.00</strong>{deliveryAlerts.map((alert) => <div key={alert.purchaseOrderId}><strong>{alert.poCode}</strong> · {alert.vendorCode} · masak {String(alert.cookingDate || "-")}<div>{alert.message}</div>{(alert.items || []).slice(0, 6).map((line) => <div className="ops-muted" key={line.itemName}>{line.message}</div>)}</div>)}</div>}\n\n        {reminderOverdue.length > 0 && <div className="ops-draft-group">`;
-      replaceOnceInBlock();
-
-      function replaceOnceInBlock() {
-        if (!reminderBlock.includes(alertBlockAnchor)) {
-          throw new Error("[po-runtime] Missing alert block anchor");
-        }
-        reminderBlock = reminderBlock.replace(alertBlockAnchor, alertBlock);
+      if (!reminderBlock.includes(alertBlockAnchor)) {
+        throw new Error("[po-runtime] Missing alert block anchor");
       }
+      reminderBlock = reminderBlock.replace(alertBlockAnchor, alertBlock);
 
       reminderBlock = reminderBlock.replaceAll(
         '<th>PO</th></tr></thead><tbody>',
