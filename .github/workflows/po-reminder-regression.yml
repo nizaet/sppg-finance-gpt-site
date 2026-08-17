@@ -70,12 +70,20 @@ jobs:
                   }
                   cur.execute("select to_regclass('public.po_reminder_overrides') as table_name")
                   override_table = cur.fetchone()['table_name']
+                  cur.execute("""
+                    select pg_get_constraintdef(oid) as definition
+                    from pg_constraint
+                    where conrelid='po_reminder_overrides'::regclass
+                      and conname='po_reminder_overrides_resolution_check'
+                  """)
+                  resolution_check = cur.fetchone()['definition']
           assert rules[('MAJA','TEMPE')] == 4, rules
           assert rules[('MAJA','TAHU')] == 2, rules
           assert rules[('CEMPLANG','TEMPE')] is None, rules
           assert override_table == 'po_reminder_overrides', override_table
+          assert 'CHECKED' in resolution_check, resolution_check
           print('procurement migration rules ok:', rules)
-          print('override table ok:', override_table)
+          print('override table + CHECKED resolution ok')
           PY
       - name: Exercise synchronized Control Tower SQL
         run: |
@@ -100,5 +108,6 @@ jobs:
           grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
           grep -q '/v1/po-reminders/override' src/operations/apiClient.js
           grep -q '/v1/purchase-orders/split' src/operations/apiClient.js
-          grep -q '/v1/po-reminders/stock-confirmation' src/operations/poShortageStockClient.js
-          grep -q 'OperationsPoWorkspace.jsx' src/operations/OperationsWorkspace.jsx
+          grep -q '/v1/po-reminders/stock-confirmation' src/operations/apiClient.js
+          grep -q 'SHORTAGE_REVIEW' src/operations/OperationsPoPlanner.jsx
+          grep -q 'Sudah dicek / biarkan' src/operations/OperationsPoPlanner.jsx
