@@ -51,7 +51,7 @@ class CompletedPoShortageSemanticsTests(unittest.TestCase):
             "po_coverage_dates": [distribution_date],
         }
 
-    def test_sent_po_stays_done_and_shortage_remains_a_reminder(self):
+    def test_sent_po_leaves_ordering_queue_and_shortage_becomes_review(self):
         payload = self._open_payload()
         po = self._sent_po()
         lookup = {("CEMPLANG", "WIKIAN", date(2026, 8, 18)): po}
@@ -59,9 +59,10 @@ class CompletedPoShortageSemanticsTests(unittest.TestCase):
         result = apply_completed_po_shortage_semantics(payload, lookup)
         item = result["items"][0]
 
-        # Timing reminder remains overdue because 50 kg still needs attention.
-        self.assertEqual(item["reminder_status"], "OVERDUE")
-        # But the actual PO workflow must never be presented as not done.
+        # The ordering job is already done, therefore this must not stay red
+        # OVERDUE/DUE_TODAY. Original timing is retained only for audit.
+        self.assertEqual(item["reminder_status"], "SHORTAGE_REVIEW")
+        self.assertEqual(item["shortage_reminder_status"], "OVERDUE")
         self.assertEqual(item["po_workflow_status"], "DONE")
         self.assertTrue(item["po_already_done"])
         self.assertTrue(item["shortage_only"])
@@ -81,6 +82,7 @@ class CompletedPoShortageSemanticsTests(unittest.TestCase):
 
         self.assertIs(result, payload)
         self.assertIsNone(item["purchase_order_id"])
+        self.assertEqual(item["reminder_status"], "OVERDUE")
         self.assertNotIn("po_workflow_status", item)
 
     def test_done_requirement_is_left_untouched(self):
@@ -114,6 +116,7 @@ class CompletedPoShortageSemanticsTests(unittest.TestCase):
 
         finder.assert_called_once_with("CEMPLANG", [date(2026, 8, 18)])
         self.assertEqual(result["items"][0]["po_workflow_status"], "DONE")
+        self.assertEqual(result["items"][0]["reminder_status"], "SHORTAGE_REVIEW")
 
     def test_enricher_does_not_touch_non_shortage_payload(self):
         payload = {"items": [{"reminder_status": "DONE"}]}
