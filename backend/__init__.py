@@ -22,6 +22,7 @@ from backend.po_reminder_v2_api import router as po_reminder_v2_router
 from backend.po_reminder_v3_api import router as po_reminder_v3_router
 from backend.po_reminder_v4_api import router as po_reminder_v4_router
 from backend.po_reminder_tools_api import router as po_reminder_tools_router
+from backend.po_shortage_stock_api import router as po_shortage_stock_router
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
@@ -51,6 +52,7 @@ operational_router.include_router(calculator_planning_bridge_router)
 operational_router.include_router(po_reminder_v4_router)
 operational_router.include_router(po_reminder_v3_router)
 operational_router.include_router(po_reminder_tools_router)
+operational_router.include_router(po_shortage_stock_router)
 operational_router.include_router(po_reminder_action_router)
 operational_router.include_router(po_reminder_v2_router)
 
