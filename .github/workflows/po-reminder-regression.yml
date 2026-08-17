@@ -9,6 +9,7 @@ on:
       - fix/po-reminder-completed-shortage-20260816
       - fix/po-reminder-wikian-tempe-sync-20260816
       - feat/po-ux-split-override-colors-20260817
+      - fix/control-tower-receiving-vendor-sync-20260817
 
 jobs:
   po-reminder-regression:
@@ -41,8 +42,10 @@ jobs:
           python -m unittest -v tests.test_po_reminder_completed_shortage
           python -m unittest -v tests.test_po_reminder_operational_reconcile
           python -m unittest -v tests.test_po_reminder_tools
+          python -m unittest -v tests.test_item_taxonomy_vendor_sync
+          python -m unittest -v tests.test_control_tower_po_sync
       - name: Compile reminder and planning bridge modules
-        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_tools_api.py backend/item_taxonomy.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_tools_api.py backend/item_taxonomy.py backend/control_tower_api.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
       - name: Validate migration and dedicated Tempe rules
         run: |
           python -m backend.migrate
