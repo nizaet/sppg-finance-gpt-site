@@ -15,8 +15,8 @@ class _Cursor:
         return [
             {
                 "reminder_key": self.key,
-                "resolution": "MANUAL_PO",
-                "note": "sudah dikirim manual",
+                "resolution": self.resolution,
+                "note": "sudah dicek",
                 "metadata": {},
                 "created_at": "2026-08-17T07:00:00+07:00",
                 "updated_at": "2026-08-17T07:00:00+07:00",
@@ -31,9 +31,10 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self, key):
+    def __init__(self, key, resolution="MANUAL_PO"):
         self.cursor_obj = _Cursor()
         self.cursor_obj.key = key
+        self.cursor_obj.resolution = resolution
 
     def cursor(self):
         return self.cursor_obj
@@ -106,6 +107,51 @@ class ReminderToolsTest(unittest.TestCase):
         self.assertEqual(40, row["requirement_details"][0]["remaining_po_qty"])
         self.assertEqual(0, result["dueCount"])
         self.assertEqual(0, result["overdueCount"])
+
+    def test_checked_shortage_review_closes_review_without_claiming_manual_po(self):
+        item = self._item()
+        item["reminder_status"] = "SHORTAGE_REVIEW"
+        item["po_already_done"] = True
+        item["po_status"] = "SENT"
+        key = reminder_key_for(item)
+        payload = {
+            "site": "MAJA",
+            "date": date(2026, 8, 17),
+            "dueCount": 1,
+            "overdueCount": 1,
+            "tomorrowCount": 0,
+            "items": [item],
+        }
+        with patch("backend.po_reminder_tools_api.database_ready", return_value=True), patch(
+            "backend.po_reminder_tools_api.connection", return_value=_Connection(key, resolution="CHECKED")
+        ):
+            result = apply_reminder_overrides(payload, "MAJA", date(2026, 8, 17))
+
+        row = result["items"][0]
+        self.assertEqual("DONE", row["reminder_status"])
+        self.assertEqual("DONE_REVIEWED", row["po_workflow_status"])
+        self.assertEqual("Sudah dicek / dibiarkan", row["reminder_override_label"])
+        self.assertFalse(row.get("manual_po_confirmed", False))
+        self.assertEqual(0, result["shortageReviewCount"])
+        self.assertEqual(0, result["overdueCount"])
+
+    def test_shortage_review_is_not_counted_as_ordering_when_override_db_unavailable(self):
+        item = self._item()
+        item["reminder_status"] = "SHORTAGE_REVIEW"
+        payload = {
+            "site": "MAJA",
+            "date": date(2026, 8, 17),
+            "dueCount": 1,
+            "overdueCount": 1,
+            "tomorrowCount": 1,
+            "items": [item],
+        }
+        with patch("backend.po_reminder_tools_api.database_ready", return_value=False):
+            result = apply_reminder_overrides(payload, "MAJA", date(2026, 8, 17))
+        self.assertEqual(0, result["dueCount"])
+        self.assertEqual(0, result["overdueCount"])
+        self.assertEqual(0, result["tomorrowCount"])
+        self.assertEqual(1, result["shortageReviewCount"])
 
 
 if __name__ == "__main__":

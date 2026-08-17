@@ -10,6 +10,7 @@ on:
       - fix/po-reminder-wikian-tempe-sync-20260816
       - feat/po-ux-split-override-colors-20260817
       - fix/control-tower-receiving-vendor-sync-20260817
+      - fix/po-reminder-shortage-review-stock-confirm-20260817
 
 jobs:
   po-reminder-regression:
@@ -42,10 +43,11 @@ jobs:
           python -m unittest -v tests.test_po_reminder_completed_shortage
           python -m unittest -v tests.test_po_reminder_operational_reconcile
           python -m unittest -v tests.test_po_reminder_tools
+          python -m unittest -v tests.test_po_shortage_stock
           python -m unittest -v tests.test_item_taxonomy_vendor_sync
           python -m unittest -v tests.test_control_tower_po_sync
       - name: Compile reminder and planning bridge modules
-        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_tools_api.py backend/item_taxonomy.py backend/control_tower_api.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_tools_api.py backend/po_shortage_stock_api.py backend/item_taxonomy.py backend/control_tower_api.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
       - name: Validate migration and dedicated Tempe rules
         run: |
           python -m backend.migrate
@@ -68,12 +70,20 @@ jobs:
                   }
                   cur.execute("select to_regclass('public.po_reminder_overrides') as table_name")
                   override_table = cur.fetchone()['table_name']
+                  cur.execute("""
+                    select pg_get_constraintdef(oid) as definition
+                    from pg_constraint
+                    where conrelid='po_reminder_overrides'::regclass
+                      and conname='po_reminder_overrides_resolution_check'
+                  """)
+                  resolution_check = cur.fetchone()['definition']
           assert rules[('MAJA','TEMPE')] == 4, rules
           assert rules[('MAJA','TAHU')] == 2, rules
           assert rules[('CEMPLANG','TEMPE')] is None, rules
           assert override_table == 'po_reminder_overrides', override_table
+          assert 'CHECKED' in resolution_check, resolution_check
           print('procurement migration rules ok:', rules)
-          print('override table ok:', override_table)
+          print('override table + CHECKED resolution ok')
           PY
       - name: Exercise synchronized Control Tower SQL
         run: |
@@ -98,3 +108,6 @@ jobs:
           grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
           grep -q '/v1/po-reminders/override' src/operations/apiClient.js
           grep -q '/v1/purchase-orders/split' src/operations/apiClient.js
+          grep -q '/v1/po-reminders/stock-confirmation' src/operations/apiClient.js
+          grep -q 'SHORTAGE_REVIEW' src/operations/OperationsPoPlanner.jsx
+          grep -q 'Sudah dicek / biarkan' src/operations/OperationsPoPlanner.jsx

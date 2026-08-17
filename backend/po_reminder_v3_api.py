@@ -12,7 +12,7 @@ from backend.po_reminder_v4_api import po_reminders_v4
 
 router = APIRouter(tags=["po-reminder-v3"])
 
-_OVERRIDE_TIMING_STATUSES = {"OVERDUE", "DUE_TODAY", "UPCOMING"}
+_OVERRIDE_TIMING_STATUSES = {"OVERDUE", "DUE_TODAY", "UPCOMING", "SHORTAGE_REVIEW"}
 
 
 @router.get("/po-reminders-v3")
@@ -25,9 +25,9 @@ def po_reminders_v3(
 
     v4 remains authoritative for planning, projected stock, lead time, and exact
     PO coverage. Compatibility passes reconcile operator-confirmed WIKIAN/Tempe
-    behavior, expose completed POs with residual shortages, and finally apply
-    explicit reminder-only manual resolutions. No pass mutates planning, stock,
-    PO, receiving, invoice, or payment source data.
+    behavior, move completed-PO residuals into SHORTAGE_REVIEW, and finally apply
+    explicit reminder-only manual resolutions. No pass mutates planning, PO,
+    receiving, invoice, payment, or physical SO source data.
     """
     target = as_of or date.today()
     payload = po_reminders_v4(site=site, as_of=target, horizon_days=horizon_days)
@@ -35,9 +35,9 @@ def po_reminders_v3(
     payload = enrich_completed_po_shortages(payload, site)
 
     # Keep the stable v3 compatibility contract exact for non-operational/mock
-    # payloads and avoid querying the override table when no timing reminder can
-    # have an operator resolution. Normal overdue/today/upcoming rows still get
-    # stable keys and persisted override semantics.
+    # payloads and avoid querying the override table when no reminder can have an
+    # operator resolution. SHORTAGE_REVIEW needs a key so the operator can mark
+    # the residual as checked/intentional after a PO was already completed.
     if not any(
         str(item.get("reminder_status") or "").upper() in _OVERRIDE_TIMING_STATUSES
         for item in (payload.get("items") or [])

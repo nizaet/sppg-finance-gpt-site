@@ -46,6 +46,7 @@ export const operationsApi = {
   getPoReminders: ({ site = "", date = "", horizonDays = 14 } = {}) => { const q = new URLSearchParams({ horizonDays: String(horizonDays) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v3?${q}`); },
   overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),
   clearPoReminderOverride: (reminderKey) => request(`/v1/po-reminders/override/${encodeURIComponent(reminderKey)}`, { method: "DELETE" }),
+  confirmPoShortageStock: (payload) => request("/v1/po-reminders/stock-confirmation", { method: "POST", body: JSON.stringify(payload) }),
   getReferenceSites: () => request("/v1/reference/sites"),
   getReferenceVendors: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/reference/vendors${q.toString() ? `?${q}` : ""}`); },
   updateVendorLeadTime: (payload) => request("/v1/reference/vendor-rules/lead-time", { method: "POST", body: JSON.stringify(payload) }),

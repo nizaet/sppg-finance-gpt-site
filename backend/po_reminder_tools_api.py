@@ -15,7 +15,7 @@ from backend.stock_opname_parser import canonical_unit
 router = APIRouter(tags=["po-reminder-tools"])
 
 ACTIVE_PO_STATUSES = {"DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
-OVERRIDE_RESOLUTIONS = {"SUFFICIENT", "MANUAL_PO"}
+OVERRIDE_RESOLUTIONS = {"SUFFICIENT", "MANUAL_PO", "CHECKED"}
 
 
 def _as_date(value: Any) -> date | None:
@@ -79,6 +79,7 @@ def _recount(payload: dict[str, Any], target: date) -> dict[str, Any]:
     result = dict(payload)
     items = result.get("items") or []
     actionable = {"OVERDUE", "DUE_TODAY", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"}
+    future_actionable = actionable | {"UPCOMING"}
     tomorrow = target + timedelta(days=1)
     result["dueCount"] = sum(
         1 for item in items
@@ -88,12 +89,16 @@ def _recount(payload: dict[str, Any], target: date) -> dict[str, Any]:
     result["tomorrowCount"] = sum(
         1 for item in items
         if _as_date(item.get("po_date")) == tomorrow
-        and str(item.get("reminder_status") or "").upper() != "DONE"
+        and str(item.get("reminder_status") or "").upper() in future_actionable
     )
     result["overdueCount"] = sum(
         1 for item in items
         if (_as_date(item.get("po_date")) or date.max) < target
         and str(item.get("reminder_status") or "").upper() == "OVERDUE"
+    )
+    result["shortageReviewCount"] = sum(
+        1 for item in items
+        if str(item.get("reminder_status") or "").upper() == "SHORTAGE_REVIEW"
     )
     return result
 
@@ -105,7 +110,7 @@ def apply_reminder_overrides(payload: dict[str, Any], site: str, target: date) -
     keys = [str(item.get("reminder_key") or "") for item in items if item.get("reminder_key")]
     normalized_site = str(site or decorated.get("site") or "").upper().strip()
     if not keys or normalized_site not in {"MAJA", "CEMPLANG"} or not database_ready():
-        return decorated
+        return _recount(decorated, target)
 
     try:
         with connection() as conn:
@@ -122,10 +127,10 @@ def apply_reminder_overrides(payload: dict[str, Any], site: str, target: date) -
     except Exception:
         # Keep reminder reads available during a rolling deploy before migration
         # has completed. The migration is still required for writes.
-        return decorated
+        return _recount(decorated, target)
 
     if not overrides:
-        return decorated
+        return _recount(decorated, target)
 
     changed = False
     enriched: list[dict[str, Any]] = []
@@ -137,16 +142,19 @@ def apply_reminder_overrides(payload: dict[str, Any], site: str, target: date) -
             continue
         resolution = str(override.get("resolution") or "").upper()
         original_status = str(item.get("reminder_status") or "").upper()
-        label = "Sudah mencukupi (override)" if resolution == "SUFFICIENT" else "PO manual sudah dilakukan"
-        message = (
-            "Operator mengonfirmasi kebutuhan sudah mencukupi. Reminder ditutup tanpa mengubah stok atau PO."
-            if resolution == "SUFFICIENT"
-            else "Operator mengonfirmasi PO telah dilakukan di luar workflow aplikasi. Reminder ditutup tanpa membuat PO fiktif."
-        )
+        if resolution == "SUFFICIENT":
+            label = "Sudah mencukupi (override)"
+            message = "Operator mengonfirmasi kebutuhan sudah mencukupi. Reminder ditutup tanpa mengubah stok atau PO."
+        elif resolution == "CHECKED":
+            label = "Sudah dicek / dibiarkan"
+            message = "PO sudah dilakukan dan sisa kebutuhan telah dicek operator. Selisih diterima tanpa membuat PO atau stok fiktif."
+        else:
+            label = "PO manual sudah dilakukan"
+            message = "Operator mengonfirmasi PO telah dilakukan di luar workflow aplikasi. Reminder ditutup tanpa membuat PO fiktif."
         item.update({
             "override_original_status": original_status,
             "reminder_status": "DONE",
-            "po_workflow_status": "DONE_MANUAL",
+            "po_workflow_status": "DONE_REVIEWED" if resolution == "CHECKED" else "DONE_MANUAL",
             "reminder_override": True,
             "reminder_override_resolution": resolution,
             "reminder_override_label": label,
@@ -173,7 +181,7 @@ class ReminderOverrideIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
     reminder_key: str = Field(min_length=8, max_length=100)
     vendor_code: str = Field(min_length=1, max_length=100)
-    resolution: Literal["SUFFICIENT", "MANUAL_PO"]
+    resolution: Literal["SUFFICIENT", "MANUAL_PO", "CHECKED"]
     note: str | None = Field(default=None, max_length=500)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

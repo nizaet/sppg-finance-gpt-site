@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from backend.db import connection, database_ready
 
-# A reminder can still be late/due/upcoming because there is a residual shortage,
-# while the original PO workflow itself is already completed. Keep those two
-# concepts separate so a SENT PO is never presented as "belum dibuat" again.
+# A reminder can still have a residual shortage while the original PO workflow
+# itself is already completed. Those rows must not stay in the ordering queue
+# (OVERDUE / DUE_TODAY), otherwise a SENT PO is presented as work that still
+# needs to be ordered. They are moved to SHORTAGE_REVIEW instead.
 DONE_PO_STATUSES = {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"}
 SHORTAGE_REMINDER_STATUSES = {"OVERDUE", "DUE_TODAY", "UPCOMING"}
 EPSILON = 0.0001
@@ -65,6 +66,42 @@ def _shortage_candidates(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         candidates.append(item)
     return candidates
+
+
+def _recount_ordering(payload: dict[str, Any]) -> dict[str, Any]:
+    """Recalculate only reminder counters affected by SHORTAGE_REVIEW.
+
+    A review-only residual must not inflate overdue, due-today, or tomorrow
+    ordering badges. Other statuses remain untouched.
+    """
+    target = _as_date(payload.get("date"))
+    if target is None:
+        return payload
+    items = payload.get("items") or []
+    actionable = {"OVERDUE", "DUE_TODAY", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"}
+    future_actionable = actionable | {"UPCOMING"}
+    tomorrow = target + timedelta(days=1)
+    result = dict(payload)
+    result["dueCount"] = sum(
+        1 for item in items
+        if (_as_date(item.get("po_date")) or date.max) <= target
+        and str(item.get("reminder_status") or "").upper() in actionable
+    )
+    result["overdueCount"] = sum(
+        1 for item in items
+        if (_as_date(item.get("po_date")) or date.max) < target
+        and str(item.get("reminder_status") or "").upper() == "OVERDUE"
+    )
+    result["tomorrowCount"] = sum(
+        1 for item in items
+        if _as_date(item.get("po_date")) == tomorrow
+        and str(item.get("reminder_status") or "").upper() in future_actionable
+    )
+    result["shortageReviewCount"] = sum(
+        1 for item in items
+        if str(item.get("reminder_status") or "").upper() == "SHORTAGE_REVIEW"
+    )
+    return result
 
 
 def _completed_po_lookup(site: str, distribution_dates: list[date]) -> dict[tuple[str, str, date], dict[str, Any]]:
@@ -144,11 +181,12 @@ def apply_completed_po_shortage_semantics(
     payload: dict[str, Any],
     completed_lookup: dict[tuple[str, str, date], dict[str, Any]],
 ) -> dict[str, Any]:
-    """Expose a completed PO while preserving the residual shortage reminder.
+    """Move residual shortage after a completed PO into a review-only state.
 
-    reminder_status keeps its timing meaning (OVERDUE/DUE_TODAY/UPCOMING). The new
-    po_workflow_status tells the UI that the PO itself is already done and this row
-    is only a shortage/revision warning.
+    ``shortage_reminder_status`` preserves the original timing state for audit,
+    while ``reminder_status=SHORTAGE_REVIEW`` removes the row from the actual
+    ordering backlog. A SENT PO therefore cannot simultaneously be shown as
+    "Terlambat" or "Kirim hari ini" merely because planning later sees a gap.
     """
     items = payload.get("items") or []
     changed = False
@@ -178,6 +216,7 @@ def apply_completed_po_shortage_semantics(
                     "po_already_done": True,
                     "shortage_only": True,
                     "shortage_reminder_status": reminder_status,
+                    "reminder_status": "SHORTAGE_REVIEW",
                     "shortage_item_names": missing_names,
                     "shortage_distribution_dates": sorted({
                         _as_date(value) for value in (item.get("missing_distribution_dates") or dates)
@@ -186,7 +225,8 @@ def apply_completed_po_shortage_semantics(
                     "shortage_qty_total": remaining_qty,
                     "po_coverage_dates": completed_po.get("po_coverage_dates") or [],
                     "reminder_message": (
-                        "PO sudah dilakukan; pengingat ini hanya untuk sisa kebutuhan yang belum tercakup."
+                        "PO sudah dilakukan. Sisa kebutuhan dikeluarkan dari antrean PO dan hanya perlu dicek: "
+                        "biarkan jika pengurangan memang disengaja, atau koreksi stok dapur bila SO belum terisi."
                     ),
                 })
                 shortage_count += 1
@@ -200,7 +240,7 @@ def apply_completed_po_shortage_semantics(
     result = dict(payload)
     result["items"] = enriched_items
     result["shortageAfterCompletedPoCount"] = shortage_count
-    return result
+    return _recount_ordering(result)
 
 
 def enrich_completed_po_shortages(payload: dict[str, Any], site: str) -> dict[str, Any]:

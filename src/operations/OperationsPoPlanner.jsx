@@ -27,6 +27,7 @@ const REMINDER_LABELS = {
   OVERDUE: "Terlambat",
   DUE_TODAY: "Kirim hari ini",
   UPCOMING: "Akan datang",
+  SHORTAGE_REVIEW: "Perlu cek kekurangan",
 };
 
 function normalize(value) {
@@ -233,8 +234,8 @@ function reminderVisual(item) {
   if (item.reminder_override || status === "DONE") {
     return { rowClass: "ops-reminder-done", pillClass: "ops-pill-green", label: item.reminder_override_label || "Selesai / sudah dikirim" };
   }
-  if (item.po_already_done && item.shortage_only) {
-    return { rowClass: "ops-reminder-shortage", pillClass: "ops-pill-amber", label: "PO sudah dilakukan · cek sisa" };
+  if (status === "SHORTAGE_REVIEW" || (item.po_already_done && item.shortage_only)) {
+    return { rowClass: "ops-reminder-shortage", pillClass: "ops-pill-amber", label: "Perlu cek kekurangan" };
   }
   if (status === "OVERDUE") return { rowClass: "ops-reminder-overdue", pillClass: "ops-pill-red", label: "Terlambat" };
   if (status === "DUE_TODAY") return { rowClass: "ops-reminder-today", pillClass: "ops-pill-amber", label: "Kirim hari ini" };
@@ -570,8 +571,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const saveReminderOverride = async (item, resolution) => {
     if (!item.reminder_key) return;
-    const label = resolution === "SUFFICIENT" ? "SUDAH MENCUKUPI" : "PO SUDAH DILAKUKAN MANUAL";
-    if (!window.confirm(`${label}?\n\nReminder ini akan ditutup dan berwarna hijau. Data planning, stok gudang, dan PO yang sudah ada TIDAK diubah.`)) return;
+    const labels = { SUFFICIENT: "SUDAH MENCUKUPI", MANUAL_PO: "PO SUDAH DILAKUKAN MANUAL", CHECKED: "SUDAH DICEK / BIARKAN" };
+    const label = labels[resolution] || resolution;
+    const explanation = resolution === "CHECKED"
+      ? "PO sudah dilakukan. Sisa qty akan ditandai sudah Anda cek dan tidak lagi dianggap pekerjaan PO. Planning, PO dan stok tidak diubah."
+      : "Reminder ini akan ditutup dan berwarna hijau. Data planning, stok gudang, dan PO yang sudah ada TIDAK diubah.";
+    if (!window.confirm(`${label}?\n\n${explanation}`)) return;
     const note = window.prompt("Catatan / referensi (opsional):", "") ?? "";
     setReminderActionKey(item.reminder_key);
     setError("");
@@ -590,9 +595,66 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         },
       });
       await refreshReminders();
-      setMessage(resolution === "SUFFICIENT" ? "Reminder ditutup: kebutuhan dikonfirmasi sudah mencukupi." : "Reminder ditutup: PO manual dikonfirmasi sudah dilakukan.");
+      setMessage(resolution === "SUFFICIENT"
+        ? "Reminder ditutup: kebutuhan dikonfirmasi sudah mencukupi."
+        : resolution === "CHECKED"
+          ? "Kekurangan ditandai sudah dicek / dibiarkan. PO yang sudah selesai tidak lagi masuk antrean terlambat."
+          : "Reminder ditutup: PO manual dikonfirmasi sudah dilakukan.");
     } catch (err) {
       setError(err.message || "Gagal menyimpan override reminder");
+    } finally {
+      setReminderActionKey("");
+    }
+  };
+
+  const confirmShortageStock = async (item) => {
+    if (!item.reminder_key) return;
+    const details = (item.requirement_details || []).filter((detail) => Number(detail.remaining_po_qty || 0) > 0);
+    if (!details.length) {
+      setError("Tidak ada item kekurangan yang dapat dikoreksi stoknya.");
+      return;
+    }
+    const updates = [];
+    for (const detail of details) {
+      const names = (detail.item_names || []).filter(Boolean);
+      const itemName = names[0] || detail.stock_type_code || "Item";
+      const unit = detail.unit || "";
+      const answer = window.prompt(
+        `Stok fisik AKTUAL dapur untuk ${itemName}${unit ? ` (${unit})` : ""} sekarang berapa?\n\nIsi jumlah yang benar-benar ada saat ini, bukan selisih. Kosongkan jika item ini tidak perlu dikoreksi.`,
+        ""
+      );
+      if (answer === null) return;
+      if (!String(answer).trim()) continue;
+      const value = Number(String(answer).replace(",", "."));
+      if (!Number.isFinite(value) || value < 0) {
+        setError(`Stok ${itemName} tidak valid.`);
+        return;
+      }
+      if (!unit) {
+        setError(`Satuan ${itemName} belum tersedia; koreksi stok dibatalkan agar tidak salah unit.`);
+        return;
+      }
+      updates.push({ item_name: itemName, unit, actual_stock_qty: value });
+    }
+    if (!updates.length) {
+      setMessage("Tidak ada stok yang diubah. Gunakan ‘Sudah dicek / biarkan’ jika selisih memang disengaja.");
+      return;
+    }
+    if (!window.confirm(`Catat ${updates.length} stok fisik dapur sebagai koreksi gudang ${activeSite}?\n\nSistem hanya mencatat SELISIH terhadap saldo aktual sekarang. SO terakhir tidak diubah.`)) return;
+    setReminderActionKey(item.reminder_key);
+    setError("");
+    setMessage("");
+    try {
+      const result = await operationsApi.confirmPoShortageStock({
+        site: activeSite,
+        reminder_key: item.reminder_key,
+        items: updates,
+        note: `Koreksi dari review kekurangan ${item.po_code || item.vendor_code}`,
+      });
+      await load();
+      setMessage(result?.message || "Stok dapur dikoreksi dan reminder dihitung ulang.");
+    } catch (err) {
+      setError(err.message || "Gagal mencatat koreksi stok dapur");
     } finally {
       setReminderActionKey("");
     }
@@ -1100,6 +1162,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         <div className="ops-summary-strip">
           <span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span>
           <span className="ops-summary-green">Selesai <strong>{reminders.filter((item) => item.reminder_status === "DONE").length}</strong></span>
+          <span>Perlu cek kekurangan <strong>{reminders.filter((item) => item.reminder_status === "SHORTAGE_REVIEW").length}</strong></span>
           <span>Cakupan <strong>21 hari</strong></span>
         </div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item / Sisa</th><th>PO</th><th>Aksi</th></tr></thead><tbody>
@@ -1118,7 +1181,9 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
               <td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{item.po_already_done && item.shortage_only ? " · PO sudah dilakukan" : ""}</div><div className="ops-muted">{item.po_sent_at ? `Terkirim: ${compactTimestamp(item.po_sent_at)}` : `Sudah dibuat: ${compactTimestamp(item.po_created_at)}`}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : item.manual_po_confirmed ? <span className="ops-stock-badge ops-stock-covered">✓ PO manual dikonfirmasi</span> : <span className="ops-muted">Belum ada PO aplikasi</span>}</td>
               <td><div className="ops-row-actions">
                 {item.reminder_override ? <button type="button" onClick={() => clearReminderOverride(item)} disabled={reminderActionKey === item.reminder_key}><RotateCcw size={13} /> Batalkan Override</button> : <>
-                  {actionableShortage && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> {item.po_already_done ? "Buat PO Kekurangan" : "Buat PO"}</button>}
+                  {actionableShortage && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> Buat PO</button>}
+                  {item.reminder_status === "SHORTAGE_REVIEW" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "CHECKED")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah dicek / biarkan</button>}
+                  {item.reminder_status === "SHORTAGE_REVIEW" && item.reminder_key && <button type="button" onClick={() => confirmShortageStock(item)} disabled={reminderActionKey === item.reminder_key}><Save size={13} /> Isi stok dapur</button>}
                   {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "SUFFICIENT")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah mencukupi</button>}
                   {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "MANUAL_PO")} disabled={reminderActionKey === item.reminder_key}><Send size={13} /> PO manual sudah dilakukan</button>}
                 </>}
