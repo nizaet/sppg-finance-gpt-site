@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -53,6 +54,42 @@ def _correction_direction(site: str, delta: float) -> tuple[str, str]:
 def _source_key(reminder_key: str, type_code: str, unit: str, current_qty: float, target_qty: float) -> str:
     raw = f"{reminder_key}|{type_code}|{unit}|{current_qty:.4f}|{target_qty:.4f}"
     return "po-reminder-stock:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
+
+
+def _upsert_stock_confirmation_override(cur: Any, site: str, reminder_key: str, note: str | None, prepared: list[dict[str, Any]]) -> None:
+    """Close the operational reminder after an explicit stock confirmation.
+
+    The inventory movements above remain the auditable stock correction. This
+    override only removes the same reminder from the PO action queue so the row
+    does not keep reappearing as a PO shortage after the operator has confirmed
+    stock is sufficient.
+    """
+    vendor = "UNKNOWN"
+    metadata = {
+        "source": "PO_REMINDER_STOCK_CONFIRMATION",
+        "items": prepared,
+    }
+    cur.execute(
+        """
+        insert into po_reminder_overrides(
+          reminder_key,site,vendor_code,resolution,note,metadata,active
+        ) values (%s,%s,%s,'SUFFICIENT',%s,%s::jsonb,true)
+        on conflict (reminder_key) where active=true
+        do update set
+          site=excluded.site,
+          resolution=excluded.resolution,
+          note=excluded.note,
+          metadata=excluded.metadata,
+          updated_at=now()
+        """,
+        (
+            reminder_key,
+            site,
+            vendor,
+            note or "Stok gudang dikonfirmasi cukup dari tombol reminder PO.",
+            json.dumps(metadata, ensure_ascii=False, default=str),
+        ),
+    )
 
 
 @router.post("/po-reminders/stock-confirmation")
@@ -145,6 +182,8 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
                 item["from_location"] = from_location
                 item["to_location"] = to_location
                 inserted += 1
+
+            _upsert_stock_confirmation_override(cur, site, payload.reminder_key, payload.note, prepared)
         conn.commit()
 
     return {
@@ -154,10 +193,11 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
         "inserted": inserted,
         "unchanged": unchanged,
         "duplicates": duplicates,
+        "overrideSaved": True,
         "items": prepared,
         "message": (
-            "Stok fisik dapur dicatat sebagai koreksi gudang. Reminder harus dihitung ulang dari stok terbaru."
+            "Stok fisik dapur dicatat sebagai koreksi gudang dan reminder PO ditutup."
             if inserted
-            else "Stok yang dikonfirmasi sudah sama dengan saldo aktual; tidak ada movement baru."
+            else "Stok yang dikonfirmasi sudah sama dengan saldo aktual; reminder PO tetap ditutup sebagai cukup."
         ),
     }
