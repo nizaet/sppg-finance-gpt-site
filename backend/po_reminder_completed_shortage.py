@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from backend.db import connection, database_ready
@@ -66,6 +66,42 @@ def _shortage_candidates(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         candidates.append(item)
     return candidates
+
+
+def _recount_ordering(payload: dict[str, Any]) -> dict[str, Any]:
+    """Recalculate only reminder counters affected by SHORTAGE_REVIEW.
+
+    A review-only residual must not inflate overdue, due-today, or tomorrow
+    ordering badges. Other statuses remain untouched.
+    """
+    target = _as_date(payload.get("date"))
+    if target is None:
+        return payload
+    items = payload.get("items") or []
+    actionable = {"OVERDUE", "DUE_TODAY", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"}
+    future_actionable = actionable | {"UPCOMING"}
+    tomorrow = target + timedelta(days=1)
+    result = dict(payload)
+    result["dueCount"] = sum(
+        1 for item in items
+        if (_as_date(item.get("po_date")) or date.max) <= target
+        and str(item.get("reminder_status") or "").upper() in actionable
+    )
+    result["overdueCount"] = sum(
+        1 for item in items
+        if (_as_date(item.get("po_date")) or date.max) < target
+        and str(item.get("reminder_status") or "").upper() == "OVERDUE"
+    )
+    result["tomorrowCount"] = sum(
+        1 for item in items
+        if _as_date(item.get("po_date")) == tomorrow
+        and str(item.get("reminder_status") or "").upper() in future_actionable
+    )
+    result["shortageReviewCount"] = sum(
+        1 for item in items
+        if str(item.get("reminder_status") or "").upper() == "SHORTAGE_REVIEW"
+    )
+    return result
 
 
 def _completed_po_lookup(site: str, distribution_dates: list[date]) -> dict[tuple[str, str, date], dict[str, Any]]:
@@ -204,7 +240,7 @@ def apply_completed_po_shortage_semantics(
     result = dict(payload)
     result["items"] = enriched_items
     result["shortageAfterCompletedPoCount"] = shortage_count
-    return result
+    return _recount_ordering(result)
 
 
 def enrich_completed_po_shortages(payload: dict[str, Any], site: str) -> dict[str, Any]:
