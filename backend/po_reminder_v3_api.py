@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from backend.po_reminder_completed_shortage import enrich_completed_po_shortages
+from backend.po_reminder_legacy_po_reconcile import reconcile_legacy_completed_pos
 from backend.po_reminder_operational_reconcile import reconcile_operational_po_reminders
 from backend.po_reminder_tools_api import apply_reminder_overrides
 from backend.po_reminder_v4_api import po_reminders_v4
@@ -25,13 +26,15 @@ def po_reminders_v3(
 
     v4 remains authoritative for planning, projected stock, lead time, and exact
     PO coverage. Compatibility passes reconcile operator-confirmed WIKIAN/Tempe
-    behavior, move completed-PO residuals into SHORTAGE_REVIEW, and finally apply
-    explicit reminder-only manual resolutions. No pass mutates planning, PO,
-    receiving, invoice, payment, or physical SO source data.
+    behavior, repair legacy single-date completed-PO item coverage, move true
+    completed-PO residuals into SHORTAGE_REVIEW, and finally apply explicit
+    reminder-only manual resolutions. No pass mutates planning, PO, receiving,
+    invoice, payment, or physical SO source data.
     """
     target = as_of or date.today()
     payload = po_reminders_v4(site=site, as_of=target, horizon_days=horizon_days)
     payload = reconcile_operational_po_reminders(payload, site, target)
+    payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
 
     # Keep the stable v3 compatibility contract exact for non-operational/mock
