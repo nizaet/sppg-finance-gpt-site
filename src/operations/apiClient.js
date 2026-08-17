@@ -3,6 +3,7 @@ import { readSessionToken } from "../auth/session.js";
 const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 const inflightGets = new Map();
 const REQUEST_TIMEOUT_MS = 20000;
+const PO_REMINDER_ACTION_HORIZON_DAYS = 2;
 
 function requestHeaders(options = {}) {
   const token = readSessionToken();
@@ -37,13 +38,19 @@ function request(path, options = {}) {
   return pending;
 }
 
+function poReminderHorizon(value) {
+  const requested = Number(value || PO_REMINDER_ACTION_HORIZON_DAYS);
+  if (!Number.isFinite(requested) || requested < 1) return PO_REMINDER_ACTION_HORIZON_DAYS;
+  return Math.min(Math.trunc(requested), PO_REMINDER_ACTION_HORIZON_DAYS);
+}
+
 export const operationsApi = {
   health: () => request("/health"),
   getSchemaStatus: () => request("/v1/schema-status"),
   getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return request(`/v1/control-tower-v2?${q}`); },
   getPoCalendar: ({ from, to, site }) => { const q = new URLSearchParams({ from, to }); if (site) q.set("site", site); return request(`/v1/po-calendar?${q}`); },
   previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => { const q = new URLSearchParams({ distributionDate }); if (cookingDate) q.set("cookingDate", cookingDate); if (site) q.set("site", site); return request(`/v1/po-schedule/preview?${q}`); },
-  getPoReminders: ({ site = "", date = "", horizonDays = 14 } = {}) => { const q = new URLSearchParams({ horizonDays: String(horizonDays) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v3?${q}`); },
+  getPoReminders: ({ site = "", date = "", horizonDays = PO_REMINDER_ACTION_HORIZON_DAYS } = {}) => { const q = new URLSearchParams({ horizonDays: String(poReminderHorizon(horizonDays)) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v3?${q}`); },
   overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),
   clearPoReminderOverride: (reminderKey) => request(`/v1/po-reminders/override/${encodeURIComponent(reminderKey)}`, { method: "DELETE" }),
   confirmPoShortageStock: (payload) => request("/v1/po-reminders/stock-confirmation", { method: "POST", body: JSON.stringify(payload) }),
@@ -110,7 +117,7 @@ export const operationsApi = {
   createAccountantInvoice: (payload) => request("/v1/accountant-invoices", { method: "POST", body: JSON.stringify(payload) }),
   getBgnFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/bgn-flow${q.toString() ? `?${q}` : ""}`); },
   createBgnMaker: (payload) => request("/v1/bgn-makers", { method: "POST", body: JSON.stringify(payload) }),
-  createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: JSON.stringify(payload) }),
+  createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: "{}" }),
   createBgnReceipt: (payload) => request("/v1/bgn-receipts", { method: "POST", body: JSON.stringify(payload) }),
   createSettlement: (payload) => request("/v1/settlements", { method: "POST", body: JSON.stringify(payload) }),
   getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
