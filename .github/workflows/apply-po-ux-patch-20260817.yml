@@ -1,0 +1,34 @@
+name: Apply PO UX Patch 20260817
+
+on:
+  push:
+    branches:
+      - feat/po-ux-split-override-colors-20260817
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[po-ux-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/po-ux-split-override-colors-20260817
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply deterministic patch
+        run: python scripts/apply_po_ux_patch_20260817.py
+      - name: Commit patched application files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/operations/OperationsPoPlanner.jsx src/operations/apiClient.js src/operations/workspace.css src/operations/OperationsWorkspace.jsx src/App.jsx index.html backend/calculator_pages.py
+          if git diff --cached --quiet; then
+            echo "No patch changes"
+          else
+            git commit -m "[po-ux-applied] Apply PO UX split override colors and branding"
+            git push origin HEAD:feat/po-ux-split-override-colors-20260817
+          fi
