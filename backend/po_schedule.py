@@ -66,15 +66,54 @@ def _dedicated_cemplang_tempe_rule(rules: list[dict[str, Any]], cook: date) -> d
     return candidates[0]
 
 
+def _latest_exact_item_rule(
+    rules: list[dict[str, Any]],
+    site: str,
+    category_hint: str,
+    cook: date,
+) -> dict[str, Any] | None:
+    """Return the newest exact category rule before broader family fallback.
+
+    Effective-dated operator edits must beat older rows with the same category.
+    Site-specific rows beat generic rows.  This prevents a legacy BAHAN_KERING
+    H-1 row from masking a newer H-0 edit and prevents combined categories from
+    masking dedicated TELUR/TEMPE rules.
+    """
+    wanted = _norm(category_hint)
+    candidates: list[dict[str, Any]] = []
+    for rule in rules:
+        site_code = str(rule.get("site_code") or "").upper().strip()
+        if site_code not in {"", site}:
+            continue
+        if _norm(rule.get("category_code")) != wanted:
+            continue
+        if rule.get("effective_from") and rule["effective_from"] > cook:
+            continue
+        if rule.get("effective_to") and rule["effective_to"] < cook:
+            continue
+        candidates.append(rule)
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda row: (
+            str(row.get("site_code") or "").upper().strip() == site,
+            row.get("effective_from") or date.min,
+            int(row.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return candidates[0]
+
+
 def _item_rule(rules: list[dict[str, Any]], vendor: str, site: str, item_name: str, cook: date) -> dict[str, Any] | None:
     family = item_family(item_name)
     if vendor == "KOPERASI" and site == "CEMPLANG" and family == "TEMPE":
         return _dedicated_cemplang_tempe_rule(rules, cook)
 
-    # Use the domain category name as a scoring hint.  This makes a dedicated
-    # TELUR rule outrank legacy combined rules such as TELUR_TAHU_TEMPE, while
-    # preserving family matching as a fallback for older data.
     category_hint = _ITEM_RULE_CATEGORY.get(family, family)
+    exact = _latest_exact_item_rule(rules, site, category_hint, cook)
+    if exact:
+        return exact
     return _rule_for_item(rules, vendor, site, category_hint, item_name, cook)
 
 
@@ -101,7 +140,7 @@ def resolve_purchase_order_schedule(cur: Any, po: dict[str, Any]) -> dict[str, A
     """Return the earliest item-specific safe date to send one saved PO.
 
     Important for KOPERASI: Telur, Tempe and dry goods may have different lead
-    times even when vendor and distribution date are identical.  Therefore a
+    times even when vendor and distribution date are identical. Therefore a
     split Telur PO must not inherit Tempe's longer lead or generic vendor lead.
     For a genuinely mixed PO, each item/date is evaluated and the earliest
     required order date wins.
@@ -208,9 +247,6 @@ def resolve_purchase_order_schedule(cur: Any, po: dict[str, Any]) -> dict[str, A
                 "rule_category_code": rule.get("category_code") if rule else None,
             })
 
-    # If every saved item can be resolved, item-specific scheduling is the source
-    # of truth. Otherwise keep the old conservative vendor-level fallback rather
-    # than pretending an unknown item has a shorter lead.
     if order_dates and not unresolved_item_rule:
         lead_time_days = max(lead_values) if lead_values else None
         scheduled_order_date = min(order_dates)
