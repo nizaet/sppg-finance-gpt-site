@@ -12,6 +12,8 @@ from backend.po_reminder_v4_api import po_reminders_v4
 
 router = APIRouter(tags=["po-reminder-v3"])
 
+_OVERRIDE_TIMING_STATUSES = {"OVERDUE", "DUE_TODAY", "UPCOMING"}
+
 
 @router.get("/po-reminders-v3")
 def po_reminders_v3(
@@ -31,4 +33,14 @@ def po_reminders_v3(
     payload = po_reminders_v4(site=site, as_of=target, horizon_days=horizon_days)
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
+
+    # Keep the stable v3 compatibility contract exact for non-operational/mock
+    # payloads and avoid querying the override table when no timing reminder can
+    # have an operator resolution. Normal overdue/today/upcoming rows still get
+    # stable keys and persisted override semantics.
+    if not any(
+        str(item.get("reminder_status") or "").upper() in _OVERRIDE_TIMING_STATUSES
+        for item in (payload.get("items") or [])
+    ):
+        return payload
     return apply_reminder_overrides(payload, site, target)
