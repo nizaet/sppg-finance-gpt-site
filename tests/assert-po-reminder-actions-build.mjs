@@ -18,9 +18,12 @@ const bundle = jsFiles
 const requiredMarkers = [
   "data-po-actions-version",
   "data-po-reminder-actions",
+  "data-editable-stock",
+  "data-delivery-alerts",
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",
+  "Peringatan barang belum datang setelah jam 17.00",
 ];
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
@@ -28,4 +31,4 @@ if (missing.length) {
   throw new Error(`PO reminder built bundle missing markers: ${missing.join(", ")}`);
 }
 
-console.log("PO reminder action UI is present in the built bundle:", requiredMarkers.join(", "));
+console.log("PO reminder/action UI is present in the built bundle:", requiredMarkers.join(", "));
