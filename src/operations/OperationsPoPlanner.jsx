@@ -1170,22 +1170,33 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             const visual = reminderVisual(item);
             const remaining = remainingReminderQty(item);
             const names = (item.missing_item_names?.length ? item.missing_item_names : item.item_names || []).filter(Boolean);
-            const actionableShortage = ["OVERDUE", "DUE_TODAY"].includes(String(item.reminder_status || "").toUpperCase()) && remaining > 0;
+            const reminderStatus = String(item.reminder_status || "").toUpperCase();
+            const orderingAction = ["OVERDUE", "DUE_TODAY"].includes(reminderStatus) && remaining > 0;
+            const residualReview = reminderStatus === "SHORTAGE_REVIEW" && remaining > 0;
+            const canCreatePo = orderingAction || residualReview;
+            const canConfirmStock = ["OVERDUE", "DUE_TODAY", "SHORTAGE_REVIEW"].includes(reminderStatus) && remaining > 0;
+            const canConfirmManualPo = ["OVERDUE", "DUE_TODAY"].includes(reminderStatus) && Boolean(item.reminder_key);
             return <tr className={visual.rowClass} key={item.reminder_key || `${item.vendor_code}-${item.distribution_date}-${index}`}>
               <td><span className={`ops-reminder-pill ${visual.pillClass}`}>{visual.label}</span>{item.reminder_override && <div className="ops-muted">Asal: {REMINDER_LABELS[item.override_original_status] || item.override_original_status}</div>}</td>
               <td><strong>{item.po_date || "Lead time belum ada"}</strong></td>
               <td>{item.vendor_name || item.vendor_code}</td>
               <td>{(item.cooking_dates || []).join(", ") || item.cooking_date || "-"}</td>
               <td>{(item.distribution_dates || []).join(", ") || item.distribution_date || "-"}</td>
-              <td><strong>{names.length || item.item_count || 0}</strong>{names.length > 0 && <div className="ops-muted ops-item-list">{names.join(", ")}</div>}{remaining > 0 && <div className="ops-shortage-qty">Sisa qty: {qty(remaining)} <small>(unit mengikuti item)</small></div>}</td>
+              <td><strong>{names.length || item.item_count || 0}</strong>
+                {(item.requirement_details || []).filter((detail) => Number(detail.remaining_po_qty || 0) > 0).map((detail, detailIndex) => {
+                  const state = String(detail.ordering_state || "NOT_ORDERED").toUpperCase();
+                  const stateLabel = state === "ORDERED_PARTIAL" ? "SUDAH DIPESAN · SISA" : state === "IN_APP_PARTIAL" ? "PO APLIKASI BELUM CUKUP" : "BELUM DIPESAN";
+                  return <div className="ops-muted ops-item-list" key={`${detail.distribution_date || "date"}-${detail.stock_type_code || detailIndex}-${detailIndex}`}><strong>{(detail.item_names || []).join(", ") || detail.stock_type_code || "Item"}</strong> · <span className={`ops-reminder-pill ${state === "ORDERED_PARTIAL" ? "ops-pill-amber" : "ops-pill-red"}`}>{stateLabel}</span> · sisa {qty(detail.remaining_po_qty)} {detail.unit || ""}</div>;
+                })}
+                {remaining > 0 && <div className="ops-shortage-qty">Total sisa: {qty(remaining)} <small>(unit mengikuti item)</small></div>}
+              </td>
               <td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}{item.po_already_done && item.shortage_only ? " · PO sudah dilakukan" : ""}</div><div className="ops-muted">{item.po_sent_at ? `Terkirim: ${compactTimestamp(item.po_sent_at)}` : `Sudah dibuat: ${compactTimestamp(item.po_created_at)}`}</div><button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : item.manual_po_confirmed ? <span className="ops-stock-badge ops-stock-covered">✓ PO manual dikonfirmasi</span> : <span className="ops-muted">Belum ada PO aplikasi</span>}</td>
               <td><div className="ops-row-actions">
                 {item.reminder_override ? <button type="button" onClick={() => clearReminderOverride(item)} disabled={reminderActionKey === item.reminder_key}><RotateCcw size={13} /> Batalkan Override</button> : <>
-                  {actionableShortage && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> Buat PO</button>}
-                  {item.reminder_status === "SHORTAGE_REVIEW" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "CHECKED")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah dicek / biarkan</button>}
-                  {item.reminder_status === "SHORTAGE_REVIEW" && item.reminder_key && <button type="button" onClick={() => confirmShortageStock(item)} disabled={reminderActionKey === item.reminder_key}><Save size={13} /> Isi stok dapur</button>}
-                  {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "SUFFICIENT")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah mencukupi</button>}
-                  {item.reminder_status === "OVERDUE" && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "MANUAL_PO")} disabled={reminderActionKey === item.reminder_key}><Send size={13} /> PO manual sudah dilakukan</button>}
+                  {canCreatePo && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> {residualReview ? "Buat PO Tambahan" : "Buat PO"}</button>}
+                  {canConfirmManualPo && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "MANUAL_PO")} disabled={reminderActionKey === item.reminder_key}><Send size={13} /> PO sudah dilakukan</button>}
+                  {canConfirmStock && item.reminder_key && <button type="button" onClick={() => confirmShortageStock(item)} disabled={reminderActionKey === item.reminder_key}><Save size={13} /> Konfirmasi stok gudang</button>}
+                  {residualReview && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "CHECKED")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah dicek / biarkan</button>}
                 </>}
               </div></td>
             </tr>;

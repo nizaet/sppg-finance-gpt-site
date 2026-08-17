@@ -177,17 +177,65 @@ def _completed_po_lookup(site: str, distribution_dates: list[date]) -> dict[tupl
     return lookup
 
 
+def _effective_completed_qty(detail: dict[str, Any]) -> float:
+    return max(
+        0.0,
+        float(detail.get("completed_po_qty") or 0.0),
+        float(detail.get("batch_completed_po_qty") or 0.0),
+    )
+
+
+def _detail_ordering_state(detail: dict[str, Any]) -> str:
+    remaining = max(0.0, float(detail.get("remaining_po_qty") or 0.0))
+    if remaining <= EPSILON:
+        return "COVERED"
+    completed = _effective_completed_qty(detail)
+    if completed > EPSILON:
+        return "ORDERED_PARTIAL"
+    covered = max(0.0, float(detail.get("covered_po_qty") or 0.0))
+    if covered > EPSILON:
+        return "IN_APP_PARTIAL"
+    return "NOT_ORDERED"
+
+
+def _detail_names(details: list[dict[str, Any]], state: str) -> list[str]:
+    return sorted({
+        str(name).strip()
+        for detail in details
+        if str(detail.get("ordering_state") or "").upper() == state
+        for name in (detail.get("item_names") or [])
+        if str(name).strip()
+    })
+
+
+def _latest_exact_completed_po(details: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows: list[dict[str, Any]] = []
+    for detail in details:
+        po_id = detail.get("completed_purchase_order_id")
+        if not po_id:
+            continue
+        rows.append({
+            "id": po_id,
+            "po_code": detail.get("completed_po_code"),
+            "status": detail.get("completed_po_status"),
+            "created_at": detail.get("completed_po_created_at"),
+            "sent_at": detail.get("completed_po_sent_at"),
+            "revision_no": 0,
+        })
+    return _latest_po(rows)
+
+
 def apply_completed_po_shortage_semantics(
     payload: dict[str, Any],
-    completed_lookup: dict[tuple[str, str, date], dict[str, Any]],
+    completed_lookup: dict[tuple[str, str, date], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Move residual shortage after a completed PO into a review-only state.
+    """Use exact requirement coverage, not broad vendor/date PO existence.
 
-    ``shortage_reminder_status`` preserves the original timing state for audit,
-    while ``reminder_status=SHORTAGE_REVIEW`` removes the row from the actual
-    ordering backlog. A SENT PO therefore cannot simultaneously be shown as
-    "Terlambat" or "Kirim hari ini" merely because planning later sees a gap.
+    A completed KOPERASI PO that contains other lines must not turn an un-ordered
+    Kecap/Telur/Tepung requirement into a completed-PO residual. Each requirement
+    is classified from its exact item type + unit + distribution-date coverage.
     """
+    del completed_lookup
     items = payload.get("items") or []
     changed = False
     shortage_count = 0
@@ -195,48 +243,74 @@ def apply_completed_po_shortage_semantics(
 
     for original in items:
         item = dict(original)
-        reminder_status = str(item.get("reminder_status") or "").upper()
-        dates = _distribution_dates(item)
-        missing_names = sorted({str(name).strip() for name in (item.get("missing_item_names") or []) if str(name).strip()})
-        remaining_qty = _remaining_qty(item)
+        status = str(item.get("reminder_status") or "").upper()
+        details = [dict(detail) for detail in (item.get("requirement_details") or [])]
+        open_details: list[dict[str, Any]] = []
+        for detail in details:
+            detail["ordering_state"] = _detail_ordering_state(detail)
+            if float(detail.get("remaining_po_qty") or 0.0) > EPSILON:
+                open_details.append(detail)
+        item["requirement_details"] = details
 
-        if reminder_status in SHORTAGE_REMINDER_STATUSES and dates and (missing_names or remaining_qty > EPSILON):
-            site = str(item.get("site") or "").upper().strip()
-            vendor = str(item.get("vendor_code") or "").upper().strip()
-            matching_pos = [completed_lookup.get((site, vendor, value)) for value in dates]
-            completed_po = _latest_po([po for po in matching_pos if po])
-            if completed_po:
+        if open_details:
+            item["not_ordered_item_names"] = _detail_names(open_details, "NOT_ORDERED")
+            item["partial_shortage_item_names"] = _detail_names(open_details, "ORDERED_PARTIAL")
+            item["in_app_partial_item_names"] = _detail_names(open_details, "IN_APP_PARTIAL")
+            item["not_ordered_count"] = sum(1 for d in open_details if d["ordering_state"] == "NOT_ORDERED")
+            item["partial_shortage_count"] = sum(1 for d in open_details if d["ordering_state"] == "ORDERED_PARTIAL")
+            item["in_app_partial_count"] = sum(1 for d in open_details if d["ordering_state"] == "IN_APP_PARTIAL")
+            changed = True
+
+        if status in SHORTAGE_REMINDER_STATUSES and open_details:
+            all_completed_partial = all(d["ordering_state"] == "ORDERED_PARTIAL" for d in open_details)
+            if all_completed_partial:
+                exact_po = _latest_exact_completed_po(open_details)
+                if exact_po:
+                    item.update({
+                        "purchase_order_id": exact_po.get("id"),
+                        "po_code": exact_po.get("po_code"),
+                        "po_status": exact_po.get("status"),
+                        "po_created_at": exact_po.get("created_at"),
+                        "po_sent_at": exact_po.get("sent_at"),
+                    })
                 item.update({
-                    "purchase_order_id": completed_po.get("id"),
-                    "po_code": completed_po.get("po_code"),
-                    "po_status": completed_po.get("status"),
-                    "po_created_at": completed_po.get("created_at"),
-                    "po_sent_at": completed_po.get("sent_at"),
                     "po_workflow_status": "DONE",
                     "po_already_done": True,
                     "shortage_only": True,
-                    "shortage_reminder_status": reminder_status,
+                    "shortage_reminder_status": status,
                     "reminder_status": "SHORTAGE_REVIEW",
-                    "shortage_item_names": missing_names,
-                    "shortage_distribution_dates": sorted({
-                        _as_date(value) for value in (item.get("missing_distribution_dates") or dates)
-                        if _as_date(value) is not None
+                    "shortage_item_names": sorted({
+                        str(name).strip()
+                        for detail in open_details
+                        for name in (detail.get("item_names") or [])
+                        if str(name).strip()
                     }),
-                    "shortage_qty_total": remaining_qty,
-                    "po_coverage_dates": completed_po.get("po_coverage_dates") or [],
+                    "shortage_distribution_dates": sorted({
+                        value
+                        for value in (_as_date(detail.get("distribution_date")) for detail in open_details)
+                        if value is not None
+                    }),
+                    "shortage_qty_total": round(sum(float(d.get("remaining_po_qty") or 0.0) for d in open_details), 4),
+                    "ordering_state_summary": "ORDERED_PARTIAL",
                     "reminder_message": (
-                        "PO sudah dilakukan. Sisa kebutuhan dikeluarkan dari antrean PO dan hanya perlu dicek: "
-                        "biarkan jika pengurangan memang disengaja, atau koreksi stok dapur bila SO belum terisi."
+                        "Item sudah pernah masuk PO selesai/SENT tetapi qty masih kurang. "
+                        "Buat PO Tambahan, Konfirmasi stok gudang, atau Sudah dicek / biarkan."
                     ),
                 })
                 shortage_count += 1
-                changed = True
+            else:
+                item["shortage_only"] = False
+                item["ordering_state_summary"] = "NEEDS_ORDERING"
+                if item.get("not_ordered_count"):
+                    item["reminder_message"] = (
+                        "Masih ada item yang belum pernah dipesan untuk tanggal distribusi ini. "
+                        "Buat PO, konfirmasi PO sudah dilakukan, atau Konfirmasi stok gudang."
+                    )
 
         enriched_items.append(item)
 
     if not changed:
         return payload
-
     result = dict(payload)
     result["items"] = enriched_items
     result["shortageAfterCompletedPoCount"] = shortage_count
@@ -244,12 +318,6 @@ def apply_completed_po_shortage_semantics(
 
 
 def enrich_completed_po_shortages(payload: dict[str, Any], site: str) -> dict[str, Any]:
-    candidates = _shortage_candidates(payload)
-    if not candidates:
-        return payload
-
-    distribution_dates = sorted({value for item in candidates for value in _distribution_dates(item)})
-    lookup = _completed_po_lookup(site, distribution_dates)
-    if not lookup:
-        return payload
-    return apply_completed_po_shortage_semantics(payload, lookup)
+    # Public signature retained; exact item-level coverage is already in v4.
+    del site
+    return apply_completed_po_shortage_semantics(payload)

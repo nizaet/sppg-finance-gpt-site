@@ -211,11 +211,16 @@ def _coverage_stage(
         stage = "OPEN"
         action_po = None
 
+    latest_completed_po = _latest_po([po for po, _ in done_rows])
     return {
         "stage": stage,
         "action_po": action_po,
         "contributors": [po for po, _ in rows],
         "covered_qty": round(total_qty, 4),
+        "completed_qty": round(done_qty, 4),
+        "finalized_qty": round(finalized_qty, 4),
+        "draft_qty": round(draft_qty, 4),
+        "latest_completed_po": latest_completed_po,
         "remaining_qty": max(0.0, round(recommended - total_qty, 4)),
     }
 
@@ -501,6 +506,16 @@ def po_reminders_v4(
                 missing_item_names.update(names)
                 missing_distribution_dates.add(req["distribution_date"])
 
+            latest_completed_po = coverage.get("latest_completed_po") or {}
+            if coverage["remaining_qty"] <= EPSILON:
+                ordering_state = "COVERED"
+            elif coverage.get("completed_qty", 0.0) > EPSILON:
+                ordering_state = "ORDERED_PARTIAL"
+            elif coverage.get("covered_qty", 0.0) > EPSILON:
+                ordering_state = "IN_APP_PARTIAL"
+            else:
+                ordering_state = "NOT_ORDERED"
+
             requirement_details.append({
                 "distribution_date": req["distribution_date"],
                 "cooking_dates": sorted(req["cooking_dates"]),
@@ -512,8 +527,17 @@ def po_reminders_v4(
                 "projected_stock_qty": round(float(req["projected_stock_qty"]), 4),
                 "recommended_po_qty": round(float(req["recommended_po_qty"]), 4),
                 "covered_po_qty": coverage["covered_qty"],
+                "completed_po_qty": coverage.get("completed_qty", 0.0),
+                "finalized_po_qty": coverage.get("finalized_qty", 0.0),
+                "draft_po_qty": coverage.get("draft_qty", 0.0),
                 "remaining_po_qty": coverage["remaining_qty"],
                 "coverage_stage": coverage["stage"],
+                "ordering_state": ordering_state,
+                "completed_purchase_order_id": latest_completed_po.get("id"),
+                "completed_po_code": latest_completed_po.get("po_code"),
+                "completed_po_status": latest_completed_po.get("status"),
+                "completed_po_created_at": latest_completed_po.get("created_at"),
+                "completed_po_sent_at": latest_completed_po.get("sent_at"),
                 "projection_basis": req["projection_basis"],
             })
 
