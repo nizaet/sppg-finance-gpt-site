@@ -286,6 +286,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [planningSnapshot, setPlanningSnapshot] = useState(null);
   const [draftItems, setDraftItems] = useState([]);
+  const [dailyPulled, setDailyPulled] = useState(false);
   const [vendorOptions, setVendorOptions] = useState(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -333,13 +334,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setDraftItems(draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, activeSite));
   };
 
-  const load = async () => {
+  const loadBase = async () => {
     setLoading(true);
     setError("");
-    setMessage("");
     try {
-      // PO history must stay visible even when the selected calculator date
-      // genuinely has no plan.  It is a separate operational record.
+      // PO history, vendor contacts, and reminders remain live even before the
+      // operator pulls a daily planning/stok working set.
       const [poData, vendorsData, reminderData] = await Promise.all([
         operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
         operationsApi.getReferenceVendors(activeSite),
@@ -359,27 +359,6 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       });
       setVendorPhones(phones);
       setPhoneValue(phones[phoneVendor] || "");
-
-      try {
-        const [scheduleData, snapshotsData, inventoryData, cooperativeData] = await Promise.all([
-          operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
-          operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
-          operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
-          operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
-        ]);
-        setSchedule(scheduleData?.items || []);
-        const snapshots = snapshotsData?.items || [];
-        if (!snapshots.length) {
-          applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
-        } else {
-          const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
-          applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
-        }
-      } catch (planningError) {
-        setSchedule([]);
-        applyPlanningSnapshot(null, [], []);
-        setError(`Rencana Kalkulator untuk tanggal ini belum tersedia. PO yang sudah tersimpan tetap ditampilkan. ${planningError.message || ""}`.trim());
-      }
     } catch (err) {
       setError(err.message || "Gagal menarik daftar PO, vendor, atau pengingat");
     } finally {
@@ -387,7 +366,61 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     }
   };
 
-  useEffect(() => { load(); }, [distributionDate, cookingDate, activeSite]);
+  const pullDailyData = async () => {
+    setLoading(true);
+    setDailyPulled(true);
+    setError("");
+    setMessage("");
+    try {
+      const [scheduleData, snapshotsData, inventoryData, cooperativeData] = await Promise.all([
+        operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
+        operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
+        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
+        operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
+      ]);
+      setSchedule(scheduleData?.items || []);
+      const snapshots = snapshotsData?.items || [];
+      if (!snapshots.length) {
+        applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
+        setMessage(`Data ${activeSite} ${distributionDate} sudah ditarik, tetapi planning aktif belum tersedia.`);
+        return;
+      }
+      const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
+      applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
+      setMessage(`Planning + stok ${activeSite} untuk distribusi ${distributionDate} berhasil ditarik. Data ini hanya working set PO dan boleh dibersihkan tanpa menghapus PO tersimpan.`);
+    } catch (planningError) {
+      setSchedule([]);
+      applyPlanningSnapshot(null, [], []);
+      setError(`Rencana Kalkulator untuk tanggal ini belum tersedia. PO yang sudah tersimpan tetap ditampilkan. ${planningError.message || ""}`.trim());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearDailyPulledData = () => {
+    setSchedule([]);
+    setPlanningSnapshot(null);
+    setDraftItems([]);
+    setDailyPulled(false);
+    setError("");
+    setMessage("Semua hasil tarikan PO harian dibersihkan dari layar. PO yang sudah tersimpan tidak dihapus.");
+  };
+
+  const clearVendorPulledData = (vendor) => {
+    setDraftItems((current) => current.filter((item) => (item.vendor_code || "UNASSIGNED") !== vendor));
+    setMessage(`Hasil tarikan ${vendor} dibersihkan dari layar. PO vendor yang sudah tersimpan tetap aman.`);
+  };
+
+  useEffect(() => { loadBase(); }, [activeSite]);
+
+  // Ganti tanggal/site tidak boleh otomatis menarik planning/stok. Operator harus
+  // menekan Tarik Data, sama seperti alur PO gabungan beberapa hari.
+  useEffect(() => {
+    setSchedule([]);
+    setPlanningSnapshot(null);
+    setDraftItems([]);
+    setDailyPulled(false);
+  }, [distributionDate, cookingDate, activeSite]);
 
   const groupedDrafts = useMemo(() => {
     const groups = new Map();
@@ -651,7 +684,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         items: updates,
         note: `Koreksi dari review kekurangan ${item.po_code || item.vendor_code}`,
       });
-      await load();
+      await refreshReminders();
+      if (dailyPulled) await pullDailyData();
       setMessage(result?.message || "Stok dapur dikoreksi dan reminder dihitung ulang.");
     } catch (err) {
       setError(err.message || "Gagal mencatat koreksi stok dapur");
@@ -1003,7 +1037,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             <h3>Tarik Planning dan Susun PO Vendor</h3>
             <p><strong>Rumus rekomendasi:</strong> Planning Qty − stok proyeksi sebelum tanggal distribusi. Proyeksi berasal dari SO terakhir + movement/aktual − planning hari sebelumnya. <strong>PO Qty tetap bebas Anda edit</strong> tanpa mengubah Kalkulator atau histori SO.</p>
           </div>
-          <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> {loading ? "Menarik..." : "Tarik Data Kalkulator + Stok"}</button>
+          <div className="ops-row-actions">
+            <button className="ops-button-primary" type="button" onClick={pullDailyData} disabled={loading}><RefreshCw size={15} /> {loading ? "Menarik..." : "Tarik Data Kalkulator + Stok"}</button>
+            {dailyPulled && <button type="button" onClick={clearDailyPulledData} disabled={loading}><Trash2 size={15} /> Bersihkan Semua</button>}
+          </div>
         </div>
 
         <div className="ops-form-grid">
@@ -1027,7 +1064,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         {error && <div className="ops-error">{error}</div>}
         {message && <div className="ops-success">{message}</div>}
 
-        {!loading && !planningSnapshot && (
+        {!loading && !dailyPulled && (
+          <div className="ops-notice">
+            Data PO harian belum ditarik. Pilih site/tanggal lalu tekan <strong>Tarik Data Kalkulator + Stok</strong>. Mengganti tanggal tidak akan menarik data otomatis.
+          </div>
+        )}
+        {!loading && dailyPulled && !planningSnapshot && (
           <div className="ops-notice">
             Belum ada planning snapshot Kalkulator untuk <strong>{activeSite}</strong> tanggal {distributionDate}. PO tidak dibuat dari tebakan.
           </div>
@@ -1059,9 +1101,12 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                       <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : "Buat Draft PO"}
                     </button>
                   )}
-                  {existingPo && <button type="button" onClick={() => existingStatus === "DRAFT" ? beginEditPo(existingPo) : viewPoDetail(existingPo)} disabled={actionId === existingPo.id}>
-                    {existingStatus === "DRAFT" ? <Pencil size={15} /> : <Eye size={15} />} {existingStatus === "DRAFT" ? "Buka & Edit PO" : "Lihat PO"}
-                  </button>}
+                  {existingPo && <div className="ops-row-actions">
+                    <button type="button" onClick={() => existingStatus === "DRAFT" ? beginEditPo(existingPo) : viewPoDetail(existingPo)} disabled={actionId === existingPo.id}>
+                      {existingStatus === "DRAFT" ? <Pencil size={15} /> : <Eye size={15} />} {existingStatus === "DRAFT" ? "Buka & Edit PO" : "Lihat PO"}
+                    </button>
+                    <button type="button" onClick={() => clearVendorPulledData(group.vendor)} title="Bersihkan hanya hasil tarikan vendor ini; PO tersimpan tidak dihapus"><Trash2 size={15} /> Bersihkan Vendor</button>
+                  </div>}
                 </div>
                 <div className="ops-table-wrap">
                   <table className="ops-table">
