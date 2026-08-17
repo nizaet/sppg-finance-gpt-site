@@ -24,6 +24,17 @@ INDEX_MAJA = DIST / "index.html"
 INDEX_CEMPLANG = DIST / "index-cemplang.html"
 ASSETS = DIST / "assets"
 
+# The SPA shell must never be reused across Railway deploys. Vite assets are
+# content-hashed, so they may be cached normally; stale index.html is dangerous
+# because it can keep pointing at an old lazy-loaded PO chunk while the backend
+# has already moved to a newer commit.
+SPA_HTML_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "X-Content-Type-Options": "nosniff",
+}
+
 if ASSETS.is_dir():
     fastapi_app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="frontend-assets")
 
@@ -33,6 +44,10 @@ def _index_for_path(full_path: str) -> Path:
     if normalized == "accountant/cemplang" or normalized.startswith("accountant/cemplang/"):
         return INDEX_CEMPLANG
     return INDEX_MAJA
+
+
+def _html_file_response(path: Path) -> FileResponse:
+    return FileResponse(path, headers=SPA_HTML_HEADERS)
 
 
 def _calculator_role(request: Request) -> str | None:
@@ -59,8 +74,7 @@ def frontend_calculator(unit: str, request: Request):
     return HTMLResponse(
         calculator_html(normalized, role),
         headers={
-            "Cache-Control": "private, no-store",
-            "X-Content-Type-Options": "nosniff",
+            **SPA_HTML_HEADERS,
             "Referrer-Policy": "same-origin",
         },
     )
@@ -70,7 +84,7 @@ def frontend_calculator(unit: str, request: Request):
 def frontend_root():
     if not INDEX_MAJA.is_file():
         raise HTTPException(503, "frontend build is not available")
-    return FileResponse(INDEX_MAJA)
+    return _html_file_response(INDEX_MAJA)
 
 
 @fastapi_app.get("/{full_path:path}", include_in_schema=False)
@@ -80,12 +94,14 @@ def frontend_spa(full_path: str):
 
     candidate = DIST / full_path
     if candidate.is_file() and DIST in candidate.resolve().parents:
+        if candidate.suffix.lower() == ".html":
+            return _html_file_response(candidate)
         return FileResponse(candidate)
 
     index = _index_for_path(full_path)
     if not index.is_file():
         raise HTTPException(503, "frontend build is not available")
-    return FileResponse(index)
+    return _html_file_response(index)
 
 
 app = SppgAccessMiddleware(fastapi_app)
