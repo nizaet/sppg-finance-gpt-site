@@ -27,6 +27,7 @@ MIGRATIONS = [
     ROOT / "schema" / "inventory_stock_opname_lifecycle_v025.sql",
     ROOT / "schema" / "po_reminder_rules_v026.sql",
     ROOT / "schema" / "po_reminder_overrides_v027.sql",
+    ROOT / "schema" / "po_reminder_review_resolution_v028.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
