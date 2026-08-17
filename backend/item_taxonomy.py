@@ -72,6 +72,12 @@ def item_family(name: Any, category: Any = None) -> str:
     category_text = normalize_item_text(category)
     combined = f"{category_text} {text}".strip()
 
+    # Milk is operationally purchased through KOPERASI regardless of a stale
+    # calculator supplier/category label. Keep this before protein/category
+    # detection so e.g. "Susu Clevo 115ml Full Cream" cannot inherit IKAN.
+    if _contains(text, r"\b(susu|milk)\b"):
+        return "DRY_GOODS"
+
     # Pantry/dry goods win before protein words. This prevents e.g.
     # "Knorr Chicken Powder" from becoming chicken/WIKIAN.
     if any(
@@ -82,7 +88,7 @@ def item_family(name: Any, category: Any = None) -> str:
             r"\bknorr\b", r"\bkaldu\b", r"\btotole\b", r"\bpowder\b", r"\bbubuk\b",
             r"\bminyak\b", r"\bgula\b", r"\bgaram\b", r"\bkecap\b", r"\bsaus\b", r"\bsaos\b",
             r"\bcuka\b", r"\bbaking\s+powder\b", r"\blada\b", r"\bmerica\b", r"\bketumbar\b",
-            r"\bsantan\b", r"\bsusu\s+(uht|bubuk)\b",
+            r"\bsantan\b", r"\bsusu\b", r"\bmilk\b",
         )
     ):
         return "DRY_GOODS"
