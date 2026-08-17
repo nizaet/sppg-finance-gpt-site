@@ -2,7 +2,8 @@ FROM node:20-alpine AS frontend
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html vite.config.js ./
+COPY index.html vite.config.js vite.runtime.config.js ./
+COPY tests/assert-po-reminder-actions-build.mjs ./tests/assert-po-reminder-actions-build.mjs
 COPY src ./src
 COPY public ./public
 
