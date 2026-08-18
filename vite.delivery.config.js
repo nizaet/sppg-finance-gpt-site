@@ -7,13 +7,12 @@ function deliveryAlertActionControls() {
     transform(code, id) {
       if (id.includes("/src/operations/apiClient.js")) {
         if (code.includes("confirmPoDeliveryAlert")) return null;
-        const needle = `getPoDeliveryAlerts: ({ site = "", date = "", minimumHour = 17 } = {}) => { const q = new URLSearchParams({ minimumHour: String(minimumHour) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(\`/v1/po-delivery-alerts?\${q}\`); },`;
-        const replacement = `${needle}
-  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),`;
-        if (!code.includes(needle)) {
-          throw new Error("[delivery-alert-actions] Missing API client anchor");
+        const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
+        const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
+        if (!code.includes(marker)) {
+          throw new Error("[delivery-alert-actions] Missing stable API insertion marker");
         }
-        return { code: code.replace(needle, replacement), map: null };
+        return { code: code.replace(marker, `${insertion}${marker}`), map: null };
       }
 
       if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
