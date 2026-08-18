@@ -29,6 +29,7 @@ const requiredMarkers = [
   "PO sudah terkirim",
   "Barang datang sesuai",
   "Datang tidak sesuai",
+  "Delivery alert saved but alert refresh failed",
 ];
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
