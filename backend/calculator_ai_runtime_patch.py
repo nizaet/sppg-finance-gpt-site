@@ -9,6 +9,8 @@ _PATCH_MARKER = "__sppg_calculator_ai_backend_proxy_v1"
 _AI_PROXY_SCRIPT = r"""
         // __sppg_calculator_ai_backend_proxy_v1
         window.__calculatorAIUseBackend = true;
+        window.__calculatorAIDefaultProvider = 'openai';
+        window.__calculatorAIFallbackProvider = 'gemini';
         async function callRailwayCalculatorAI(provider, prompt, systemPrompt = null, modelName = '', abortSignal = null, timeoutMs = 70000) {
             var sessionToken = sessionStorage.getItem('sppg_session_token_v1') || localStorage.getItem('sppg_session_token_v1') || '';
             var controller = new AbortController();
@@ -59,6 +61,14 @@ def _patch_legacy_ai(html: str) -> str:
     html = html.replace(
         "openAiApiKey: String(appConfig.openAiApiKey || '').trim(),",
         "openAiApiKey: String(appConfig.openAiApiKey || (window.__calculatorAIUseBackend ? 'railway-backend' : '')).trim(),",
+    )
+    html = html.replace(
+        "aiProvider: appConfig.aiProvider || 'gemini',",
+        "aiProvider: window.__calculatorAIDefaultProvider || 'openai',",
+    )
+    html = html.replace(
+        "aiFallbackProvider: appConfig.aiFallbackProvider || 'openai',",
+        "aiFallbackProvider: window.__calculatorAIFallbackProvider || 'gemini',",
     )
 
     marker = "        function getAIConfig() {"
