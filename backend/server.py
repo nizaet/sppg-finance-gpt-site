@@ -17,7 +17,10 @@ from backend.app import app as fastapi_app
 from backend.auth_api import SESSION_COOKIE, verify_session
 from backend.auth_middleware import SppgAccessMiddleware
 from backend.calculator_ai_api import router as calculator_ai_router
-from backend.calculator_pages import calculator_html
+from backend.calculator_ai_runtime_patch import install as install_calculator_ai_patch
+
+install_calculator_ai_patch()
+from backend.calculator_pages import calculator_html  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
