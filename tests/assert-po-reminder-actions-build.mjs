@@ -20,11 +20,15 @@ const requiredMarkers = [
   "data-po-reminder-actions",
   "data-editable-stock",
   "data-delivery-alerts",
+  "data-delivery-alert-actions",
   "data-po-archive-search",
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",
   "Peringatan barang belum datang setelah jam 17.00",
+  "PO sudah terkirim",
+  "Barang datang sesuai",
+  "Datang tidak sesuai",
 ];
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
