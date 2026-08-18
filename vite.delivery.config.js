@@ -6,13 +6,19 @@ function deliveryAlertActionControls() {
     enforce: "post",
     transform(code, id) {
       if (id.includes("/src/operations/apiClient.js")) {
-        if (code.includes("confirmPoDeliveryAlert")) return null;
-        const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
-        const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
-        if (!code.includes(marker)) {
-          throw new Error("[delivery-alert-actions] Missing stable API insertion marker");
+        let apiCode = code.replace(
+          "const REQUEST_TIMEOUT_MS = 20000;",
+          "const REQUEST_TIMEOUT_MS = 60000;",
+        );
+        if (!apiCode.includes("confirmPoDeliveryAlert")) {
+          const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
+          const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
+          if (!apiCode.includes(marker)) {
+            throw new Error("[delivery-alert-actions] Missing stable API insertion marker");
+          }
+          apiCode = apiCode.replace(marker, `${insertion}${marker}`);
         }
-        return { code: code.replace(marker, `${insertion}${marker}`), map: null };
+        return apiCode === code ? null : { code: apiCode, map: null };
       }
 
       if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
