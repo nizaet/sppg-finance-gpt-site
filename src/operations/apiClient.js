@@ -83,6 +83,7 @@ export const operationsApi = {
   getStockOpnames: ({ location = "", limit = 50 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (location) q.set("location", location); return request(`/v1/inventory/stock-opnames?${q}`); },
   getStockOpname: (id) => request(`/v1/inventory/stock-opnames/${encodeURIComponent(id)}`),
   deleteStockOpname: (id, reason = "") => { const q = new URLSearchParams(); if (reason) q.set("reason", reason); return request(`/v1/inventory/stock-opnames/${encodeURIComponent(id)}${q.toString() ? `?${q}` : ""}`, { method: "DELETE" }); },
+  manualStockAdjustment: (payload, commit = true) => request("/v1/inventory/manual-adjustment", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   getInventoryItems: (search = "") => { const q = new URLSearchParams(); if (search) q.set("search", search); return request(`/v1/inventory/items${q.toString() ? `?${q}` : ""}`); },
   saveInventoryItem: (payload, commit = false) => request("/v1/inventory/items", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   previewCalculatorPlans: (payload) => request("/v1/calculator-data/plan-preview", { method: "POST", body: JSON.stringify(payload) }),
