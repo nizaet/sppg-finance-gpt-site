@@ -37,10 +37,16 @@ from backend.purchase_order_workflow_api import router as purchase_order_workflo
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
 from backend.po_reminder_projection_cache_patch import install as install_po_reminder_projection_cache_patch
+from backend.po_delivery_receipt_reconcile_patch import install as install_po_delivery_receipt_reconcile_patch
 
 # Reuse identical site/date stock projections for a few seconds. This only
 # removes duplicate expensive reads; it does not change stock or PO arithmetic.
 install_po_reminder_projection_cache_patch()
+
+# Reconcile valid goods receipts that have the correct PO header but a missing
+# purchase_order_item_id. Matching is constrained to that same PO and must be
+# unambiguous before it can reduce a delivery alert.
+install_po_delivery_receipt_reconcile_patch()
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
