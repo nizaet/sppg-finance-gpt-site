@@ -14,7 +14,8 @@ function deliveryAlertActionControls() {
           .replace(
             `if (err?.name === "AbortError") throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");`,
             `if (err?.name === "AbortError") throw new Error(\`SPPG Core API terlalu lama merespons: \${path}. Coba Refresh.\`);`,
-          );
+          )
+          .replace("/v1/control-tower-v2?${q}", "/v1/control-tower?${q}");
         if (!apiCode.includes("confirmPoDeliveryAlert")) {
           const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
           const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
@@ -27,7 +28,7 @@ function deliveryAlertActionControls() {
       }
 
       if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
-      if (!code.includes(`data-delivery-alerts="v16"`)) return null;
+      if (!code.includes("Peringatan barang belum datang")) return null;
       if (code.includes("confirmDeliveryAlert = async")) return null;
 
       let next = code;
@@ -38,12 +39,12 @@ function deliveryAlertActionControls() {
       }
       next = next.replace(returnAnchor, `${helper}${returnAnchor}`);
 
-      const alertNeedle = `{(alert.items || []).slice(0, 6).map((line) => <div className="ops-muted" key={line.itemName}>{line.message}</div>)}</div>)}</div>}`;
-      const alertReplacement = `{(alert.items || []).slice(0, 6).map((line) => <div className="ops-muted" key={line.itemName}>{line.message}</div>)}<div className="ops-row-actions" data-delivery-alert-actions="v17"><button type="button" onClick={() => confirmDeliveryAlert(alert, "SENT_CONFIRMED")} disabled={actionId === alert.purchaseOrderId}><Send size={13} /> PO sudah terkirim</button><button className="ops-button-success" type="button" onClick={() => confirmDeliveryAlert(alert, "ARRIVED_MATCH")} disabled={actionId === alert.purchaseOrderId}><CheckCircle2 size={13} /> Barang datang sesuai</button><button type="button" onClick={() => confirmDeliveryAlert(alert, "ARRIVED_MISMATCH")} disabled={actionId === alert.purchaseOrderId}><XCircle size={13} /> Datang tidak sesuai</button></div></div>)}</div>}`;
-      if (!next.includes(alertNeedle)) {
-        throw new Error("[delivery-alert-actions] Missing alert render anchor");
+      const itemListNeedle = `{(alert.items || []).slice(0, 6).map((line) => <div className="ops-muted" key={line.itemName}>{line.message}</div>)}`;
+      const actionButtons = `<div className="ops-row-actions" data-delivery-alert-actions="v18"><button type="button" onClick={() => confirmDeliveryAlert(alert, "SENT_CONFIRMED")} disabled={actionId === alert.purchaseOrderId}><Send size={13} /> PO sudah terkirim</button><button className="ops-button-success" type="button" onClick={() => confirmDeliveryAlert(alert, "ARRIVED_MATCH")} disabled={actionId === alert.purchaseOrderId}><CheckCircle2 size={13} /> Barang datang sesuai</button><button type="button" onClick={() => confirmDeliveryAlert(alert, "ARRIVED_MISMATCH")} disabled={actionId === alert.purchaseOrderId}>✕ Datang tidak sesuai</button></div>`;
+      if (!next.includes(itemListNeedle)) {
+        throw new Error("[delivery-alert-actions] Missing alert item-list render anchor");
       }
-      next = next.replace(alertNeedle, alertReplacement);
+      next = next.replace(itemListNeedle, `${itemListNeedle}${actionButtons}`);
 
       next = next.replaceAll("Untuk Di-PO Besok", "Info PO Besok — belum perlu dikirim hari ini");
       next = next.replaceAll("persiapan satu hari ke depan", "informasi tanggal pesan besok, bukan aksi hari ini");
