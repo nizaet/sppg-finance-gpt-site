@@ -36,6 +36,11 @@ from backend.purchase_order_listing_api import router as purchase_order_listing_
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
+from backend.po_reminder_projection_cache_patch import install as install_po_reminder_projection_cache_patch
+
+# Reuse identical site/date stock projections for a few seconds. This only
+# removes duplicate expensive reads; it does not change stock or PO arithmetic.
+install_po_reminder_projection_cache_patch()
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
