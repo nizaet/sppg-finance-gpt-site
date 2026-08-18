@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from backend.po_reminder_completed_shortage import enrich_completed_po_shortages
 from backend.po_reminder_legacy_po_reconcile import reconcile_legacy_completed_pos
 from backend.po_reminder_operational_reconcile import reconcile_operational_po_reminders
+from backend.po_reminder_override_fallback import apply_fallback_reminder_overrides
 from backend.po_reminder_tools_api import apply_reminder_overrides
 from backend.po_reminder_v4_api import po_reminders_v4
 
@@ -122,4 +123,5 @@ def po_reminders_v3(
         for item in (payload.get("items") or [])
     ):
         payload = apply_reminder_overrides(payload, site, target)
+        payload = apply_fallback_reminder_overrides(payload, site, target)
     return _hide_resolved_rows(payload, target)
