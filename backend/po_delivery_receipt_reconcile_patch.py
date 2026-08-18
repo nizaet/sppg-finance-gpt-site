@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from fastapi import Query
+
 from backend import po_delivery_alerts_api as _alerts
 from backend.db import connection
 from backend.item_taxonomy import stock_type
@@ -102,8 +104,8 @@ def _fallback_received_by_item(po_ids: list[int]) -> dict[int, float]:
 
 def po_delivery_alerts(
     site: str = "",
-    alert_date: date | None = None,
-    minimum_hour: int = 17,
+    alert_date: date | None = Query(default=None, alias="date"),
+    minimum_hour: int = Query(default=17, ge=0, le=23, alias="minimumHour"),
 ) -> dict[str, Any]:
     payload = _ORIGINAL_PO_DELIVERY_ALERTS(site=site, alert_date=alert_date, minimum_hour=minimum_hour)
     rows = payload.get("items") or []
