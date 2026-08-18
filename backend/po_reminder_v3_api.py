@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from backend.item_taxonomy import item_family
 from backend.po_reminder_completed_shortage import enrich_completed_po_shortages
 from backend.po_reminder_legacy_po_reconcile import reconcile_legacy_completed_pos
 from backend.po_reminder_operational_reconcile import reconcile_operational_po_reminders
@@ -34,6 +35,62 @@ def _as_date(value: Any) -> date | None:
         return date.fromisoformat(text[:10])
     except ValueError:
         return None
+
+
+def _is_tofu_tempe_line(value: Any) -> bool:
+    text = str(value or "")
+    family = item_family(text)
+    return family in {"TOFU", "TEMPE"} or any(token in text.lower() for token in ("tahu", "tempe"))
+
+
+def _fix_maja_koperasi_tofu_tempe_h1(payload: dict[str, Any], target: date) -> dict[str, Any]:
+    """Keep MAJA KOPERASI tofu/tempe reminders at H-1 from cooking.
+
+    MAJA tahu/tempe via KOPERASI/Mungki is an H-1 operational order. A broader
+    KOPERASI/dry-goods vendor rule can otherwise pull Tahu Putih into the red
+    overdue bucket several days early. This compatibility pass changes only the
+    reminder row timing; it does not mutate vendor rules, planning, PO, or stock.
+    """
+    items = payload.get("items") or []
+    if not items:
+        return payload
+
+    changed = False
+    adjusted: list[dict[str, Any]] = []
+    for original in items:
+        item = dict(original)
+        site = str(item.get("site") or "").upper().strip()
+        vendor = str(item.get("vendor_code") or "").upper().strip()
+        names = [*(item.get("item_names") or [])]
+        for detail in item.get("requirement_details") or []:
+            names.extend(detail.get("item_names") or [])
+        if site == "MAJA" and vendor == "KOPERASI" and any(_is_tofu_tempe_line(name) for name in names):
+            cook = _as_date(item.get("cooking_date"))
+            if cook is None:
+                cooks = [_as_date(value) for value in (item.get("cooking_dates") or [])]
+                cook = min([value for value in cooks if value is not None], default=None)
+            if cook is not None:
+                correct_po_date = cook - timedelta(days=1)
+                old_po_date = _as_date(item.get("po_date"))
+                if old_po_date != correct_po_date:
+                    item["po_date"] = correct_po_date
+                    item["lead_time_days_before_cooking"] = 1
+                    item["reminder_timing_override"] = "MAJA_KOPERASI_TAHU_TEMPE_H1"
+                    if correct_po_date < target:
+                        item["reminder_status"] = "OVERDUE"
+                    elif correct_po_date == target:
+                        item["reminder_status"] = "DUE_TODAY"
+                    elif correct_po_date == target + timedelta(days=1):
+                        item["reminder_status"] = "UPCOMING"
+                    changed = True
+        adjusted.append(item)
+
+    if not changed:
+        return payload
+    result = dict(payload)
+    result["items"] = adjusted
+    result["majaKoperasiTofuTempeH1Fix"] = True
+    return result
 
 
 def _hide_resolved_rows(payload: dict[str, Any], target: date) -> dict[str, Any]:
@@ -106,6 +163,7 @@ def po_reminders_v3(
     effective_horizon_days = min(max(int(horizon_days or PO_ACTION_HORIZON_DAYS), 1), PO_ACTION_HORIZON_DAYS)
 
     payload = po_reminders_v4(site=site, as_of=target, horizon_days=effective_horizon_days)
+    payload = _fix_maja_koperasi_tofu_tempe_h1(payload, target)
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
