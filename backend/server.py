@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app import app as fastapi_app
 from backend.auth_api import SESSION_COOKIE, verify_session
 from backend.auth_middleware import SppgAccessMiddleware
+from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_pages import calculator_html
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,10 @@ SPA_HTML_HEADERS = {
     "Expires": "0",
     "X-Content-Type-Options": "nosniff",
 }
+
+# Calculator AI must be served by Railway so provider keys stay in env vars and
+# never leak into the legacy browser/Firebase appConfig path.
+fastapi_app.include_router(calculator_ai_router)
 
 if ASSETS.is_dir():
     fastapi_app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="frontend-assets")
