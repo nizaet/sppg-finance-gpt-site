@@ -16,6 +16,7 @@ from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
+from backend.goods_receipt_visibility_api import router as goods_receipt_visibility_router
 from backend.po_cleanup_api import router as po_cleanup_router
 from backend.po_delivery_alerts_api import router as po_delivery_alerts_router
 from backend.po_reminder_action_api import router as po_reminder_action_router
@@ -48,9 +49,10 @@ operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_planning_bridge_router)
 
-# Operational PO reads that are safe to add without changing PO source records.
+# Operational PO/receiving reads that are safe to add without changing source records.
 operational_router.include_router(purchase_order_listing_router)
 operational_router.include_router(po_delivery_alerts_router)
+operational_router.include_router(goods_receipt_visibility_router)
 
 # v4 is the strict stock-aware reminder used by the current frontend. It only
 # links a PO when distribution date + ingredient + unit + qty actually cover the
