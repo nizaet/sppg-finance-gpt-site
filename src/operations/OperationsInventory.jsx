@@ -26,6 +26,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const [sourceExternalId, setSourceExternalId] = useState("");
   const [masters, setMasters] = useState([]);
   const [masterForm, setMasterForm] = useState({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+  const [stockEdit, setStockEdit] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -36,6 +37,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
       setSite(fixedSite);
       setSearch("");
       setPreview(null);
+      setStockEdit(null);
     }
   }, [fixedSite, site]);
 
@@ -220,6 +222,57 @@ export default function OperationsInventory({ fixedSite = "" }) {
     }
   };
 
+  const openManualStockEdit = (item) => {
+    const current = Number(item.actual_balance ?? item.balance ?? 0);
+    setStockEdit({
+      item_name: item.item_name || "",
+      inventory_item_code: item.inventory_item_code || "",
+      unit: item.unit || "",
+      current_balance: current,
+      target_balance: current,
+      reason: "Koreksi manual stok gudang",
+    });
+    setMessage(`Edit manual stok dibuka untuk ${item.item_name}.`);
+    window.setTimeout(() => document.getElementById("inventory-manual-edit")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  };
+
+  const updateStockEdit = (patch) => setStockEdit((current) => current ? { ...current, ...patch } : current);
+
+  const commitManualStockEdit = async () => {
+    if (!stockEdit?.item_name?.trim()) return setError("Nama barang wajib diisi untuk koreksi manual.");
+    const current = Number(stockEdit.current_balance || 0);
+    const target = Number(stockEdit.target_balance);
+    if (!Number.isFinite(target) || target < 0) return setError("Stok baru harus berupa angka 0 atau lebih.");
+    const delta = target - current;
+    if (Math.abs(delta) <= 0.00005) return setError("Stok baru sama dengan stok tercatat. Tidak ada koreksi yang perlu disimpan.");
+    if (!window.confirm(
+      `Set stok aktual ${stockEdit.item_name} dari ${qty(current)} ${stockEdit.unit || ""} menjadi ${qty(target)} ${stockEdit.unit || ""}?\n\n` +
+      `Sistem akan mencatat movement koreksi ${signedQty(delta)} ${stockEdit.unit || ""}. Histori SO dan penerimaan tidak dihapus.`
+    )) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await operationsApi.manualStockAdjustment({
+        location: activeSite,
+        item_name: stockEdit.item_name.trim(),
+        inventory_item_code: stockEdit.inventory_item_code || null,
+        unit: stockEdit.unit || null,
+        current_balance: current,
+        target_balance: target,
+        reason: stockEdit.reason || "Koreksi manual stok gudang",
+        actor: "operator",
+      }, true);
+      setMessage(`Stok ${result.itemName} diset ke ${qty(result.balanceAfter ?? target)} ${result.unit || ""}. Movement koreksi #${result.movementId}; delta ${signedQty(result.adjustmentDelta)} ${result.unit || ""}.`);
+      setStockEdit(null);
+      await load(search);
+    } catch (err) {
+      setError(err.message || "Gagal menyimpan koreksi manual stok");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateReviewed = (clientKey, patch) => {
     setReviewedItems((current) => current.map((item) => item.client_key === clientKey ? addStockComparison({ ...item, ...patch }) : item));
   };
@@ -278,7 +331,7 @@ export default function OperationsInventory({ fixedSite = "" }) {
             <p>SO adalah hitungan fisik terbaru. Setelah disimpan, angka ini menjadi stok aktual yang dipakai untuk PO — bukan ditambahkan ke SO lama.</p>
           </div>
           <div className="ops-inline-controls">
-            <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => { setSite(e.target.value); setSearch(""); setPreview(null); }}><option value="MAJA">Gudang Dapur Maja</option><option value="CEMPLANG">Gudang Dapur Cemplang</option><option value="KOPERASI">Gudang Koperasi</option></select>
+            <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => { setSite(e.target.value); setSearch(""); setPreview(null); setStockEdit(null); }}><option value="MAJA">Gudang Dapur Maja</option><option value="CEMPLANG">Gudang Dapur Cemplang</option><option value="KOPERASI">Gudang Koperasi</option></select>
           </div>
         </div>
         {error && <div className="ops-error">{error}</div>}
@@ -334,10 +387,22 @@ export default function OperationsInventory({ fixedSite = "" }) {
         </div>
         <div className="ops-stock-card"><div><span className="ops-kicker">STOK FISIK BERLAKU</span><strong>{balanceMeta?.latestStockOpnameId ? `SO #${balanceMeta.latestStockOpnameId} · ${balanceMeta.latestStockOpnameDate}` : "Belum ada SO aktif"}</strong><p>{balanceMeta?.latestStockOpnameId ? "Ini sumber hitungan stok aktual di bawah dan dipakai untuk rekomendasi PO." : "Masukkan satu laporan SO untuk memulai stok aktual gudang."}</p></div><div className="ops-summary-strip"><span>Item <strong>{items.length}</strong></span><span>Proyeksi s.d. <strong>{balanceMeta?.projectionThrough || "-"}</strong></span><span>Butuh PO <strong>{negativeCount}</strong></span><span>Perlu cek <strong>{lowConfidenceCount}</strong></span></div></div>
         {balanceMeta?.baselineNeedsConsolidation && <div className="ops-error"><strong>Stok aktual belum lengkap.</strong> Ada {balanceMeta.sameDateStockOpnameCount} potongan laporan SO tanggal {balanceMeta.latestStockOpnameDate}; saat ini sistem hanya membaca potongan terakhir. Klik sekali untuk menyatukan semuanya menjadi satu stok aktual.<div className="ops-row-actions"><button type="button" onClick={repairFragmentedStock} disabled={saving}><Plus size={14} /> Perbaiki Stok Aktual {balanceMeta.latestStockOpnameDate}</button></div></div>}
-        <div className="ops-notice"><strong>Alur otomatis:</strong> SO baru mengganti hitungan fisik. Penerimaan sesudah SO menambah stok, pemakaian aktual mengurangi stok, lalu planning hanya mengurangi kolom “Sisa untuk PO”.</div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>SO fisik terakhir</th><th>Barang masuk / keluar sesudah SO</th><th>Pemakaian aktual</th><th>Stok aktual sekarang</th><th>Dikurangi planning</th><th>Sisa untuk PO</th><th>Unit</th><th>Status data</th></tr></thead><tbody>
-          {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div></td></tr>)}
-          {!loading && items.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Belum ada SO aktif atau pergerakan stok untuk lokasi/filter ini.</td></tr>}
+        <div className="ops-notice"><strong>Alur otomatis:</strong> SO baru mengganti hitungan fisik. Penerimaan sesudah SO menambah stok, pemakaian aktual mengurangi stok, lalu planning hanya mengurangi kolom “Sisa untuk PO”. Koreksi manual di bawah dicatat sebagai movement audit, bukan menghapus SO.</div>
+        {stockEdit && <div className="ops-parse-result" id="inventory-manual-edit">
+          <div><Pencil size={16} /><strong>Edit Manual Stok Gudang</strong></div>
+          <div className="ops-form-grid">
+            <label>Barang<input value={stockEdit.item_name} onChange={(e) => updateStockEdit({ item_name: e.target.value })} /></label>
+            <label>Stok tercatat sekarang<input value={qty(stockEdit.current_balance)} disabled /></label>
+            <label>Stok baru<input className="ops-qty-input" type="number" min="0" step="0.0001" value={stockEdit.target_balance} onChange={(e) => updateStockEdit({ target_balance: Number(e.target.value) })} /></label>
+            <label>Unit<input value={stockEdit.unit} onChange={(e) => updateStockEdit({ unit: e.target.value })} placeholder="kg / pcs / ikat" /></label>
+            <label>Alasan<input value={stockEdit.reason} onChange={(e) => updateStockEdit({ reason: e.target.value })} placeholder="contoh: koreksi hitung fisik" /></label>
+            <label>Aksi<div className="ops-row-actions"><button type="button" onClick={commitManualStockEdit} disabled={saving}><Save size={14} /> Simpan Koreksi</button><button type="button" onClick={() => setStockEdit(null)} disabled={saving}><XCircle size={14} /> Batal</button></div></label>
+          </div>
+          <div className="ops-muted">Yang disimpan adalah selisih dari stok tercatat ke stok baru. Riwayat SO, PO, dan penerimaan tetap ada untuk audit.</div>
+        </div>}
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>SO fisik terakhir</th><th>Barang masuk / keluar sesudah SO</th><th>Pemakaian aktual</th><th>Stok aktual sekarang</th><th>Dikurangi planning</th><th>Sisa untuk PO</th><th>Unit</th><th>Status data</th><th>Aksi</th></tr></thead><tbody>
+          {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div></td><td><button type="button" onClick={() => openManualStockEdit(item)} disabled={saving}><Pencil size={14} /> Edit Stok</button></td></tr>)}
+          {!loading && items.length === 0 && <tr><td colSpan="10" className="ops-empty-cell">Belum ada SO aktif atau pergerakan stok untuk lokasi/filter ini.</td></tr>}
         </tbody></table></div>
       </section>
 
