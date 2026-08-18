@@ -5,6 +5,10 @@ are not already mounted through `reference_router` or directly by app.py.
 """
 
 from backend.operational_api import router as operational_router
+from backend.receiving_runtime_patch import install as install_receiving_runtime_patch
+
+install_receiving_runtime_patch()
+
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.inventory_manual_api import router as inventory_manual_router
