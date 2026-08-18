@@ -17,6 +17,7 @@ from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
+from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
 from backend.goods_receipt_visibility_api import router as goods_receipt_visibility_router
 from backend.po_cleanup_api import router as po_cleanup_router
@@ -53,6 +54,7 @@ operational_router.include_router(inventory_projection_v2_router)
 operational_router.include_router(accountant_excel_router)
 operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
+operational_router.include_router(calculator_ai_router)
 operational_router.include_router(calculator_planning_bridge_router)
 
 # Operational PO/receiving reads that are safe to add without changing source records.
