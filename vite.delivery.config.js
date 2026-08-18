@@ -6,10 +6,15 @@ function deliveryAlertActionControls() {
     enforce: "post",
     transform(code, id) {
       if (id.includes("/src/operations/apiClient.js")) {
-        let apiCode = code.replace(
-          "const REQUEST_TIMEOUT_MS = 20000;",
-          "const REQUEST_TIMEOUT_MS = 60000;",
-        );
+        let apiCode = code
+          .replace(
+            "const REQUEST_TIMEOUT_MS = 20000;",
+            "const REQUEST_TIMEOUT_MS = 60000;",
+          )
+          .replace(
+            `if (err?.name === "AbortError") throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");`,
+            `if (err?.name === "AbortError") throw new Error(\`SPPG Core API terlalu lama merespons: \${path}. Coba Refresh.\`);`,
+          );
         if (!apiCode.includes("confirmPoDeliveryAlert")) {
           const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
           const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
