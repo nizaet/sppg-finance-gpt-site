@@ -163,10 +163,12 @@ def po_reminders_v3(
     effective_horizon_days = min(max(int(horizon_days or PO_ACTION_HORIZON_DAYS), 1), PO_ACTION_HORIZON_DAYS)
 
     payload = po_reminders_v4(site=site, as_of=target, horizon_days=effective_horizon_days)
-    payload = _fix_maja_koperasi_tofu_tempe_h1(payload, target)
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
+    # Apply the MAJA KOPERASI tahu/tempe H-1 timing last so no compatibility
+    # reconciliation step can overwrite it back to a broader vendor lead time.
+    payload = _fix_maja_koperasi_tofu_tempe_h1(payload, target)
 
     payload["requestedHorizonDays"] = horizon_days
     payload["effectiveHorizonDays"] = effective_horizon_days
