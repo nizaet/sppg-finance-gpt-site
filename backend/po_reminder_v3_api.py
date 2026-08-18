@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, timedelta
+from threading import Lock
+from time import monotonic, perf_counter
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -23,6 +26,54 @@ _DONE_STATUSES = {"DONE"}
 # This also prevents the browser's 20s SPPG Core API timeout caused by scanning 21 days
 # plus every vendor lead-time projection.
 PO_ACTION_HORIZON_DAYS = 2
+
+# v4 performs taxonomy-aware projected stock calculations and may open several DB
+# connections for one reminder request. Browsers can issue the same request more
+# than once while mounting/re-rendering the operations page. Keep a deliberately
+# tiny cache and a per-key single-flight lock so identical concurrent requests do
+# not repeat that expensive work. Five seconds is short enough that PO/receiving
+# state changes become visible almost immediately without special invalidation.
+_V4_CACHE_TTL_SECONDS = 5.0
+_v4_cache_guard = Lock()
+_v4_cache: dict[tuple[str, date, int], tuple[float, dict[str, Any]]] = {}
+_v4_key_locks: dict[tuple[str, date, int], Lock] = {}
+
+
+def _cached_v4_payload(site: str, target: date, horizon_days: int) -> tuple[dict[str, Any], bool, float]:
+    key = (str(site or "").upper().strip(), target, int(horizon_days))
+    now = monotonic()
+
+    with _v4_cache_guard:
+        cached = _v4_cache.get(key)
+        if cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
+            return deepcopy(cached[1]), True, 0.0
+        key_lock = _v4_key_locks.setdefault(key, Lock())
+
+    # Only requests for the exact same site/date/horizon are serialized. MAJA and
+    # CEMPLANG can still calculate in parallel.
+    with key_lock:
+        now = monotonic()
+        with _v4_cache_guard:
+            cached = _v4_cache.get(key)
+            if cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
+                return deepcopy(cached[1]), True, 0.0
+
+        started = perf_counter()
+        payload = po_reminders_v4(site=site, as_of=target, horizon_days=horizon_days)
+        elapsed_ms = round((perf_counter() - started) * 1000.0, 1)
+
+        with _v4_cache_guard:
+            # Opportunistically purge expired entries so date-based keys cannot
+            # grow forever in a long-running Railway process.
+            expiry_cutoff = monotonic() - _V4_CACHE_TTL_SECONDS
+            expired = [cache_key for cache_key, value in _v4_cache.items() if value[0] < expiry_cutoff]
+            for cache_key in expired:
+                _v4_cache.pop(cache_key, None)
+                if cache_key != key:
+                    _v4_key_locks.pop(cache_key, None)
+            _v4_cache[key] = (monotonic(), deepcopy(payload))
+
+        return payload, False, elapsed_ms
 
 
 def _as_date(value: Any) -> date | None:
@@ -162,7 +213,7 @@ def po_reminders_v3(
     target = as_of or date.today()
     effective_horizon_days = min(max(int(horizon_days or PO_ACTION_HORIZON_DAYS), 1), PO_ACTION_HORIZON_DAYS)
 
-    payload = po_reminders_v4(site=site, as_of=target, horizon_days=effective_horizon_days)
+    payload, cache_hit, compute_ms = _cached_v4_payload(site, target, effective_horizon_days)
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
@@ -173,6 +224,8 @@ def po_reminders_v3(
     payload["requestedHorizonDays"] = horizon_days
     payload["effectiveHorizonDays"] = effective_horizon_days
     payload["coverageLabel"] = "terlambat 7 hari + hari ini + besok"
+    payload["v4CacheHit"] = cache_hit
+    payload["v4ComputeMs"] = compute_ms
 
     # Keep the stable v3 compatibility contract exact for non-operational/mock
     # payloads and avoid querying the override table when no reminder can have an
