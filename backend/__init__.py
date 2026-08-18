@@ -7,11 +7,13 @@ are not already mounted through `reference_router` or directly by app.py.
 from backend.operational_api import router as operational_router
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
+from backend.inventory_manual_api import router as inventory_manual_router
 from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
 from backend.inventory_summary_api import router as inventory_summary_router
 from backend.inventory_projection_v2_api import router as inventory_projection_v2_router
 from backend.auth_api import router as auth_router
+from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
@@ -35,9 +37,13 @@ from backend.firebase_auth_api import router as firebase_auth_router
 operational_router.include_router(auth_router)
 operational_router.include_router(firebase_auth_router)
 
+# Strict read-only flow routes are mounted before chat_router's legacy domain
+# routes so partial/older Railway schemas do not make Accountant/BGN tabs fail.
+operational_router.include_router(accountant_bgn_flow_router)
+
 # chat_router contains the domain router, restoring these live routes under /v1:
-# /parse-message, /goods-receipts, /actual-usage, /accountant-flow,
-# /bgn-flow, /audit-log, and their corresponding write endpoints.
+# /parse-message, /goods-receipts, /actual-usage, legacy /accountant-flow,
+# legacy /bgn-flow, /audit-log, and their corresponding write endpoints.
 operational_router.include_router(chat_router)
 
 # Read-only projections and owner-side workflow controls.
@@ -74,3 +80,4 @@ operational_router.include_router(calculator_data_router)
 # Preserve the legacy compatibility bundle used by existing clients.
 operational_router.include_router(vendor_payables_router)
 operational_router.include_router(inventory_router)
+operational_router.include_router(inventory_manual_router)
