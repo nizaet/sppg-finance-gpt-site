@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 from datetime import date
 from typing import Any
 from urllib.parse import urlencode
@@ -10,6 +9,7 @@ from fastapi import Query
 from fastapi.responses import StreamingResponse
 
 from backend import accountant_excel_api as excel
+from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
 
 _INSTALLED = False
 
@@ -46,12 +46,12 @@ def _base_result(payload: excel.AccountantExcelFromPlanningIn, snapshot: dict[st
         "driveUploadStatus": "NOT_REQUESTED" if not payload.commit else "PENDING",
         "driveUploadError": None,
         "retryable": False,
-        "failSafeVersion": "accountant-excel-v2",
+        "failSafeVersion": "accountant-excel-v3-drive-fallback",
     }
 
 
 def accountant_excel_from_planning_fail_safe(payload: excel.AccountantExcelFromPlanningIn) -> dict[str, Any]:
-    """Build XLSX independently from Drive availability; Drive is a delivery channel, not the artifact itself."""
+    """Build XLSX independently from Drive and retry failed uploads idempotently."""
     excel.require_db()
     accountant = excel.ACCOUNTANTS[payload.site]
     with excel.connection() as conn:
@@ -73,7 +73,7 @@ def accountant_excel_from_planning_fail_safe(payload: excel.AccountantExcelFromP
                 (payload.site, accountant, snapshot["id"]),
             )
             existing = cur.fetchone()
-            if existing:
+            if existing and existing.get("excel_evidence_uri"):
                 result.update({
                     "committed": True,
                     "duplicate": True,
@@ -82,41 +82,78 @@ def accountant_excel_from_planning_fail_safe(payload: excel.AccountantExcelFromP
                     "status": existing["status"],
                     "sentAt": existing["sent_at"],
                     "filename": existing["generated_filename"] or filename,
-                    "driveUploadStatus": "UPLOADED" if existing["excel_evidence_uri"] else "UNKNOWN",
+                    "driveUploadStatus": "UPLOADED",
                 })
                 return result
 
-            folder_id = os.getenv("SPPG_DRIVE_ACCOUNTANT_FOLDER_ID", "").strip()
             try:
-                drive_uri = excel.upload_bytes_to_drive(folder_id, filename, xlsx, excel.XLSX_MIME)
-            except Exception as exc:
-                # SELECTs above created no domain changes. Roll back the read transaction
-                # and return a valid downloadable workbook result instead of raw 500/503.
-                conn.rollback()
+                uploaded = upload_accountant_artifact(
+                    kind="excel",
+                    filename=filename,
+                    data=xlsx,
+                    mime_type=excel.XLSX_MIME,
+                )
+            except AccountantDriveUploadError as exc:
+                error_text = str(exc)[:1500]
+                if existing:
+                    cur.execute(
+                        """update accountant_submissions
+                           set status=case when status='SENT' then status else 'EXCEL_READY_UPLOAD_FAILED' end,
+                               generated_filename=coalesce(generated_filename,%s),
+                               drive_upload_status='FAILED',drive_upload_error=%s,updated_at=now()
+                           where id=%s""",
+                        (filename, error_text, existing["id"]),
+                    )
+                    conn.commit()
+                    result["submissionId"] = existing["id"]
+                else:
+                    conn.rollback()
                 result.update({
                     "committed": False,
                     "status": "EXCEL_READY_UPLOAD_FAILED",
                     "driveUploadStatus": "FAILED",
-                    "driveUploadError": f"{type(exc).__name__}: {exc}"[:1500],
+                    "driveUploadError": error_text,
                     "retryable": True,
                 })
                 return result
 
-            cur.execute(
-                """insert into accountant_submissions(
-                     production_cycle_id,site,accountant_code,excel_evidence_uri,sent_at,status,
-                     source_planning_snapshot_id,generated_filename
-                   ) values (%s,%s,%s,%s,null,'READY',%s,%s) returning id""",
-                (snapshot.get("production_cycle_id"), payload.site, accountant, drive_uri, snapshot["id"], filename),
-            )
-            submission_id = cur.fetchone()["id"]
+            drive_uri = uploaded["driveUri"]
+            if existing:
+                cur.execute(
+                    """update accountant_submissions
+                       set excel_evidence_uri=%s,
+                           status=case when status='SENT' then status else 'READY' end,
+                           generated_filename=coalesce(generated_filename,%s),
+                           drive_upload_status='UPLOADED',drive_upload_error=null,updated_at=now()
+                       where id=%s returning id,status,sent_at""",
+                    (drive_uri, filename, existing["id"]),
+                )
+                saved = cur.fetchone()
+                submission_id = saved["id"]
+                status = saved["status"]
+                sent_at = saved["sent_at"]
+            else:
+                cur.execute(
+                    """insert into accountant_submissions(
+                         production_cycle_id,site,accountant_code,excel_evidence_uri,sent_at,status,
+                         source_planning_snapshot_id,generated_filename,drive_upload_status,drive_upload_error
+                       ) values (%s,%s,%s,%s,null,'READY',%s,%s,'UPLOADED',null) returning id,status,sent_at""",
+                    (snapshot.get("production_cycle_id"), payload.site, accountant, drive_uri, snapshot["id"], filename),
+                )
+                saved = cur.fetchone()
+                submission_id = saved["id"]
+                status = saved["status"]
+                sent_at = saved["sent_at"]
             conn.commit()
             result.update({
                 "committed": True,
+                "duplicate": bool(existing),
                 "submissionId": submission_id,
                 "driveUri": drive_uri,
-                "status": "READY",
-                "sentAt": None,
+                "driveFolderId": uploaded["folderId"],
+                "usedFallbackDriveFolder": uploaded["usedFallbackFolder"],
+                "status": status,
+                "sentAt": sent_at,
                 "driveUploadStatus": "UPLOADED",
             })
             return result
