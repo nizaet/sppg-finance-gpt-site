@@ -52,9 +52,17 @@ def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvi
         return _ORIGINAL(payload)
 
     key = payment_api._payment_key(payload)
+    with connection() as lookup_conn:
+        with lookup_conn.cursor() as cur:
+            cur.execute("select * from vendor_payments where source_key=%s", (key,))
+            existing = cur.fetchone()
+    if not existing:
+        return _ORIGINAL(payload)
+
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("select * from vendor_payments where source_key=%s", (key,))
+            # Reload under the transaction used for any recovery write.
+            cur.execute("select * from vendor_payments where id=%s", (existing["id"],))
             payment = cur.fetchone()
             if not payment:
                 return _ORIGINAL(payload)
