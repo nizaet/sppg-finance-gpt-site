@@ -3,14 +3,20 @@ import { readSessionToken } from "../auth/session.js";
 const BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 const TIMEOUT_MS = 60000;
 
+function headersFor(options = {}) {
+  const token = readSessionToken();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+}
+
 async function request(path, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const token = readSessionToken();
   const headers = {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
+    ...headersFor(options),
   };
   try {
     const response = await fetch(`${BASE_URL}${path}`, { ...options, headers, signal: controller.signal });
@@ -28,10 +34,32 @@ async function request(path, options = {}) {
   }
 }
 
-export function absoluteAccountantUrl(path) {
-  if (!path) return "";
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+async function download(path, fallbackFilename) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: "GET",
+      headers: headersFor(),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let detail = "";
+      try { detail = await response.text(); } catch {}
+      throw new Error(`SPPG Core API ${response.status}: ${detail || response.statusText}`);
+    }
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    return {
+      blob: await response.blob(),
+      filename: match?.[1] || fallbackFilename || "daftar_belanja.xlsx",
+    };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error(`SPPG Core API terlalu lama merespons: ${path}`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function fileToBase64(file) {
@@ -64,6 +92,8 @@ export const accountantApi = {
       }),
     },
   ),
+
+  downloadSelectedPlanExcel: ({ downloadUrl, filename }) => download(downloadUrl, filename),
 
   uploadInvoice: async ({ submissionId, file, invoiceNumber, invoiceAmount }) => {
     const contentBase64 = await fileToBase64(file);
