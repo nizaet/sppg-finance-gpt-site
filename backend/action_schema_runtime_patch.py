@@ -21,10 +21,8 @@ def _knowledge_operation() -> dict[str, Any]:
         "operationId": "getSppgOperationalRuntimeContext",
         "summary": "Load canonical SPPG knowledge and live operational context",
         "description": (
-            "READ-ONLY FIRST-CONTEXT ACTION. Call this at the start of every new operational conversation before interpreting or committing "
-            "PO, receiving, payment, payable, accountant, or warehouse work. Call it again when site/vendor/date context materially changes. "
-            "PostgreSQL live state is the source of truth; canonicalKnowledge contains durable operating rules. Do not rely on a previous chat window "
-            "when this action can resolve the current context."
+            "READ-ONLY. Call first in every new operational chat and again when site/vendor/date changes. It returns canonical rules plus live "
+            "PostgreSQL state. Use it before PO, receiving, payment, payable, accountant, or warehouse actions; do not rely on prior-chat memory."
         ),
         "x-openai-isConsequential": False,
         "parameters": [
@@ -70,9 +68,8 @@ def _payment_evidence_operation() -> dict[str, Any]:
         "operationId": "previewOrRecordSppgVendorPaymentEvidence",
         "summary": "Record a verified vendor transfer even before payable reconciliation is complete",
         "description": (
-            "Use for explicit payment evidence such as 'sudah saya transfer/udah dibayar'. If one payable is uniquely compatible the payment may "
-            "reconcile immediately; otherwise commit records PAID_UNRECONCILED instead of rejecting the real transfer. Never ask the user to enter "
-            "the same payment again merely because GR/invoice reconciliation is incomplete."
+            "Use when a vendor transfer is confirmed. If one payable matches safely, reconcile it; otherwise commit as PAID_UNRECONCILED. "
+            "Do not reject a real transfer or ask the user to enter it again only because GR/invoice reconciliation is incomplete."
         ),
         "x-openai-isConsequential": True,
         "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
@@ -84,10 +81,7 @@ def _payment_reconcile_operation() -> dict[str, Any]:
     return {"post": {
         "operationId": "reconcileRecordedSppgVendorPayment",
         "summary": "Link a paid-unreconciled transfer to its vendor payable",
-        "description": (
-            "Use after the matching vendor invoice/payable becomes uniquely known. This never creates a second payment or finance transaction; "
-            "it only changes reconciliation linkage/status."
-        ),
+        "description": "Link an existing paid-unreconciled transfer to one verified invoice. Never create a second payment or finance transaction.",
         "x-openai-isConsequential": True,
         "parameters": [{"in": "path", "name": "payment_id", "required": True, "schema": {"type": "integer", "minimum": 1}}],
         "requestBody": {"required": True, "content": {"application/json": {"schema": _obj({
@@ -104,7 +98,7 @@ def _unreconciled_operation() -> dict[str, Any]:
     return {"get": {
         "operationId": "listSppgPaidUnreconciledVendorPayments",
         "summary": "List real transfers still waiting for payable reconciliation",
-        "description": "READ-ONLY. Reconnect a prior real transfer to a later goods receipt/invoice without asking the user to enter payment again.",
+        "description": "READ-ONLY. Find recorded transfers waiting to be linked to a later goods receipt or invoice.",
         "x-openai-isConsequential": False,
         "parameters": [
             {"in": "query", "name": "site", "schema": {"type": "string", "enum": ["MAJA", "CEMPLANG"]}},
@@ -122,8 +116,8 @@ def _excel_operation() -> dict[str, Any]:
         "operationId": "previewOrGenerateSppgAccountantExcel",
         "summary": "Generate Accountant Excel with Drive fail-safe",
         "description": (
-            "Generate the Accountant workbook from the planning snapshot. The XLSX remains downloadable even if Google Drive upload fails. "
-            "When driveUploadStatus=FAILED, report that Excel generation succeeded and Drive upload is retryable; do not call it an Excel failure."
+            "Generate Accountant XLSX from planning. XLSX stays downloadable if Drive upload fails. If driveUploadStatus=FAILED, "
+            "report Excel generation as successful and Drive upload as retryable."
         ),
         "x-openai-isConsequential": True,
         "requestBody": {"required": True, "content": {"application/json": {"schema": _obj({
@@ -142,9 +136,8 @@ def schema_v0184_core_repair() -> dict[str, Any]:
         "title": "SPPG Operations, Runtime Knowledge, and Accountant Bridge",
         "version": "0.18.5",
         "description": (
-            "Backward-compatible v0.18.4 action surface plus deterministic multi-PO receiving, paid-unreconciled vendor transfers, "
-            "Accountant Excel Drive fail-safe, and a canonical/live operational context runtime. At the start of a new operational conversation, "
-            "call getSppgOperationalRuntimeContext before relying on prior-chat memory."
+            "Stable v0.18.4 action URL with multi-PO receiving, paid-unreconciled transfers, Accountant Excel fail-safe, and live/canonical "
+            "operational context. In a new operational chat, call getSppgOperationalRuntimeContext before relying on chat memory."
         ),
     }
     paths = payload.setdefault("paths", {})
@@ -158,10 +151,9 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     if receiving:
         receiving["summary"] = "Preview or record a deterministic goods receipt across one or more POs"
         receiving["description"] = (
-            "Resolve supplied receiving text against the complete relevant open-PO pool for the same site/vendor. One report may allocate one item "
-            "across main/additional/late POs using item identity, unit, date relevance, and outstanding qty. Do not require one purchase_order_id when "
-            "allocation is deterministic. If canCommit=true and the user explicitly says commit, execute. Ask only when the endpoint reports a genuine "
-            "item-family or vendor ambiguity."
+            "Resolve receiving text against all relevant open POs for the same site/vendor. One report may allocate across main/additional/late POs "
+            "by item, unit, date, and outstanding qty. If canCommit=true and the user explicitly says commit, execute; ask only on genuine "
+            "item/vendor ambiguity."
         )
     return payload
 
