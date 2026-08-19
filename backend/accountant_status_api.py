@@ -22,20 +22,22 @@ def mark_accountant_submission_sent(submission_id: int) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """update accountant_submissions
-                   set sent_at=coalesce(sent_at,now()), status='SENT'
-                   where id=%s and excel_evidence_uri is not null
-                   returning id,site,accountant_code,excel_evidence_uri,sent_at,status""",
+                   set sent_at=coalesce(sent_at,now()), status='SENT', updated_at=now()
+                   where id=%s
+                     and (excel_evidence_uri is not null or generated_filename is not null)
+                   returning id,site,accountant_code,excel_evidence_uri,generated_filename,sent_at,status""",
                 (submission_id,),
             )
             row = cur.fetchone()
             if not row:
-                raise HTTPException(404, "accountant submission tidak ditemukan atau Excel belum tersedia")
+                raise HTTPException(404, "accountant submission tidak ditemukan atau Excel belum pernah dibuat")
             conn.commit()
             return {
                 "submissionId": row["id"],
                 "site": row["site"],
                 "accountantCode": row["accountant_code"],
                 "driveUri": row["excel_evidence_uri"],
+                "filename": row["generated_filename"],
                 "sentAt": row["sent_at"],
                 "status": row["status"],
             }
