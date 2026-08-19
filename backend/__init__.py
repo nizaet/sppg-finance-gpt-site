@@ -31,6 +31,7 @@ from backend.auth_api import router as auth_router
 from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_excel_fail_safe_patch import install as install_accountant_excel_fail_safe_patch
+from backend.accountant_selected_plan_api import router as accountant_selected_plan_router
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
@@ -91,6 +92,7 @@ operational_router.include_router(control_tower_router)
 operational_router.include_router(inventory_summary_router)
 operational_router.include_router(inventory_projection_v2_router)
 operational_router.include_router(accountant_excel_router)
+operational_router.include_router(accountant_selected_plan_router)
 operational_router.include_router(accountant_status_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_ai_router)
