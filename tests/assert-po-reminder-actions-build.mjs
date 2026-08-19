@@ -19,8 +19,6 @@ const requiredMarkers = [
   "data-po-actions-version",
   "data-po-reminder-actions",
   "data-editable-stock",
-  "data-delivery-alerts",
-  "data-delivery-alert-actions",
   "data-po-archive-search",
   "data-po-staged-sync",
   "data-po-sync-progress",
@@ -38,16 +36,26 @@ const requiredMarkers = [
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",
+  "data-po-receiving-list",
+  "data-po-receiving-detail",
+  "data-calendar-po-receiving",
+  "Konfirmasi Penerimaan",
+  "Semua sesuai",
+  "Penerimaan",
+];
+
+const forbiddenMarkers = [
+  "data-delivery-alerts",
   "Peringatan barang belum datang setelah jam 17.00",
-  "PO sudah terkirim",
-  "Barang datang sesuai",
-  "Datang tidak sesuai",
-  "Delivery alert saved but alert refresh failed",
 ];
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
 if (missing.length) {
   throw new Error(`PO reminder built bundle missing markers: ${missing.join(", ")}`);
 }
+const forbidden = forbiddenMarkers.filter((marker) => bundle.includes(marker));
+if (forbidden.length) {
+  throw new Error(`Retired red delivery alert still present in built bundle: ${forbidden.join(", ")}`);
+}
 
-console.log("PO reminder/action UI is present in the built bundle:", requiredMarkers.join(", "));
+console.log("PO reminder/action + receiving UI is present in the built bundle:", requiredMarkers.join(", "));
