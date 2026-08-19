@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any
 
-from backend.google_services import upload_bytes_to_drive
+from backend.google_services import drive_auth_mode, upload_bytes_to_drive
 
 # Canonical folders already shared with the SPPG service account.
 DEFAULT_ACCOUNTANT_EXCEL_FOLDER_ID = "1DDVtg6U7_2SI_iJVW5vk4UYPRIyiEvn6"  # 04 EXCEL AKUNTAN
@@ -29,19 +29,27 @@ def _candidate_folder_ids(env_name: str, fallback_id: str) -> list[str]:
 def _friendly_drive_error(exc: Exception) -> tuple[str, bool]:
     raw = str(exc)
     lowered = raw.lower()
+    if "service accounts do not have storage quota" in lowered or "storagequotaexceeded" in lowered:
+        return (
+            "Folder tujuan berada di My Drive pribadi, tetapi backend masih mengunggah sebagai Service Account. "
+            "Service Account tidak memiliki kuota penyimpanan Drive. Hubungkan Drive sebagai USER_OAUTH "
+            "(akun pemilik folder, mis. jack&bear@gmail.com) atau pindahkan folder ke Shared Drive. "
+            f"Mode Drive backend saat ini: {drive_auth_mode()}.",
+            True,
+        )
     if "drive api has not been used" in lowered or "drive.googleapis.com" in lowered and "disabled" in lowered:
         match = re.search(r"project(?:=|\s+)(\d{6,})", raw, re.IGNORECASE)
         project_number = match.group(1) if match else "tidak terdeteksi"
         return (
             "Google Drive API belum aktif pada Google Cloud project "
-            f"{project_number}. Aktifkan API drive.googleapis.com pada project credential service account SPPG, "
+            f"{project_number}. Aktifkan API drive.googleapis.com pada project credential SPPG, "
             "tunggu propagasi beberapa menit, lalu klik Coba Upload Drive Lagi.",
             True,
         )
     if "insufficient permissions" in lowered or "permission" in lowered and "403" in lowered:
         return (
-            "Service account tidak memiliki izin tulis ke folder Google Drive tujuan. "
-            "Pastikan folder dibagikan sebagai Editor ke service account SPPG.",
+            "Identitas Google Drive backend tidak memiliki izin tulis ke folder tujuan. "
+            "Pastikan akun OAuth pemilik Drive atau service account memiliki akses Editor/Contributor.",
             False,
         )
     return (raw[:900], False)
@@ -71,6 +79,7 @@ def upload_accountant_artifact(
             return {
                 "driveUri": uri,
                 "folderId": folder_id,
+                "driveAuthMode": drive_auth_mode(),
                 "usedFallbackFolder": folder_id == fallback_id and os.getenv(env_name, "").strip() not in {"", fallback_id},
                 "attempts": attempts,
             }
@@ -81,8 +90,8 @@ def upload_accountant_artifact(
                 "errorType": type(exc).__name__,
                 "error": friendly,
             })
-            # A disabled Drive API is project-wide. Trying another folder cannot
-            # succeed and only produces a second copy of the same 403 message.
+            # Disabled API and service-account storage quota are global for the
+            # credential; trying a second personal folder cannot fix them.
             if global_configuration_error:
                 raise AccountantDriveUploadError(friendly, attempts) from exc
 
