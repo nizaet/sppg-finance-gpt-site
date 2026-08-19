@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any
 
@@ -18,6 +19,7 @@ INACTIVE_STATUSES = {"CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"}
 COVERAGE_STATUSES = DONE_STATUSES | {"DRAFT", "FINALIZED"}
 OVERDUE_LOOKBACK_DAYS = 7
 MAX_LEAD_DAYS = 30
+PROJECTION_WORKERS = 4
 EPSILON = 0.0001
 
 # Operator-confirmed procurement rule. This is intentionally item-specific and
@@ -385,14 +387,31 @@ def po_reminders_v4(
         })
         candidates.append(row)
 
+    # Stock projections are independent per (site, distribution date). Previously
+    # they were calculated serially and every lookup performs several PostgreSQL
+    # queries. A small bounded pool keeps first-hit latency down without opening an
+    # unbounded number of Railway database connections.
+    projection_keys = sorted({(row["site"], row["distribution_date"]) for row in candidates})
     projection_cache: dict[tuple[str, date], tuple[dict[tuple[str, str], float], str]] = {}
+    if projection_keys:
+        worker_count = min(PROJECTION_WORKERS, len(projection_keys))
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="po-projection") as executor:
+            futures = {executor.submit(_projection_lookup, *key): key for key in projection_keys}
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    projection_cache[key] = future.result()
+                except Exception:
+                    projection_cache[key] = ({}, "PROJECTION_UNAVAILABLE")
+
     requirements: dict[tuple[str, str, date, date, str, str, str], dict[str, Any]] = {}
 
     for row in candidates:
         projection_key = (row["site"], row["distribution_date"])
-        if projection_key not in projection_cache:
-            projection_cache[projection_key] = _projection_lookup(*projection_key)
-        stock_lookup, projection_basis = projection_cache[projection_key]
+        stock_lookup, projection_basis = projection_cache.get(
+            projection_key,
+            ({}, "PROJECTION_UNAVAILABLE"),
+        )
         available = float(stock_lookup.get(row["stock_key"], 0.0))
         planned = max(0.0, float(row.get("planned_qty") or 0))
         if planned - available <= EPSILON:
