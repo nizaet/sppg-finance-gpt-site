@@ -12,7 +12,10 @@ from backend.db import connection, database_ready
 from backend.inventory_api import normalize_location
 from backend.stock_opname_parser import canonical_unit
 
-router = APIRouter(prefix="/v1", tags=["inventory-manual"])
+# This router is included into backend.operational_api.router, which already owns
+# the /v1 prefix. Keeping another /v1 here creates /v1/v1/inventory/manual-adjustment
+# while the frontend correctly calls /v1/inventory/manual-adjustment.
+router = APIRouter(tags=["inventory-manual"])
 
 
 def require_db() -> None:
