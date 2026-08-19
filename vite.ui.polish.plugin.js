@@ -97,6 +97,17 @@ export default function uiPolishPlugin() {
           `File: {excelFilename || excelPreview.filename} · Document ID:`,
         );
 
+        next = replaceOnce(
+          next,
+          `setMessage(data.duplicate ? "Excel perencanaan ini sudah ada; file Drive yang sama ditampilkan." : "Excel dibuat dan masuk ke folder Drive akuntan. Status READY sampai benar-benar dikirim.");`,
+          `setMessage(data.replacedExisting ? "Excel diperbarui di file Drive yang sama, termasuk nama file dan format terbaru." : data.duplicate ? "Excel sudah SENT; bukti Drive lama dipertahankan dan tidak ditimpa." : "Excel dibuat dan masuk ke folder Drive akuntan. Status READY sampai benar-benar dikirim.");`,
+          "accountant regenerate message",
+        );
+
+        const oldCreateButton = `{!excelPreview.driveUri&&<button type="button" onClick={createExcel} disabled={excelBusy}><FileSpreadsheet size={14}/> {excelPreview.retryable?"Coba Upload Drive Lagi":"Buat Excel & Arsip Drive"}</button>}`;
+        const newCreateButton = `{(!excelPreview.driveUri||String(excelPreview.status||"").toUpperCase()!=="SENT")&&<button type="button" onClick={createExcel} disabled={excelBusy}><FileSpreadsheet size={14}/> {excelPreview.driveUri?(excelPreview.retryable?"Coba Update Drive Lagi":"Buat Ulang / Update Drive"):(excelPreview.retryable?"Coba Upload Drive Lagi":"Buat Excel & Arsip Drive")}</button>}`;
+        next = replaceOnce(next, oldCreateButton, newCreateButton, "accountant regenerate button");
+
         return next === code ? null : { code: next, map: null };
       }
 
