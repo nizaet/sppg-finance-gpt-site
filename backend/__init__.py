@@ -6,10 +6,20 @@ are not already mounted through `reference_router` or directly by app.py.
 
 from backend.operational_api import router as operational_router
 from backend.receiving_runtime_patch import install as install_receiving_runtime_patch
+from backend.receiving_multi_po_runtime_patch import install as install_receiving_multi_po_runtime_patch
+from backend.action_schema_runtime_patch import install as install_action_schema_runtime_patch
 
+# Keep the existing WhatsApp parser improvements, then replace only the current
+# receiving execution callable with deterministic multi-PO reconciliation.
 install_receiving_runtime_patch()
+install_receiving_multi_po_runtime_patch()
+
+# Keep the stable v0.18.4 schema URL while enriching the callable before
+# backend.app imports it for the public schema alias.
+install_action_schema_runtime_patch()
 
 from backend.vendor_payables_api import router as vendor_payables_router
+from backend.vendor_payment_override_api import router as vendor_payment_override_router
 from backend.inventory_api import router as inventory_router
 from backend.inventory_manual_api import router as inventory_manual_router
 from backend.chat_api import router as chat_router
@@ -19,6 +29,7 @@ from backend.inventory_projection_v2_api import router as inventory_projection_v
 from backend.auth_api import router as auth_router
 from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
+from backend.accountant_excel_fail_safe_patch import install as install_accountant_excel_fail_safe_patch
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
@@ -36,8 +47,12 @@ from backend.purchase_order_listing_api import router as purchase_order_listing_
 from backend.purchase_order_workflow_api import router as purchase_order_workflow_router
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
+from backend.knowledge_runtime_api import router as knowledge_runtime_router
 from backend.po_reminder_projection_cache_patch import install as install_po_reminder_projection_cache_patch
 from backend.po_delivery_receipt_reconcile_patch import install as install_po_delivery_receipt_reconcile_patch
+
+# Excel bytes remain available even when Drive upload fails.
+install_accountant_excel_fail_safe_patch()
 
 # Reuse identical site/date stock projections for a few seconds. This only
 # removes duplicate expensive reads; it does not change stock or PO arithmetic.
@@ -52,6 +67,10 @@ install_po_delivery_receipt_reconcile_patch()
 # activated after Railway has all role passwords + auth secret.
 operational_router.include_router(auth_router)
 operational_router.include_router(firebase_auth_router)
+
+# /v1/gpt is public at middleware level, but this runtime endpoint itself
+# requires the configured GPT bearer and returns canonical + live context.
+operational_router.include_router(knowledge_runtime_router)
 
 # Strict read-only flow routes are mounted before chat_router's legacy domain
 # routes so partial/older Railway schemas do not make Accountant/BGN tabs fail.
@@ -94,7 +113,9 @@ operational_router.include_router(po_cleanup_router)
 operational_router.include_router(purchase_order_workflow_router)
 operational_router.include_router(calculator_data_router)
 
-# Preserve the legacy compatibility bundle used by existing clients.
+# Preserve the legacy compatibility bundle used by existing clients, then add
+# the non-destructive payment-evidence/reconciliation bridge alongside it.
 operational_router.include_router(vendor_payables_router)
+operational_router.include_router(vendor_payment_override_router)
 operational_router.include_router(inventory_router)
 operational_router.include_router(inventory_manual_router)
