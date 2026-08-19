@@ -61,6 +61,15 @@ export default function OperationsReceiving({ fixedSite = "" }){
     finally{setLoading(false);}
   };
   useEffect(()=>{load();},[activeSite]);
+  useEffect(()=>{
+    const onReceiptSaved=(event)=>{
+      const eventSite=String(event?.detail?.site||"").toUpperCase();
+      if(eventSite && eventSite!==String(activeSite).toUpperCase()) return;
+      load();
+    };
+    window.addEventListener("sppg:goods-receipt-saved",onReceiptSaved);
+    return()=>window.removeEventListener("sppg:goods-receipt-saved",onReceiptSaved);
+  },[activeSite,historyFrom,historyTo,historyVendor,historyPo,historySearch]);
 
   const payload=useMemo(()=>({
     site: activeSite,
