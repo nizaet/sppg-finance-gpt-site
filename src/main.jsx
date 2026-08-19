@@ -3,8 +3,10 @@ import { createRoot } from "react-dom/client";
 import AuthGate from "./auth/AuthGate.jsx";
 import CalculatorGateway from "./auth/CalculatorGateway.jsx";
 import { applyAppTheme } from "./theme.js";
+import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
 
 applyAppTheme();
+installRuntimeUiPolish();
 
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
