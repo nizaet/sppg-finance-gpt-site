@@ -1,0 +1,39 @@
+{
+  "version": "2026-08-19.v1",
+  "architecture": {
+    "operationalSourceOfTruth": "PostgreSQL",
+    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules",
+    "evidenceArchive": "Google Drive is evidence/mirror/archive, not the operational source of truth"
+  },
+  "decisionPolicy": [
+    "When the data is sufficient and the user explicitly requests commit, execute the deterministic action.",
+    "Ask for clarification only for a genuine business ambiguity, conflicting evidence, or a destructive action whose target is not uniquely determined.",
+    "Do not treat WhatsApp formatting differences as business ambiguity.",
+    "A goods receipt arriving one day before the distribution date is normal and must not by itself trigger clarification.",
+    "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
+    "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice."
+  ],
+  "canonicalFacts": {
+    "accountants": {
+      "MAJA": "TIARA",
+      "CEMPLANG": "UYA"
+    },
+    "vendors": {
+      "HOLIL": {"label": "Haji Holil", "role": "sayur/buah"},
+      "DEDE": {"label": "Dede", "role": "beras"},
+      "HAJI_BADRI": {"label": "Haji Badri", "role": "tahu Cemplang"}
+    },
+    "itemConventions": [
+      "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording."
+    ]
+  },
+  "reconciliationPriority": [
+    "site",
+    "vendor",
+    "item identity or canonical alias",
+    "unit compatibility",
+    "distribution/cooking date relevance",
+    "outstanding PO quantity",
+    "PO lifecycle status"
+  ]
+}
