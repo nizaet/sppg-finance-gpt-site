@@ -32,6 +32,7 @@ from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_excel_fail_safe_patch import install as install_accountant_excel_fail_safe_patch
 from backend.accountant_selected_plan_api import router as accountant_selected_plan_router
+from backend.accountant_excel_polish_patch import install as install_accountant_excel_polish_patch
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
@@ -56,6 +57,8 @@ from backend.po_delivery_receipt_reconcile_patch import install as install_po_de
 
 # Excel bytes remain available even when Drive upload fails.
 install_accountant_excel_fail_safe_patch()
+# Use a cleaner workbook renderer and allow the operator to choose the Excel filename.
+install_accountant_excel_polish_patch()
 
 # A retry of an already-paid-unreconciled transfer must remain unresolved until
 # the dedicated reconciliation action links it to one invoice.
