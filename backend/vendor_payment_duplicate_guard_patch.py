@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from backend import vendor_payment_override_api as payment_api
 from backend.db import connection, database_ready
 
@@ -7,37 +9,104 @@ _ORIGINAL = payment_api.record_vendor_payment_evidence
 _INSTALLED = False
 
 
-def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvidenceIn):
-    """A retry may not silently relabel an existing PAID_UNRECONCILED row as reconciled.
+def _existing_result(payload: payment_api.VendorPaymentEvidenceIn, payment: dict, invoice: dict | None, *, committed: bool,
+                     finance: dict | None = None, finance_inserted: bool = False) -> dict:
+    unresolved = invoice is None
+    warnings = []
+    if unresolved:
+        warnings.append(
+            f"payment {payment['id']} sudah tercatat PAID_UNRECONCILED; gunakan endpoint reconcile untuk menghubungkannya ke invoice"
+        )
+    return {
+        "committed": committed,
+        "canCommit": True,
+        "duplicate": True,
+        "site": payment.get("site") or payload.site,
+        "vendorCode": payment.get("vendor_code") or payload.vendor_code.upper().strip(),
+        "amount": float(payment.get("amount") or payload.amount),
+        "paidAt": payment.get("paid_at"),
+        "paymentStatus": "PAID",
+        "reconciliationStatus": "PAID_UNRECONCILED" if unresolved else "RECONCILED",
+        "vendorPaymentId": int(payment["id"]),
+        "vendorInvoiceId": invoice.get("id") if invoice else None,
+        "candidatePurchaseOrderId": payment.get("candidate_purchase_order_id"),
+        "candidateGoodsReceiptId": payment.get("candidate_goods_receipt_id"),
+        "candidateVendorInvoiceId": payment.get("candidate_vendor_invoice_id"),
+        "payableStatusAfter": invoice.get("payable_status") if invoice else None,
+        "warnings": warnings,
+        "financeTransactionCreated": bool(finance),
+        "financeTransactionInserted": finance_inserted,
+        "financeTransactionId": finance.get("transaction_id") if finance else payment.get("finance_transaction_id"),
+    }
 
-    Reconciliation of an already-recorded transfer is intentionally handled by
-    /vendor-payments/{payment_id}/reconcile so no second payment is created and
-    the audit trail remains explicit.
+
+def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvidenceIn):
+    """Return/recover an existing payment without ever creating a second finance row.
+
+    Reconciliation of an already-recorded PAID_UNRECONCILED transfer is handled
+    only by /vendor-payments/{payment_id}/reconcile. The stable payment row owns
+    the original paid_at, so retries on later days cannot produce a new finance
+    idempotency key or silently relabel the transfer as reconciled.
     """
-    if database_ready():
-        key = payment_api._payment_key(payload)
-        with connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("select id,vendor_invoice_id,payment_status from vendor_payments where source_key=%s", (key,))
-                existing = cur.fetchone()
-        if existing and existing.get("vendor_invoice_id") is None and str(existing.get("payment_status") or "").upper() == "PAID_UNRECONCILED":
-            # vendor_invoice_id is not part of the payment idempotency key. Force
-            # this call to preserve the stored unresolved state; linking belongs
-            # to the dedicated reconciliation endpoint.
-            safe_payload = payload.model_copy(update={"vendor_invoice_id": -1})
-            result = _ORIGINAL(safe_payload)
-            warnings = [w for w in (result.get("warnings") or []) if "vendor_invoice_id tidak ditemukan" not in str(w)]
-            warnings.append(
-                f"payment {existing['id']} sudah tercatat PAID_UNRECONCILED; gunakan endpoint reconcile untuk menghubungkannya ke invoice"
-            )
-            result.update({
-                "vendorPaymentId": int(existing["id"]),
-                "vendorInvoiceId": None,
-                "reconciliationStatus": "PAID_UNRECONCILED",
-                "warnings": warnings,
-            })
-            return result
-    return _ORIGINAL(payload)
+    if not database_ready():
+        return _ORIGINAL(payload)
+
+    key = payment_api._payment_key(payload)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select * from vendor_payments where source_key=%s", (key,))
+            payment = cur.fetchone()
+            if not payment:
+                return _ORIGINAL(payload)
+
+            invoice = None
+            if payment.get("vendor_invoice_id"):
+                cur.execute(
+                    """select vi.*,po.po_code from vendor_invoices vi
+                       left join purchase_orders po on po.id=vi.purchase_order_id where vi.id=%s""",
+                    (payment["vendor_invoice_id"],),
+                )
+                invoice = cur.fetchone()
+
+            cur.execute("select * from finance_transactions where source_ref=%s order by transaction_id limit 1", (f"vendor-payment:{payment['id']}",))
+            finance = cur.fetchone()
+            if not payload.commit:
+                return _existing_result(payload, payment, invoice, committed=False, finance=finance)
+
+            finance_inserted = False
+            if not finance:
+                stored_paid_at = payment.get("paid_at") or datetime.now(timezone.utc)
+                stable_payload = payload.model_copy(update={
+                    "amount": float(payment.get("amount") or payload.amount),
+                    "paid_at": stored_paid_at,
+                    "vendor_invoice_id": payment.get("vendor_invoice_id"),
+                })
+                finance, finance_inserted = payment_api._finance_row(
+                    cur,
+                    int(payment["id"]),
+                    stable_payload,
+                    stored_paid_at,
+                    invoice,
+                )
+            elif payment.get("finance_transaction_id") != finance.get("transaction_id"):
+                cur.execute(
+                    "update vendor_payments set finance_transaction_id=%s,updated_at=now() where id=%s",
+                    (finance["transaction_id"], payment["id"]),
+                )
+            conn.commit()
+
+    result = _existing_result(payload, payment, invoice, committed=True, finance=finance, finance_inserted=finance_inserted)
+    if finance:
+        sync_status, firestore_path, firestore_doc_id, sync_error = payment_api._sync_row(finance)
+        payment_api._update_sync_status(
+            finance["transaction_id"], sync_status, firestore_doc_id, sync_error, payment.get("evidence_uri") or payload.evidence_uri
+        )
+        result.update({
+            "firestoreSyncStatus": sync_status,
+            "firestoreDocument": firestore_path,
+            "syncError": sync_error,
+        })
+    return result
 
 
 def install() -> None:
