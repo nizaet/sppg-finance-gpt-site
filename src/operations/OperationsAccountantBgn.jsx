@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ClipboardCopy, Download, ExternalLink, FileCheck2, FileSpreadsheet, MessageCircle, RefreshCw, Send, Stamp, Upload } from "lucide-react";
 import { operationsApi } from "./apiClient";
-import { accountantApi, absoluteAccountantUrl } from "./accountantApi.js";
+import { accountantApi } from "./accountantApi.js";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 
@@ -175,6 +175,30 @@ export default function OperationsAccountantBgn(){
     }
   };
 
+  const downloadExcel = async () => {
+    if (!excelPreview?.downloadUrl) return;
+    setExcelBusy(true); setError(""); setMessage("");
+    try {
+      const file = await accountantApi.downloadSelectedPlanExcel({
+        downloadUrl: excelPreview.downloadUrl,
+        filename: excelPreview.filename,
+      });
+      const objectUrl = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = file.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setMessage(`Excel ${file.filename} berhasil diunduh.`);
+    } catch (e) {
+      setError(e.message || "Gagal download Excel akuntan");
+    } finally {
+      setExcelBusy(false);
+    }
+  };
+
   const copyGeneratedExcel = async () => {
     if (!excelPreview) return;
     await copyText(generatedExcelMessage(excelPreview));
@@ -331,7 +355,7 @@ export default function OperationsAccountantBgn(){
         <div className="ops-row-actions">
           {!excelPreview.driveUri&&<button type="button" onClick={createExcel} disabled={excelBusy}><FileSpreadsheet size={14}/> {excelPreview.retryable?"Coba Upload Drive Lagi":"Buat Excel & Arsip Drive"}</button>}
           {excelPreview.driveUri&&<button type="button" onClick={()=>window.open(excelPreview.driveUri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Excel Drive</button>}
-          {excelPreview.downloadUrl&&<button type="button" onClick={()=>window.open(absoluteAccountantUrl(excelPreview.downloadUrl),"_blank","noopener,noreferrer")}><Download size={14}/> Download Excel</button>}
+          {excelPreview.downloadUrl&&<button type="button" onClick={downloadExcel} disabled={excelBusy}><Download size={14}/> Download Excel</button>}
           <button type="button" onClick={copyGeneratedExcel}><ClipboardCopy size={14}/> Copy Pesan</button>
           <button type="button" onClick={waGeneratedExcel}><MessageCircle size={14}/> WhatsApp</button>
         </div>
