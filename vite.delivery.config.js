@@ -3,7 +3,7 @@ import runtimeConfig from "./vite.runtime.config.js";
 function deliveryApiClientCompatibility() {
   return {
     name: "sppg-delivery-api-client-compatibility",
-    enforce: "post",
+    enforce: "pre",
     transform(code, id) {
       if (id.includes("/src/operations/apiClient.js")) {
         let apiCode = code
@@ -29,8 +29,6 @@ function deliveryApiClientCompatibility() {
       if (id.includes("/src/operations/OperationsPoPlanner.jsx")) {
         let plannerCode = code;
 
-        // Mount the staged-sync/calendar feature as a real React component instead
-        // of embedding a large JSX string in this transform.
         const importAnchor = `import PoQtyMath from "./PoQtyMath.jsx";`;
         if (!plannerCode.includes(importAnchor)) {
           throw new Error("[po-delivery] PoQtyMath import anchor missing");
@@ -39,14 +37,12 @@ function deliveryApiClientCompatibility() {
           plannerCode = plannerCode.replace(importAnchor, `${importAnchor}\nimport PoOpsEnhancements from "./PoOpsEnhancements.jsx";`);
         }
 
-        // Delivery confirmation remains responsive even if secondary reminder work is slow.
         const oldSequence = `      await refreshPurchaseOrders();\n      await refreshReminders();\n      await refreshDeliveryAlerts();\n      setMessage(result?.message || \`\${label} tersimpan.\`);`;
         if (plannerCode.includes(oldSequence)) {
           const newSequence = `      if (!result?.saved) throw new Error(result?.message || \`Konfirmasi \${label} belum tersimpan.\`);\n      setDeliveryAlerts((current) => current.filter((row) => row.purchaseOrderId !== alert.purchaseOrderId));\n      try { await refreshDeliveryAlerts(); } catch (alertRefreshError) { console.warn("Delivery alert saved but alert refresh failed", alertRefreshError); }\n      const secondaryRefresh = await Promise.allSettled([refreshPurchaseOrders(), refreshReminders()]);\n      const failedRefreshes = secondaryRefresh.filter((entry) => entry.status === "rejected");\n      setMessage((result?.message || \`\${label} tersimpan.\`) + (failedRefreshes.length ? " Data PO/pengingat akan diperbarui saat refresh berikutnya." : ""));`;
           plannerCode = plannerCode.replace(oldSequence, newSequence);
         }
 
-        // Item-level PO coverage: one Telur PO cannot block other items for the same vendor/date.
         const updateDraftAnchor = `  const updateDraftItem = (planningItemId, patch) => {\n    setDraftItems((current) => current.map((item) => item.planning_snapshot_item_id === planningItemId ? { ...item, ...patch } : item));\n  };`;
         if (plannerCode.includes(updateDraftAnchor) && !plannerCode.includes("isItemCoveredByActivePo")) {
           const coverageHelper = `${updateDraftAnchor}\n\n  const isItemCoveredByActivePo = (item, forDate = distributionDate) => {\n    const planningId = Number(item?.planning_snapshot_item_id || 0);\n    const wantedName = normalize(item?.item_name);\n    const wantedUnit = normalizeUnit(item?.unit);\n    return purchaseOrders.some((po) => {\n      if (!isActivePurchaseOrder(po)) return false;\n      if (String(po.site || "").toUpperCase() !== String(activeSite || "").toUpperCase()) return false;\n      if (String(po.vendor_code || "").toUpperCase() !== String(item?.vendor_code || "").toUpperCase()) return false;\n      if (!coverageDatesFor(po).includes(String(forDate))) return false;\n      const ids = (po.planning_item_ids || []).map((value) => Number(value || 0));\n      if (planningId > 0 && ids.includes(planningId)) return true;\n      return (po.item_keys || []).some((key) => {\n        const separator = String(key || "").lastIndexOf("|");\n        const rawName = separator >= 0 ? String(key).slice(0, separator) : String(key || "");\n        const rawUnit = separator >= 0 ? String(key).slice(separator + 1) : "";\n        return normalize(rawName) === wantedName && normalizeUnit(rawUnit) === wantedUnit;\n      });\n    });\n  };`;
@@ -74,7 +70,6 @@ function deliveryApiClientCompatibility() {
         const newRangeCode = `        po_code: purchaseOrders.some((po) => isActivePurchaseOrder(po) && String(po.vendor_code || "").toUpperCase() === String(rangeVendor).toUpperCase() && candidates.some((row) => coverageDatesFor(po).includes(String(row.date))))\n          ? "PO-" + activeSite + "-" + codeDate + "-" + rangeVendor + "-TAMBAHAN-" + poItemSlug(aggregateItems[0]?.item_name) + "-" + aggregateItems.length\n          : "PO-" + activeSite + "-" + codeDate + "-" + rangeVendor,`;
         plannerCode = plannerCode.replace(oldRangeCode, newRangeCode);
 
-        // Prevent a late response for the previously selected kitchen from being rendered.
         const reminderBucketAnchor = `  const reminderOverdue = reminders.filter((item) => String(item.po_date || "") < today() && item.reminder_status === "OVERDUE");`;
         if (plannerCode.includes(reminderBucketAnchor)) {
           plannerCode = plannerCode.replace(
