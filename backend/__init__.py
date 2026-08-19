@@ -39,6 +39,7 @@ from backend.calculator_planning_bridge_api import router as calculator_planning
 from backend.goods_receipt_visibility_api import router as goods_receipt_visibility_router
 from backend.po_cleanup_api import router as po_cleanup_router
 from backend.po_delivery_alerts_api import router as po_delivery_alerts_router
+from backend.po_receiving_confirmation_api import router as po_receiving_confirmation_router
 from backend.po_reminder_action_api import router as po_reminder_action_router
 from backend.po_reminder_v2_api import router as po_reminder_v2_router
 from backend.po_reminder_v3_api import router as po_reminder_v3_router
@@ -101,6 +102,7 @@ operational_router.include_router(calculator_planning_bridge_router)
 # Operational PO/receiving reads that are safe to add without changing source records.
 operational_router.include_router(purchase_order_listing_router)
 operational_router.include_router(po_delivery_alerts_router)
+operational_router.include_router(po_receiving_confirmation_router)
 operational_router.include_router(goods_receipt_visibility_router)
 
 # v4 is the strict stock-aware reminder used by the current frontend. It only
