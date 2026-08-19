@@ -58,6 +58,11 @@ def list_purchase_orders_active(
     Default view is deliberately short and operational: active/relevant POs from
     H-1 through H+7. Fully received POs and old POs after H+2 are archived by
     default, but remain searchable with includeArchived=true or a search term.
+
+    Item-level coverage metadata is returned so the PO builder can distinguish
+    "Telur already ordered" from "the whole KOPERASI/date is already ordered".
+    This prevents one partial PO from blocking creation of another PO for the
+    still-uncovered items on the same vendor/date.
     """
     require_db()
     jakarta_today = datetime.now(ZoneInfo("Asia/Jakarta")).date()
@@ -76,6 +81,18 @@ def list_purchase_orders_active(
                         array[pc.distribution_date]) as coverage_dates,
                coalesce((select count(*) from purchase_order_coverage poc where poc.purchase_order_id=po.id),1) as coverage_day_count,
                (select count(*) from purchase_order_items poi where poi.purchase_order_id=po.id) as item_count,
+               coalesce((
+                 select array_agg(distinct poi.planning_snapshot_item_id)
+                 from purchase_order_items poi
+                 where poi.purchase_order_id=po.id
+                   and poi.planning_snapshot_item_id is not null
+               ), array[]::bigint[]) as planning_item_ids,
+               coalesce((
+                 select array_agg(distinct lower(trim(coalesce(poi.item_name,''))) || '|' || lower(trim(coalesce(poi.unit,''))))
+                 from purchase_order_items poi
+                 where poi.purchase_order_id=po.id
+                   and coalesce(poi.po_qty,0)>0
+               ), array[]::text[]) as item_keys,
                coalesce((select sum(poi.po_qty * coalesce(poi.po_price,0))
                          from purchase_order_items poi where poi.purchase_order_id=po.id),0) as po_total
         from purchase_orders po
