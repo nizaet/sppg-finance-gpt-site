@@ -22,8 +22,6 @@ const requiredMarkers = [
   "data-delivery-alerts",
   "data-delivery-alert-actions",
   "data-po-archive-search",
-  "data-po-reminder-refresh",
-  "Refresh Pengingat PO",
   "TAMBAHAN-",
   "planning_item_ids",
   "item_keys",
