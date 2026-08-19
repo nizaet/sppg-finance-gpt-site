@@ -17,10 +17,14 @@ function deliveryApiClientCompatibility() {
           )
           .replace("/v1/control-tower-v2?${q}", "/v1/control-tower?${q}");
 
+        const apiMarker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
         if (!apiCode.includes("confirmPoDeliveryAlert")) {
-          const marker = `  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),`;
           const insertion = `  confirmPoDeliveryAlert: (payload) => request("/v1/po-delivery-alerts/confirm", { method: "POST", body: JSON.stringify(payload) }),\n`;
-          if (apiCode.includes(marker)) apiCode = apiCode.replace(marker, `${insertion}${marker}`);
+          if (apiCode.includes(apiMarker)) apiCode = apiCode.replace(apiMarker, `${insertion}${apiMarker}`);
+        }
+        if (!apiCode.includes("getPoReceivingConfirmation")) {
+          const insertion = `  getPoReceivingConfirmation: (purchaseOrderId) => request(\`/v1/purchase-orders/\${encodeURIComponent(purchaseOrderId)}/receiving-confirmation\`),\n  confirmPoReceiving: (purchaseOrderId, payload) => request(\`/v1/purchase-orders/\${encodeURIComponent(purchaseOrderId)}/receiving-confirmation\`, { method: "POST", body: JSON.stringify(payload) }),\n`;
+          if (apiCode.includes(apiMarker)) apiCode = apiCode.replace(apiMarker, `${insertion}${apiMarker}`);
         }
 
         return apiCode === code ? null : { code: apiCode, map: null };
@@ -35,6 +39,11 @@ function deliveryApiClientCompatibility() {
         }
         if (!plannerCode.includes("PoOpsEnhancements")) {
           plannerCode = plannerCode.replace(importAnchor, `${importAnchor}\nimport PoOpsEnhancements from "./PoOpsEnhancements.jsx";`);
+        }
+        if (!plannerCode.includes("PoReceivingConfirm")) {
+          const anchor = `import PoOpsEnhancements from "./PoOpsEnhancements.jsx";`;
+          if (!plannerCode.includes(anchor)) throw new Error("[po-receiving] PoOpsEnhancements import anchor missing");
+          plannerCode = plannerCode.replace(anchor, `${anchor}\nimport PoReceivingConfirm from "./PoReceivingConfirm.jsx";`);
         }
 
         const oldSequence = `      await refreshPurchaseOrders();\n      await refreshReminders();\n      await refreshDeliveryAlerts();\n      setMessage(result?.message || \`\${label} tersimpan.\`);`;
@@ -104,7 +113,56 @@ function deliveryApiClientCompatibility() {
           `        <PoOpsEnhancements mode="calendar" activeSite={activeSite} setReminders={setReminders} setPurchaseOrders={setPurchaseOrders} setDeliveryAlerts={setDeliveryAlerts} />\n${detailAnchor}`,
         );
 
+        // The red "barang belum datang" block is intentionally retired. Receiving
+        // is now an explicit action on the actual PO (list/calendar), not an alert.
+        const redAlertStart = plannerCode.indexOf(`        {deliveryAlerts.length > 0 && <div className="ops-error" data-delivery-alerts="v20">`);
+        if (redAlertStart >= 0) {
+          const nextReminderBlock = plannerCode.indexOf(`        {reminderOverdue.length > 0`, redAlertStart);
+          if (nextReminderBlock > redAlertStart) {
+            plannerCode = plannerCode.slice(0, redAlertStart) + plannerCode.slice(nextReminderBlock);
+          }
+        }
+
+        const listDetailButton = `<button type="button" onClick={() => viewPoDetail(po)} disabled={actionId === po.id}><Eye size={14} /> Lihat Detail</button>`;
+        if (plannerCode.includes(listDetailButton) && !plannerCode.includes(`data-po-receiving-list="v30"`)) {
+          plannerCode = plannerCode.replace(
+            listDetailButton,
+            `${listDetailButton}\n                      <span data-po-receiving-list="v30"><PoReceivingConfirm poId={po.id} poCode={po.po_code} status={po.status} onChanged={async () => { await refreshPurchaseOrders(); }} /></span>`,
+          );
+        }
+
+        const detailSummaryEnd = `<span>Total <strong>{money((viewingPo.items || []).reduce((sum, item) => sum + Number(item.po_qty || 0) * Number(item.po_price || 0), 0))}</strong></span>\n          </div>`;
+        if (plannerCode.includes(detailSummaryEnd) && !plannerCode.includes(`data-po-receiving-detail="v30"`)) {
+          plannerCode = plannerCode.replace(
+            detailSummaryEnd,
+            `${detailSummaryEnd}\n          <div data-po-receiving-detail="v30"><PoReceivingConfirm poId={viewingPo.id} poCode={viewingPo.po_code} status={viewingPo.status} onChanged={async () => { await refreshPurchaseOrders(); const detail = await operationsApi.getPurchaseOrder(viewingPo.id); setViewingPo(detail); }} /></div>`,
+          );
+        }
+
         return plannerCode === code ? null : { code: plannerCode, map: null };
+      }
+
+      if (id.includes("/src/operations/PoOpsEnhancements.jsx")) {
+        let enhancementCode = code;
+        const importAnchor = `import { operationsApi } from "./apiClient";`;
+        if (!enhancementCode.includes("PoReceivingConfirm")) {
+          if (!enhancementCode.includes(importAnchor)) throw new Error("[po-receiving] enhancements import anchor missing");
+          enhancementCode = enhancementCode.replace(importAnchor, `${importAnchor}\nimport PoReceivingConfirm from "./PoReceivingConfirm.jsx";`);
+        }
+
+        enhancementCode = enhancementCode.replace(
+          `          <button type="button" onClick={refreshDelivery} disabled={progress.active}>\n            <RefreshCw size={14} /> Refresh Barang Datang\n          </button>`,
+          ``,
+        );
+
+        const calendarOrdersAnchor = `            <h4>Pesanan</h4>`;
+        if (enhancementCode.includes(calendarOrdersAnchor) && !enhancementCode.includes(`data-calendar-po-receiving="v30"`)) {
+          enhancementCode = enhancementCode.replace(
+            calendarOrdersAnchor,
+            `            <div data-calendar-po-receiving="v30" style={{ marginTop: 12 }}><PoReceivingConfirm inline poId={calendarPo.id} poCode={calendarPo.po_code} status={calendarPo.status} onChanged={async () => { await refreshCalendar(); await refreshActualPo(); const detail = await operationsApi.getPurchaseOrder(calendarPo.id); setCalendarPo((current) => current ? { ...current, ...detail } : current); }} /></div>\n${calendarOrdersAnchor}`,
+          );
+        }
+        return enhancementCode === code ? null : { code: enhancementCode, map: null };
       }
 
       return null;
