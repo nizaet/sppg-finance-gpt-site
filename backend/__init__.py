@@ -20,6 +20,7 @@ install_action_schema_runtime_patch()
 
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.vendor_payment_override_api import router as vendor_payment_override_router
+from backend.vendor_payment_duplicate_guard_patch import install as install_vendor_payment_duplicate_guard_patch
 from backend.inventory_api import router as inventory_router
 from backend.inventory_manual_api import router as inventory_manual_router
 from backend.chat_api import router as chat_router
@@ -53,6 +54,10 @@ from backend.po_delivery_receipt_reconcile_patch import install as install_po_de
 
 # Excel bytes remain available even when Drive upload fails.
 install_accountant_excel_fail_safe_patch()
+
+# A retry of an already-paid-unreconciled transfer must remain unresolved until
+# the dedicated reconciliation action links it to one invoice.
+install_vendor_payment_duplicate_guard_patch()
 
 # Reuse identical site/date stock projections for a few seconds. This only
 # removes duplicate expensive reads; it does not change stock or PO arithmetic.
