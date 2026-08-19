@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from backend import accountant_excel_api as excel
 from backend import accountant_selected_plan_api as selected
 from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
+from backend.accountant_drive_replace import replace_accountant_drive_file
 from backend.db import connection
 
 _INSTALLED = False
@@ -51,7 +52,6 @@ def polished_workbook_bytes(rows: list[list[Any]]) -> bytes:
     thin = Side(style="thin", color=border_color)
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # Header
     for cell in ws[1]:
         cell.fill = PatternFill("solid", fgColor=blue)
         cell.font = Font(color="FFFFFF", bold=True, size=11)
@@ -168,13 +168,15 @@ def _download_url(payload: NamedSelectedPlanExcelIn) -> str:
     return "/v1/accountant-excel/download-selected-plan?" + urlencode(params)
 
 
-def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, Any]:
-    selected.require_db()
-    artifact = _artifact(payload)
-    accountant = excel.ACCOUNTANTS[payload.site]
-    base = {
+def _base_result(
+    payload: NamedSelectedPlanExcelIn,
+    artifact: dict[str, Any],
+    accountant: str,
+) -> dict[str, Any]:
+    return {
         "committed": False,
         "duplicate": False,
+        "replacedExisting": False,
         "site": payload.site,
         "accountantCode": accountant,
         "distributionDate": payload.distribution_date.isoformat(),
@@ -195,8 +197,15 @@ def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, An
         "driveUploadStatus": "NOT_REQUESTED" if not payload.commit else "PENDING",
         "driveUploadError": None,
         "retryable": False,
-        "excelFormatVersion": "accountant-polished-v1",
+        "excelFormatVersion": "accountant-polished-v2",
     }
+
+
+def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, Any]:
+    selected.require_db()
+    artifact = _artifact(payload)
+    accountant = excel.ACCOUNTANTS[payload.site]
+    base = _base_result(payload, artifact, accountant)
     if not payload.commit:
         return base
 
@@ -214,7 +223,10 @@ def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, An
                 (payload.site, accountant, payload.calculator_document_id),
             )
             existing = cur.fetchone()
-            if existing and existing.get("excel_evidence_uri"):
+
+            # SENT is immutable evidence. READY/failed submissions may be regenerated
+            # in-place so formatting/name corrections keep the same Drive link.
+            if existing and existing.get("excel_evidence_uri") and str(existing.get("status") or "").upper() == "SENT":
                 return {
                     **base,
                     "committed": True,
@@ -226,6 +238,71 @@ def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, An
                     "filename": existing.get("generated_filename") or artifact["filename"],
                     "driveUploadStatus": existing.get("drive_upload_status") or "UPLOADED",
                     "driveUploadError": existing.get("drive_upload_error"),
+                    "message": "Excel sudah SENT; bukti yang sudah dikirim tidak ditimpa.",
+                }
+
+            if existing and existing.get("excel_evidence_uri"):
+                try:
+                    replaced = replace_accountant_drive_file(
+                        drive_uri=existing["excel_evidence_uri"],
+                        filename=artifact["filename"],
+                        data=artifact["xlsx"],
+                        mime_type=excel.XLSX_MIME,
+                    )
+                except AccountantDriveUploadError as exc:
+                    error_text = str(exc)[:1500]
+                    return {
+                        **base,
+                        "committed": False,
+                        "submissionId": existing["id"],
+                        "driveUri": existing["excel_evidence_uri"],
+                        "status": existing["status"],
+                        "sentAt": existing["sent_at"],
+                        "filename": existing.get("generated_filename") or artifact["filename"],
+                        "driveUploadStatus": "FAILED",
+                        "driveUploadError": error_text,
+                        "retryable": True,
+                        "message": "File lama tetap aman; pembaruan Excel Drive gagal.",
+                    }
+
+                cur.execute(
+                    """
+                    update accountant_submissions
+                    set production_cycle_id=%s,
+                        excel_evidence_uri=%s,
+                        generated_filename=%s,
+                        source_plan_name=%s,
+                        source_distribution_date=%s,
+                        drive_upload_status='UPLOADED',
+                        drive_upload_error=null,
+                        status='READY',
+                        updated_at=now()
+                    where id=%s
+                    returning id,status,sent_at
+                    """,
+                    (
+                        cycle_id,
+                        replaced["driveUri"],
+                        artifact["filename"],
+                        artifact["planName"],
+                        payload.distribution_date,
+                        existing["id"],
+                    ),
+                )
+                saved = cur.fetchone()
+                conn.commit()
+                return {
+                    **base,
+                    "committed": True,
+                    "duplicate": False,
+                    "replacedExisting": True,
+                    "submissionId": saved["id"],
+                    "driveUri": replaced["driveUri"],
+                    "driveFileId": replaced["fileId"],
+                    "status": saved["status"],
+                    "sentAt": saved["sent_at"],
+                    "driveUploadStatus": "UPLOADED",
+                    "message": "Excel READY diperbarui di file Drive yang sama.",
                 }
 
             try:
@@ -351,10 +428,8 @@ def install() -> None:
     if _INSTALLED:
         return
 
-    # All accountant workbook creation paths use the polished renderer.
     excel._workbook_bytes = polished_workbook_bytes
 
-    # Replace only the selected-plan Excel routes; invoice and Maker routes remain untouched.
     selected.router.routes[:] = [
         route for route in selected.router.routes
         if not (
