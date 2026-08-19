@@ -80,7 +80,7 @@ export const accountantApi = {
     return request(`/v1/accountant-excel/planning-options?${q}`);
   },
 
-  generateSelectedPlanExcel: ({ site, distributionDate, calculatorDocumentId }, commit = false) => request(
+  generateSelectedPlanExcel: ({ site, distributionDate, calculatorDocumentId, customFilename = "" }, commit = false) => request(
     "/v1/accountant-excel/from-selected-plan",
     {
       method: "POST",
@@ -88,6 +88,7 @@ export const accountantApi = {
         site,
         distribution_date: distributionDate,
         calculator_document_id: calculatorDocumentId,
+        custom_filename: customFilename || null,
         commit,
       }),
     },
