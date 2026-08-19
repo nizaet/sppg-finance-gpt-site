@@ -48,7 +48,7 @@ def _order(alias: str, columns: set[str]) -> str:
 
 @router.get("/accountant-flow")
 def accountant_flow(site: str = "") -> dict[str, Any]:
-    """Read accountant submissions without assuming every Railway DB has all new columns."""
+    """Read accountant submissions with selected-plan, Drive and invoice provenance."""
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
@@ -65,6 +65,7 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
             """
             invoice_join = ""
             if can_join_invoice:
+                invoice_order = _order("x", inv_cols)
                 invoice_select = f"""
                        {_col('i', inv_cols, 'id', as_name='invoice_id')},
                        {_col('i', inv_cols, 'invoice_number')},
@@ -72,7 +73,14 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
                        {_col('i', inv_cols, 'invoice_evidence_uri')},
                        {_col('i', inv_cols, 'received_at')}
                 """
-                invoice_join = "left join accountant_invoices i on i.accountant_submission_id=s.id"
+                invoice_join = f"""
+                left join lateral (
+                  select * from accountant_invoices x
+                  where x.accountant_submission_id=s.id
+                  order by {invoice_order}
+                  limit 1
+                ) i on true
+                """
 
             sql = f"""
                 select {_col('s', sub_cols, 'id', as_name='submission_id')},
@@ -83,7 +91,13 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
                        {_col('s', sub_cols, 'sent_at')},
                        {_col('s', sub_cols, 'status', as_name='submission_status')},
                        {_col('s', sub_cols, 'source_planning_snapshot_id')},
+                       {_col('s', sub_cols, 'source_calculator_document_id')},
+                       {_col('s', sub_cols, 'source_plan_name')},
+                       {_col('s', sub_cols, 'source_distribution_date')},
                        {_col('s', sub_cols, 'generated_filename')},
+                       {_col('s', sub_cols, 'drive_upload_status')},
+                       {_col('s', sub_cols, 'drive_upload_error')},
+                       {_col('s', sub_cols, 'updated_at', as_name='submission_updated_at')},
                        {invoice_select}
                 from accountant_submissions s
                 {invoice_join}
@@ -136,6 +150,7 @@ def bgn_flow(site: str = "") -> dict[str, Any]:
             sql = f"""
                 select {_col('m', maker_cols, 'id', as_name='maker_id')},
                        {_col('m', maker_cols, 'production_cycle_id')},
+                       {_col('m', maker_cols, 'accountant_invoice_id')},
                        {_col('m', maker_cols, 'site')},
                        {_col('m', maker_cols, 'reference_number')},
                        {_col('m', maker_cols, 'amount', as_name='maker_amount')},
