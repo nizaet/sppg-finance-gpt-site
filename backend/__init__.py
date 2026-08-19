@@ -33,6 +33,7 @@ from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_excel_fail_safe_patch import install as install_accountant_excel_fail_safe_patch
 from backend.accountant_selected_plan_api import router as accountant_selected_plan_router
 from backend.accountant_excel_polish_patch import install as install_accountant_excel_polish_patch
+from backend.accountant_excel_indonesia_format_patch import install as install_accountant_excel_indonesia_format_patch
 from backend.accountant_status_api import router as accountant_status_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
@@ -59,6 +60,8 @@ from backend.po_delivery_receipt_reconcile_patch import install as install_po_de
 install_accountant_excel_fail_safe_patch()
 # Use a cleaner workbook renderer and allow the operator to choose the Excel filename.
 install_accountant_excel_polish_patch()
+# Keep numeric cells numeric but display quantities with Indonesian decimal/group separators.
+install_accountant_excel_indonesia_format_patch()
 
 # A retry of an already-paid-unreconciled transfer must remain unresolved until
 # the dedicated reconciliation action links it to one invoice.
