@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from backend.google_services import upload_bytes_to_drive
@@ -23,6 +24,27 @@ def _candidate_folder_ids(env_name: str, fallback_id: str) -> list[str]:
         if value and value not in values:
             values.append(value)
     return values
+
+
+def _friendly_drive_error(exc: Exception) -> tuple[str, bool]:
+    raw = str(exc)
+    lowered = raw.lower()
+    if "drive api has not been used" in lowered or "drive.googleapis.com" in lowered and "disabled" in lowered:
+        match = re.search(r"project(?:=|\s+)(\d{6,})", raw, re.IGNORECASE)
+        project_number = match.group(1) if match else "tidak terdeteksi"
+        return (
+            "Google Drive API belum aktif pada Google Cloud project "
+            f"{project_number}. Aktifkan API drive.googleapis.com pada project credential service account SPPG, "
+            "tunggu propagasi beberapa menit, lalu klik Coba Upload Drive Lagi.",
+            True,
+        )
+    if "insufficient permissions" in lowered or "permission" in lowered and "403" in lowered:
+        return (
+            "Service account tidak memiliki izin tulis ke folder Google Drive tujuan. "
+            "Pastikan folder dibagikan sebagai Editor ke service account SPPG.",
+            False,
+        )
+    return (raw[:900], False)
 
 
 def upload_accountant_artifact(
@@ -53,11 +75,16 @@ def upload_accountant_artifact(
                 "attempts": attempts,
             }
         except Exception as exc:  # Drive API errors vary by google client version.
+            friendly, global_configuration_error = _friendly_drive_error(exc)
             attempts.append({
                 "folderId": folder_id,
                 "errorType": type(exc).__name__,
-                "error": str(exc)[:700],
+                "error": friendly,
             })
+            # A disabled Drive API is project-wide. Trying another folder cannot
+            # succeed and only produces a second copy of the same 403 message.
+            if global_configuration_error:
+                raise AccountantDriveUploadError(friendly, attempts) from exc
 
     detail = "; ".join(
         f"{row['folderId']}: {row['errorType']} {row['error']}" for row in attempts
