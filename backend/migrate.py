@@ -28,6 +28,7 @@ MIGRATIONS = [
     ROOT / "schema" / "po_reminder_rules_v026.sql",
     ROOT / "schema" / "po_reminder_overrides_v027.sql",
     ROOT / "schema" / "po_reminder_review_resolution_v028.sql",
+    ROOT / "schema" / "vendor_payment_unreconciled_v029.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
