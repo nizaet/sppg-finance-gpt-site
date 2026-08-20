@@ -1,16 +1,16 @@
 {
   "name": "sppg-finance-multi-dapur-runtime-routing",
   "private": true,
-  "version": "8.1.1",
+  "version": "8.1.2",
   "type": "module",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "dev": "vite --config vite.flowviews4.config.js --host 0.0.0.0",
-    "build": "vite build --config vite.flowviews4.config.js && node tests/assert-po-reminder-actions-build.mjs",
-    "start": "vite preview --config vite.flowviews4.config.js --host 0.0.0.0 --port ${PORT:-4173}",
-    "preview": "vite preview --config vite.flowviews4.config.js --host 0.0.0.0 --port ${PORT:-4173}"
+    "dev": "vite --config vite.po-list-independent.config.js --host 0.0.0.0",
+    "build": "vite build --config vite.po-list-independent.config.js && node tests/assert-po-reminder-actions-build.mjs",
+    "start": "vite preview --config vite.po-list-independent.config.js --host 0.0.0.0 --port ${PORT:-4173}",
+    "preview": "vite preview --config vite.po-list-independent.config.js --host 0.0.0.0 --port ${PORT:-4173}"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",
