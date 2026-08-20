@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: SPPG Hermes Lab
+  version: 0.1.0
+  description: Read-only experimental bridge from a Custom GPT to Hermes Agent.
+servers:
+  - url: https://REPLACE_WITH_HERMES_LAB_HOST
+paths:
+  /health:
+    get:
+      operationId: hermesLabHealth
+      summary: Check Hermes Lab status
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/lab/chat:
+    post:
+      operationId: askHermesLab
+      summary: Ask the read-only SPPG Hermes Lab agent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 40
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant]
+                      content:
+                        type: string
+      responses:
+        '200':
+          description: Hermes Lab answer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [answer, mode, model]
+                properties:
+                  answer:
+                    type: string
+                  mode:
+                    type: string
+                  model:
+                    type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
