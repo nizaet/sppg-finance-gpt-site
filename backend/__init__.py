@@ -16,6 +16,7 @@ install_action_schema_runtime_patch()
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.vendor_payment_override_api import router as vendor_payment_override_router
 from backend.vendor_payment_evidence_api import router as vendor_payment_evidence_router
+from backend.vendor_payment_evidence_compat_api import router as vendor_payment_evidence_compat_router
 from backend.vendor_payment_duplicate_guard_patch import install as install_vendor_payment_duplicate_guard_patch
 from backend.inventory_api import router as inventory_router
 from backend.stock_opname_learning_patch import install as install_stock_opname_learning_patch
@@ -97,5 +98,6 @@ operational_router.include_router(calculator_data_router)
 operational_router.include_router(vendor_payables_router)
 operational_router.include_router(vendor_payment_override_router)
 operational_router.include_router(vendor_payment_evidence_router)
+operational_router.include_router(vendor_payment_evidence_compat_router)
 operational_router.include_router(inventory_router)
 operational_router.include_router(inventory_manual_router)
