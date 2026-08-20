@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
 from backend.db import connection, database_ready
 
-router = APIRouter(prefix="/v1", tags=["bgn-paid"])
+router = APIRouter(tags=["bgn-paid"])
 MAX_EVIDENCE_BYTES = 12 * 1024 * 1024
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 
