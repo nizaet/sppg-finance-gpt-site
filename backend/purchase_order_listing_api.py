@@ -55,14 +55,11 @@ def list_purchase_orders_active(
 ) -> dict[str, Any]:
     """PO listing for the operations UI.
 
-    Default view is deliberately short and operational: active/relevant POs from
-    H-1 through H+7. Fully received POs and old POs after H+2 are archived by
-    default, but remain searchable with includeArchived=true or a search term.
-
-    Item-level coverage metadata is returned so the PO builder can distinguish
-    "Telur already ordered" from "the whole KOPERASI/date is already ordered".
-    This prevents one partial PO from blocking creation of another PO for the
-    still-uncovered items on the same vendor/date.
+    The relational distribution/coverage date remains the source of truth. For
+    canonical PO codes such as PO-CEMPLANG-20260828-KOPERASI-ITEM-DAGING-SAPI,
+    the YYYYMMDD segment is used only as a read-time fallback when an older or
+    malformed PO has lost its production-cycle/coverage date relation. This
+    keeps a valid FINAL PO visible without rewriting operational history.
     """
     require_db()
     jakarta_today = datetime.now(ZoneInfo("Asia/Jakarta")).date()
@@ -72,13 +69,31 @@ def list_purchase_orders_active(
         from_date = jakarta_today - timedelta(days=1)
         to_date = jakarta_today + timedelta(days=7)
 
-    sql = """
+    # Read-only recovery for a PO whose relational date metadata is missing.
+    # A valid canonical code always contains the distribution YYYYMMDD directly
+    # after the site segment. Relational dates still win whenever they exist.
+    code_date_sql = (
+        "case when po.po_code ~ '^PO-[^-]+-[0-9]{8}-' "
+        "then to_date(substring(po.po_code from '^PO-[^-]+-([0-9]{8})-'),'YYYYMMDD') "
+        "else null end"
+    )
+    effective_distribution_sql = f"coalesce(pc.distribution_date, {code_date_sql})"
+    last_distribution_sql = (
+        "coalesce((select max(poc.distribution_date) from purchase_order_coverage poc "
+        f"where poc.purchase_order_id=po.id), pc.distribution_date, {code_date_sql})"
+    )
+    first_distribution_sql = (
+        "coalesce((select min(poc.distribution_date) from purchase_order_coverage poc "
+        f"where poc.purchase_order_id=po.id), pc.distribution_date, {code_date_sql})"
+    )
+
+    sql = f"""
         select po.id, po.po_code, po.revision_no, po.site, po.vendor_code, po.status,
                po.sent_at, po.acknowledged_at, po.finalized_at, po.created_at,
-               pc.distribution_date,pc.cooking_at,
+               {effective_distribution_sql} as distribution_date, pc.cooking_at,
                coalesce((select array_agg(poc.distribution_date order by poc.distribution_date)
                          from purchase_order_coverage poc where poc.purchase_order_id=po.id),
-                        array[pc.distribution_date]) as coverage_dates,
+                        array[{effective_distribution_sql}]) as coverage_dates,
                coalesce((select count(*) from purchase_order_coverage poc where poc.purchase_order_id=po.id),1) as coverage_day_count,
                (select count(*) from purchase_order_items poi where poi.purchase_order_id=po.id) as item_count,
                coalesce((
@@ -113,10 +128,10 @@ def list_purchase_orders_active(
         sql += " and upper(coalesce(po.status,'')) <> all(%s)"
         params.append(sorted(_HISTORY_STATUSES))
     if from_date:
-        sql += " and coalesce((select max(poc.distribution_date) from purchase_order_coverage poc where poc.purchase_order_id=po.id), pc.distribution_date) >= %s"
+        sql += f" and {last_distribution_sql} >= %s"
         params.append(from_date)
     if to_date:
-        sql += " and coalesce((select min(poc.distribution_date) from purchase_order_coverage poc where poc.purchase_order_id=po.id), pc.distribution_date) <= %s"
+        sql += f" and {first_distribution_sql} <= %s"
         params.append(to_date)
     if normalized_search:
         pattern = f"%{normalized_search.lower()}%"
@@ -132,7 +147,7 @@ def list_purchase_orders_active(
           )
         """
         params.extend([pattern, pattern, pattern])
-    sql += " order by pc.distribution_date desc nulls last, po.created_at desc limit %s"
+    sql += f" order by {effective_distribution_sql} desc nulls last, po.created_at desc limit %s"
     params.append(limit)
 
     with connection() as conn:
