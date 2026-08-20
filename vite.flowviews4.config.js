@@ -4,7 +4,7 @@ const legacyMakerExpr = '(x.maker_id?{maker_id:x.maker_id,maker_status:x.maker_s
 
 function makerStatePrePlugin() {
   return {
-    name: "sppg-maker-state-pre-v6",
+    name: "sppg-maker-state-pre-v7",
     enforce: "pre",
     transform(code, id) {
       if (!id.includes("/src/operations/OperationsAccountantBgn.jsx")) return null;
@@ -37,10 +37,10 @@ function makerStatePrePlugin() {
   };
 }
 
-function makerStatePostPlugin() {
+function makerStateAfterCalendarPlugin() {
   return {
-    name: "sppg-maker-state-post-v6",
-    enforce: "post",
+    name: "sppg-maker-state-after-calendar-v7",
+    enforce: "pre",
     transform(code, id) {
       let out = code;
       if (id.includes("/src/operations/OperationsAccountantBgn.jsx")) {
@@ -68,5 +68,5 @@ function makerStatePostPlugin() {
 
 export default {
   ...flowConfig,
-  plugins: [makerStatePrePlugin(), ...(flowConfig.plugins || []), makerStatePostPlugin()],
+  plugins: [makerStatePrePlugin(), ...(flowConfig.plugins || []), makerStateAfterCalendarPlugin()],
 };
