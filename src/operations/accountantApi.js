@@ -41,7 +41,7 @@ async function download(path, fallbackFilename) {
     }
     const disposition = response.headers.get("content-disposition") || "";
     const match = disposition.match(/filename="?([^";]+)"?/i);
-    return { blob: await response.blob(), filename: match?.[1] || fallbackFilename || "daftar_belanja.xlsx" };
+    return { blob: await response.blob(), filename: fallbackFilename || match?.[1] || "daftar_belanja.xlsx" };
   } catch (error) {
     if (error?.name === "AbortError") throw new Error(`SPPG Core API terlalu lama merespons: ${path}`);
     throw error;
@@ -79,9 +79,9 @@ export const accountantApi = {
   },
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, { method: "POST", body: "{}" }),
   deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, { method: "DELETE" }),
-  confirmMakerApproved: (makerId, commit = true) => request(`/v1/bgn-makers/${encodeURIComponent(makerId)}/confirm-approved`, {
+  confirmMakerApproved: (makerId) => request(`/v1/bgn-makers/${encodeURIComponent(makerId)}/approve-now`, {
     method: "POST",
-    body: JSON.stringify({ commit, approved_at: null, actor: "web-owner" }),
+    body: "{}",
   }),
   confirmMakerPaid: async ({ makerId, file = null, evidenceUri = null, commit = true }) => {
     const payload = { commit, paid_at: null, evidence_uri: evidenceUri || null, actor: "web-owner" };
