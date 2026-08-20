@@ -40,7 +40,7 @@ def _is_header_line(line: str) -> bool:
         return False
     # Header styles seen in operational WhatsApp SO reports. A date/header must
     # never become an inventory item simply because it contains a number.
-    if re.fullmatch(r"so(?: barang)?(?: maja| cemplang| koperasi)?\s+\d{4}-\d{2}-\d{2}", normalized):
+    if re.fullmatch(r"so(?:\s+barang)?(?:\s+(?:maja|cemplang|koperasi))?\s+\d{4}-\d{2}-\d{2}", raw, re.IGNORECASE):
         return True
     if re.fullmatch(rf"{_WEEKDAY}\s+\d{{1,2}}\s+[a-z]+\s+\d{{4}}", raw, re.IGNORECASE):
         return True
@@ -53,23 +53,41 @@ def _clean_headers(text: str) -> str:
     return "\n".join(line for line in str(text or "").splitlines() if not _is_header_line(line))
 
 
-def _merge_same_line_missing_units(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Propagate one explicit unit across `10,20 + 3,38 kg` style components."""
+def _merge_same_line_components(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Handle arithmetic rows such as `10,20 + 3,38 kg` as one physical count."""
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for item in items:
         grouped[(str(item.get("normalizedItemName") or ""), str(item.get("rawLine") or ""))].append(item)
 
+    output: list[dict[str, Any]] = []
+    consumed: set[int] = set()
     for group in grouped.values():
+        if len(group) <= 1:
+            continue
         units = {str(row.get("unit") or "") for row in group if str(row.get("unit") or "")}
-        if len(group) > 1 and len(units) == 1 and any(not row.get("unit") for row in group):
-            unit = next(iter(units))
-            for row in group:
-                if not row.get("unit"):
-                    row["unit"] = unit
-                    row["parseStatus"] = "READY"
-                    row["warnings"] = [w for w in (row.get("warnings") or []) if "Satuan tidak tertulis" not in w]
-                    row.setdefault("warnings", []).append(f"Satuan {unit} diterapkan ke komponen penjumlahan pada baris yang sama.")
-    return items
+        if len(units) != 1 or "+" not in str(group[0].get("rawLine") or ""):
+            continue
+        unit = next(iter(units))
+        for row in group:
+            if not row.get("unit"):
+                row["unit"] = unit
+                row["parseStatus"] = "READY"
+                row["warnings"] = [w for w in (row.get("warnings") or []) if "Satuan tidak tertulis" not in w]
+        if any(str(row.get("unit") or "") != unit for row in group):
+            continue
+        first = dict(group[0])
+        first["qty"] = round(sum(float(row.get("qty") or 0) for row in group), 4)
+        first["unit"] = unit
+        first["parseStatus"] = "READY"
+        first["warnings"] = [w for w in (first.get("warnings") or []) if "Duplikat" not in w and "Satuan tidak tertulis" not in w]
+        first["warnings"].append(f"Komponen penjumlahan pada baris yang sama digabung dalam satuan {unit}.")
+        output.append(first)
+        consumed.update(id(row) for row in group)
+
+    for item in items:
+        if id(item) not in consumed:
+            output.append(item)
+    return output
 
 
 def _consolidate_known_packages(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -136,7 +154,7 @@ def learned_parse_stock_opname_text(text: str) -> dict[str, Any]:
             row["warnings"] = [w for w in (row.get("warnings") or []) if "Satuan tidak tertulis" not in w]
             row.setdefault("warnings", []).append(f"Satuan operasional terkonfirmasi: {default_unit}.")
 
-    items = _merge_same_line_missing_units(items)
+    items = _merge_same_line_components(items)
     items = _consolidate_known_packages(items)
 
     warnings: list[str] = []
