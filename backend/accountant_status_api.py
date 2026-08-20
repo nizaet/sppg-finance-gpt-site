@@ -101,3 +101,59 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
         "approvedAt": approval["approved_at"],
         "evidenceRequired": False,
     }
+
+
+@router.post("/bgn-makers/{maker_id}/cancel-approval")
+def cancel_bgn_maker_approval(maker_id: int) -> dict[str, Any]:
+    """Undo an accidental approval as long as the maker has not been paid/received."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select m.id,m.site,m.status,m.reference_number,m.amount,
+                          exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as has_receipt
+                   from bgn_makers m where m.id=%s""",
+                (maker_id,),
+            )
+            maker = cur.fetchone()
+            if not maker:
+                raise HTTPException(404, "maker BGN tidak ditemukan")
+            if bool(maker.get("has_receipt")) or str(maker.get("status") or "").upper() == "PAID":
+                raise HTTPException(409, "approval tidak dapat dibatalkan karena Maker sudah PAID / memiliki penerimaan dana")
+
+            cur.execute(
+                """select id,approver_code,status,approved_at
+                   from bgn_approvals where bgn_maker_id=%s
+                   order by created_at desc,id desc limit 1""",
+                (maker_id,),
+            )
+            approval = cur.fetchone()
+            if not approval:
+                raise HTTPException(409, "maker belum memiliki approval")
+
+            cur.execute(
+                """update bgn_approvals
+                   set status='PENDING',approved_at=null,rejected_at=null
+                   where id=%s
+                   returning id,approver_code,status,approved_at""",
+                (approval["id"],),
+            )
+            approval = cur.fetchone()
+            cur.execute(
+                """update bgn_makers
+                   set status=case when upper(status)='PAID' then status else 'CREATED' end
+                   where id=%s returning status""",
+                (maker_id,),
+            )
+            maker_status = cur.fetchone()["status"]
+            conn.commit()
+
+    return {
+        "makerId": maker_id,
+        "makerStatus": maker_status,
+        "approvalId": approval["id"],
+        "approverCode": approval["approver_code"],
+        "approvalStatus": approval["status"],
+        "approvedAt": approval["approved_at"],
+        "cancelled": True,
+    }
