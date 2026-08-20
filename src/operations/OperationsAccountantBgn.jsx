@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ClipboardCopy, Download, ExternalLink, FileCheck2, FileSpreadsheet, MessageCircle, RefreshCw, Send, Stamp, Trash2, Upload } from "lucide-react";
+import { ClipboardCopy, Download, ExternalLink, FileCheck2, FileSpreadsheet, MessageCircle, RefreshCw, Send, Stamp, Trash2, Upload, CheckCircle2, WalletCards } from "lucide-react";
 import { operationsApi } from "./apiClient";
 import { accountantApi } from "./accountantApi.js";
 
@@ -70,6 +70,7 @@ export default function OperationsAccountantBgn(){
   const [excelPreview,setExcelPreview]=useState(null);
   const [excelBusy,setExcelBusy]=useState(false);
   const [invoiceFiles,setInvoiceFiles]=useState({});
+  const [paymentFiles,setPaymentFiles]=useState({});
   const [customFilename,setCustomFilename]=useState("");
 
   const load=async()=>{
@@ -92,9 +93,8 @@ export default function OperationsAccountantBgn(){
       if (!options.length) setMessage(`Tidak ada perencanaan Kalkulator ${excelSite} untuk ${excelDate}.`);
       else if (options.length > 1) setMessage(`${options.length} perencanaan ditemukan. Pilih satu; Excel tidak menggabungkan perencanaan.`);
       else setMessage(`1 perencanaan ditemukan: ${options[0].planName}.`);
-    } catch (e) {
-      setPlanOptions([]); setSelectedPlanId(""); setError(e.message || "Gagal menarik daftar perencanaan Kalkulator");
-    } finally { setPlanBusy(false); }
+    } catch (e) { setPlanOptions([]); setSelectedPlanId(""); setError(e.message || "Gagal menarik daftar perencanaan Kalkulator"); }
+    finally { setPlanBusy(false); }
   };
   useEffect(()=>{ loadPlanningOptions(); },[excelSite,excelDate]);
 
@@ -104,7 +104,6 @@ export default function OperationsAccountantBgn(){
     bgn.forEach((x) => { if (x.accountant_invoice_id != null && !map.has(String(x.accountant_invoice_id))) map.set(String(x.accountant_invoice_id), x); });
     return map;
   }, [bgn]);
-
   const excelArgs = () => ({ site: excelSite, distributionDate: excelDate, calculatorDocumentId: selectedPlanId, customFilename });
 
   const previewExcel = async () => {
@@ -196,6 +195,30 @@ export default function OperationsAccountantBgn(){
     finally { setSaving(""); }
   };
 
+  const approveMaker = async (row) => {
+    if (String(row.approval_status||"").toUpperCase()==="APPROVED") return;
+    if (!window.confirm(`Konfirmasi Maker #${row.maker_id} (${row.reference_number||"tanpa referensi"}) SUDAH APPROVE?`)) return;
+    setSaving(`approve-${row.maker_id}`); setError("");
+    try { await accountantApi.confirmMakerApproved(row.maker_id, true); setMessage(`Maker #${row.maker_id} ditandai APPROVED.`); await load(); }
+    catch (e) { setError(e.message || "Gagal konfirmasi approval Maker"); }
+    finally { setSaving(""); }
+  };
+
+  const markMakerPaid = async (row) => {
+    const file = paymentFiles[row.maker_id];
+    if (!file) return setError("Pilih/upload bukti pembayaran dulu sebelum klik PAID.");
+    if (String(row.approval_status||"").toUpperCase()!=="APPROVED") return setError("Maker belum APPROVED. Klik Sudah Approve terlebih dahulu.");
+    if (!window.confirm(`Konfirmasi dana Maker #${row.maker_id} sebesar ${money(row.maker_amount)} SUDAH PAID/DITERIMA? Bukti akan diarsipkan ke Google Drive.`)) return;
+    setSaving(`paid-${row.maker_id}`); setError("");
+    try {
+      const result = await accountantApi.confirmMakerPaid({ makerId: row.maker_id, file, commit: true });
+      setPaymentFiles((current)=>({...current,[row.maker_id]:null}));
+      setMessage(`Maker #${row.maker_id} PAID. Bukti tersimpan di Drive${result.evidenceUri ? " dan tertaut ke penerimaan dana." : "."}`);
+      await load();
+    } catch (e) { setError(e.message || "Gagal konfirmasi PAID"); }
+    finally { setSaving(""); }
+  };
+
   return <div className="ops-domain-stack">
     <section className="ops-module">
       <div className="ops-module-header"><div><span className="ops-kicker">KALKULATOR → EXCEL AKUNTAN</span><h3>Excel Belanja per Perencanaan</h3><p>Preview dan pembuatan Excel selalu membaca ulang dokumen perencanaan terbaru. File lama tidak boleh dipakai diam-diam setelah perencanaan berubah.</p></div></div>
@@ -242,8 +265,16 @@ export default function OperationsAccountantBgn(){
     </section>
 
     <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">BGN</span><h3>Maker & Pending Approval</h3><p>Maker yang masih pending dapat ikut terhapus melalui Hapus Alur di tabel Accountant. Maker yang sudah APPROVED atau sudah memiliki penerimaan dana dikunci dari delete.</p></div><div className="ops-row-actions"><button type="button" onClick={async()=>{await copyText(pendingApprovalMessage(bgn));setMessage("Rekap pending approval sudah disalin.");}}><ClipboardCopy size={14}/> Copy Pending ({pendingBgn.length})</button><button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(pendingApprovalMessage(bgn))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp Pending</button></div></div>
-      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Maker</th><th>Invoice</th><th>Referensi</th><th>Nilai</th><th>Maker Status</th><th>Approver</th><th>Approval</th><th>Approved</th></tr></thead><tbody>{bgn.map(x=><tr key={x.maker_id}><td>{x.site}</td><td>#{x.maker_id}</td><td>{x.accountant_invoice_id?`#${x.accountant_invoice_id}`:"-"}</td><td>{x.reference_number||"-"}</td><td>{money(x.maker_amount)}</td><td>{x.maker_status}</td><td>{x.approver_code||"-"}</td><td>{x.approval_status||"Belum diminta"}</td><td>{x.approved_at||"-"}</td></tr>)}{!loading&&bgn.length===0&&<tr><td colSpan="9" className="ops-empty-cell">Belum ada maker BGN.</td></tr>}</tbody></table></div>
+      <div className="ops-module-header"><div><span className="ops-kicker">BGN</span><h3>Maker → Approval → Paid</h3><p>Approval dan pembayaran dipisahkan. Klik Sudah Approve saat approval selesai. Setelah dana benar-benar masuk, unggah bukti lalu klik PAID; bukti otomatis diarsipkan ke Google Drive.</p></div><div className="ops-row-actions"><button type="button" onClick={async()=>{await copyText(pendingApprovalMessage(bgn));setMessage("Rekap pending approval sudah disalin.");}}><ClipboardCopy size={14}/> Copy Pending ({pendingBgn.length})</button><button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(pendingApprovalMessage(bgn))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp Pending</button></div></div>
+      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Maker</th><th>Invoice</th><th>Referensi</th><th>Nilai</th><th>Maker Status</th><th>Approver</th><th>Approval</th><th>Approved</th><th>Pembayaran</th><th>Bukti</th><th>Aksi</th></tr></thead><tbody>{bgn.map(x=>{
+        const approved=String(x.approval_status||"").toUpperCase()==="APPROVED";
+        const paid=Boolean(x.receipt_id)||String(x.maker_status||"").toUpperCase()==="PAID";
+        return <tr key={x.maker_id}><td>{x.site}</td><td>#{x.maker_id}</td><td>{x.accountant_invoice_id?`#${x.accountant_invoice_id}`:"-"}</td><td>{x.reference_number||"-"}</td><td>{money(x.maker_amount)}</td><td><strong>{x.maker_status}</strong></td><td>{x.approver_code||"-"}</td><td>{approved?<strong>APPROVED</strong>:(x.approval_status||"PENDING")}</td><td>{x.approved_at||"-"}</td><td>{paid?<><strong>PAID</strong><div className="ops-muted">{x.payment_received_at||""}</div></>:"BELUM PAID"}</td><td>{x.payment_evidence_uri?<button type="button" onClick={()=>window.open(x.payment_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Bukti</button>:paid?<span className="ops-muted">Tanpa file</span>:<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>setPaymentFiles(current=>({...current,[x.maker_id]:e.target.files?.[0]||null}))}/>}</td><td><div className="ops-row-actions">
+          {!approved&&<button type="button" onClick={()=>approveMaker(x)} disabled={saving===`approve-${x.maker_id}`}><CheckCircle2 size={14}/> Sudah Approve</button>}
+          {approved&&!paid&&<button type="button" onClick={()=>markMakerPaid(x)} disabled={saving===`paid-${x.maker_id}`||!paymentFiles[x.maker_id]}><WalletCards size={14}/> PAID</button>}
+          {paid&&<span className="ops-success" style={{padding:"4px 8px"}}>✓ Selesai</span>}
+        </div></td></tr>;
+      })}{!loading&&bgn.length===0&&<tr><td colSpan="12" className="ops-empty-cell">Belum ada maker BGN.</td></tr>}</tbody></table></div>
     </section>
   </div>;
 }
