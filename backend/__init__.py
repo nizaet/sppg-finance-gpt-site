@@ -22,6 +22,7 @@ from backend.vendor_payables_api import router as vendor_payables_router
 from backend.vendor_payment_override_api import router as vendor_payment_override_router
 from backend.vendor_payment_duplicate_guard_patch import install as install_vendor_payment_duplicate_guard_patch
 from backend.inventory_api import router as inventory_router
+from backend.stock_opname_learning_patch import install as install_stock_opname_learning_patch
 from backend.inventory_manual_api import router as inventory_manual_router
 from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
@@ -55,6 +56,10 @@ from backend.firebase_auth_api import router as firebase_auth_router
 from backend.knowledge_runtime_api import router as knowledge_runtime_router
 from backend.po_reminder_projection_cache_patch import install as install_po_reminder_projection_cache_patch
 from backend.po_delivery_receipt_reconcile_patch import install as install_po_delivery_receipt_reconcile_patch
+
+# Learn stable SO aliases from previously committed, explicitly reviewed stock
+# opnames and apply the owner's confirmed package/unit conventions.
+install_stock_opname_learning_patch()
 
 # Excel bytes remain available even when Drive upload fails.
 install_accountant_excel_fail_safe_patch()
