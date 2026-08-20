@@ -4,6 +4,9 @@ import { operationsApi } from "./apiClient";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const qty = (v) => Number(v || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
+const WHATSAPP_PO_STATUSES = new Set(["FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"]);
+const REVISABLE_PO_STATUSES = new Set(["FINALIZED", "SENT", "ACKNOWLEDGED"]);
+const CANCELLABLE_PO_STATUSES = new Set(["DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED"]);
 
 function shiftDate(value, days) {
   const result = new Date(`${value}T12:00:00`);
@@ -52,6 +55,38 @@ function monthBounds(value) {
   };
 }
 
+function activePoRows(rows) {
+  return (rows || []).filter((po) => !["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"].includes(String(po?.status || "").toUpperCase()));
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+}
+
+function localPoMessage(po) {
+  const lines = [
+    `🛒 *PO SPPG ${po.site || "-"}*`,
+    `👤 *Vendor:* ${po.vendor_code || "-"}`,
+    `📅 *Distribusi:* ${coverageLabel(po)}`,
+    `🍳 *Masak:* ${po.cooking_date || "-"}`,
+    `🧾 *No. PO:* ${po.po_code || "-"}`,
+    "",
+    "📦 *DAFTAR PESANAN*",
+    "",
+  ];
+  (po.items || []).forEach((item, index) => lines.push(`   ${index + 1}. *${item.item_name || "Barang"}* : ${qty(item.po_qty)} ${item.unit || ""}`.trimEnd()));
+  lines.push("", "Mohon dibantu disiapkan sesuai daftar di atas ya Pak. 🙏", "Mohon konfirmasi jika ada barang yang kosong atau harganya berubah.", "Terima kasih.");
+  return lines.join("\n");
+}
+
 export default function PoOpsEnhancements({
   mode,
   activeSite,
@@ -64,15 +99,17 @@ export default function PoOpsEnhancements({
   const [calendarMonth, setCalendarMonth] = useState(today().slice(0, 7));
   const [calendarPos, setCalendarPos] = useState([]);
   const [calendarPo, setCalendarPo] = useState(null);
+  const [calendarAction, setCalendarAction] = useState("");
 
   const refreshActualPo = async () => {
+    const bounds = monthBounds(calendarMonth || today().slice(0, 7));
     const result = await operationsApi.getPurchaseOrders({
       site: activeSite,
-      limit: 80,
-      fromDate: shiftDate(today(), -1),
-      toDate: shiftDate(today(), 7),
+      limit: 500,
+      fromDate: bounds.first,
+      toDate: bounds.last,
     });
-    setPurchaseOrders?.(result?.items || []);
+    setPurchaseOrders?.(activePoRows(result?.items || []));
   };
 
   const refreshDelivery = async () => {
@@ -89,7 +126,6 @@ export default function PoOpsEnhancements({
       { date: today(), start: 15, end: 55, label: "Terlambat + hari ini" },
       { date: shiftDate(today(), 1), start: 65, end: 100, label: "Pengingat besok" },
     ];
-
     for (const stage of stages) {
       setProgress({ active: true, percent: stage.start, label: `Menarik ${stage.label}` });
       try {
@@ -102,7 +138,6 @@ export default function PoOpsEnhancements({
       }
       setProgress({ active: true, percent: stage.end, label: `${stage.label} selesai` });
     }
-
     setProgress({ active: false, percent: 100, label: failures.length ? "Selesai sebagian" : "Sinkron selesai" });
     if (failures.length) setLocalError(failures.join("; "));
   };
@@ -111,69 +146,45 @@ export default function PoOpsEnhancements({
     setLocalError("");
     const failures = [];
     setProgress({ active: true, percent: 5, label: `Memulai sinkron ${activeSite}` });
-
-    try {
-      setProgress({ active: true, percent: 15, label: "1/4 · PO Aktual" });
-      await refreshActualPo();
-    } catch (err) {
-      failures.push(`PO Aktual: ${err.message || "gagal"}`);
-    }
-
-    try {
-      setProgress({ active: true, percent: 35, label: "2/4 · Barang belum datang" });
-      await refreshDelivery();
-    } catch (err) {
-      failures.push(`Barang belum datang: ${err.message || "gagal"}`);
-    }
-
+    try { setProgress({ active: true, percent: 15, label: "1/4 · PO Aktual" }); await refreshActualPo(); }
+    catch (err) { failures.push(`PO Aktual: ${err.message || "gagal"}`); }
+    try { setProgress({ active: true, percent: 35, label: "2/4 · Barang belum datang" }); await refreshDelivery(); }
+    catch (err) { failures.push(`Barang belum datang: ${err.message || "gagal"}`); }
     let collected = [];
     try {
       setProgress({ active: true, percent: 55, label: "3/4 · Terlambat + hari ini" });
       const current = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 1 });
-      collected = mergeReminderRows(collected, current?.items || []);
-      setReminders?.(collected);
-    } catch (err) {
-      failures.push(`Pengingat hari ini: ${err.message || "gagal"}`);
-    }
-
+      collected = mergeReminderRows(collected, current?.items || []); setReminders?.(collected);
+    } catch (err) { failures.push(`Pengingat hari ini: ${err.message || "gagal"}`); }
     try {
       setProgress({ active: true, percent: 80, label: "4/4 · Pengingat besok" });
       const tomorrow = await operationsApi.getPoReminders({ site: activeSite, date: shiftDate(today(), 1), horizonDays: 1 });
-      collected = mergeReminderRows(collected, tomorrow?.items || []);
-      setReminders?.(collected);
-    } catch (err) {
-      failures.push(`Pengingat besok: ${err.message || "gagal"}`);
-    }
-
+      collected = mergeReminderRows(collected, tomorrow?.items || []); setReminders?.(collected);
+    } catch (err) { failures.push(`Pengingat besok: ${err.message || "gagal"}`); }
     setProgress({ active: false, percent: 100, label: failures.length ? "Sinkron selesai sebagian" : "Semua blok tersinkron" });
     if (failures.length) setLocalError(failures.join("; "));
   };
 
   const refreshCalendar = async () => {
     const bounds = monthBounds(calendarMonth);
-    const result = await operationsApi.getPurchaseOrders({
-      site: activeSite,
-      includeArchived: true,
-      fromDate: bounds.first,
-      toDate: bounds.last,
-      limit: 500,
-    });
-    setCalendarPos(result?.items || []);
+    const result = await operationsApi.getPurchaseOrders({ site: activeSite, includeArchived: true, fromDate: bounds.first, toDate: bounds.last, limit: 500 });
+    const rows = result?.items || [];
+    setCalendarPos(rows);
+    setPurchaseOrders?.(activePoRows(rows));
   };
 
   useEffect(() => {
     if (mode !== "calendar") return undefined;
     let cancelled = false;
     const bounds = monthBounds(calendarMonth);
-    operationsApi.getPurchaseOrders({
-      site: activeSite,
-      includeArchived: true,
-      fromDate: bounds.first,
-      toDate: bounds.last,
-      limit: 500,
-    }).then((result) => {
-      if (!cancelled) setCalendarPos(result?.items || []);
-    }).catch(() => {});
+    operationsApi.getPurchaseOrders({ site: activeSite, includeArchived: true, fromDate: bounds.first, toDate: bounds.last, limit: 500 })
+      .then((result) => {
+        if (cancelled) return;
+        const rows = result?.items || [];
+        setCalendarPos(rows);
+        setPurchaseOrders?.(activePoRows(rows));
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [mode, activeSite, calendarMonth]);
 
@@ -200,9 +211,72 @@ export default function PoOpsEnhancements({
     try {
       const detail = await operationsApi.getPurchaseOrder(po.id);
       setCalendarPo({ ...po, ...detail });
-    } catch (err) {
-      setLocalError(err.message || "Gagal membuka PO dari kalender");
-    }
+    } catch (err) { setLocalError(err.message || "Gagal membuka PO dari kalender"); }
+  };
+
+  const refreshCurrentCalendarPo = async (poId = calendarPo?.id) => {
+    await refreshCalendar();
+    if (!poId) return;
+    try { setCalendarPo(await operationsApi.getPurchaseOrder(poId)); }
+    catch { setCalendarPo(null); }
+  };
+
+  const copyCalendarPo = async () => {
+    if (!calendarPo) return;
+    setCalendarAction("copy"); setLocalError("");
+    try {
+      let text = localPoMessage(calendarPo);
+      try {
+        const preview = await operationsApi.getPoWhatsAppPreview({ purchaseOrderId: calendarPo.id });
+        text = preview?.message || preview?.text || preview?.whatsapp_message || preview?.whatsappText || text;
+      } catch {}
+      await copyText(text);
+    } catch (err) { setLocalError(err.message || "Gagal copy PO"); }
+    finally { setCalendarAction(""); }
+  };
+
+  const openCalendarWhatsApp = async () => {
+    if (!calendarPo) return;
+    setCalendarAction("wa"); setLocalError("");
+    try {
+      const preview = await operationsApi.getPoWhatsAppPreview({ purchaseOrderId: calendarPo.id });
+      const text = preview?.message || preview?.text || preview?.whatsapp_message || preview?.whatsappText || localPoMessage(calendarPo);
+      const direct = preview?.whatsapp_url || preview?.whatsappUrl || preview?.url;
+      if (direct) { window.open(direct, "_blank", "noopener,noreferrer"); return; }
+      const phone = String(preview?.whatsapp_phone || preview?.whatsappPhone || preview?.phone || "").replace(/[^0-9]/g, "").replace(/^0/, "62");
+      if (!phone) throw new Error("Nomor WhatsApp vendor belum tersimpan.");
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+    } catch (err) { setLocalError(err.message || "Gagal membuka WhatsApp vendor"); }
+    finally { setCalendarAction(""); }
+  };
+
+  const markCalendarSent = async () => {
+    if (!calendarPo || !window.confirm(`Tandai ${calendarPo.po_code} sudah dikirim ke vendor?`)) return;
+    setCalendarAction("sent"); setLocalError("");
+    try { await operationsApi.markPurchaseOrderSent(calendarPo.id); await refreshCurrentCalendarPo(calendarPo.id); }
+    catch (err) { setLocalError(err.message || "Gagal menandai PO terkirim"); }
+    finally { setCalendarAction(""); }
+  };
+
+  const reviseCalendarPo = async () => {
+    if (!calendarPo || !window.confirm(`Buat revisi baru dari ${calendarPo.po_code}?`)) return;
+    setCalendarAction("revise"); setLocalError("");
+    try {
+      const result = await operationsApi.revisePurchaseOrder(calendarPo.id);
+      await refreshCalendar();
+      const nextId = result?.id || result?.purchase_order_id || result?.purchaseOrderId;
+      if (nextId) setCalendarPo(await operationsApi.getPurchaseOrder(nextId));
+      else await refreshCurrentCalendarPo(calendarPo.id);
+    } catch (err) { setLocalError(err.message || "Gagal membuat revisi PO"); }
+    finally { setCalendarAction(""); }
+  };
+
+  const cancelCalendarPo = async () => {
+    if (!calendarPo || !window.confirm(`Batalkan ${calendarPo.po_code}?`)) return;
+    setCalendarAction("cancel"); setLocalError("");
+    try { await operationsApi.cancelPurchaseOrder(calendarPo.id); setCalendarPo(null); await refreshCalendar(); }
+    catch (err) { setLocalError(err.message || "Gagal membatalkan PO"); }
+    finally { setCalendarAction(""); }
   };
 
   const progressUi = progress.percent > 0 ? (
@@ -218,12 +292,8 @@ export default function PoOpsEnhancements({
     return (
       <div data-po-staged-sync="v25" style={{ marginTop: 10 }}>
         <div className="ops-row-actions">
-          <button className="ops-button-primary" type="button" onClick={syncReminderStages} disabled={progress.active}>
-            <RefreshCw size={14} /> Tarik / Sinkron Pengingat
-          </button>
-          <button type="button" onClick={refreshDelivery} disabled={progress.active}>
-            <RefreshCw size={14} /> Refresh Barang Datang
-          </button>
+          <button className="ops-button-primary" type="button" onClick={syncReminderStages} disabled={progress.active}><RefreshCw size={14} /> Tarik / Sinkron Pengingat</button>
+          <button type="button" onClick={refreshDelivery} disabled={progress.active}><RefreshCw size={14} /> Refresh Barang Datang</button>
         </div>
         {progressUi}
         {localError && <div className="ops-error">Sinkron selesai sebagian: {localError}</div>}
@@ -231,12 +301,14 @@ export default function PoOpsEnhancements({
     );
   }
 
+  const calendarStatus = String(calendarPo?.status || "").toUpperCase();
+
   return (
     <div data-po-actual-calendar="v25" className="ops-draft-group">
       <div className="ops-draft-group-head">
         <div>
           <strong>Kalender PO Aktual</strong>
-          <span>PO aktual pada tanggal distribusi. Klik PO untuk melihat dibuat, pesan/kirim, masak, dan distribusi untuk kapan.</span>
+          <span>PO aktual pada tanggal distribusi. Klik PO untuk melihat detail dan menjalankan aksi yang sama seperti mode list.</span>
         </div>
         <div className="ops-row-actions" data-po-actual-refresh="v25">
           <button type="button" onClick={refreshActualPo} disabled={progress.active}><RefreshCw size={14} /> Refresh PO Aktual</button>
@@ -245,7 +317,7 @@ export default function PoOpsEnhancements({
       </div>
 
       {progressUi}
-      {localError && <div className="ops-error">Sinkron selesai sebagian: {localError}</div>}
+      {localError && <div className="ops-error">{localError}</div>}
 
       <div className="ops-row-actions" style={{ marginTop: 10 }}>
         <label>Bulan <input type="month" value={calendarMonth} onChange={(e) => setCalendarMonth(e.target.value)} /></label>
@@ -253,9 +325,7 @@ export default function PoOpsEnhancements({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6, marginTop: 10 }}>
-        {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((day) => (
-          <strong key={day} className="ops-muted" style={{ textAlign: "center" }}>{day}</strong>
-        ))}
+        {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((day) => <strong key={day} className="ops-muted" style={{ textAlign: "center" }}>{day}</strong>)}
         {calendarCells.map((day, index) => {
           const dateValue = day ? `${calendarMonth}-${day}` : "";
           const dayPos = dateValue ? (poByDate.get(dateValue) || []) : [];
@@ -278,7 +348,7 @@ export default function PoOpsEnhancements({
 
       {calendarPo && (
         <div data-po-calendar-popup="v25" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }} onClick={() => setCalendarPo(null)}>
-          <div className="ops-module" style={{ width: "min(760px,96vw)", maxHeight: "88vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+          <div className="ops-module" style={{ width: "min(900px,96vw)", maxHeight: "88vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div className="ops-draft-group-head">
               <div><strong>{calendarPo.po_code} · Rev {calendarPo.revision_no}</strong><span>{calendarPo.vendor_code} · {calendarPo.status}</span></div>
               <button type="button" onClick={() => setCalendarPo(null)}><XCircle size={14} /> Tutup</button>
@@ -290,6 +360,13 @@ export default function PoOpsEnhancements({
               <span>Distribusi <strong>{coverageLabel(calendarPo)}</strong></span>
               <span>Status <strong>{calendarPo.status}</strong></span>
             </div>
+            <div className="ops-row-actions" style={{ marginTop: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={copyCalendarPo} disabled={Boolean(calendarAction)}>Copy PO</button>
+              {WHATSAPP_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={openCalendarWhatsApp} disabled={Boolean(calendarAction)}>WhatsApp Vendor</button>}
+              {REVISABLE_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={reviseCalendarPo} disabled={Boolean(calendarAction)}>Buat Revisi</button>}
+              {calendarStatus === "FINALIZED" && <button type="button" onClick={markCalendarSent} disabled={Boolean(calendarAction)}>Tandai Terkirim</button>}
+              {CANCELLABLE_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={cancelCalendarPo} disabled={Boolean(calendarAction)}>Batalkan</button>}
+            </div>
             <h4>Pesanan</h4>
             <div className="ops-table-wrap">
               <table className="ops-table"><thead><tr><th>Barang</th><th>Qty</th><th>Unit</th></tr></thead><tbody>
@@ -300,9 +377,7 @@ export default function PoOpsEnhancements({
               <h4>Masak untuk kapan</h4>
               <div className="ops-coverage-grid">
                 {calendarPo.coverage.map((day, index) => (
-                  <div className="ops-notice" key={`${day.distribution_date}-${index}`}>
-                    Masak <strong>{String(day.cooking_date || calendarPo.cooking_date || "-")}</strong> → distribusi <strong>{String(day.distribution_date || "-")}</strong>
-                  </div>
+                  <div className="ops-notice" key={`${day.distribution_date}-${index}`}>Masak <strong>{String(day.cooking_date || calendarPo.cooking_date || "-")}</strong> → distribusi <strong>{String(day.distribution_date || "-")}</strong></div>
                 ))}
               </div>
             </>}
