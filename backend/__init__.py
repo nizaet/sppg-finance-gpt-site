@@ -28,10 +28,12 @@ from backend.accountant_bgn_flow_api import router as accountant_bgn_flow_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_excel_fail_safe_patch import install as install_accountant_excel_fail_safe_patch
 from backend.accountant_selected_plan_api import router as accountant_selected_plan_router
+from backend.accountant_live_plan_patch import install as install_accountant_live_plan_patch
 from backend.accountant_correction_api import router as accountant_correction_router
 from backend.accountant_excel_polish_patch import install as install_accountant_excel_polish_patch
 from backend.accountant_excel_indonesia_format_patch import install as install_accountant_excel_indonesia_format_patch
 from backend.accountant_status_api import router as accountant_status_router
+from backend.bgn_paid_api import router as bgn_paid_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
@@ -54,6 +56,7 @@ from backend.po_reminder_projection_cache_patch import install as install_po_rem
 from backend.po_delivery_receipt_reconcile_patch import install as install_po_delivery_receipt_reconcile_patch
 
 install_stock_opname_learning_patch()
+install_accountant_live_plan_patch()
 install_accountant_excel_fail_safe_patch()
 install_accountant_excel_polish_patch()
 install_accountant_excel_indonesia_format_patch()
@@ -73,6 +76,7 @@ operational_router.include_router(accountant_excel_router)
 operational_router.include_router(accountant_selected_plan_router)
 operational_router.include_router(accountant_correction_router)
 operational_router.include_router(accountant_status_router)
+operational_router.include_router(bgn_paid_router)
 operational_router.include_router(vendor_rule_admin_router)
 operational_router.include_router(calculator_ai_router)
 operational_router.include_router(calculator_planning_bridge_router)
