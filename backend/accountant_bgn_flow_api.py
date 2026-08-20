@@ -52,14 +52,24 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
             if can_join_invoice:
                 invoice_select = f"{_col('i',inv_cols,'id',as_name='invoice_id')},{_col('i',inv_cols,'invoice_number')},{_col('i',inv_cols,'invoice_amount')},{_col('i',inv_cols,'invoice_evidence_uri')},{_col('i',inv_cols,'received_at')}"
                 invoice_join = f"left join lateral (select * from accountant_invoices x where x.accountant_submission_id=s.id order by {_order('x',inv_cols)} limit 1) i on true"
+
+            maker_exists = _table_exists(cur, "bgn_makers")
+            maker_cols = _columns(cur, "bgn_makers") if maker_exists else set()
+            can_join_maker = can_join_invoice and maker_exists and "accountant_invoice_id" in maker_cols
+            maker_select = "null as maker_id,null as maker_status"
+            maker_join = ""
+            if can_join_maker:
+                maker_select = f"{_col('m',maker_cols,'id',as_name='maker_id')},{_col('m',maker_cols,'status',as_name='maker_status')}"
+                maker_join = f"left join lateral (select * from bgn_makers x where x.accountant_invoice_id=i.id order by {_order('x',maker_cols)} limit 1) m on true"
+
             sql = f"""
                 select {_col('s',sub_cols,'id',as_name='submission_id')},{_col('s',sub_cols,'production_cycle_id')},{_col('s',sub_cols,'site')},
                        {_col('s',sub_cols,'accountant_code')},{_col('s',sub_cols,'excel_evidence_uri')},{_col('s',sub_cols,'sent_at')},
                        {_col('s',sub_cols,'status',as_name='submission_status')},{_col('s',sub_cols,'source_planning_snapshot_id')},
                        {_col('s',sub_cols,'source_calculator_document_id')},{_col('s',sub_cols,'source_plan_name')},{_col('s',sub_cols,'source_distribution_date')},
                        {_col('s',sub_cols,'generated_filename')},{_col('s',sub_cols,'drive_upload_status')},{_col('s',sub_cols,'drive_upload_error')},
-                       {_col('s',sub_cols,'updated_at',as_name='submission_updated_at')},{invoice_select}
-                from accountant_submissions s {invoice_join} where true
+                       {_col('s',sub_cols,'updated_at',as_name='submission_updated_at')},{invoice_select},{maker_select}
+                from accountant_submissions s {invoice_join} {maker_join} where true
             """
             params: list[Any] = []
             if site and "site" in sub_cols:
