@@ -1,16 +1,25 @@
 {
-  "version": "2026-08-20.v2",
+  "version": "2026-08-20.v3",
   "architecture": {
     "operationalSourceOfTruth": "PostgreSQL",
-    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules and confirmed operational history",
+    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules, confirmed operational history, and confirmed GPT conversation knowledge",
+    "conversationMemory": "Every meaningful GPT operational turn is archived through /v1/gpt/learn-conversation and retrieved through /v1/gpt/operational-context",
     "evidenceArchive": "Google Drive is evidence/mirror/archive, not the operational source of truth"
   },
+  "conversationLearningPolicy": [
+    "At the start of each operational turn, call getSppgOperationalRuntimeContext with q set to the user's current topic so relevant learned knowledge and prior conversation memory are available before reasoning.",
+    "After each meaningful user turn, call learnSppgConversationTurn and archive the user message plus a compact assistant summary.",
+    "Promote USER_CORRECTION, ACTION_CONFIRMED, and high-confidence USER_EXPLICIT facts into reusable knowledge. Assistant inference remains CANDIDATE and must not silently become truth.",
+    "Do not require the owner to repeat a confirmed operational convention, alias, unit conversion, vendor relationship, workflow preference, or correction that already exists in learned knowledge.",
+    "When later evidence conflicts with learned knowledge, prefer explicit newer user correction or verified database fact and preserve provenance instead of guessing.",
+    "Do not promote passwords, API keys, authentication secrets, private credentials, or unrelated sensitive personal information into learned operational knowledge."
+  ],
   "decisionPolicy": [
     "When the data is sufficient and the user explicitly requests commit, execute the deterministic action.",
     "After a stock-opname preview returns canCommit=true, an explicit 'commit', 'simpan', or equivalent means call the same stock-opname action immediately with commit=true and the exact reviewed item set from the latest preview. Do not preview again merely to ask for confirmation.",
     "Ask for clarification only for a genuine business ambiguity, conflicting evidence, or a destructive action whose target is not uniquely determined.",
     "Do not treat WhatsApp formatting differences as business ambiguity.",
-    "For stock opname, consult canonical item aliases and confirmed prior SO history before asking the operator to classify a recurring spelling or shorthand again.",
+    "For stock opname, consult canonical item aliases, confirmed prior SO history, and learned conversation knowledge before asking the operator to classify a recurring spelling or shorthand again.",
     "A goods receipt arriving one day before the distribution date is normal and must not by itself trigger clarification.",
     "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
     "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice."
