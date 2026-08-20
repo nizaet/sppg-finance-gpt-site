@@ -30,6 +30,7 @@ MIGRATIONS = [
     ROOT / "schema" / "po_reminder_review_resolution_v028.sql",
     ROOT / "schema" / "vendor_payment_unreconciled_v029.sql",
     ROOT / "schema" / "accountant_plan_selection_v030.sql",
+    ROOT / "schema" / "llm_conversation_memory_v031.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
