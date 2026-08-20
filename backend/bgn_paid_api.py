@@ -17,6 +17,13 @@ MAX_EVIDENCE_BYTES = 12 * 1024 * 1024
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 
 
+class BgnApproveIn(BaseModel):
+    commit: bool = False
+    approved_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    actor: str = Field(default="operator", max_length=100)
+
+
 class BgnPaidIn(BaseModel):
     commit: bool = False
     paid_at: datetime | None = None
@@ -72,6 +79,52 @@ def _maker_state(cur: Any, maker_id: int) -> dict[str, Any]:
     if not row:
         raise HTTPException(404, "maker BGN tidak ditemukan")
     return dict(row)
+
+
+@router.post("/bgn-makers/{maker_id}/confirm-approved")
+def confirm_bgn_approved(maker_id: int, payload: BgnApproveIn) -> dict[str, Any]:
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    with connection() as conn:
+        with conn.cursor() as cur:
+            row = _maker_state(cur, maker_id)
+            preview = {
+                "committed": False,
+                "makerId": maker_id,
+                "site": row.get("site"),
+                "referenceNumber": row.get("reference_number"),
+                "amount": row.get("amount"),
+                "currentApprovalStatus": row.get("approval_status"),
+                "alreadyApproved": str(row.get("approval_status") or "").upper() == "APPROVED",
+            }
+            if not payload.commit:
+                return preview
+            if not row.get("approval_id"):
+                raise HTTPException(409, "maker belum memiliki approval")
+            cur.execute(
+                """
+                update bgn_approvals
+                set status='APPROVED',approved_at=coalesce(approved_at,%s,now()),rejected_at=null
+                where id=%s
+                returning id,status,approved_at
+                """,
+                (payload.approved_at, row["approval_id"]),
+            )
+            approval = cur.fetchone()
+            cur.execute(
+                "update bgn_makers set status=case when status='PAID' then status else 'APPROVED' end where id=%s",
+                (maker_id,),
+            )
+            conn.commit()
+    return {
+        **preview,
+        "committed": True,
+        "approvalId": approval["id"],
+        "approvalStatus": approval["status"],
+        "approvedAt": approval["approved_at"],
+        "actor": payload.actor,
+        "note": payload.note,
+    }
 
 
 @router.post("/bgn-makers/{maker_id}/confirm-paid")
