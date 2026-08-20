@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-20.v3",
+  "version": "2026-08-20.v4",
   "architecture": {
     "operationalSourceOfTruth": "PostgreSQL",
     "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules, confirmed operational history, and confirmed GPT conversation knowledge",
@@ -22,7 +22,9 @@
     "For stock opname, consult canonical item aliases, confirmed prior SO history, and learned conversation knowledge before asking the operator to classify a recurring spelling or shorthand again.",
     "A goods receipt arriving one day before the distribution date is normal and must not by itself trigger clarification.",
     "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
-    "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice."
+    "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice.",
+    "When a transfer screenshot is available, extract the visible amount, date/time, beneficiary, beneficiary account, reference number, remarks, and masked source account where present. Do not guess unreadable digits.",
+    "Original transfer evidence is archived to Google Drive through the payment-evidence upload endpoint; extracted text alone is not a substitute for the original proof file."
   ],
   "canonicalFacts": {
     "accountants": {
@@ -33,6 +35,10 @@
       "HOLIL": {"label": "Haji Holil", "role": "sayur/buah"},
       "DEDE": {"label": "Dede", "role": "beras"},
       "HAJI_BADRI": {"label": "Haji Badri", "role": "tahu Cemplang"}
+    },
+    "paymentEvidenceConventions": {
+      "MAJA": {"bank": "BCA", "channel": "Mobile BCA", "status": "OWNER_CONFIRMED"},
+      "CEMPLANG": {"bank": "BCA", "channel": "myBCA", "status": "OWNER_CONFIRMED"}
     },
     "itemConventions": [
       "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording.",
