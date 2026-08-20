@@ -36,11 +36,50 @@ def _order(alias: str, columns: set[str]) -> str:
     return "1"
 
 
+def _backfill_legacy_maker_links(cur: Any) -> int:
+    """Safely link old makers created before accountant_invoice_id was populated.
+
+    Only unique deterministic matches are accepted: same site, same amount, and
+    either the same invoice reference or the legacy AKUNTAN-INV-<invoice id>
+    reference. This repairs history without guessing.
+    """
+    if not (_table_exists(cur, "bgn_makers") and _table_exists(cur, "accountant_invoices") and _table_exists(cur, "accountant_submissions")):
+        return 0
+    maker_cols = _columns(cur, "bgn_makers")
+    if "accountant_invoice_id" not in maker_cols:
+        return 0
+    cur.execute(
+        """
+        with candidates as (
+          select m.id as maker_id,min(i.id) as invoice_id,count(*) as candidate_count
+          from bgn_makers m
+          join accountant_invoices i on abs(coalesce(m.amount,0)-coalesce(i.invoice_amount,0)) < 0.01
+          join accountant_submissions s on s.id=i.accountant_submission_id
+          where m.accountant_invoice_id is null
+            and upper(coalesce(m.site,''))=upper(coalesce(s.site,''))
+            and (
+              lower(trim(coalesce(m.reference_number,'')))=lower(trim(coalesce(i.invoice_number,'')))
+              or lower(trim(coalesce(m.reference_number,'')))=lower('AKUNTAN-INV-' || i.id::text)
+            )
+          group by m.id
+        )
+        update bgn_makers m
+           set accountant_invoice_id=c.invoice_id
+          from candidates c
+         where m.id=c.maker_id and c.candidate_count=1 and m.accountant_invoice_id is null
+        """
+    )
+    return max(int(cur.rowcount or 0), 0)
+
+
 @router.get("/accountant-flow")
 def accountant_flow(site: str = "") -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
+            repaired = _backfill_legacy_maker_links(cur)
+            if repaired:
+                conn.commit()
             if not _table_exists(cur, "accountant_submissions"):
                 return {"items": [], "count": 0, "schemaWarning": "accountant_submissions table is not available"}
             sub_cols = _columns(cur, "accountant_submissions")
@@ -76,7 +115,7 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
                 sql += " and upper(s.site)=upper(%s)"; params.append(site)
             sql += f" order by {_order('s',sub_cols)} limit 250"
             cur.execute(sql, params); rows = cur.fetchall()
-    return {"items": rows, "count": len(rows)}
+    return {"items": rows, "count": len(rows), "legacyMakerLinksRepaired": repaired}
 
 
 @router.get("/bgn-flow")
@@ -84,6 +123,9 @@ def bgn_flow(site: str = "") -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
+            repaired = _backfill_legacy_maker_links(cur)
+            if repaired:
+                conn.commit()
             if not _table_exists(cur, "bgn_makers"):
                 return {"items": [], "count": 0, "schemaWarning": "bgn_makers table is not available"}
             maker_cols = _columns(cur, "bgn_makers")
@@ -116,4 +158,4 @@ def bgn_flow(site: str = "") -> dict[str, Any]:
                 sql += " and upper(m.site)=upper(%s)"; params.append(site)
             sql += f" order by {_order('m',maker_cols)} limit 250"
             cur.execute(sql, params); rows = cur.fetchall()
-    return {"items": rows, "count": len(rows)}
+    return {"items": rows, "count": len(rows), "legacyMakerLinksRepaired": repaired}
