@@ -20,9 +20,7 @@ def _knowledge_operation() -> dict[str, Any]:
     return {"get": {
         "operationId": "getSppgOperationalRuntimeContext",
         "summary": "Load canonical, learned, and live SPPG operational context",
-        "description": (
-            "READ-ONLY. Call at the start of every operational turn with q set to the user's current topic. Returns canonical rules, learned GPT conversation memory, and live PostgreSQL state. Never rely on prior-chat memory alone."
-        ),
+        "description": "READ-ONLY. Call at the start of every operational turn with q set to the user's current topic. Returns canonical rules, learned GPT conversation memory, and live PostgreSQL state. Never rely on prior-chat memory alone.",
         "x-openai-isConsequential": False,
         "parameters": [
             {"in": "query", "name": "site", "schema": {"type": "string", "enum": ["MAJA", "CEMPLANG"]}},
@@ -31,20 +29,7 @@ def _knowledge_operation() -> dict[str, Any]:
             {"in": "query", "name": "asOf", "schema": {"type": "string", "format": "date"}},
             {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}},
         ],
-        "responses": {"200": {"description": "Canonical knowledge, learned conversation memory, and live PostgreSQL context", "content": {"application/json": {"schema": _obj({
-            "runtimeVersion": {"type": "string"},
-            "generatedAt": {"type": "string", "format": "date-time"},
-            "asOf": {"type": "string", "format": "date"},
-            "query": {"type": ["string", "null"]},
-            "databaseReady": {"type": "boolean"},
-            "site": {"type": ["string", "null"]},
-            "vendorCode": {"type": ["string", "null"]},
-            "sourceOfTruth": {"type": "string"},
-            "canonicalKnowledge": {"type": "object", "additionalProperties": True},
-            "liveContext": {"type": "object", "additionalProperties": True},
-            "sectionErrors": {"type": "object", "additionalProperties": True},
-            "safeToUseForWrites": {"type": "boolean"},
-        })}}}},
+        "responses": {"200": {"description": "Canonical knowledge, learned conversation memory, and live PostgreSQL context", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
     }}
 
 
@@ -71,12 +56,10 @@ def _learn_conversation_operation() -> dict[str, Any]:
     return {"post": {
         "operationId": "learnSppgConversationTurn",
         "summary": "Store each GPT turn and promote durable operational knowledge",
-        "description": (
-            "AUTOMATIC MEMORY WRITE. Call after every meaningful user turn. Archive the user message and summarize useful context. Promote explicit facts, corrections, and action-confirmed results; mark uncertain inference as ASSISTANT_INFERENCE."
-        ),
+        "description": "AUTOMATIC MEMORY WRITE. Call after every meaningful user turn. Archive the user message and summarize useful context. Promote explicit facts, corrections, and action-confirmed results; mark uncertain inference as ASSISTANT_INFERENCE.",
         "x-openai-isConsequential": False,
         "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
-        "responses": {"200": {"description": "Conversation memory write and promoted/candidate knowledge", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        "responses": {"200": {"description": "Conversation memory write", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
     }}
 
 
@@ -99,13 +82,11 @@ def _payment_evidence_operation() -> dict[str, Any]:
     }, ["site", "vendor_code", "amount", "commit"])
     return {"post": {
         "operationId": "previewOrRecordSppgVendorPaymentEvidence",
-        "summary": "Record a verified vendor transfer even before payable reconciliation is complete",
-        "description": (
-            "Use when a vendor transfer is confirmed. If one payable matches safely, reconcile it; otherwise commit as PAID_UNRECONCILED. Do not reject a real transfer or ask the user to enter it again only because GR/invoice reconciliation is incomplete."
-        ),
+        "summary": "Record a verified vendor transfer",
+        "description": "Use when a vendor transfer is confirmed. If one payable matches safely, reconcile it; otherwise commit as PAID_UNRECONCILED.",
         "x-openai-isConsequential": True,
         "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
-        "responses": {"200": {"description": "Payment evidence preview/commit and reconciliation state", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        "responses": {"200": {"description": "Payment state", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
     }}
 
 
@@ -122,7 +103,7 @@ def _payment_reconcile_operation() -> dict[str, Any]:
             "actor": {"type": "string", "default": "chatgpt"},
             "commit": {"type": "boolean", "default": False},
         }, ["vendor_invoice_id", "commit"])}}},
-        "responses": {"200": {"description": "Reconciliation preview/result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+        "responses": {"200": {"description": "Reconciliation result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
     }}
 
 
@@ -137,9 +118,7 @@ def _unreconciled_operation() -> dict[str, Any]:
             {"in": "query", "name": "vendor", "schema": {"type": "string"}},
             {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}},
         ],
-        "responses": {"200": {"description": "Paid-unreconciled transfers", "content": {"application/json": {"schema": _obj({
-            "items": {"type": "array", "items": {"type": "object", "additionalProperties": True}}
-        })}}}},
+        "responses": {"200": {"description": "Paid-unreconciled transfers", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
     }}
 
 
@@ -147,9 +126,7 @@ def _excel_operation() -> dict[str, Any]:
     return {"post": {
         "operationId": "previewOrGenerateSppgAccountantExcel",
         "summary": "Generate Accountant Excel with Drive fail-safe",
-        "description": (
-            "Generate Accountant XLSX from planning. XLSX stays downloadable if Drive upload fails. If driveUploadStatus=FAILED, report Excel generation as successful and Drive upload as retryable."
-        ),
+        "description": "Generate Accountant XLSX from planning. XLSX stays downloadable if Drive upload fails.",
         "x-openai-isConsequential": True,
         "requestBody": {"required": True, "content": {"application/json": {"schema": _obj({
             "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
@@ -161,14 +138,47 @@ def _excel_operation() -> dict[str, Any]:
     }}
 
 
+def _bgn_approve_operation() -> dict[str, Any]:
+    return {"post": {
+        "operationId": "confirmSppgBgnMakerApproved",
+        "summary": "Confirm a BGN Maker has been approved",
+        "description": "Use when the user explicitly confirms a specific Maker is already approved. Preview with commit=false; write only after explicit confirmation.",
+        "x-openai-isConsequential": True,
+        "parameters": [{"in": "path", "name": "maker_id", "required": True, "schema": {"type": "integer", "minimum": 1}}],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": _obj({
+            "commit": {"type": "boolean", "default": False},
+            "approved_at": {"type": ["string", "null"], "format": "date-time"},
+            "note": {"type": ["string", "null"]},
+            "actor": {"type": "string", "default": "chatgpt"},
+        }, ["commit"])}}},
+        "responses": {"200": {"description": "Approval confirmation", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+    }}
+
+
+def _bgn_paid_operation() -> dict[str, Any]:
+    return {"post": {
+        "operationId": "confirmSppgBgnMakerPaid",
+        "summary": "Confirm a BGN Maker payment was received",
+        "description": "Use when the user explicitly confirms a specific Maker has been paid/received. This creates or updates the BGN receipt and marks Maker PAID. evidence_uri is optional for GPT; the web UI can upload the proof file to Drive.",
+        "x-openai-isConsequential": True,
+        "parameters": [{"in": "path", "name": "maker_id", "required": True, "schema": {"type": "integer", "minimum": 1}}],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": _obj({
+            "commit": {"type": "boolean", "default": False},
+            "paid_at": {"type": ["string", "null"], "format": "date-time"},
+            "evidence_uri": {"type": ["string", "null"]},
+            "note": {"type": ["string", "null"]},
+            "actor": {"type": "string", "default": "chatgpt"},
+        }, ["commit"])}}},
+        "responses": {"200": {"description": "Paid confirmation", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+    }}
+
+
 def schema_v0184_core_repair() -> dict[str, Any]:
     payload = deepcopy(_ORIGINAL_V0184())
     payload["info"] = {
-        "title": "SPPG Operations, Runtime Knowledge, and Accountant Bridge",
-        "version": "0.18.6",
-        "description": (
-            "Stable v0.18.4 URL with multi-PO receiving, payment override, Excel fail-safe, and durable GPT conversation memory. Read runtime context for each topic and write the current turn back to the learning endpoint."
-        ),
+        "title": "SPPG Operations, Runtime Knowledge, Accountant and BGN Bridge",
+        "version": "0.18.7",
+        "description": "Stable v0.18.4 URL with multi-PO receiving, durable GPT memory, accountant workflow, and explicit BGN approval/paid confirmations.",
     }
     paths = payload.setdefault("paths", {})
     paths["/v1/gpt/operational-context"] = _knowledge_operation()
@@ -177,13 +187,13 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     paths["/v1/vendor-payments/{payment_id}/reconcile"] = _payment_reconcile_operation()
     paths["/v1/vendor-payments/unreconciled"] = _unreconciled_operation()
     paths["/v1/accountant-excel/from-planning"] = _excel_operation()
+    paths["/v1/bgn-makers/{maker_id}/confirm-approved"] = _bgn_approve_operation()
+    paths["/v1/bgn-makers/{maker_id}/confirm-paid"] = _bgn_paid_operation()
 
     receiving = paths.get("/v1/receiving/whatsapp", {}).get("post")
     if receiving:
         receiving["summary"] = "Preview or record a deterministic goods receipt across one or more POs"
-        receiving["description"] = (
-            "Resolve receiving text against all relevant open POs for the same site/vendor. One report may allocate across main/additional/late POs by item, unit, date, and outstanding qty. If canCommit=true and the user explicitly says commit, execute; ask only on genuine item/vendor ambiguity."
-        )
+        receiving["description"] = "Resolve receiving text against all relevant open POs for the same site/vendor. If canCommit=true and the user explicitly says commit, execute; ask only on genuine ambiguity."
     return payload
 
 
