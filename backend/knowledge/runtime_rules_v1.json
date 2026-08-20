@@ -1,14 +1,16 @@
 {
-  "version": "2026-08-19.v1",
+  "version": "2026-08-20.v2",
   "architecture": {
     "operationalSourceOfTruth": "PostgreSQL",
-    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules",
+    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules and confirmed operational history",
     "evidenceArchive": "Google Drive is evidence/mirror/archive, not the operational source of truth"
   },
   "decisionPolicy": [
     "When the data is sufficient and the user explicitly requests commit, execute the deterministic action.",
+    "After a stock-opname preview returns canCommit=true, an explicit 'commit', 'simpan', or equivalent means call the same stock-opname action immediately with commit=true and the exact reviewed item set from the latest preview. Do not preview again merely to ask for confirmation.",
     "Ask for clarification only for a genuine business ambiguity, conflicting evidence, or a destructive action whose target is not uniquely determined.",
     "Do not treat WhatsApp formatting differences as business ambiguity.",
+    "For stock opname, consult canonical item aliases and confirmed prior SO history before asking the operator to classify a recurring spelling or shorthand again.",
     "A goods receipt arriving one day before the distribution date is normal and must not by itself trigger clarification.",
     "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
     "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice."
@@ -24,7 +26,19 @@
       "HAJI_BADRI": {"label": "Haji Badri", "role": "tahu Cemplang"}
     },
     "itemConventions": [
-      "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording."
+      "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording.",
+      "Mie telor ayam / mie telur ayam is a Mie item; the word ayam is part of the product name and must not classify it as chicken.",
+      "Bombay means Bawang Bombay; Langkuas means Lengkuas; telor means Telur; kuyit bubuk means Kunyit Bubuk; mayonnese means Mayonnaise.",
+      "For confirmed CEMPLANG SO convention, Sapu and Kain Pel/Pel use pcs when the report omits the unit."
+    ],
+    "stockOpnameConversions": [
+      {"itemFamily": "Beras", "fromUnit": "karung", "toUnit": "kg", "factor": 25, "status": "OWNER_CONFIRMED"},
+      {"itemFamily": "Minyak Goreng", "fromUnit": "dus", "toUnit": "liter", "factor": 12, "status": "OWNER_CONFIRMED"}
+    ],
+    "stockOpnameParsing": [
+      "Ignore report-title/date lines such as 'SO BARANG CEMPLANG 2026-08-20' and weekday/date headings; they are not inventory items.",
+      "When one arithmetic line is written like '10,20 + 3,38 kg', the explicit trailing unit applies to the components on that same line unless conflicting units are explicitly written.",
+      "Confirmed reviewed SO rows are operational history and should be reused as aliases on later SO previews instead of asking the same mapping again."
     ]
   },
   "reconciliationPriority": [
