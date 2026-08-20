@@ -5,7 +5,8 @@ import binascii
 import json
 import re
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
+from itertools import combinations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -24,6 +25,7 @@ PAYMENT_SOURCE_BY_SITE = {
     "MAJA": "Mobile BCA",
     "CEMPLANG": "myBCA",
 }
+CLOSED_PAYABLE = {"PAID", "RECONCILED", "CLOSED", "CANCELLED", "CANCELED"}
 
 
 class EvidenceInspectIn(BaseModel):
@@ -35,6 +37,7 @@ class EvidenceInspectIn(BaseModel):
 
 class EvidenceCommitIn(EvidenceInspectIn):
     amount: float = Field(gt=0)
+    invoice_ids: list[int] | None = Field(default=None, max_length=20)
     paid_at: datetime | None = None
     reference_number: str | None = Field(default=None, max_length=300)
     beneficiary_name: str | None = Field(default=None, max_length=300)
@@ -79,7 +82,7 @@ def _invoice_context(invoice_id: int) -> dict[str, Any]:
                 """
                 select vi.id as vendor_invoice_id,vi.vendor_code,vi.site,vi.invoice_number,
                        vi.net_amount,vi.payable_status,vi.purchase_order_id,vi.goods_receipt_id,
-                       po.po_code,pc.distribution_date
+                       po.po_code,pc.distribution_date,vi.created_at
                 from vendor_invoices vi
                 left join purchase_orders po on po.id=vi.purchase_order_id
                 left join production_cycles pc on pc.id=vi.production_cycle_id
@@ -91,6 +94,89 @@ def _invoice_context(invoice_id: int) -> dict[str, Any]:
     if not row:
         raise HTTPException(404, "vendor invoice tidak ditemukan")
     return dict(row)
+
+
+def _open_invoice_candidates(invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    site = str(invoice.get("site") or "").upper()
+    vendor = str(invoice.get("vendor_code") or "").upper()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select vi.id as vendor_invoice_id,vi.invoice_number,vi.net_amount,vi.payable_status,
+                       vi.purchase_order_id,vi.goods_receipt_id,po.po_code,pc.distribution_date,vi.created_at,
+                       coalesce((select sum(vp.amount) from vendor_payments vp
+                         where vp.vendor_invoice_id=vi.id and vp.payment_status in ('PAID','RECONCILED')),0) as paid_total
+                from vendor_invoices vi
+                left join purchase_orders po on po.id=vi.purchase_order_id
+                left join production_cycles pc on pc.id=vi.production_cycle_id
+                where upper(vi.site)=upper(%s) and upper(vi.vendor_code)=upper(%s)
+                order by vi.created_at desc,vi.id desc limit 20
+                """,
+                (site, vendor),
+            )
+            rows = cur.fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        status = str(row.get("payable_status") or "UNPAID").upper()
+        remaining = round(max(float(row.get("net_amount") or 0) - float(row.get("paid_total") or 0), 0.0), 2)
+        if status in CLOSED_PAYABLE or remaining <= 0.01:
+            continue
+        out.append({**dict(row), "remaining_amount": remaining})
+    return out
+
+
+def _detect_invoice_group(invoice: dict[str, Any], amount: float | None) -> dict[str, Any]:
+    candidates = _open_invoice_candidates(invoice)
+    anchor_id = int(invoice["vendor_invoice_id"])
+    target = int(round(float(amount or 0) * 100))
+    compact = [
+        {
+            "vendorInvoiceId": int(row["vendor_invoice_id"]),
+            "invoiceNumber": row.get("invoice_number"),
+            "poCode": row.get("po_code"),
+            "distributionDate": row.get("distribution_date"),
+            "netAmount": float(row.get("net_amount") or 0),
+            "remainingAmount": float(row.get("remaining_amount") or 0),
+        }
+        for row in candidates
+    ]
+    if target <= 0:
+        return {"candidateInvoices": compact, "suggestedInvoiceIds": [anchor_id], "suggestedTotal": float(invoice.get("net_amount") or 0), "multiInvoiceDetected": False, "groupAmbiguous": False}
+
+    anchor = next((row for row in candidates if int(row["vendor_invoice_id"]) == anchor_id), None)
+    if not anchor:
+        return {"candidateInvoices": compact, "suggestedInvoiceIds": [], "suggestedTotal": 0, "multiInvoiceDetected": False, "groupAmbiguous": False}
+
+    anchor_cents = int(round(float(anchor["remaining_amount"]) * 100))
+    others = [row for row in candidates if int(row["vendor_invoice_id"]) != anchor_id][:14]
+    matches: list[list[dict[str, Any]]] = []
+    needed = target - anchor_cents
+    if needed == 0:
+        matches = [[anchor]]
+    elif needed > 0:
+        for size in range(1, len(others) + 1):
+            for combo in combinations(others, size):
+                if sum(int(round(float(row["remaining_amount"]) * 100)) for row in combo) == needed:
+                    matches.append([anchor, *combo])
+                    if len(matches) >= 8:
+                        break
+            if matches:
+                break
+    if not matches:
+        return {"candidateInvoices": compact, "suggestedInvoiceIds": [], "suggestedTotal": 0, "multiInvoiceDetected": False, "groupAmbiguous": False}
+
+    best = matches[0]
+    ids = [int(row["vendor_invoice_id"]) for row in best]
+    total = round(sum(float(row["remaining_amount"]) for row in best), 2)
+    return {
+        "candidateInvoices": compact,
+        "suggestedInvoiceIds": ids if len(matches) == 1 else [],
+        "suggestedTotal": total,
+        "multiInvoiceDetected": len(best) > 1 and len(matches) == 1,
+        "groupAmbiguous": len(matches) > 1,
+        "matchingGroupCount": len(matches),
+    }
 
 
 def _clean_json_text(text: str) -> dict[str, Any]:
@@ -127,7 +213,8 @@ def _inspect_with_gemini(data: bytes, mime: str, invoice: dict[str, Any]) -> dic
         }
 
     prompt = f"""Baca bukti transfer bank Indonesia ini sebagai bukti pembayaran vendor SPPG.
-Konteks invoice: site={invoice.get('site')}, vendor={invoice.get('vendor_code')}, nilai invoice={invoice.get('net_amount')}, invoice={invoice.get('invoice_number') or '-'}, PO={invoice.get('po_code') or '-'}.
+Konteks invoice yang diklik: site={invoice.get('site')}, vendor={invoice.get('vendor_code')}, nilai invoice={invoice.get('net_amount')}, invoice={invoice.get('invoice_number') or '-'}, PO={invoice.get('po_code') or '-'}.
+Satu transfer BOLEH membayar beberapa invoice vendor sekaligus. Tugas Anda hanya membaca bukti bank, bukan menentukan invoice mana yang dibayar.
 Ekstrak data yang benar-benar terlihat. Jangan menebak digit yang tidak terlihat.
 Kembalikan JSON SAJA dengan field:
 amount (number atau null),
@@ -150,10 +237,7 @@ Untuk angka rupiah, contoh 'IDR 4,887,000.00' berarti 4887000. Jangan mencampur 
                 {"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}},
             ]
         }],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
     }
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(model)}:generateContent?key={urllib.parse.quote(key)}"
     response = _post_json(url, body, {"Content-Type": "application/json"}, timeout=75)
@@ -175,11 +259,18 @@ def _inspect_result(invoice: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         amount = float(amount_raw) if amount_raw is not None else None
     except (TypeError, ValueError):
         amount = None
+    effective_amount = amount if amount is not None else expected
+    group = _detect_invoice_group(invoice, effective_amount)
+
     warnings: list[str] = []
     if parsed.get("warning"):
         warnings.append(str(parsed["warning"]))
-    if amount is not None and expected > 0 and abs(amount - expected) > 0.01:
-        warnings.append(f"Nominal bukti {amount:.0f} berbeda dari netto invoice {expected:.0f}; cek invoice yang dipilih sebelum simpan.")
+    if group.get("multiInvoiceDetected"):
+        warnings.append(f"Nominal transfer cocok tepat dengan {len(group['suggestedInvoiceIds'])} invoice {invoice.get('vendor_code')}. Sistem menandai semuanya sebagai satu kelompok transfer.")
+    elif group.get("groupAmbiguous"):
+        warnings.append("Nominal transfer cocok dengan lebih dari satu kombinasi invoice. Pilih invoice secara manual sebelum simpan.")
+    elif amount is not None and expected > 0 and abs(amount - expected) > 0.01:
+        warnings.append(f"Nominal bukti {amount:.0f} berbeda dari invoice yang diklik {expected:.0f}; belum ditemukan kombinasi invoice yang pasti.")
     channel = str(parsed.get("channel_detected") or "").strip()
     if channel and source.lower().replace(" ", "") not in channel.lower().replace(" ", ""):
         warnings.append(f"Channel yang terbaca '{channel}', tetapi aturan site {site} menetapkan sumber pembayaran '{source}'. Sumber tetap mengikuti aturan site.")
@@ -195,7 +286,7 @@ def _inspect_result(invoice: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "currentPayableStatus": invoice.get("payable_status"),
         "paymentSource": source,
         "paymentSourceRule": "OWNER_CONFIRMED_SITE_RULE",
-        "amount": amount if amount is not None else expected,
+        "amount": effective_amount,
         "paidAt": parsed.get("paid_at"),
         "referenceNumber": reference,
         "beneficiaryName": parsed.get("beneficiary_name"),
@@ -207,6 +298,7 @@ def _inspect_result(invoice: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "confidence": parsed.get("confidence"),
         "provider": parsed.get("provider"),
         "model": parsed.get("model"),
+        **group,
         "warnings": warnings,
     }
 
@@ -219,55 +311,111 @@ def inspect_vendor_payment_evidence(payload: EvidenceInspectIn) -> dict[str, Any
     return _inspect_result(invoice, parsed)
 
 
+def _selected_allocations(payload: EvidenceCommitIn) -> tuple[list[dict[str, Any]], str, str]:
+    requested = list(dict.fromkeys(payload.invoice_ids or [payload.vendor_invoice_id]))
+    if payload.vendor_invoice_id not in requested:
+        requested.insert(0, payload.vendor_invoice_id)
+    invoices = [_invoice_context(invoice_id) for invoice_id in requested]
+    site = str(invoices[0].get("site") or "").upper()
+    vendor = str(invoices[0].get("vendor_code") or "").upper()
+    if any(str(row.get("site") or "").upper() != site or str(row.get("vendor_code") or "").upper() != vendor for row in invoices):
+        raise HTTPException(409, "satu transfer hanya boleh dialokasikan ke invoice vendor dan site yang sama")
+
+    candidates = {int(row["vendor_invoice_id"]): row for row in _open_invoice_candidates(invoices[0])}
+    allocations: list[dict[str, Any]] = []
+    for invoice in invoices:
+        invoice_id = int(invoice["vendor_invoice_id"])
+        candidate = candidates.get(invoice_id)
+        if not candidate:
+            raise HTTPException(409, f"invoice #{invoice_id} sudah lunas/tertutup atau tidak memiliki sisa tagihan")
+        allocations.append({**invoice, "allocation_amount": float(candidate["remaining_amount"])})
+
+    if len(allocations) > 1:
+        allocation_total = round(sum(float(row["allocation_amount"]) for row in allocations), 2)
+        if abs(allocation_total - float(payload.amount)) > 0.01:
+            raise HTTPException(409, f"total invoice terpilih {allocation_total:.0f} tidak sama dengan nominal transfer {float(payload.amount):.0f}")
+    else:
+        if float(payload.amount) > float(allocations[0]["allocation_amount"]) + 0.01:
+            raise HTTPException(409, "nominal transfer melebihi sisa invoice; pilih invoice lain jika ini satu transfer gabungan")
+        allocations[0]["allocation_amount"] = float(payload.amount)
+    return allocations, site, vendor
+
+
 @router.post("/commit")
 def commit_vendor_payment_evidence(payload: EvidenceCommitIn) -> dict[str, Any]:
-    invoice = _invoice_context(payload.vendor_invoice_id)
-    site = str(invoice.get("site") or "").upper()
-    vendor = str(invoice.get("vendor_code") or "").upper()
+    allocations, site, vendor = _selected_allocations(payload)
     source = PAYMENT_SOURCE_BY_SITE.get(site, "BCA")
     data, mime = _decode_file(payload.content_base64, payload.mime_type)
+    paid_at = payload.paid_at or datetime.now(timezone.utc)
 
-    timestamp = (payload.paid_at or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    filename = f"bukti_vendor_{site.lower()}_{vendor.lower()}_inv{payload.vendor_invoice_id}_{timestamp}_{_safe_filename(payload.file_name)}"
+    timestamp = paid_at.strftime("%Y%m%d_%H%M%S")
+    group_label = f"{len(allocations)}inv" if len(allocations) > 1 else f"inv{allocations[0]['vendor_invoice_id']}"
+    filename = f"bukti_vendor_{site.lower()}_{vendor.lower()}_{group_label}_{timestamp}_{_safe_filename(payload.file_name)}"
     try:
         uploaded = upload_accountant_artifact(kind="invoice", filename=filename, data=data, mime_type=mime)
     except AccountantDriveUploadError as exc:
         raise HTTPException(503, str(exc)[:1500]) from exc
 
-    metadata_note = " | ".join(filter(None, [
-        payload.note or "",
-        f"beneficiary={payload.beneficiary_name}" if payload.beneficiary_name else "",
-        f"beneficiary_account={payload.beneficiary_account}" if payload.beneficiary_account else "",
-        f"source_account={payload.source_account}" if payload.source_account else "",
-        f"remarks={payload.remarks}" if payload.remarks else "",
-        f"payment_source_rule={site}:{source}",
-    ]))
+    reference = (payload.reference_number or "").strip() or None
+    group_key = reference or f"evidence-{timestamp}-{vendor}-{round(float(payload.amount),2)}"
+    payment_results: list[dict[str, Any]] = []
+    for row in allocations:
+        invoice_id = int(row["vendor_invoice_id"])
+        allocation_amount = float(row["allocation_amount"])
+        metadata_note = " | ".join(filter(None, [
+            payload.note or "",
+            f"bank_transfer_group={group_key}",
+            f"bank_transfer_total={round(float(payload.amount),2)}",
+            f"allocation_invoice_id={invoice_id}",
+            f"allocation_amount={allocation_amount}",
+            f"beneficiary={payload.beneficiary_name}" if payload.beneficiary_name else "",
+            f"beneficiary_account={payload.beneficiary_account}" if payload.beneficiary_account else "",
+            f"source_account={payload.source_account}" if payload.source_account else "",
+            f"remarks={payload.remarks}" if payload.remarks else "",
+            f"payment_source_rule={site}:{source}",
+        ]))
+        result = record_vendor_payment_evidence(VendorPaymentEvidenceIn(
+            site=site,
+            vendor_code=vendor,
+            amount=allocation_amount,
+            paid_at=paid_at,
+            payment_source=source,
+            reference_number=reference,
+            evidence_uri=uploaded["driveUri"],
+            source_external_id=f"bank-transfer:{group_key}:invoice:{invoice_id}",
+            purchase_order_id=row.get("purchase_order_id"),
+            goods_receipt_id=row.get("goods_receipt_id"),
+            vendor_invoice_id=invoice_id,
+            note=metadata_note,
+            actor=payload.actor,
+            commit=True,
+        ))
+        payment_results.append({
+            "vendorInvoiceId": invoice_id,
+            "invoiceNumber": row.get("invoice_number"),
+            "allocatedAmount": allocation_amount,
+            "vendorPaymentId": result.get("vendorPaymentId"),
+            "financeTransactionId": result.get("financeTransactionId"),
+            "payableStatusAfter": result.get("payableStatusAfter"),
+            "duplicate": result.get("duplicate", False),
+        })
 
-    record = record_vendor_payment_evidence(VendorPaymentEvidenceIn(
-        site=site,
-        vendor_code=vendor,
-        amount=payload.amount,
-        paid_at=payload.paid_at,
-        payment_source=source,
-        reference_number=(payload.reference_number or "").strip() or None,
-        evidence_uri=uploaded["driveUri"],
-        source_external_id=(f"bankref:{payload.reference_number.strip()}" if payload.reference_number else None),
-        purchase_order_id=invoice.get("purchase_order_id"),
-        goods_receipt_id=invoice.get("goods_receipt_id"),
-        vendor_invoice_id=payload.vendor_invoice_id,
-        note=metadata_note,
-        actor=payload.actor,
-        commit=True,
-    ))
     return {
-        **record,
+        "committed": True,
+        "multiInvoice": len(allocations) > 1,
+        "invoiceCount": len(allocations),
+        "invoiceIds": [int(row["vendor_invoice_id"]) for row in allocations],
+        "transferAmount": round(float(payload.amount), 2),
+        "allocationTotal": round(sum(float(row["allocation_amount"]) for row in allocations), 2),
+        "paymentResults": payment_results,
         "evidenceUri": uploaded["driveUri"],
         "driveFolderId": uploaded.get("folderId"),
         "driveAuthMode": uploaded.get("driveAuthMode"),
         "paymentSource": source,
-        "referenceNumber": payload.reference_number,
+        "referenceNumber": reference,
         "beneficiaryName": payload.beneficiary_name,
         "beneficiaryAccount": payload.beneficiary_account,
         "sourceAccount": payload.source_account,
         "remarks": payload.remarks,
+        "payableStatusAfter": "PAID" if all(row.get("payableStatusAfter") == "PAID" for row in payment_results) else "PARTIAL",
     }
