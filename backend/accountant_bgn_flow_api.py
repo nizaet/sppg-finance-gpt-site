@@ -39,9 +39,10 @@ def _order(alias: str, columns: set[str]) -> str:
 def _backfill_legacy_maker_links(cur: Any) -> int:
     """Safely link old makers created before accountant_invoice_id was populated.
 
-    Only unique deterministic matches are accepted: same site, same amount, and
-    either the same invoice reference or the legacy AKUNTAN-INV-<invoice id>
-    reference. This repairs history without guessing.
+    Match by same site + exact amount. A link is written only when there is one
+    unique accountant invoice candidate for that maker, so repeated amounts are
+    deliberately left untouched instead of guessed. Matching reference numbers
+    are used only as an extra narrowing signal when available.
     """
     if not (_table_exists(cur, "bgn_makers") and _table_exists(cur, "accountant_invoices") and _table_exists(cur, "accountant_submissions")):
         return 0
@@ -50,18 +51,27 @@ def _backfill_legacy_maker_links(cur: Any) -> int:
         return 0
     cur.execute(
         """
-        with candidates as (
-          select m.id as maker_id,min(i.id) as invoice_id,count(*) as candidate_count
+        with raw_candidates as (
+          select m.id as maker_id,i.id as invoice_id,
+                 case
+                   when lower(trim(coalesce(m.reference_number,'')))=lower(trim(coalesce(i.invoice_number,''))) then 2
+                   when lower(trim(coalesce(m.reference_number,'')))=lower('AKUNTAN-INV-' || i.id::text) then 2
+                   else 1
+                 end as ref_score
           from bgn_makers m
           join accountant_invoices i on abs(coalesce(m.amount,0)-coalesce(i.invoice_amount,0)) < 0.01
           join accountant_submissions s on s.id=i.accountant_submission_id
           where m.accountant_invoice_id is null
             and upper(coalesce(m.site,''))=upper(coalesce(s.site,''))
-            and (
-              lower(trim(coalesce(m.reference_number,'')))=lower(trim(coalesce(i.invoice_number,'')))
-              or lower(trim(coalesce(m.reference_number,'')))=lower('AKUNTAN-INV-' || i.id::text)
-            )
-          group by m.id
+        ), preferred as (
+          select r.*,
+                 max(ref_score) over(partition by maker_id) as best_score
+          from raw_candidates r
+        ), candidates as (
+          select maker_id,min(invoice_id) as invoice_id,count(*) as candidate_count
+          from preferred
+          where ref_score=best_score
+          group by maker_id
         )
         update bgn_makers m
            set accountant_invoice_id=c.invoice_id
