@@ -81,7 +81,7 @@ export const accountantApi = {
   },
 
   generateSelectedPlanExcel: ({ site, distributionDate, calculatorDocumentId, customFilename = "" }, commit = false) => request(
-    "/v1/accountant-excel/from-selected-plan",
+    "/v1/accountant-excel/from-selected-plan-fresh",
     {
       method: "POST",
       body: JSON.stringify({
@@ -114,5 +114,9 @@ export const accountantApi = {
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, {
     method: "POST",
     body: "{}",
+  }),
+
+  deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, {
+    method: "DELETE",
   }),
 };
