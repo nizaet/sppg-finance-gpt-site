@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from backend.db import connection, database_ready
 
-router = APIRouter(prefix="/v1", tags=["accountant-bgn-flow"])
+router = APIRouter(tags=["accountant-bgn-flow"])
 
 
 def require_db() -> None:
