@@ -4,7 +4,7 @@ const legacyMakerExpr = '(x.maker_id?{maker_id:x.maker_id,maker_status:x.maker_s
 
 function makerStatePrePlugin() {
   return {
-    name: "sppg-maker-state-pre-v5",
+    name: "sppg-maker-state-pre-v6",
     enforce: "pre",
     transform(code, id) {
       if (!id.includes("/src/operations/OperationsAccountantBgn.jsx")) return null;
@@ -18,15 +18,6 @@ function makerStatePrePlugin() {
       out = out.replace(
         'const existingMaker = x.invoice_id != null ? makerByInvoice.get(String(x.invoice_id)) : null;',
         `const existingMaker = ${legacyMakerExpr};`
-      );
-
-      out = out.replace(
-        '<tr key={`${x.submission_id}-${x.invoice_id||0}`}>',
-        '<tr key={`${x.submission_id}-${x.invoice_id||0}`} style={existingMaker?{background:"#dcfce7"}:undefined}>'
-      );
-      out = out.replace(
-        '<td>{existingMaker?`#${existingMaker.maker_id}`:"-"}</td>',
-        '<td>{existingMaker?<strong style={{color:"#166534"}}>✓ Maker #{existingMaker.maker_id}</strong>:"-"}</td>'
       );
 
       if (!out.includes("const cancelMakerApproval = async")) {
@@ -48,11 +39,15 @@ function makerStatePrePlugin() {
 
 function makerStatePostPlugin() {
   return {
-    name: "sppg-maker-state-post-v5",
+    name: "sppg-maker-state-post-v6",
     enforce: "post",
     transform(code, id) {
       let out = code;
       if (id.includes("/src/operations/OperationsAccountantBgn.jsx")) {
+        out = out.replace(
+          '<td>{existingMaker?`#${existingMaker.maker_id}`:"-"}</td>',
+          '<td>{existingMaker?<strong style={{color:"#166534"}}>✓ Maker #{existingMaker.maker_id}</strong>:"-"}</td>'
+        );
         out = out.replace(
           'const mk=x.maker_id?{maker_id:x.maker_id,maker_status:x.maker_status}:(x.invoice_id!=null?makerByInvoice.get(String(x.invoice_id)):null);',
           `const mk=${legacyMakerExpr};`
