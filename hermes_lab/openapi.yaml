@@ -1,15 +1,15 @@
 openapi: 3.1.0
 info:
   title: SPPG Hermes Lab
-  version: 0.1.0
-  description: Read-only experimental bridge from a Custom GPT to Hermes Agent.
+  version: 0.2.0
+  description: Experimental bridge from a Custom GPT to Hermes Agent with read-only operational access and shared memory with the legacy GPTS.
 servers:
   - url: https://REPLACE_WITH_HERMES_LAB_HOST
 paths:
   /health:
     get:
       operationId: hermesLabHealth
-      summary: Check Hermes Lab status
+      summary: Check Hermes Lab and shared-memory status
       responses:
         '200':
           description: Service health
@@ -21,7 +21,8 @@ paths:
   /v1/lab/chat:
     post:
       operationId: askHermesLab
-      summary: Ask the read-only SPPG Hermes Lab agent
+      summary: Ask Hermes using shared SPPG behavior memory
+      description: Hermes automatically loads recent confirmed knowledge and conversation behavior learned by the legacy GPTS, then stores the Hermes turn back into the same memory layer. Operational production data remains read-only.
       security:
         - bearerAuth: []
       requestBody:
@@ -45,14 +46,20 @@ paths:
                         enum: [user, assistant]
                       content:
                         type: string
+                conversation_ref:
+                  type: [string, 'null']
+                  maxLength: 200
+                turn_ref:
+                  type: [string, 'null']
+                  maxLength: 200
       responses:
         '200':
-          description: Hermes Lab answer
+          description: Hermes Lab answer and memory status
           content:
             application/json:
               schema:
                 type: object
-                required: [answer, mode, model]
+                required: [answer, mode, model, memory_loaded, memory_stored]
                 properties:
                   answer:
                     type: string
@@ -60,6 +67,10 @@ paths:
                     type: string
                   model:
                     type: string
+                  memory_loaded:
+                    type: boolean
+                  memory_stored:
+                    type: boolean
 components:
   securitySchemes:
     bearerAuth:
