@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 
@@ -55,7 +54,11 @@ def _as_float(value: Any) -> float | None:
 
 
 def _configured_app_id(site: str) -> str:
-    return os.getenv(f"SPPG_{site}_CALCULATOR_APP_ID", "").strip()
+    # The calculator pages write to the canonical per-site artifact root from
+    # SITE_TARGETS. Reading a deployment override here can silently point the
+    # PO bridge at a different artifact, while leaving the calculator itself
+    # on the canonical root. Pin both sides to the same source of truth.
+    return str(SITE_TARGETS[site]["site_id"])
 
 
 def _plan_updated_at(data: dict[str, Any]) -> datetime:
@@ -70,62 +73,46 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
     client = firestore_client(target["database_id"])
     target_date = distribution_date.isoformat()
     configured = _configured_app_id(site)
-
-    app_refs = []
-    if configured:
-        app_refs = [client.collection("artifacts").document(configured)]
-    else:
-        try:
-            app_refs = list(client.collection("artifacts").list_documents(page_size=100))
-        except TypeError:
-            app_refs = list(client.collection("artifacts").list_documents())[:100]
+    app_ref = client.collection("artifacts").document(configured)
 
     candidates: list[dict[str, Any]] = []
-    for app_ref in app_refs:
-        try:
-            query = (
-                app_ref.collection("public").document("data").collection("dailyPlans")
-                .where("date", "==", target_date)
-                .limit(20)
-            )
-            docs = list(query.stream())
-        except Exception:
-            continue
-        for snap in docs:
-            data = snap.to_dict() or {}
-            shopping = ((data.get("shoppingListJSON") or {}).get("shoppingList") or [])
-            candidates.append({
-                "app_id": app_ref.id,
-                "doc": snap,
-                "data": data,
-                "updated_at": _plan_updated_at(data),
-                "item_count": len(shopping) if isinstance(shopping, list) else 0,
-            })
-
-    if not candidates:
-        suffix = f" untuk appId {configured}" if configured else ""
-        raise HTTPException(404, f"rencana Kalkulator {site} tanggal {target_date} tidak ditemukan{suffix}")
-
-    app_ids = sorted({x["app_id"] for x in candidates})
-    if not configured and len(app_ids) > 1:
+    try:
+        query = (
+            app_ref.collection("public").document("data").collection("dailyPlans")
+            .where("date", "==", target_date)
+            .limit(20)
+        )
+        docs = list(query.stream())
+    except Exception as exc:
+        # Never translate Firestore permission, network, or configuration
+        # failures into a misleading "plan not found" response.
         raise HTTPException(
-            409,
+            502,
             detail={
-                "message": "lebih dari satu appId Kalkulator memiliki rencana pada tanggal yang sama; konfigurasi appId diperlukan agar tidak salah menarik data",
+                "message": "gagal membaca rencana Kalkulator dari Firestore",
                 "site": site,
                 "distributionDate": target_date,
-                "candidateAppIds": app_ids,
-                "candidates": [
-                    {
-                        "appId": x["app_id"],
-                        "documentId": x["doc"].id,
-                        "planName": x["data"].get("planName"),
-                        "itemCount": x["item_count"],
-                        "updatedAt": _json_safe(x["updated_at"]),
-                    }
-                    for x in sorted(candidates, key=lambda y: y["updated_at"], reverse=True)
-                ],
+                "databaseId": target["database_id"],
+                "appId": configured,
+                "errorType": type(exc).__name__,
             },
+        ) from exc
+
+    for snap in docs:
+        data = snap.to_dict() or {}
+        shopping = ((data.get("shoppingListJSON") or {}).get("shoppingList") or [])
+        candidates.append({
+            "app_id": configured,
+            "doc": snap,
+            "data": data,
+            "updated_at": _plan_updated_at(data),
+            "item_count": len(shopping) if isinstance(shopping, list) else 0,
+        })
+
+    if not candidates:
+        raise HTTPException(
+            404,
+            f"rencana Kalkulator {site} tanggal {target_date} tidak ditemukan untuk appId {configured}",
         )
 
     candidates.sort(key=lambda x: (x["updated_at"], x["item_count"]), reverse=True)
