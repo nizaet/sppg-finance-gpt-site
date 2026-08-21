@@ -25,6 +25,7 @@ const requiredMarkers = [
   "Tarik / Sinkron Pengingat",
   "Refresh PO Aktual",
   "Sinkron Semua Blok",
+  "4/4 · Kalender PO",
   "data-po-actual-calendar",
   "Kalender PO Aktual",
   "data-po-calendar-popup",
@@ -69,6 +70,9 @@ if (reminderEnhancementSource.includes("date: shiftDate(today(), 1), horizonDays
 }
 if (reminderEnhancementSource.includes("useEffect(() =>")) {
   throw new Error("PO enhancement must not fetch calendar or reminder data automatically on tab mount");
+}
+if (!/const syncAllBlocks = async \(\) => \{[\s\S]*?await refreshCalendar\(\);[\s\S]*?const refreshCalendar/.test(reminderEnhancementSource)) {
+  throw new Error("Sinkron Semua Blok must explicitly populate the selected-month PO calendar");
 }
 
 const plannerSource = fs.readFileSync(
