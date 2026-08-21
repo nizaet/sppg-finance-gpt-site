@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 
@@ -23,6 +24,10 @@ SUPPLIER_CATEGORY = {
     "supplier_kering": "BAHAN_KERING",
     "supplier_sayur": "SAYUR_BUAH_BUMBU",
 }
+
+PLAN_DATE_FIELDS = ("date", "tanggal", "planDate", "distributionDate")
+CANONICAL_SCAN_LIMIT = 500
+DISCOVERY_LIMIT = 50
 
 
 class CalculatorPlanningSyncIn(BaseModel):
@@ -68,20 +73,105 @@ def _plan_updated_at(data: dict[str, Any]) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _normalized_plan_date(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for pattern, date_format in (
+        (r"^\d{4}-\d{2}-\d{2}", "%Y-%m-%d"),
+        (r"^\d{1,2}/\d{1,2}/\d{4}$", "%d/%m/%Y"),
+        (r"^\d{1,2}-\d{1,2}-\d{4}$", "%d-%m-%Y"),
+    ):
+        matched = re.match(pattern, text)
+        if not matched:
+            continue
+        try:
+            return datetime.strptime(matched.group(0), date_format).date().isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _plan_date(data: dict[str, Any]) -> tuple[str | None, Any, str | None]:
+    for field in PLAN_DATE_FIELDS:
+        if field not in data:
+            continue
+        raw = data.get(field)
+        normalized = _normalized_plan_date(raw)
+        if normalized:
+            return field, raw, normalized
+    return None, None, None
+
+
+def _artifact_app_id(snapshot: Any) -> str | None:
+    path = str(getattr(getattr(snapshot, "reference", None), "path", "") or "")
+    parts = [part for part in path.split("/") if part]
+    if len(parts) == 6 and parts[0] == "artifacts" and parts[2:5] == ["public", "data", "dailyPlans"]:
+        return parts[1]
+    return None
+
+
+def _candidate(app_id: str, snapshot: Any, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = data if data is not None else (snapshot.to_dict() or {})
+    shopping = ((payload.get("shoppingListJSON") or {}).get("shoppingList") or [])
+    date_field, raw_date, normalized_date = _plan_date(payload)
+    return {
+        "app_id": app_id,
+        "doc": snapshot,
+        "data": payload,
+        "updated_at": _plan_updated_at(payload),
+        "item_count": len(shopping) if isinstance(shopping, list) else 0,
+        "date_field": date_field,
+        "raw_date": raw_date,
+        "normalized_date": normalized_date,
+    }
+
+
+def _source_detail(client: Any, site: str, target_date: str, configured: str) -> dict[str, Any]:
+    target = SITE_TARGETS[site]
+    return {
+        "site": site,
+        "distributionDate": target_date,
+        "projectId": str(getattr(client, "project", "") or "unknown"),
+        "databaseId": target["database_id"],
+        "appId": configured,
+        "canonicalAppId": configured,
+        "canonicalPath": f"artifacts/{configured}/public/data/dailyPlans",
+    }
+
+
+def _visible_plan_dates(documents: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for snapshot in documents:
+        data = snapshot.to_dict() or {}
+        field, raw, normalized = _plan_date(data)
+        rows.append({
+            "documentId": snapshot.id,
+            "planName": data.get("planName"),
+            "dateField": field,
+            "rawDate": _json_safe(raw),
+            "normalizedDate": normalized,
+        })
+    rows.sort(key=lambda row: str(row.get("normalizedDate") or ""), reverse=True)
+    return rows[:12]
+
+
 def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, dict[str, Any], list[dict[str, Any]]]:
     target = SITE_TARGETS[site]
     client = firestore_client(target["database_id"])
     target_date = distribution_date.isoformat()
     configured = _configured_app_id(site)
     app_ref = client.collection("artifacts").document(configured)
+    daily_plans = app_ref.collection("public").document("data").collection("dailyPlans")
+    source_detail = _source_detail(client, site, target_date, configured)
 
     candidates: list[dict[str, Any]] = []
     try:
-        query = (
-            app_ref.collection("public").document("data").collection("dailyPlans")
-            .where("date", "==", target_date)
-            .limit(20)
-        )
+        query = daily_plans.where("date", "==", target_date).limit(20)
         docs = list(query.stream())
     except Exception as exc:
         # Never translate Firestore permission, network, or configuration
@@ -90,29 +180,96 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
             502,
             detail={
                 "message": "gagal membaca rencana Kalkulator dari Firestore",
-                "site": site,
-                "distributionDate": target_date,
-                "databaseId": target["database_id"],
-                "appId": configured,
+                **source_detail,
                 "errorType": type(exc).__name__,
             },
         ) from exc
 
     for snap in docs:
-        data = snap.to_dict() or {}
-        shopping = ((data.get("shoppingListJSON") or {}).get("shoppingList") or [])
-        candidates.append({
-            "app_id": configured,
-            "doc": snap,
-            "data": data,
-            "updated_at": _plan_updated_at(data),
-            "item_count": len(shopping) if isinstance(shopping, list) else 0,
-        })
+        candidates.append(_candidate(configured, snap))
+
+    if not candidates:
+        try:
+            canonical_docs = list(daily_plans.limit(CANONICAL_SCAN_LIMIT).stream())
+        except Exception as exc:
+            raise HTTPException(
+                502,
+                detail={
+                    "message": "gagal memeriksa format tanggal lama pada rencana Kalkulator",
+                    **source_detail,
+                    "errorType": type(exc).__name__,
+                },
+            ) from exc
+
+        for snap in canonical_docs:
+            candidate = _candidate(configured, snap)
+            if candidate["normalized_date"] == target_date:
+                candidates.append(candidate)
+
+    if not candidates:
+        discovered: dict[str, dict[str, Any]] = {}
+        try:
+            for field in PLAN_DATE_FIELDS:
+                query = client.collection_group("dailyPlans").where(field, "==", target_date).limit(DISCOVERY_LIMIT)
+                for snap in query.stream():
+                    app_id = _artifact_app_id(snap)
+                    if not app_id:
+                        continue
+                    key = str(getattr(getattr(snap, "reference", None), "path", "") or f"{app_id}/{snap.id}")
+                    discovered[key] = _candidate(app_id, snap)
+        except Exception as exc:
+            raise HTTPException(
+                502,
+                detail={
+                    "message": "gagal mencari sumber rencana Kalkulator di Firestore",
+                    **source_detail,
+                    "canonicalDocumentsInspected": len(canonical_docs),
+                    "visibleCanonicalPlans": _visible_plan_dates(canonical_docs),
+                    "errorType": type(exc).__name__,
+                },
+            ) from exc
+
+        other_site = "CEMPLANG" if site == "MAJA" else "MAJA"
+        forbidden_app_id = _configured_app_id(other_site)
+        discovered_candidates = [
+            candidate for candidate in discovered.values()
+            if candidate["app_id"] != forbidden_app_id
+        ]
+        app_ids = sorted({candidate["app_id"] for candidate in discovered_candidates})
+
+        if len(app_ids) == 1:
+            candidates = discovered_candidates
+            configured = app_ids[0]
+        elif len(app_ids) > 1:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": "rencana ditemukan pada beberapa appId; sinkronisasi dihentikan agar MAJA dan CEMPLANG tidak tertukar",
+                    **source_detail,
+                    "candidateAppIds": app_ids,
+                    "candidates": [
+                        {
+                            "appId": candidate["app_id"],
+                            "documentId": candidate["doc"].id,
+                            "planName": candidate["data"].get("planName"),
+                            "dateField": candidate["date_field"],
+                            "itemCount": candidate["item_count"],
+                        }
+                        for candidate in discovered_candidates
+                    ],
+                },
+            )
 
     if not candidates:
         raise HTTPException(
             404,
-            f"rencana Kalkulator {site} tanggal {target_date} tidak ditemukan untuk appId {configured}",
+            detail={
+                "message": f"rencana Kalkulator {site} tanggal {target_date} tidak ditemukan pada sumber Firestore yang terlihat backend",
+                **source_detail,
+                "canonicalDocumentsInspected": len(canonical_docs),
+                "visibleCanonicalPlans": _visible_plan_dates(canonical_docs),
+                "nextCheck": "pastikan Kalkulator tidak memakai Firebase Data Connection override lokal",
+            },
         )
 
     candidates.sort(key=lambda x: (x["updated_at"], x["item_count"]), reverse=True)
@@ -122,6 +279,8 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
 
 def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnapshotIn, dict[str, Any]]:
     app_id, doc_snap, plan, candidates = _daily_plan_matches(site, distribution_date)
+    canonical_app_id = _configured_app_id(site)
+    source_resolution = "CANONICAL" if app_id == canonical_app_id else "DISCOVERED_UNIQUE_APP_ID"
     selected_candidates = [candidate for candidate in candidates if candidate["app_id"] == app_id]
     source_plans = [
         {
@@ -195,6 +354,8 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
     source_payload = {
         "firestoreDatabase": SITE_TARGETS[site]["database_id"],
         "calculatorAppId": app_id,
+        "canonicalCalculatorAppId": canonical_app_id,
+        "sourceResolution": source_resolution,
         "dailyPlanDocumentId": doc_snap.id,
         "dailyPlanDocumentIds": document_ids,
         "planName": plan.get("planName"),
@@ -222,6 +383,8 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
         "site": site,
         "distributionDate": distribution_date.isoformat(),
         "appId": app_id,
+        "canonicalAppId": canonical_app_id,
+        "sourceResolution": source_resolution,
         "dailyPlanDocumentId": doc_snap.id,
         "dailyPlanDocumentIds": document_ids,
         "planName": plan.get("planName"),
