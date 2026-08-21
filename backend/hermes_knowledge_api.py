@@ -21,7 +21,7 @@ from backend.knowledge_runtime_api import (
     learn_conversation,
 )
 
-router = APIRouter(prefix="/v1/llm-wiki", tags=["hermes-llm-wiki"])
+router = APIRouter(prefix="/llm-wiki", tags=["hermes-llm-wiki"])
 JAKARTA = ZoneInfo("Asia/Jakarta")
 
 Topic = Literal[
