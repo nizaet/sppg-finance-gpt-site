@@ -371,27 +371,44 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setDailyPulled(true);
     setError("");
     setMessage("");
+    let planningReady = false;
     try {
-      const [scheduleData, snapshotsData, inventoryData, cooperativeData] = await Promise.all([
+      // Resolve the canonical calculator plan first. This endpoint already
+      // returns the complete PostgreSQL snapshot, so there is no reason to
+      // list and fetch it again. More importantly, do not run the expensive
+      // MAJA/CEMPLANG + KOPERASI stock projections when the plan is missing.
+      const planningSync = await operationsApi.syncCalculatorPlanning({
+        site: activeSite,
+        distributionDate,
+      });
+      const detail = planningSync?.snapshot || null;
+      if (!detail) {
+        setSchedule([]);
+        applyPlanningSnapshot(null, [], []);
+        setMessage(`Data ${activeSite} ${distributionDate} sudah ditarik, tetapi planning aktif belum tersedia.`);
+        return;
+      }
+      planningReady = true;
+
+      const [scheduleData, inventoryData, cooperativeData] = await Promise.all([
         operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
-        operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate, activeOnly: true }),
         operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
         operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
       ]);
       setSchedule(scheduleData?.items || []);
-      const snapshots = snapshotsData?.items || [];
-      if (!snapshots.length) {
-        applyPlanningSnapshot(null, inventoryData?.items || [], cooperativeData?.items || []);
-        setMessage(`Data ${activeSite} ${distributionDate} sudah ditarik, tetapi planning aktif belum tersedia.`);
-        return;
-      }
-      const detail = await operationsApi.getPlanningSnapshot(snapshots[0].id);
       applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
       setMessage(`Planning + stok ${activeSite} untuk distribusi ${distributionDate} berhasil ditarik. Data ini hanya working set PO dan boleh dibersihkan tanpa menghapus PO tersimpan.`);
     } catch (planningError) {
       setSchedule([]);
       applyPlanningSnapshot(null, [], []);
-      setError(`Rencana Kalkulator untuk tanggal ini belum tersedia. PO yang sudah tersimpan tetap ditampilkan. ${planningError.message || ""}`.trim());
+      const detail = String(planningError?.message || "").trim();
+      if (detail.includes("SPPG Core API 404")) {
+        setError(`Rencana Kalkulator ${activeSite} tanggal ${distributionDate} tidak ditemukan pada sumber kalkulator baku. PO yang sudah tersimpan tetap ditampilkan. ${detail}`.trim());
+      } else if (planningReady) {
+        setError(`Planning ditemukan, tetapi jadwal atau stok gagal ditarik. PO yang sudah tersimpan tetap ditampilkan. ${detail}`.trim());
+      } else {
+        setError(`Gagal menyinkronkan planning Kalkulator. Data Firestore tidak dianggap kosong. PO yang sudah tersimpan tetap ditampilkan. ${detail}`.trim());
+      }
     } finally {
       setLoading(false);
     }
