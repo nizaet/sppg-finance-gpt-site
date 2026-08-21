@@ -152,6 +152,19 @@ def _hide_resolved_rows(payload: dict[str, Any], target: date) -> dict[str, Any]
     queue, even though the underlying PO/audit history remains in the PO table.
     """
     items = payload.get("items") or []
+    operational_statuses = _OVERRIDE_TIMING_STATUSES | _DONE_STATUSES | {
+        "DRAFT_NEEDS_FINAL",
+        "READY_TO_SEND",
+    }
+    # Preserve the exact v4 compatibility contract for synthetic/non-operational
+    # payloads. Besides keeping the delegated response intact, this avoids adding
+    # action-queue counters to callers that do not return reminder workflow rows.
+    if items and not any(
+        str(item.get("reminder_status") or "").upper() in operational_statuses
+        for item in items
+    ):
+        return payload
+
     visible: list[dict[str, Any]] = []
     hidden = 0
     for item in items:
