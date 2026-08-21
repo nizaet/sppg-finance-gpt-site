@@ -26,7 +26,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
+      - run: pip install -r hermes_lab/requirements.txt
       - run: python -m compileall backend parser workflow
+      - name: Test Hermes approval boundary
+        run: |
+          python -m unittest -v tests.test_hermes_action_api
+          python -m unittest -v tests.test_hermes_lab_action_proposals
       - run: python -c "from backend.app import app; assert app.title == 'SPPG Core API'; from backend.server import app as production_app; assert production_app is not None"
       - name: Assert SPPG Core routes
         run: |
