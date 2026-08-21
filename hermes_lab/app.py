@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="SPPG Hermes Lab Gateway",
-    version="0.2.0",
-    description="Isolated SPPG gateway that lets Hermes read production context and share durable memory with the legacy GPTS without operational write access.",
+    version="0.3.0",
+    description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals without operational execution.",
 )
 
 HERMES_API_URL = os.getenv("HERMES_API_URL", "").rstrip("/")
@@ -22,7 +22,8 @@ SPPG_GPT_API_KEY = os.getenv("SPPG_GPT_API_KEY", "")
 
 SYSTEM_POLICY = """You are SPPG Hermes Lab, an experimental operations agent in migration mode.
 You may inspect and reason over approved SPPG/LLM Wiki context, including confirmed knowledge and conversation behavior learned from the legacy GPTS.
-You may write only to the shared LLM memory/knowledge layer. You must not create, update, delete, send, approve, pay, commit, or otherwise mutate operational production data such as PO, receiving, stock, finance, payment, Firestore, Drive, GitHub, or SPPG Core records.
+You may write to the shared LLM memory/knowledge layer and prepare an explicit action proposal in the isolated staging queue. A proposal is not approval and is never execution.
+You must not approve, execute, create, update, delete, send, pay, commit, or otherwise mutate operational production data such as PO, receiving, stock, finance, payment, Firestore, Drive, GitHub, or SPPG Core ledger records.
 Use the supplied behavior memory to preserve the user's established corrections, classification choices, workflow habits, terminology, and formatting preferences. More recent explicit corrections override older behavior.
 Treat assistant inference as weaker than explicit user statements or confirmed actions. Never turn an inferred pattern directly into an operational mutation.
 If the user asks for a production mutation, explain or propose the action only unless a separately approved production tool is explicitly provided later.
@@ -43,10 +44,44 @@ class LabChatRequest(BaseModel):
 
 class LabChatResponse(BaseModel):
     answer: str
-    mode: str = "read_operational_write_memory"
+    mode: str = "read_operational_write_memory_propose_actions"
     model: str
     memory_loaded: bool = False
     memory_stored: bool = False
+
+
+ActionType = Literal[
+    "CREATE_PO",
+    "RECORD_RECEIVING",
+    "RECORD_VENDOR_PAYABLE",
+    "RECORD_VENDOR_PAYMENT",
+    "RECORD_FINANCE_TRANSACTION",
+    "SEND_WHATSAPP",
+]
+
+
+class LabActionProposalRequest(BaseModel):
+    source_ref: str = Field(min_length=1, max_length=300)
+    action_type: ActionType
+    site: Literal["MAJA", "CEMPLANG"]
+    vendor_code: str | None = Field(default=None, max_length=100)
+    entity_code: str | None = Field(default=None, max_length=160)
+    target_type: str = Field(min_length=1, max_length=100)
+    target_id: str | None = Field(default=None, max_length=200)
+    rationale: str = Field(min_length=1, max_length=2000)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class LabActionProposalResponse(BaseModel):
+    proposalId: int
+    actionId: int
+    candidateStatus: str
+    actionStatus: str
+    inserted: bool
+    approvalRequired: bool
+    executed: bool
+    executionLocked: bool
 
 
 def _authorize(authorization: str | None) -> None:
@@ -117,7 +152,7 @@ async def _store_shared_turn(
         "assistant_summary": answer[:6000],
         "action_context": {
             "source": "hermes_lab_gateway",
-            "mode": "read_operational_write_memory",
+            "mode": "read_operational_write_memory_propose_actions",
             "operationalMutation": False,
         },
         "facts": [],
@@ -139,10 +174,46 @@ def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "sppg-hermes-lab",
-        "mode": "read_operational_write_memory",
+        "mode": "read_operational_write_memory_propose_actions",
         "hermes_configured": bool(HERMES_API_URL and HERMES_API_KEY),
         "shared_memory_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
+        "action_proposals_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
+        "action_execution_exposed": False,
     }
+
+
+@app.post("/v1/lab/proposals", response_model=LabActionProposalResponse)
+async def create_action_proposal(
+    payload: LabActionProposalRequest,
+    authorization: str | None = Header(default=None),
+) -> LabActionProposalResponse:
+    _authorize(authorization)
+    if not SPPG_CORE_URL or not SPPG_GPT_API_KEY:
+        raise HTTPException(status_code=503, detail="SPPG Core proposal API is not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{SPPG_CORE_URL}/v1/gpt/hermes-actions/proposals",
+                json=payload.model_dump(mode="json", exclude_none=True),
+                headers=_memory_headers(),
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"SPPG Core proposal connection failed: {exc.__class__.__name__}",
+        ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="SPPG Core rejected the action proposal")
+    try:
+        data = response.json()
+        result = LabActionProposalResponse.model_validate(data)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Unexpected SPPG Core proposal response") from exc
+    if result.executed or not result.executionLocked or not result.approvalRequired:
+        raise HTTPException(status_code=502, detail="Unsafe proposal response from SPPG Core")
+    return result
 
 
 @app.post("/v1/lab/chat", response_model=LabChatResponse)

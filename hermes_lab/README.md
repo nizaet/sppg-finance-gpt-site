@@ -1,6 +1,6 @@
-# SPPG Hermes Lab v0
+# SPPG Hermes Lab v0.3
 
-Eksperimen terisolasi untuk menghubungkan Custom GPT ke Hermes Agent tanpa memberi hak tulis ke sistem produksi.
+Eksperimen terisolasi untuk menghubungkan Custom GPT ke Hermes Agent. Hermes dapat membaca konteks, berbagi memory, dan membuat proposal staging yang wajib disetujui operator; tidak ada eksekusi produksi.
 
 ## Arsitektur
 
@@ -8,12 +8,14 @@ Custom GPT -> HTTPS `hermes_lab` gateway -> Hermes Agent API -> approved read-on
 
 Branch ini sengaja terpisah dari `main` dan `llm-wiki-v0`.
 
-## Batas v0
+## Batas v0.3
 
-- READ ONLY.
+- Data operasional tetap READ ONLY.
+- Hermes boleh menulis shared memory dan proposal ke staging queue.
+- Proposal selalu `PENDING`/`PLANNED`, membutuhkan approval, dan tidak pernah mengeksekusi aksi.
 - Tidak boleh membuat/mengubah/menghapus transaksi, PO, receiving, stok, file Drive, GitHub, Firestore, PostgreSQL, atau data SPPG lainnya.
 - Tidak boleh mengirim WhatsApp/email/pesan.
-- Permintaan mutasi hanya menghasilkan proposed action.
+- Hermes tidak menerima `SPPG_HERMES_APPROVAL_KEY`; kunci approval hanya milik operator/backend.
 - Jangan memasukkan credential ke repository.
 
 ## Environment gateway
@@ -22,6 +24,8 @@ Branch ini sengaja terpisah dari `main` dan `llm-wiki-v0`.
 - `HERMES_API_KEY` = `API_SERVER_KEY` milik Hermes.
 - `LAB_GATEWAY_KEY` = secret khusus yang dipasang juga sebagai API key di Custom GPT Action.
 - `HERMES_MODEL` = opsional, default `hermes-agent`.
+- `SPPG_CORE_URL` = URL Railway SPPG Core.
+- `SPPG_GPT_API_KEY` = kunci gateway untuk context, memory, dan pembuatan proposal saja.
 
 ## Hermes Agent
 
@@ -50,7 +54,7 @@ Setelah deploy, cek:
 
 `GET /health`
 
-Harus menampilkan `mode: read_only` dan `hermes_configured: true`.
+Harus menampilkan `mode: read_operational_write_memory_propose_actions`, `hermes_configured: true`, dan `action_execution_exposed: false`.
 
 ## Custom GPT
 
@@ -58,7 +62,7 @@ Harus menampilkan `mode: read_only` dan `hermes_configured: true`.
 2. Tambahkan Action dari `hermes_lab/openapi.yaml`.
 3. Ganti server placeholder dengan URL HTTPS gateway.
 4. Auth Action: Bearer/API Key = nilai `LAB_GATEWAY_KEY`.
-5. Jangan sambungkan Action produksi lain pada fase v0.
+5. Jangan berikan endpoint approval atau kunci `SPPG_HERMES_APPROVAL_KEY` kepada Hermes.
 
 ### Instruksi GPT v0
 
