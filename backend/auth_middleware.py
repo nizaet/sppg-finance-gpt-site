@@ -36,17 +36,22 @@ def _bearer(value: str) -> str:
     return ""
 
 
-def _role_from_auth(value: str) -> str | None:
+def _auth_context(value: str) -> tuple[str | None, str | None]:
     token = _bearer(value)
     if not token:
-        return None
+        return None, None
     gpt_key = os.getenv("SPPG_GPT_API_KEY", "").strip()
     if gpt_key and hmac.compare_digest(token, gpt_key):
-        return "OWNER"
+        return "OWNER", "GPT_KEY"
     try:
-        return str(verify_session(token).get("role") or "").upper() or None
+        role = str(verify_session(token).get("role") or "").upper() or None
+        return role, "SESSION" if role else None
     except Exception:
-        return None
+        return None, None
+
+
+def _role_from_auth(value: str) -> str | None:
+    return _auth_context(value)[0]
 
 
 # Kept for regression compatibility and utility tests. They no longer grant site
@@ -114,13 +119,14 @@ class SppgAccessMiddleware:
             await self.app(scope, receive, send)
             return
 
-        role = _role_from_auth(_authorization(scope.get("headers") or []))
+        role, auth_kind = _auth_context(_authorization(scope.get("headers") or []))
         if role not in {"OWNER", "MAJA", "CEMPLANG"}:
             response = _json_response(401, "SPPG login required")
             await response(scope, receive, send)
             return
 
         scope.setdefault("state", {})["sppg_role"] = role
+        scope["state"]["sppg_auth_kind"] = auth_kind
         if path == "/v1/calculator-data/shared-master-sync" and method == "POST":
             # A kitchen calculator may update only this narrowly scoped shared
             # master bridge. The endpoint validates source_site and never accepts

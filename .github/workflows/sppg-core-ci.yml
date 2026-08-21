@@ -83,6 +83,8 @@ jobs:
               '/v1/gpt/finance-transactions',
               '/v1/gpt/finance-transactions/{transaction_id}',
               '/v1/gpt/backfill-firestore',
+              '/v1/hermes-actions/proposals/{action_id}/po-draft-preview',
+              '/v1/hermes-actions/proposals/{action_id}/create-po-draft',
           }
           missing = required - paths
           assert not missing, f'Missing API routes: {sorted(missing)}'
@@ -98,7 +100,7 @@ jobs:
         run: |
           python - <<'PY'
           from backend.auth_api import auth_config, issue_session, verify_session
-          from backend.auth_middleware import _query_with_site, _role_from_auth, _validate_body_site
+          from backend.auth_middleware import _auth_context, _query_with_site, _role_from_auth, _validate_body_site
 
           cfg = auth_config()
           assert cfg['enabled'] is True
@@ -112,6 +114,10 @@ jobs:
               assert _role_from_auth(f'Bearer {token}') == role
 
           assert _role_from_auth('Bearer ci-gpt-owner-key') == 'OWNER'
+          assert _auth_context('Bearer ci-gpt-owner-key') == ('OWNER', 'GPT_KEY')
+
+          owner_token, _ = issue_session('OWNER', remember=False)
+          assert _auth_context(f'Bearer {owner_token}') == ('OWNER', 'SESSION')
 
           scope = {'query_string': b'date=2026-08-13'}
           ok, _ = _query_with_site(scope, 'MAJA')
@@ -267,3 +273,32 @@ jobs:
           assert must_exist is False
           print('legacy Firestore target protection ok')
           PY
+
+  hermes-po-draft-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sppg_hermes_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sppg_hermes_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sppg_hermes_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Migrate isolated Hermes integration database
+        run: python -m backend.migrate
+      - name: Test approved CREATE_PO remains DRAFT-only and idempotent
+        run: python -m unittest -v tests.test_hermes_po_draft_integration

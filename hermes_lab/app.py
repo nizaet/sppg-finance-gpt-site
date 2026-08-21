@@ -1,16 +1,19 @@
 import hashlib
 import json
 import os
+from collections import defaultdict
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Literal
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 app = FastAPI(
     title="SPPG Hermes Lab Gateway",
-    version="0.3.0",
-    description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals without operational execution.",
+    version="0.4.0",
+    description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals. The gateway cannot execute operations.",
 )
 
 HERMES_API_URL = os.getenv("HERMES_API_URL", "").rstrip("/")
@@ -28,6 +31,7 @@ Use the supplied behavior memory to preserve the user's established corrections,
 Treat assistant inference as weaker than explicit user statements or confirmed actions. Never turn an inferred pattern directly into an operational mutation.
 If the user asks for a production mutation, explain or propose the action only unless a separately approved production tool is explicitly provided later.
 Prefer explicit site/date/vendor identifiers and report genuine uncertainty rather than guessing.
+For CREATE_PO proposals, provide only a complete canonical DRAFT payload using snake_case fields: po_code, distribution_date, optional cooking_at/source_planning_snapshot_id, status DRAFT, items, and optional per-day coverage. Every item requires item_name and po_qty greater than zero. Never invent a quantity, price, planning identifier, vendor, site, or date.
 """
 
 
@@ -60,6 +64,80 @@ ActionType = Literal[
 ]
 
 
+class LabPoDraftItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_code: str | None = Field(default=None, max_length=160)
+    item_name: str = Field(min_length=1, max_length=300)
+    planning_snapshot_item_id: int | None = Field(default=None, ge=1)
+    planned_qty: float | None = Field(default=None, ge=0)
+    po_qty: float = Field(gt=0)
+    unit: str | None = Field(default=None, max_length=40)
+    planning_price: float | None = Field(default=None, ge=0)
+    po_price: float | None = Field(default=None, ge=0)
+    aliases: list[str] = Field(default_factory=list, max_length=30)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("item_name")
+    @classmethod
+    def normalize_item_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("item_name cannot be blank")
+        return name
+
+
+class LabPoDraftCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    distribution_date: date
+    cooking_date: date | None = None
+    source_planning_snapshot_id: int | None = Field(default=None, ge=1)
+    items: list[LabPoDraftItem] = Field(min_length=1, max_length=300)
+
+
+class LabPoDraftPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    po_code: str = Field(min_length=3, max_length=220)
+    distribution_date: date
+    cooking_at: datetime | None = None
+    source_planning_snapshot_id: int | None = Field(default=None, ge=1)
+    status: Literal["DRAFT"] = "DRAFT"
+    items: list[LabPoDraftItem] = Field(min_length=1, max_length=300)
+    coverage: list[LabPoDraftCoverage] = Field(default_factory=list, max_length=31)
+
+    @field_validator("po_code")
+    @classmethod
+    def normalize_po_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def validate_coverage_totals(self) -> "LabPoDraftPayload":
+        if not self.coverage:
+            return self
+        dates = [row.distribution_date for row in self.coverage]
+        if len(set(dates)) != len(dates) or min(dates) != self.distribution_date:
+            raise ValueError("coverage dates must be unique and start at distribution_date")
+
+        def key(item: LabPoDraftItem) -> tuple[str, str]:
+            return (
+                str(item.item_code or item.item_name).strip().upper(),
+                str(item.unit or "").strip().lower(),
+            )
+
+        order_totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+        coverage_totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+        for item in self.items:
+            order_totals[key(item)] += Decimal(str(item.po_qty))
+        for coverage in self.coverage:
+            for item in coverage.items:
+                coverage_totals[key(item)] += Decimal(str(item.po_qty))
+        if order_totals != coverage_totals:
+            raise ValueError("aggregate items must exactly match coverage item quantities")
+        return self
+
+
 class LabActionProposalRequest(BaseModel):
     source_ref: str = Field(min_length=1, max_length=300)
     action_type: ActionType
@@ -71,6 +149,23 @@ class LabActionProposalRequest(BaseModel):
     rationale: str = Field(min_length=1, max_length=2000)
     confidence: float = Field(default=0.5, ge=0, le=1)
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_create_po_contract(self) -> "LabActionProposalRequest":
+        if self.action_type != "CREATE_PO":
+            return self
+        if self.target_type != "purchase_order" or self.target_id is not None:
+            raise ValueError("CREATE_PO must target a new purchase_order")
+        if not str(self.vendor_code or "").strip():
+            raise ValueError("CREATE_PO requires vendor_code")
+        draft = LabPoDraftPayload.model_validate(self.payload)
+        site = self.site.upper()
+        expected_prefix = f"PO-{site}-{draft.distribution_date.strftime('%Y%m%d')}"
+        if not draft.po_code.upper().startswith(expected_prefix):
+            raise ValueError(f"CREATE_PO po_code must start with {expected_prefix}")
+        self.vendor_code = str(self.vendor_code).strip().upper()
+        self.payload = draft.model_dump(mode="json")
+        return self
 
 
 class LabActionProposalResponse(BaseModel):
