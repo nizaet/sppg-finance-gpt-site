@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { CalendarDays, RefreshCw, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
@@ -30,16 +30,6 @@ function coverageLabel(po) {
   if (!dates.length) return "-";
   if (dates.length === 1) return dates[0];
   return `${dates[0]} s.d. ${dates[dates.length - 1]}`;
-}
-
-function reminderKey(row) {
-  return row?.reminder_key || [row?.site, row?.vendor_code, row?.po_date, row?.procurement_bucket, ...(row?.distribution_dates || [])].join("|");
-}
-
-function mergeReminderRows(baseRows, extraRows) {
-  const merged = new Map();
-  [...(baseRows || []), ...(extraRows || [])].forEach((row) => merged.set(reminderKey(row), row));
-  return Array.from(merged.values());
 }
 
 function monthBounds(value) {
@@ -91,7 +81,9 @@ export default function PoOpsEnhancements({
   mode,
   activeSite,
   setReminders,
+  setRemindersPulled,
   setPurchaseOrders,
+  setPoListLoaded,
   setDeliveryAlerts,
 }) {
   const [progress, setProgress] = useState({ active: false, percent: 0, label: "Siap" });
@@ -110,6 +102,7 @@ export default function PoOpsEnhancements({
       toDate: bounds.last,
     });
     setPurchaseOrders?.(activePoRows(result?.items || []));
+    setPoListLoaded?.(true);
   };
 
   const refreshDelivery = async () => {
@@ -119,27 +112,20 @@ export default function PoOpsEnhancements({
 
   const syncReminderStages = async () => {
     setLocalError("");
-    setProgress({ active: true, percent: 5, label: `Menyiapkan pengingat ${activeSite}` });
-    let collected = [];
-    const failures = [];
-    const stages = [
-      { date: today(), start: 15, end: 55, label: "Terlambat + hari ini" },
-      { date: shiftDate(today(), 1), start: 65, end: 100, label: "Pengingat besok" },
-    ];
-    for (const stage of stages) {
-      setProgress({ active: true, percent: stage.start, label: `Menarik ${stage.label}` });
-      try {
-        const result = await operationsApi.getPoReminders({ site: activeSite, date: stage.date, horizonDays: 1 });
-        const rows = (result?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
-        collected = mergeReminderRows(collected, rows);
-        setReminders?.(collected);
-      } catch (err) {
-        failures.push(`${stage.label}: ${err.message || "gagal"}`);
-      }
-      setProgress({ active: true, percent: stage.end, label: `${stage.label} selesai` });
+    setProgress({ active: true, percent: 15, label: `Menarik pengingat lengkap ${activeSite}` });
+    try {
+      // One authoritative request covers overdue + today + tomorrow. Updating
+      // the screen only after the complete response prevents a timed-out stage
+      // from replacing good reminder data with a partial list.
+      const result = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+      const rows = (result?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
+      setReminders?.(rows);
+      setRemindersPulled?.(true);
+      setProgress({ active: false, percent: 100, label: "Pengingat lengkap tersinkron" });
+    } catch (err) {
+      setProgress({ active: false, percent: 100, label: "Sinkron pengingat gagal" });
+      setLocalError(`Data sebelumnya tetap ditampilkan. ${err.message || "Gagal menarik pengingat"}`);
     }
-    setProgress({ active: false, percent: 100, label: failures.length ? "Selesai sebagian" : "Sinkron selesai" });
-    if (failures.length) setLocalError(failures.join("; "));
   };
 
   const syncAllBlocks = async () => {
@@ -150,17 +136,13 @@ export default function PoOpsEnhancements({
     catch (err) { failures.push(`PO Aktual: ${err.message || "gagal"}`); }
     try { setProgress({ active: true, percent: 35, label: "2/4 · Barang belum datang" }); await refreshDelivery(); }
     catch (err) { failures.push(`Barang belum datang: ${err.message || "gagal"}`); }
-    let collected = [];
     try {
-      setProgress({ active: true, percent: 55, label: "3/4 · Terlambat + hari ini" });
-      const current = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 1 });
-      collected = mergeReminderRows(collected, current?.items || []); setReminders?.(collected);
-    } catch (err) { failures.push(`Pengingat hari ini: ${err.message || "gagal"}`); }
-    try {
-      setProgress({ active: true, percent: 80, label: "4/4 · Pengingat besok" });
-      const tomorrow = await operationsApi.getPoReminders({ site: activeSite, date: shiftDate(today(), 1), horizonDays: 1 });
-      collected = mergeReminderRows(collected, tomorrow?.items || []); setReminders?.(collected);
-    } catch (err) { failures.push(`Pengingat besok: ${err.message || "gagal"}`); }
+      setProgress({ active: true, percent: 65, label: "3/3 · Pengingat lengkap" });
+      const reminderResult = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+      const rows = (reminderResult?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
+      setReminders?.(rows);
+      setRemindersPulled?.(true);
+    } catch (err) { failures.push(`Pengingat (data sebelumnya dipertahankan): ${err.message || "gagal"}`); }
     setProgress({ active: false, percent: 100, label: failures.length ? "Sinkron selesai sebagian" : "Semua blok tersinkron" });
     if (failures.length) setLocalError(failures.join("; "));
   };
@@ -171,22 +153,8 @@ export default function PoOpsEnhancements({
     const rows = result?.items || [];
     setCalendarPos(rows);
     setPurchaseOrders?.(activePoRows(rows));
+    setPoListLoaded?.(true);
   };
-
-  useEffect(() => {
-    if (mode !== "calendar") return undefined;
-    let cancelled = false;
-    const bounds = monthBounds(calendarMonth);
-    operationsApi.getPurchaseOrders({ site: activeSite, includeArchived: true, fromDate: bounds.first, toDate: bounds.last, limit: 500 })
-      .then((result) => {
-        if (cancelled) return;
-        const rows = result?.items || [];
-        setCalendarPos(rows);
-        setPurchaseOrders?.(activePoRows(rows));
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [mode, activeSite, calendarMonth]);
 
   const calendarCells = useMemo(() => {
     const bounds = monthBounds(calendarMonth);
@@ -296,7 +264,7 @@ export default function PoOpsEnhancements({
           <button type="button" onClick={refreshDelivery} disabled={progress.active}><RefreshCw size={14} /> Refresh Barang Datang</button>
         </div>
         {progressUi}
-        {localError && <div className="ops-error">Sinkron selesai sebagian: {localError}</div>}
+        {localError && <div className="ops-error">{localError}</div>}
       </div>
     );
   }

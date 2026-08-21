@@ -42,12 +42,45 @@ const requiredMarkers = [
   "Konfirmasi Penerimaan",
   "Semua sesuai",
   "Penerimaan",
+  "data-po-manual-load",
+  "Tarik Kontak Vendor",
+  "List PO belum ditarik",
+  "Pengingat belum ditarik",
 ];
 
 const forbiddenMarkers = [
   "data-delivery-alerts",
   "Peringatan barang belum datang setelah jam 17.00",
 ];
+
+const reminderEnhancementSource = fs.readFileSync(
+  path.resolve("src/operations/PoOpsEnhancements.jsx"),
+  "utf8",
+);
+const reminderRequestCount = (reminderEnhancementSource.match(/operationsApi\.getPoReminders\(/g) || []).length;
+if (reminderRequestCount !== 2) {
+  throw new Error(`Expected one atomic reminder request per sync action, found ${reminderRequestCount} source calls`);
+}
+if (!reminderEnhancementSource.includes("date: today(), horizonDays: 2")) {
+  throw new Error("Atomic reminder sync must request overdue + today + tomorrow in one horizonDays=2 snapshot");
+}
+if (reminderEnhancementSource.includes("date: shiftDate(today(), 1), horizonDays: 1")) {
+  throw new Error("Staged tomorrow-only reminder request can expose partial data and must stay retired");
+}
+if (reminderEnhancementSource.includes("useEffect(() =>")) {
+  throw new Error("PO enhancement must not fetch calendar or reminder data automatically on tab mount");
+}
+
+const plannerSource = fs.readFileSync(
+  path.resolve("src/operations/OperationsPoPlanner.jsx"),
+  "utf8",
+);
+if (plannerSource.includes("useEffect(() => { loadBase(); }, [activeSite])")) {
+  throw new Error("PO Vendor tab must not pull list/vendor/reminder data automatically");
+}
+if (!plannerSource.includes('data-po-manual-load="v31"')) {
+  throw new Error("PO Vendor manual-load notice is missing");
+}
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
 if (missing.length) {

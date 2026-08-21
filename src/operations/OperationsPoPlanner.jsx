@@ -289,15 +289,20 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [dailyPulled, setDailyPulled] = useState(false);
   const [vendorOptions, setVendorOptions] = useState(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
   const [loading, setLoading] = useState(false);
+  const [poListLoading, setPoListLoading] = useState(false);
+  const [poListLoaded, setPoListLoaded] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [actionId, setActionId] = useState(null);
   const [creatingVendor, setCreatingVendor] = useState("");
   const [reminders, setReminders] = useState([]);
+  const [remindersPulled, setRemindersPulled] = useState(false);
   const [vendorPhones, setVendorPhones] = useState({});
   const [phoneVendor, setPhoneVendor] = useState("WIKIAN");
   const [phoneValue, setPhoneValue] = useState("");
   const [savingPhone, setSavingPhone] = useState(false);
+  const [vendorLoading, setVendorLoading] = useState(false);
+  const [vendorReferencesPulled, setVendorReferencesPulled] = useState(false);
   const [editingPo, setEditingPo] = useState(null);
   const [editVendor, setEditVendor] = useState("");
   const [editItems, setEditItems] = useState([]);
@@ -327,6 +332,32 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const refreshReminders = async () => {
     const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
     setReminders(reminderData?.items || []);
+    setRemindersPulled(true);
+  };
+
+  const refreshVendorReferences = async () => {
+    setVendorLoading(true);
+    setError("");
+    try {
+      const vendorsData = await operationsApi.getReferenceVendors(activeSite);
+      const uniqueVendors = new Map(FALLBACK_VENDORS.map(([code, name]) => [code, { code, name }]));
+      (vendorsData?.items || []).forEach((item) => {
+        if (item?.code) uniqueVendors.set(String(item.code).toUpperCase(), { code: String(item.code).toUpperCase(), name: item.name || item.code });
+      });
+      setVendorOptions(Array.from(uniqueVendors.values()).sort((a, b) => a.name.localeCompare(b.name, "id")));
+      const phones = {};
+      (vendorsData?.items || []).forEach((item) => {
+        if (item?.code && item?.metadata?.whatsapp_phone) phones[String(item.code).toUpperCase()] = String(item.metadata.whatsapp_phone);
+      });
+      setVendorPhones(phones);
+      setPhoneValue(phones[phoneVendor] || "");
+      setVendorReferencesPulled(true);
+      setMessage(`Kontak vendor ${activeSite} berhasil ditarik.`);
+    } catch (err) {
+      setError(err.message || `Gagal menarik kontak vendor ${activeSite}`);
+    } finally {
+      setVendorLoading(false);
+    }
   };
 
   const applyPlanningSnapshot = (snapshot, inventoryItems = [], cooperativeItems = []) => {
@@ -428,7 +459,20 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setMessage(`Hasil tarikan ${vendor} dibersihkan dari layar. PO vendor yang sudah tersimpan tetap aman.`);
   };
 
-  useEffect(() => { loadBase(); }, [activeSite]);
+  // Membuka tab atau mengganti site tidak boleh memanggil API. Operator memilih
+  // sendiri apakah ingin menarik planning/stok, pengingat, kontak, list, atau
+  // kalender PO melalui tombol manual masing-masing.
+  useEffect(() => {
+    setPurchaseOrders([]);
+    setPoListLoaded(false);
+    setReminders([]);
+    setRemindersPulled(false);
+    setVendorOptions(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
+    setVendorPhones({});
+    setVendorReferencesPulled(false);
+    setMessage("");
+    setError("");
+  }, [activeSite]);
 
   // Ganti tanggal/site tidak boleh otomatis menarik planning/stok. Operator harus
   // menekan Tarik Data, sama seperti alur PO gabungan beberapa hari.
@@ -783,6 +827,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       const result = await operationsApi.updateVendorWhatsApp(phoneVendor, phoneValue);
       setVendorPhones((current) => ({ ...current, [phoneVendor]: result.whatsappPhone }));
       setPhoneValue(result.whatsappPhone);
+      setVendorReferencesPulled(true);
       setMessage(`Nomor WhatsApp ${result.vendorName} tersimpan dan sekarang dapat diklik dari PO.`);
     } catch (err) {
       setError(err.message || "Gagal menyimpan nomor WhatsApp vendor");
@@ -984,6 +1029,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       await refreshPurchaseOrders();
       const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
       setReminders(reminderData?.items || []);
+      setRemindersPulled(true);
       setMessage(`1 DRAFT PO gabungan ${result.poCode} berhasil dibuat. Cakupan ${candidates.length} hari: ${candidates.map((row) => row.date).join(", ")}.`);
     } catch (err) {
       setError(err.message || "Gagal membuat PO rentang tanggal");
@@ -1066,16 +1112,22 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <label>Masak<input type="date" value={cookingDate} onChange={(e) => setCookingDate(e.target.value)} /></label>
         </div>
 
+        <div className="ops-notice" data-po-manual-load="v31">
+          Tab PO Vendor tidak menarik data otomatis. Pilih sendiri tombol untuk menarik planning + stok, kontak vendor, pengingat, list PO, atau kalender PO.
+        </div>
+
         <div className="ops-draft-group">
           <div className="ops-draft-group-head">
             <div><strong>Kontak WhatsApp Vendor</strong><span>Isi di sini agar tombol WhatsApp langsung membuka chat orang yang benar.</span></div>
+            <button type="button" onClick={refreshVendorReferences} disabled={vendorLoading}><RefreshCw size={14} /> {vendorLoading ? "Menarik…" : "Tarik Kontak Vendor"}</button>
           </div>
           <div className="ops-form-grid">
             <label>Vendor<select value={phoneVendor} onChange={(e) => setPhoneVendor(e.target.value)}>{vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}</select></label>
             <label>Nomor WhatsApp<input value={phoneValue} onChange={(e) => setPhoneValue(e.target.value)} placeholder="contoh: 081234567890 atau 6281234567890" /></label>
             <label>Aksi<div className="ops-row-actions"><button type="button" onClick={saveQuickPhone} disabled={savingPhone || !phoneValue.trim()}><Save size={14} /> {savingPhone ? "Menyimpan…" : "Simpan Nomor"}</button>{vendorPhones[phoneVendor] && <a className="ops-button-link" href={`https://wa.me/${vendorPhones[phoneVendor]}`} target="_blank" rel="noreferrer"><MessageCircle size={14} /> Buka Chat</a>}</div></label>
           </div>
-          {!vendorPhones[phoneVendor] && <div className="ops-notice">Nomor {phoneVendor} belum tersimpan. Inilah penyebab tanda merah pada PO; setelah nomor disimpan, tanda itu hilang.</div>}
+          {!vendorReferencesPulled && <div className="ops-notice">Kontak vendor belum ditarik. Tekan <strong>Tarik Kontak Vendor</strong> bila ingin memuat nomor tersimpan.</div>}
+          {vendorReferencesPulled && !vendorPhones[phoneVendor] && <div className="ops-notice">Nomor {phoneVendor} belum tersimpan. Inilah penyebab tanda merah pada PO; setelah nomor disimpan, tanda itu hilang.</div>}
         </div>
 
         {error && <div className="ops-error">{error}</div>}
@@ -1366,7 +1418,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                   </td>
                 </tr>;
               })}
-              {!loading && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}
+              {!poListLoading && !poListLoaded && <tr><td colSpan="9" className="ops-empty-cell">List PO belum ditarik. Tekan Refresh List PO bila ingin memuatnya.</td></tr>}
+              {!poListLoading && poListLoaded && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Tidak ada PO tercatat untuk site ini.</td></tr>}
             </tbody>
           </table>
         </div>

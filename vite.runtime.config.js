@@ -57,6 +57,17 @@ function poReminderActionsVisible() {
       const editableStockDisplay = `<div data-editable-stock="v16"><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong><PoQtyMath value={item.stock_qty} title={"Stok gudang " + item.item_name} onChange={(value) => updateDraftStockQty(item.planning_snapshot_item_id, item.planned_qty, value)} /></div>`;
       replaceOnce(stockDisplay, editableStockDisplay, "editable daily stock qty");
 
+      replaceOnce(
+        `{!loading && reminderToday.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO yang jatuh pada hari ini setelah memperhitungkan stok proyeksi.</td></tr>}`,
+        `{!loading && remindersPulled && reminderToday.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO yang jatuh pada hari ini setelah memperhitungkan stok proyeksi.</td></tr>}{!loading && !remindersPulled && <tr><td colSpan="6" className="ops-empty-cell">Pengingat belum ditarik. Tekan Tarik / Sinkron Pengingat bila ingin memuatnya.</td></tr>}`,
+        "manual reminder today state",
+      );
+      replaceOnce(
+        `{!loading && reminderTomorrow.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO untuk besok setelah memperhitungkan stok proyeksi.</td></tr>}`,
+        `{!loading && remindersPulled && reminderTomorrow.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO untuk besok setelah memperhitungkan stok proyeksi.</td></tr>}{!loading && !remindersPulled && <tr><td colSpan="6" className="ops-empty-cell">Pengingat besok belum ditarik.</td></tr>}`,
+        "manual reminder tomorrow state",
+      );
+
       const reminderStart = next.indexOf('<span className="ops-kicker">PENGINGAT PO BERDASARKAN LEAD TIME</span>');
       const nextSection = next.indexOf('      <section className="ops-module">', reminderStart + 20);
       if (reminderStart < 0 || nextSection < 0) {

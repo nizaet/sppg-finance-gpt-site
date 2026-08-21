@@ -11,7 +11,7 @@ function poListIndependentPlugin() {
       if (!out.includes("poListLoading")) {
         out = out.replace(
           '  const [loading, setLoading] = useState(false);',
-          '  const [loading, setLoading] = useState(false);\n  const [poListLoading, setPoListLoading] = useState(false);'
+          '  const [loading, setLoading] = useState(false);\n  const [poListLoading, setPoListLoading] = useState(false);\n  const [poListLoaded, setPoListLoaded] = useState(false);'
         );
       }
 
@@ -24,9 +24,14 @@ function poListIndependentPlugin() {
 
       const helperMarker = '  const loadBase = async () => {';
       if (out.includes(helperMarker) && !out.includes("const refreshPoListOnly = async")) {
-        const helper = `  const currentPoMonthBounds = () => {\n    const now = new Date();\n    const year = now.getFullYear();\n    const month = now.getMonth() + 1;\n    const mm = String(month).padStart(2, "0");\n    const lastDay = new Date(year, month, 0).getDate();\n    return { fromDate: year + "-" + mm + "-01", toDate: year + "-" + mm + "-" + String(lastDay).padStart(2, "0") };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = currentPoMonthBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
+        const helper = `  const currentPoMonthBounds = () => {\n    const now = new Date();\n    const year = now.getFullYear();\n    const month = now.getMonth() + 1;\n    const mm = String(month).padStart(2, "0");\n    const lastDay = new Date(year, month, 0).getDate();\n    return { fromDate: year + "-" + mm + "-01", toDate: year + "-" + mm + "-" + String(lastDay).padStart(2, "0") };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = currentPoMonthBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      setPoListLoaded(true);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
         out = out.replace(helperMarker, helper + helperMarker);
       }
+
+      out = out.replace(
+        '    setPurchaseOrders([]);\n    setReminders([]);',
+        '    setPurchaseOrders([]);\n    setPoListLoaded(false);\n    setReminders([]);'
+      );
 
       const loadBasePattern = /  const loadBase = async \(\) => \{[\s\S]*?\n  \};\n\n  const pullDailyData = async \(\) => \{/;
       if (loadBasePattern.test(out)) {
@@ -54,6 +59,11 @@ function poListIndependentPlugin() {
           '<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah. List membaca seluruh bulan berjalan dan tidak menunggu pengingat.</p></div>\n          <div className="ops-row-actions"><button data-refresh-po-list="v1" type="button" onClick={refreshPoListOnly} disabled={poListLoading}><RefreshCw size={14} /> {poListLoading ? "Memuat List…" : "Refresh List PO"}</button></div>\n        </div>'
         );
       }
+
+      out = out.replace(
+        '{!loading && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}',
+        '{!poListLoading && !poListLoaded && <tr><td colSpan="9" className="ops-empty-cell">List PO belum ditarik. Tekan Refresh List PO bila ingin memuatnya.</td></tr>}{!poListLoading && poListLoaded && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Tidak ada PO tercatat untuk site ini.</td></tr>}'
+      );
 
       return out === code ? null : { code: out, map: null };
     },
