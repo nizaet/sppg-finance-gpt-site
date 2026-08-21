@@ -91,29 +91,65 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
 
 
 class DeliveryAlertReconciliationRegressionTests(unittest.TestCase):
-    def _po_item(self, item_id: int, name: str, unit: str = "kg"):
-        return {"id": item_id, "item_name": name, "unit": unit, "po_qty": 10.0}
+    def _alert_payload(self, accepted_qty: float = 0.0):
+        return {
+            "site": "CEMPLANG",
+            "date": date(2026, 8, 18),
+            "count": 1,
+            "items": [{
+                "purchaseOrderId": 101,
+                "poCode": "PO-CEMPLANG-TEST",
+                "items": [{
+                    "purchaseOrderItemId": 1001,
+                    "itemName": "Tahu Putih",
+                    "poQty": 144.0,
+                    "acceptedQty": accepted_qty,
+                    "remainingReceiveQty": 144.0 - accepted_qty,
+                    "unit": "pcs",
+                }],
+            }],
+        }
 
-    def test_unlinked_receipt_matches_only_unambiguous_item_inside_same_po(self):
-        receipt = {"reported_item_name": "Tahu Putih", "unit": "pcs"}
-        items = [
-            self._po_item(11, "Tahu Putih", "pcs"),
-            self._po_item(12, "Tempe", "kg"),
-        ]
-        matched = delivery_patch._pick_po_item(receipt, items)
-        self.assertIsNotNone(matched)
-        self.assertEqual(matched["id"], 11)
+    def test_direct_positive_receipt_removes_not_arrived_alert(self):
+        original = self._alert_payload(accepted_qty=20.0)
+        with patch.object(delivery_patch, "_ORIGINAL_PO_DELIVERY_ALERTS", return_value=original), \
+             patch.object(delivery_patch, "_resolved_po_ids", return_value=set()), \
+             patch.object(delivery_patch, "_arrival_evidence", return_value=set()):
+            result = delivery_patch.po_delivery_alerts(
+                site="CEMPLANG", alert_date=date(2026, 8, 18), minimum_hour=0
+            )
 
-    def test_ambiguous_unlinked_receipt_does_not_close_any_po_item(self):
-        receipt = {"reported_item_name": "Ayam", "unit": "kg"}
-        items = [
-            self._po_item(21, "Ayam Potong", "kg"),
-            self._po_item(22, "Ayam Filet", "kg"),
-        ]
-        matched = delivery_patch._pick_po_item(receipt, items)
-        self.assertIsNone(matched)
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["receivedItemsHidden"], 1)
 
-    def test_fallback_full_receipt_removes_alert_row(self):
+    def test_cross_receipt_evidence_removes_not_arrived_alert(self):
+        original = self._alert_payload()
+        with patch.object(delivery_patch, "_ORIGINAL_PO_DELIVERY_ALERTS", return_value=original), \
+             patch.object(delivery_patch, "_resolved_po_ids", return_value=set()), \
+             patch.object(delivery_patch, "_arrival_evidence", return_value={1001}):
+            result = delivery_patch.po_delivery_alerts(
+                site="CEMPLANG", alert_date=date(2026, 8, 18), minimum_hour=0
+            )
+
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["receivedItemsHidden"], 1)
+
+    def test_item_without_receipt_evidence_stays_visible(self):
+        original = self._alert_payload()
+        with patch.object(delivery_patch, "_ORIGINAL_PO_DELIVERY_ALERTS", return_value=original), \
+             patch.object(delivery_patch, "_resolved_po_ids", return_value=set()), \
+             patch.object(delivery_patch, "_arrival_evidence", return_value=set()):
+            result = delivery_patch.po_delivery_alerts(
+                site="CEMPLANG", alert_date=date(2026, 8, 18), minimum_hour=0
+            )
+
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["items"][0]["items"][0]["purchaseOrderItemId"], 1001)
+        self.assertEqual(result["receivedItemsHidden"], 0)
+
+    def test_operator_resolved_po_is_hidden_before_receipt_lookup(self):
         original = {
             "site": "CEMPLANG",
             "date": date(2026, 8, 18),
@@ -132,43 +168,16 @@ class DeliveryAlertReconciliationRegressionTests(unittest.TestCase):
             }],
         }
         with patch.object(delivery_patch, "_ORIGINAL_PO_DELIVERY_ALERTS", return_value=original), \
-             patch.object(delivery_patch, "_fallback_received_by_item", return_value={1001: 144.0}):
+             patch.object(delivery_patch, "_resolved_po_ids", return_value={101}), \
+             patch.object(delivery_patch, "_arrival_evidence") as arrival_evidence:
             result = delivery_patch.po_delivery_alerts(
                 site="CEMPLANG", alert_date=date(2026, 8, 18), minimum_hour=0
             )
 
         self.assertEqual(result["count"], 0)
         self.assertEqual(result["items"], [])
-        self.assertTrue(result["receiptLinkFallbackApplied"])
-        self.assertEqual(result["receiptFallbackAcceptedQty"], 144.0)
-
-    def test_fallback_partial_receipt_keeps_only_remaining_qty(self):
-        original = {
-            "count": 1,
-            "items": [{
-                "purchaseOrderId": 202,
-                "poCode": "PO-MAJA-TEST",
-                "items": [{
-                    "purchaseOrderItemId": 2001,
-                    "itemName": "Beras",
-                    "poQty": 100.0,
-                    "acceptedQty": 20.0,
-                    "remainingReceiveQty": 80.0,
-                    "unit": "kg",
-                }],
-            }],
-        }
-        with patch.object(delivery_patch, "_ORIGINAL_PO_DELIVERY_ALERTS", return_value=original), \
-             patch.object(delivery_patch, "_fallback_received_by_item", return_value={2001: 30.0}):
-            result = delivery_patch.po_delivery_alerts(
-                site="MAJA", alert_date=date(2026, 8, 18), minimum_hour=0
-            )
-
-        self.assertEqual(result["count"], 1)
-        item = result["items"][0]["items"][0]
-        self.assertEqual(item["acceptedQty"], 50.0)
-        self.assertEqual(item["remainingReceiveQty"], 50.0)
-        self.assertTrue(item["receiptLinkFallbackApplied"])
+        self.assertTrue(result["resolutionGuardApplied"])
+        arrival_evidence.assert_not_called()
 
 
 if __name__ == "__main__":
