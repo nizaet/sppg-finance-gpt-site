@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: SPPG Hermes Lab
-  version: 0.2.0
-  description: Experimental bridge from a Custom GPT to Hermes Agent with read-only operational access and shared memory with the legacy GPTS.
+  version: 0.3.0
+  description: Experimental bridge from a Custom GPT to Hermes Agent with read-only operational access, shared memory, and approval-required staging proposals.
 servers:
   - url: https://REPLACE_WITH_HERMES_LAB_HOST
 paths:
@@ -70,6 +70,73 @@ paths:
                   memory_loaded:
                     type: boolean
                   memory_stored:
+                    type: boolean
+  /v1/lab/proposals:
+    post:
+      operationId: createHermesActionProposal
+      summary: Stage a Hermes action proposal for operator review
+      description: Creates only PENDING/PLANNED staging records. It cannot approve or execute PO, receiving, payment, finance, stock, or message actions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_ref, action_type, site, target_type, rationale]
+              properties:
+                source_ref:
+                  type: string
+                  maxLength: 300
+                action_type:
+                  type: string
+                  enum: [CREATE_PO, RECORD_RECEIVING, RECORD_VENDOR_PAYABLE, RECORD_VENDOR_PAYMENT, RECORD_FINANCE_TRANSACTION, SEND_WHATSAPP]
+                site:
+                  type: string
+                  enum: [MAJA, CEMPLANG]
+                vendor_code:
+                  type: [string, 'null']
+                entity_code:
+                  type: [string, 'null']
+                target_type:
+                  type: string
+                target_id:
+                  type: [string, 'null']
+                rationale:
+                  type: string
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  default: 0.5
+                payload:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Staged proposal; never an executed action
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposalId, actionId, candidateStatus, actionStatus, inserted, approvalRequired, executed, executionLocked]
+                properties:
+                  proposalId:
+                    type: integer
+                  actionId:
+                    type: integer
+                  candidateStatus:
+                    type: string
+                  actionStatus:
+                    type: string
+                  inserted:
+                    type: boolean
+                  approvalRequired:
+                    type: boolean
+                  executed:
+                    type: boolean
+                  executionLocked:
                     type: boolean
 components:
   securitySchemes:
