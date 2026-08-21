@@ -256,6 +256,22 @@ class ConversationLearnIn(BaseModel):
     actor: str = Field(default="chatgpt", max_length=100)
 
 
+class ExplicitKnowledgeFactIn(BaseModel):
+    statement: str = Field(min_length=3, max_length=1500)
+    scope_type: Literal["GLOBAL", "SITE", "VENDOR", "ITEM", "WORKFLOW"] = "GLOBAL"
+    topic: str | None = Field(default=None, max_length=160)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExplicitKnowledgeIn(BaseModel):
+    source_ref: str = Field(min_length=1, max_length=200)
+    site: Literal["MAJA", "CEMPLANG"] | None = None
+    vendor: str | None = Field(default=None, max_length=100)
+    user_message: str = Field(min_length=1, max_length=20000)
+    facts: list[ExplicitKnowledgeFactIn] = Field(min_length=1, max_length=30)
+    actor: str = Field(default="chatgpt", max_length=100)
+
+
 @router.post("/learn-conversation", dependencies=[Depends(require_gpt_auth)])
 def learn_conversation(payload: ConversationLearnIn) -> dict[str, Any]:
     """Archive a GPT turn and promote only explicit/corrected/confirmed durable facts."""
@@ -350,6 +366,42 @@ def learn_conversation(payload: ConversationLearnIn) -> dict[str, Any]:
         "candidates": candidates,
         "policy": "Every turn is archived. Only explicit user facts, user corrections, and action-confirmed facts become trusted knowledge; assistant inference stays candidate.",
     }
+
+
+@router.post("/knowledge", dependencies=[Depends(require_gpt_auth)])
+def record_explicit_knowledge(payload: ExplicitKnowledgeIn) -> dict[str, Any]:
+    """Confirm facts that the operator explicitly asks to store as LLM Wiki knowledge.
+
+    This memory-only route deliberately bypasses the operational candidate-event
+    parser. It never mutates PO, inventory, receiving, payment, or finance state.
+    """
+    result = learn_conversation(ConversationLearnIn(
+        conversation_ref=f"explicit-knowledge:{payload.source_ref}",
+        turn_ref=payload.source_ref,
+        site=payload.site,
+        vendor=payload.vendor,
+        user_message=payload.user_message,
+        assistant_summary="Explicit operator instruction to store durable SPPG knowledge.",
+        action_context={"sourceRef": payload.source_ref, "knowledgeWrite": True},
+        facts=[
+            LearnedFactIn(
+                statement=fact.statement,
+                kind="USER_EXPLICIT",
+                scope_type=fact.scope_type,
+                topic=fact.topic,
+                confidence=1.0,
+                metadata={**fact.metadata, "sourceRef": payload.source_ref, "explicitlyRequested": True},
+            )
+            for fact in payload.facts
+        ],
+        actor=payload.actor,
+    ))
+    result.update({
+        "knowledgeWrite": True,
+        "knowledgeStatus": "CONFIRMED" if result.get("stored") and not result.get("candidates") else "FAILED",
+        "operationalMutation": False,
+    })
+    return result
 
 
 @router.get("/operational-context", dependencies=[Depends(require_gpt_auth)])

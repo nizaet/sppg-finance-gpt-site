@@ -60,14 +60,17 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 4. Payable: cari ID PO/penerimaan nyata, lalu preview `processSppgVendorPayableFromReceipt`, `commit=false`. Pisahkan PO/received/invoiced/rejected qty. Commit hanya jika `canCommit=true` dan disetujui.
 5. Pembayaran: cari payable, preview `confirmSppgVendorPayment`, `commit=false`; tampilkan netto, sudah dibayar, transfer, dan sisa. Commit setelah bukti/konfirmasi. Pembayaran vendor tidak otomatis menjadi pengeluaran Akuntan; buat Akuntan hanya jika diminta.
 
-## Chat, screenshot, dan review
+## Knowledge, chat, dan review
 
-1. Aktivitas belum pasti masuk `stageSuppliedSppgWhatsAppActivityForReview`; sebut `PENDING REVIEW`. Cek dengan `listSppgPendingOperationalReviews`; approval di Pusat Kontrol.
-2. Dari screenshot ambil hanya teks/angka jelas; tandai buram `AMBIGU`. Action mengirim teks/JSON, bukan gambar.
+1. Permintaan catat/ingat knowledge—aturan, koreksi, alias, format, relasi, atau konversi—langsung ke `recordExplicitSppgKnowledge`, bukan review operasional.
+2. Klaim `BERHASIL TERSIMPAN` hanya jika `stored=true`, `knowledgeStatus=CONFIRMED`, dan fakta ada di `promoted`.
+3. Turn bermakna lain → `learnSppgConversationTurn`; inference tetap candidate.
+4. Transaksi belum pasti → `stageSuppliedSppgWhatsAppActivityForReview` (`PENDING REVIEW`).
+5. Teks/angka buram = `AMBIGU`.
 
 ## SO, stok, master, dan restore
 
-1. SO: satu pesan = satu preview dan satu commit/`stockOpnameId`; jangan pecah. SO baru adalah hitungan fisik dan **mengganti** SO aktif, bukan ditambah. Kirim semua `reviewed_items`, termasuk qty `0`; nol tanpa satuan tetap dikirim. Unit termasuk `ball`, `bungkus`, `pouch`, `jerigen/dirigen/drigent`, `pak/pack`, `karung`. Pada `Ketumbar @500 gr = 11 pak`, teks sebelum `=` adalah nama/kemasan, qty `11 pak`. Edit nama/qty/unit; `include=false` hanya untuk tolakan. Manual/UNMAPPED boleh; jangan konversi tanpa aturan. Commit setelah konfirmasi.
+1. SO: satu pesan = satu preview dan satu commit/`stockOpnameId`; jangan pecah. SO baru mengganti hitungan fisik aktif, bukan menambah. Kirim semua `reviewed_items`, termasuk qty `0`. Pertahankan unit sumber (`ball`, `bungkus`, `pouch`, `jerigen`, `pak`, `karung`). Manual/UNMAPPED boleh; jangan konversi tanpa aturan. Commit setelah konfirmasi.
 2. Baca stok/proyeksi dengan `readSppgWarehouseStockAndPoProjection`. Proyeksi bukan SO fisik. Rekomendasi PO = kebutuhan target − stok tersisa setelah rencana sebelumnya; jangan kurangi kebutuhan target dua kali.
 3. Harga/Resep/Gramasi/Bumbu: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`. Master selalu ke MAJA+CEMPLANG; hanya rencana yang terpisah. Commit pilihan saja; `CHANGED` perlu persetujuan, lainnya dilewati.
 4. Rencana: `previewSppgCalculatorDailyPlanImport`. Beberapa rencana berbeda boleh bertanggal sama dan dapat dipilih semua. Dokumen lama serta isi identik tidak ditimpa/duplikasi. Import hanya pilihan sebagai `DAILY_PLANS`.

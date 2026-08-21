@@ -47,6 +47,10 @@ const requiredMarkers = [
   "Tarik Kontak Vendor",
   "List PO belum ditarik",
   "Pengingat belum ditarik",
+  "data-po-site-tabs",
+  "data-po-site-panel",
+  "PO Vendor per Dapur",
+  "Hasil tarikan MAJA dan CEMPLANG disimpan pada tab masing-masing",
 ];
 
 const forbiddenMarkers = [
@@ -84,6 +88,17 @@ if (plannerSource.includes("useEffect(() => { loadBase(); }, [activeSite])")) {
 }
 if (!plannerSource.includes('data-po-manual-load="v31"')) {
   throw new Error("PO Vendor manual-load notice is missing");
+}
+
+const siteTabsSource = fs.readFileSync(
+  path.resolve("src/operations/OperationsPoSiteTabs.jsx"),
+  "utf8",
+);
+if (!siteTabsSource.includes('<OperationsPoPlanner fixedSite={site} />')) {
+  throw new Error("MAJA and CEMPLANG PO planners must be mounted as independent site workspaces");
+}
+if (!siteTabsSource.includes('hidden={activeSite !== site}')) {
+  throw new Error("PO site switch must hide, not unmount, the inactive workspace so pulled data is retained");
 }
 
 const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
