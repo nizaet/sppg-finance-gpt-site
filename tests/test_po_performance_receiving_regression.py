@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from unittest.mock import patch
 
@@ -15,9 +16,11 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
         with projection_patch._LOCK:
             projection_patch._CACHE.clear()
             projection_patch._KEY_LOCKS.clear()
-            for future in projection_patch._INFLIGHT.values():
-                future.cancel()
-            projection_patch._INFLIGHT.clear()
+
+    def tearDown(self):
+        with projection_patch._LOCK:
+            projection_patch._CACHE.clear()
+            projection_patch._KEY_LOCKS.clear()
 
     def test_identical_site_date_projection_is_reused_without_mutating_result(self):
         calls = []
@@ -27,8 +30,7 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
             return {("RICE", "kg"): 125.0}, "TEST_PROJECTION"
 
         target = date(2026, 8, 20)
-        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup), \
-             patch.object(projection_patch, "_PREFETCH_DAYS", 0):
+        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup):
             first = projection_patch.projection_lookup("MAJA", target)
             first[0][("RICE", "kg")] = 1.0
             second = projection_patch.projection_lookup("MAJA", target)
@@ -46,42 +48,46 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
 
         d1 = date(2026, 8, 20)
         d2 = date(2026, 8, 21)
-        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup), \
-             patch.object(projection_patch, "_PREFETCH_DAYS", 0):
+        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup):
             projection_patch.projection_lookup("MAJA", d1)
             projection_patch.projection_lookup("CEMPLANG", d1)
             projection_patch.projection_lookup("MAJA", d2)
 
         self.assertEqual(len(calls), 3)
 
-    def test_prefetch_starts_nearby_dates_concurrently(self):
-        started = set()
-        lock = threading.Lock()
+    def test_concurrent_identical_requests_use_one_projection(self):
+        calls = []
+        calls_lock = threading.Lock()
 
         def slow_lookup(site, distribution_date):
-            with lock:
-                started.add((site, distribution_date))
+            with calls_lock:
+                calls.append((site, distribution_date))
             time.sleep(0.08)
             return {("TEST", "kg"): 1.0}, "TEST"
 
         target = date(2026, 8, 20)
-        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=slow_lookup), \
-             patch.object(projection_patch, "_PREFETCH_DAYS", 3):
-            began = time.monotonic()
-            projection_patch.projection_lookup("MAJA", target)
-            elapsed = time.monotonic() - began
-            deadline = time.monotonic() + 1.0
-            while time.monotonic() < deadline:
-                with projection_patch._LOCK:
-                    if not projection_patch._INFLIGHT:
-                        break
-                time.sleep(0.01)
+        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=slow_lookup):
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                results = list(executor.map(
+                    lambda _: projection_patch.projection_lookup("MAJA", target),
+                    range(4),
+                ))
 
-        expected = {("MAJA", date(2026, 8, day)) for day in (20, 21, 22, 23)}
-        self.assertTrue(expected.issubset(started), started)
-        # Four 80ms lookups should overlap under the bounded four-worker pool;
-        # serial execution would take roughly 320ms before returning date 20.
-        self.assertLess(elapsed, 0.22)
+        self.assertEqual(calls, [("MAJA", target)])
+        self.assertTrue(all(result == results[0] for result in results))
+
+    def test_exact_lookup_does_not_prefetch_unrequested_dates(self):
+        calls = []
+
+        def fake_lookup(site, distribution_date):
+            calls.append((site, distribution_date))
+            return {("TEST", "kg"): 1.0}, "TEST"
+
+        target = date(2026, 8, 20)
+        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup):
+            projection_patch.projection_lookup("MAJA", target)
+
+        self.assertEqual(calls, [("MAJA", target)])
 
 
 class DeliveryAlertReconciliationRegressionTests(unittest.TestCase):
