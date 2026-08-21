@@ -1,11 +1,13 @@
 import inspect
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
+from starlette.requests import Request
 
 import backend.hermes_action_api as hermes_action_api
 
@@ -68,9 +70,15 @@ class HermesActionApiTests(unittest.TestCase):
             )
 
     def test_router_has_no_execute_endpoint_or_operational_insert(self):
-        paths = {route.path for route in hermes_action_api.router.routes}
+        paths = {
+            route.path
+            for router in (hermes_action_api.router, hermes_action_api.owner_router)
+            for route in router.routes
+        }
         self.assertIn("/gpt/hermes-actions/proposals", paths)
         self.assertIn("/gpt/hermes-actions/proposals/{action_id}/decision", paths)
+        self.assertIn("/hermes-actions/proposals", paths)
+        self.assertIn("/hermes-actions/proposals/{action_id}/decision", paths)
         self.assertTrue(all("execute" not in path.lower() for path in paths))
 
         source = inspect.getsource(hermes_action_api).lower()
@@ -82,6 +90,28 @@ class HermesActionApiTests(unittest.TestCase):
             "insert into inventory_ledger",
         )
         self.assertTrue(all(statement not in source for statement in forbidden_writes))
+
+    def test_owner_route_requires_owner_state(self):
+        owner_request = Request({"type": "http", "state": {"sppg_role": "OWNER"}})
+        hermes_action_api.require_owner_request(owner_request)
+
+        kitchen_request = Request({"type": "http", "state": {"sppg_role": "MAJA"}})
+        with self.assertRaises(HTTPException) as exc:
+            hermes_action_api.require_owner_request(kitchen_request)
+        self.assertEqual(exc.exception.status_code, 403)
+
+    def test_owner_decision_payload_cannot_override_actor(self):
+        with self.assertRaises(ValidationError):
+            hermes_action_api.OwnerHermesActionDecisionIn(
+                decision="APPROVE",
+                note="reviewed",
+                actor="hermes",
+            )
+
+    def test_generic_review_queue_excludes_hermes_proposals(self):
+        source = Path("backend/app.py").read_text(encoding="utf-8")
+        self.assertIn("event_type not like 'HERMES_PROPOSAL_%'", source)
+        self.assertIn("event_type not like 'HERMES_PROPOSAL_%%'", source)
 
 
 if __name__ == "__main__":

@@ -402,7 +402,8 @@ def review_queue() -> dict[str, Any]:
             cur.execute(
                 """select id, event_key, event_type, site, vendor_code, entity_code, event_time,
                           confidence, requires_confirmation, payload, raw_text, parser_version, status, created_at
-                   from candidate_events where status='PENDING'
+                   from candidate_events
+                   where status='PENDING' and event_type not like 'HERMES_PROPOSAL_%'
                    order by requires_confirmation desc, confidence asc, created_at asc limit 500"""
             )
             return {"items": cur.fetchall()}
@@ -422,12 +423,14 @@ def review_decision(event_id: int, payload: ReviewDecision) -> dict[str, Any]:
             cur.execute(
                 """update candidate_events set status=%s, validated_at=now(), validated_by=%s,
                           rejection_reason=case when %s='REJECTED' then %s else null end
-                   where id=%s and status='PENDING' returning id, status""",
+                   where id=%s and status='PENDING'
+                     and event_type not like 'HERMES_PROPOSAL_%%'
+                   returning id, status""",
                 (status, payload.actor, status, payload.note, event_id),
             )
             row = cur.fetchone()
             if row is None:
-                raise HTTPException(409, "event not found or no longer pending")
+                raise HTTPException(409, "event not found, no longer pending, or requires Hermes Approval Center")
             cur.execute(
                 "insert into event_audit_log(candidate_event_id, action,actor,details) values (%s,%s,%s,%s::jsonb)",
                 (event_id, f"REVIEW_{decision}", payload.actor, json.dumps({"note": payload.note}, ensure_ascii=False)),

@@ -6,15 +6,16 @@ import json
 import os
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.db import connection, database_ready
 from backend.gpt_bridge_api import require_gpt_auth
 
 
 router = APIRouter(prefix="/gpt/hermes-actions", tags=["hermes-actions"])
+owner_router = APIRouter(prefix="/hermes-actions", tags=["hermes-action-approvals"])
 approval_bearer = HTTPBearer(auto_error=False)
 
 Site = Literal["MAJA", "CEMPLANG"]
@@ -55,6 +56,13 @@ class HermesActionDecisionIn(BaseModel):
         return actor
 
 
+class OwnerHermesActionDecisionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["APPROVE", "REJECT"]
+    note: str = Field(default="", max_length=2000)
+
+
 def require_hermes_approval_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(approval_bearer),
 ) -> None:
@@ -65,6 +73,11 @@ def require_hermes_approval_auth(
         raise HTTPException(401, "Approval bearer token required")
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(403, "Invalid approval key")
+
+
+def require_owner_request(request: Request) -> None:
+    if str(getattr(request.state, "sppg_role", "")).upper() != "OWNER":
+        raise HTTPException(403, "OWNER access required")
 
 
 def proposal_keys(payload: HermesActionProposalIn) -> tuple[str, str]:
@@ -250,6 +263,15 @@ def list_hermes_action_proposals(
     return {"items": rows, "executionExposed": False}
 
 
+@owner_router.get("/proposals", dependencies=[Depends(require_owner_request)])
+def list_owner_hermes_action_proposals(
+    site: Site | None = None,
+    status: Literal["PENDING", "VALIDATED", "REJECTED", "APPLIED", "SUPERSEDED"] | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+) -> dict[str, Any]:
+    return list_hermes_action_proposals(site=site, status=status, limit=limit)
+
+
 @router.post(
     "/proposals/{action_id}/decision",
     dependencies=[Depends(require_hermes_approval_auth)],
@@ -339,3 +361,21 @@ def decide_hermes_action_proposal(
         "executed": False,
         "executionLocked": True,
     }
+
+
+@owner_router.post(
+    "/proposals/{action_id}/decision",
+    dependencies=[Depends(require_owner_request)],
+)
+def decide_owner_hermes_action_proposal(
+    action_id: int,
+    payload: OwnerHermesActionDecisionIn,
+) -> dict[str, Any]:
+    return decide_hermes_action_proposal(
+        action_id,
+        HermesActionDecisionIn(
+            decision=payload.decision,
+            actor="owner-ui",
+            note=payload.note,
+        ),
+    )
