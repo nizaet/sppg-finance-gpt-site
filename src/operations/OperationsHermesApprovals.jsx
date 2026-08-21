@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Bot, Check, Clock3, Lock, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { Bot, Check, Clock3, FilePlus2, Lock, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { operationsApi } from "./apiClient.js";
 import "./hermes-approvals.css";
 
@@ -46,6 +46,13 @@ function proposalDetails(item) {
   };
 }
 
+function formatQty(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number)
+    ? new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(number)
+    : String(value || "-");
+}
+
 export default function OperationsHermesApprovals() {
   const [items, setItems] = useState([]);
   const [site, setSite] = useState("");
@@ -53,6 +60,8 @@ export default function OperationsHermesApprovals() {
   const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [previewBusyId, setPreviewBusyId] = useState(null);
+  const [previews, setPreviews] = useState({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -66,7 +75,8 @@ export default function OperationsHermesApprovals() {
     setError("");
     try {
       const data = await operationsApi.getHermesActionProposals({ site, status, limit: 100 });
-      if (data?.executionExposed !== false) {
+      const capabilities = Array.isArray(data?.ownerExecutionCapabilities) ? data.ownerExecutionCapabilities : [];
+      if (data?.executionExposed !== false || data?.genericExecutionExposed !== false || capabilities.join(",") !== "CREATE_PO_DRAFT") {
         throw new Error("Batas keamanan Hermes tidak dapat diverifikasi.");
       }
       setItems(Array.isArray(data?.items) ? data.items : []);
@@ -74,6 +84,77 @@ export default function OperationsHermesApprovals() {
       setError(err.message || "Gagal memuat proposal Hermes");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const previewPoDraft = async (item) => {
+    const actionId = item.action_id;
+    setPreviewBusyId(actionId);
+    setError("");
+    setNotice("");
+    try {
+      const result = await operationsApi.previewHermesPoDraft(actionId);
+      const safety = result?.safety || {};
+      if (
+        safety.createsStatus !== "DRAFT"
+        || safety.finalizesPurchaseOrder !== false
+        || safety.marksPurchaseOrderSent !== false
+        || safety.sendsWhatsApp !== false
+        || safety.writesFinance !== false
+        || safety.writesReceiving !== false
+      ) {
+        throw new Error("Preview tidak memenuhi batas CREATE_PO_DRAFT.");
+      }
+      setPreviews((current) => ({ ...current, [actionId]: result }));
+    } catch (err) {
+      setError(err.message || "Payload proposal tidak dapat divalidasi sebagai draft PO");
+    } finally {
+      setPreviewBusyId(null);
+    }
+  };
+
+  const createPoDraft = async (item) => {
+    const actionId = item.action_id;
+    const preview = previews[actionId];
+    if (!preview?.executable || !preview?.draft) {
+      setError("Tinjau dan validasi payload PO terlebih dahulu.");
+      return;
+    }
+    const draft = preview.draft;
+    const confirmed = window.confirm(
+      `BUAT PO DRAFT DARI HERMES?\n\n`
+      + `Site: ${draft.site}\nVendor: ${draft.vendor_code}\nNo. PO: ${draft.po_code}\n`
+      + `Distribusi: ${draft.distribution_date}\nItem: ${(draft.items || []).length}\n\n`
+      + "Aksi ini MENULIS satu PO berstatus DRAFT. Tidak memfinalkan, tidak menandai terkirim, dan tidak mengirim WhatsApp.",
+    );
+    if (!confirmed) return;
+
+    setBusyId(actionId);
+    setError("");
+    setNotice("");
+    try {
+      const result = await operationsApi.createHermesPoDraft(actionId);
+      if (
+        result?.purchaseOrderStatus !== "DRAFT"
+        || result?.draftOnlyAtCreation !== true
+        || result?.finalizedByExecutor !== false
+        || result?.markedSentByExecutor !== false
+        || result?.whatsAppSentByExecutor !== false
+        || result?.otherExecutorsLocked !== true
+      ) {
+        throw new Error("Respons executor tidak memenuhi batas DRAFT-only.");
+      }
+      setNotice(`${result.poCode} rev ${result.revisionNo} dibuat sebagai DRAFT. Belum final dan belum dikirim.`);
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || "Gagal membuat PO DRAFT dari proposal Hermes");
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -121,7 +202,7 @@ export default function OperationsHermesApprovals() {
         <div>
           <span className="ops-kicker">HERMES ACTION CONTROL</span>
           <h3><ShieldCheck size={23} /> Persetujuan Hermes</h3>
-          <p>Tinjau proposal agen. Persetujuan di halaman ini belum menjalankan aksi produksi.</p>
+          <p>Tinjau proposal agen. Approval dan pembuatan DRAFT tetap dua tindakan OWNER yang terpisah.</p>
         </div>
         <button type="button" onClick={load} disabled={loading}>
           <RefreshCw size={15} className={loading ? "hermes-spin" : ""} />
@@ -132,8 +213,8 @@ export default function OperationsHermesApprovals() {
       <div className="hermes-safety-banner">
         <Lock size={18} />
         <div>
-          <strong>Eksekutor operasional masih terkunci</strong>
-          <span>Approve hanya mengubah staging menjadi VALIDATED / READY. Tidak membuat PO, transaksi, receiving, pembayaran, atau mengirim WhatsApp.</span>
+          <strong>Hanya executor PO DRAFT yang dibuka</strong>
+          <span>Sesudah proposal READY, OWNER wajib meninjau payload lalu konfirmasi lagi. Executor tidak dapat finalisasi PO, menandai terkirim, mengirim WhatsApp, atau menulis receiving/keuangan.</span>
         </div>
       </div>
 
@@ -152,6 +233,7 @@ export default function OperationsHermesApprovals() {
             <option value="PENDING">Menunggu keputusan</option>
             <option value="VALIDATED">Sudah disetujui</option>
             <option value="REJECTED">Ditolak</option>
+            <option value="APPLIED">Sudah dibuatkan DRAFT</option>
             <option value="">Semua status</option>
           </select>
         </label>
@@ -170,6 +252,8 @@ export default function OperationsHermesApprovals() {
         {items.map((item) => {
           const details = proposalDetails(item);
           const isPending = item.candidate_status === "PENDING" && item.action_status === "PLANNED";
+          const isReadyPo = item.candidate_status === "VALIDATED" && item.action_status === "READY" && item.action_type === "CREATE_PO";
+          const preview = previews[item.action_id];
           return (
             <article className="hermes-proposal-card" key={item.action_id}>
               <header>
@@ -208,6 +292,63 @@ export default function OperationsHermesApprovals() {
                 <summary>Lihat payload proposal</summary>
                 <pre>{JSON.stringify(details.payload, null, 2)}</pre>
               </details>
+
+              {isReadyPo && (
+                <div className="hermes-execution-area">
+                  <div className="hermes-execution-heading">
+                    <div>
+                      <strong>Langkah kedua: validasi lalu buat PO DRAFT</strong>
+                      <span>Tidak ada aksi otomatis setelah approval. Payload diperiksa kembali terhadap vendor, site, planning, dan PO aktif.</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="hermes-preview"
+                      disabled={previewBusyId === item.action_id || busyId === item.action_id}
+                      onClick={() => previewPoDraft(item)}
+                    >
+                      <ShieldCheck size={16} /> {previewBusyId === item.action_id ? "Memvalidasi" : "Tinjau draft PO"}
+                    </button>
+                  </div>
+
+                  {preview && (
+                    <div className={`hermes-execution-preview ${preview.executable ? "" : "hermes-execution-blocked"}`}>
+                      {preview.executable ? (
+                        <>
+                          <div className="hermes-preview-grid">
+                            <div><span>No. PO</span><strong>{preview.draft.po_code}</strong></div>
+                            <div><span>Site / Vendor</span><strong>{preview.draft.site} / {preview.draft.vendor_code}</strong></div>
+                            <div><span>Distribusi</span><strong>{preview.draft.distribution_date}</strong></div>
+                            <div><span>Status yang dibuat</span><strong>DRAFT</strong></div>
+                          </div>
+                          <div className="hermes-preview-items">
+                            {(preview.draft.items || []).map((line, index) => (
+                              <div key={`${line.item_code || line.item_name}-${index}`}>
+                                <span>{index + 1}. {line.item_name}</span>
+                                <strong>{formatQty(line.po_qty)} {line.unit || ""}</strong>
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            className="hermes-create-draft"
+                            disabled={busyId === item.action_id}
+                            onClick={() => createPoDraft(item)}
+                          >
+                            <FilePlus2 size={16} /> {busyId === item.action_id ? "Membuat DRAFT" : "Buat PO DRAFT"}
+                          </button>
+                        </>
+                      ) : (
+                        <div>
+                          <strong>Eksekusi diblokir karena PO aktif sudah ada.</strong>
+                          <span>
+                            {preview.existingPurchaseOrder?.poCode || "PO aktif"} · {preview.existingPurchaseOrder?.status || "-"}. Buka PO tersebut; executor tidak membuat duplikat.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {isPending ? (
                 <div className="hermes-decision-area">
