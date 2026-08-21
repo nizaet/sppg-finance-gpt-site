@@ -558,3 +558,18 @@ html[data-app-theme="light"] .ops-reminder-overdue { background: #fff1f2; }
 html[data-app-theme="light"] .ops-reminder-upcoming, html[data-app-theme="light"] .ops-reminder-ready, html[data-app-theme="light"] .ops-po-row-ready { background: #eff6ff; }
 html[data-app-theme="light"] .ops-reminder-draft { background: #faf5ff; }
 html[data-app-theme="light"] .ops-shortage-qty { color: #b45309; }
+
+/* Keep MAJA and CEMPLANG PO workspaces mounted independently. */
+.ops-po-site-switcher { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ops-po-site-switcher h3 { margin: 3px 0; }
+.ops-po-site-switcher p { margin: 0; opacity: .7; }
+.ops-po-site-tabs { display: inline-flex; gap: 6px; padding: 5px; border: 1px solid var(--ops-border); border-radius: 12px; background: var(--ops-input); }
+.ops-po-site-tabs button { min-width: 112px; }
+.ops-po-site-tabs button.active { color: #dbeafe; border-color: rgba(96, 165, 250, .6); background: rgba(30, 64, 175, .45); }
+html[data-app-theme="light"] .ops-po-site-tabs button.active { color: #1e40af; border-color: #93c5fd; background: #dbeafe; }
+
+@media (max-width: 700px) {
+  .ops-po-site-switcher { align-items: stretch; flex-direction: column; }
+  .ops-po-site-tabs { display: grid; grid-template-columns: 1fr 1fr; }
+  .ops-po-site-tabs button { min-width: 0; }
+}

@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 
 from backend.inventory_api import router as inventory_router
+from backend.stock_opname_learning_patch import learned_parse_stock_opname_text
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -82,3 +83,18 @@ def test_stock_opname_history_exposes_detail_for_safe_correction():
         route.path == "/v1/inventory/stock-opnames/{stock_opname_id}" and "DELETE" in route.methods
         for route in inventory_router.routes
     )
+
+
+def test_confirmed_oil_packages_merge_dus_pcs_and_liters():
+    result = learned_parse_stock_opname_text(
+        """1. Minyak Goreng: 2 dus
+2. Minyak Goreng: 7 pcs
+3. Minyak Goreng: 3 liter"""
+    )
+
+    oil = [item for item in result["items"] if item["normalizedItemName"] == "minyak goreng"]
+    assert len(oil) == 1
+    assert oil[0]["qty"] == 41.0
+    assert oil[0]["unit"] == "liter"
+    assert any("1 dus = 12 liter" in warning for warning in oil[0]["warnings"])
+    assert any("1 pcs = 2 liter" in warning for warning in oil[0]["warnings"])

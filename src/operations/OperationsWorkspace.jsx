@@ -19,7 +19,7 @@ import { useAppTheme } from "../theme.js";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import "./workspace.css";
 
-const OperationsPoPlanner = lazy(() => import("./OperationsPoPlanner.jsx"));
+const OperationsPoSiteTabs = lazy(() => import("./OperationsPoSiteTabs.jsx"));
 const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
 const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
@@ -45,7 +45,7 @@ const tabs = [
 ];
 
 const moduleComponents = {
-  po: OperationsPoPlanner,
+  po: OperationsPoSiteTabs,
   receiving: OperationsReceiving,
   inventory: OperationsInventory,
   "calculator-data": OperationsCalculatorData,

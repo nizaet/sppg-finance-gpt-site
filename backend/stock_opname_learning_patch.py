@@ -99,24 +99,29 @@ def _consolidate_known_packages(items: list[dict[str, Any]]) -> list[dict[str, A
     output: list[dict[str, Any]] = []
     consumed: set[int] = set()
     for name, group in by_name.items():
-        rule: tuple[str, str, float] | None = None
+        target_unit = ""
+        conversions: dict[str, float] = {}
         if re.search(r"\bberas\b", name):
-            rule = ("karung", "kg", 25.0)
+            target_unit = "kg"
+            conversions = {"karung": 25.0}
         elif re.search(r"\bminyak(?: goreng)?\b", name):
-            rule = ("dus", "liter", 12.0)
-        if not rule:
+            target_unit = "liter"
+            conversions = {"dus": 12.0, "pcs": 2.0}
+        if not conversions:
             continue
 
-        source_unit, target_unit, factor = rule
-        compatible = [row for row in group if str(row.get("unit") or "") in {source_unit, target_unit}]
-        if not compatible or not any(str(row.get("unit") or "") == source_unit for row in compatible):
+        compatible_units = {target_unit, *conversions}
+        compatible = [row for row in group if str(row.get("unit") or "") in compatible_units]
+        source_units = {str(row.get("unit") or "") for row in compatible if str(row.get("unit") or "") in conversions}
+        if not compatible or not source_units:
             continue
         first = compatible[0]
         total = 0.0
         raw_lines: list[str] = []
         for row in compatible:
             amount = float(row.get("qty") or 0)
-            total += amount * factor if str(row.get("unit") or "") == source_unit else amount
+            unit = str(row.get("unit") or "")
+            total += amount * conversions.get(unit, 1.0)
             raw = str(row.get("rawLine") or "").strip()
             if raw and raw not in raw_lines:
                 raw_lines.append(raw)
@@ -130,9 +135,8 @@ def _consolidate_known_packages(items: list[dict[str, Any]]) -> list[dict[str, A
             w for w in (first.get("warnings") or [])
             if "Duplikat" not in w and "Satuan tidak tertulis" not in w
         ]
-        merged["warnings"].append(
-            f"Konversi operasional terkonfirmasi: 1 {source_unit} = {factor:g} {target_unit}; komponen digabung."
-        )
+        rules = ", ".join(f"1 {unit} = {conversions[unit]:g} {target_unit}" for unit in sorted(source_units))
+        merged["warnings"].append(f"Konversi operasional terkonfirmasi: {rules}; komponen digabung.")
         output.append(merged)
 
     for item in items:

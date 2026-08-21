@@ -63,6 +63,31 @@ def _learn_conversation_operation() -> dict[str, Any]:
     }}
 
 
+def _explicit_knowledge_operation() -> dict[str, Any]:
+    fact = _obj({
+        "statement": {"type": "string", "minLength": 3, "maxLength": 1500},
+        "scope_type": {"type": "string", "enum": ["GLOBAL", "SITE", "VENDOR", "ITEM", "WORKFLOW"], "default": "GLOBAL"},
+        "topic": {"type": ["string", "null"], "maxLength": 160},
+        "metadata": {"type": "object", "additionalProperties": True},
+    }, ["statement"])
+    body = _obj({
+        "source_ref": {"type": "string", "minLength": 1, "maxLength": 200},
+        "site": {"type": ["string", "null"], "enum": ["MAJA", "CEMPLANG", None]},
+        "vendor": {"type": ["string", "null"], "maxLength": 100},
+        "user_message": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "facts": {"type": "array", "minItems": 1, "maxItems": 30, "items": fact},
+        "actor": {"type": "string", "default": "chatgpt", "maxLength": 100},
+    }, ["source_ref", "user_message", "facts"])
+    return {"post": {
+        "operationId": "recordExplicitSppgKnowledge",
+        "summary": "Store explicitly requested facts as confirmed LLM Wiki knowledge",
+        "description": "MEMORY ONLY. Use when the user says catat, ingat, or masukkan ke LLM Wiki/knowledge. Confirm explicit rules, corrections, mappings, and unit conversions here; never send them to operational review.",
+        "x-openai-isConsequential": False,
+        "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
+        "responses": {"200": {"description": "Confirmed knowledge write", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}},
+    }}
+
+
 def _payment_evidence_operation() -> dict[str, Any]:
     body = _obj({
         "site": {"type": "string", "enum": ["MAJA", "CEMPLANG"]},
@@ -177,12 +202,13 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     payload = deepcopy(_ORIGINAL_V0184())
     payload["info"] = {
         "title": "SPPG Operations, Runtime Knowledge, Accountant and BGN Bridge",
-        "version": "0.18.7",
-        "description": "Stable v0.18.4 URL with multi-PO receiving, durable GPT memory, accountant workflow, and explicit BGN approval/paid confirmations.",
+        "version": "0.18.8",
+        "description": "Stable v0.18.4 URL with explicit LLM Wiki writes, shared GPT/Hermes memory, and guarded operational workflows.",
     }
     paths = payload.setdefault("paths", {})
     paths["/v1/gpt/operational-context"] = _knowledge_operation()
     paths["/v1/gpt/learn-conversation"] = _learn_conversation_operation()
+    paths["/v1/gpt/knowledge"] = _explicit_knowledge_operation()
     paths["/v1/vendor-payments/record-evidence"] = _payment_evidence_operation()
     paths["/v1/vendor-payments/{payment_id}/reconcile"] = _payment_reconcile_operation()
     paths["/v1/vendor-payments/unreconciled"] = _unreconciled_operation()
