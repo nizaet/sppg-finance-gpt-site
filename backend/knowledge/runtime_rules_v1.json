@@ -1,0 +1,68 @@
+{
+  "version": "2026-08-20.v4",
+  "architecture": {
+    "operationalSourceOfTruth": "PostgreSQL",
+    "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules, confirmed operational history, and confirmed GPT conversation knowledge",
+    "conversationMemory": "Every meaningful GPT operational turn is archived through /v1/gpt/learn-conversation and retrieved through /v1/gpt/operational-context",
+    "evidenceArchive": "Google Drive is evidence/mirror/archive, not the operational source of truth"
+  },
+  "conversationLearningPolicy": [
+    "At the start of each operational turn, call getSppgOperationalRuntimeContext with q set to the user's current topic so relevant learned knowledge and prior conversation memory are available before reasoning.",
+    "After each meaningful user turn, call learnSppgConversationTurn and archive the user message plus a compact assistant summary.",
+    "Promote USER_CORRECTION, ACTION_CONFIRMED, and high-confidence USER_EXPLICIT facts into reusable knowledge. Assistant inference remains CANDIDATE and must not silently become truth.",
+    "Do not require the owner to repeat a confirmed operational convention, alias, unit conversion, vendor relationship, workflow preference, or correction that already exists in learned knowledge.",
+    "When later evidence conflicts with learned knowledge, prefer explicit newer user correction or verified database fact and preserve provenance instead of guessing.",
+    "Do not promote passwords, API keys, authentication secrets, private credentials, or unrelated sensitive personal information into learned operational knowledge."
+  ],
+  "decisionPolicy": [
+    "When the data is sufficient and the user explicitly requests commit, execute the deterministic action.",
+    "After a stock-opname preview returns canCommit=true, an explicit 'commit', 'simpan', or equivalent means call the same stock-opname action immediately with commit=true and the exact reviewed item set from the latest preview. Do not preview again merely to ask for confirmation.",
+    "Ask for clarification only for a genuine business ambiguity, conflicting evidence, or a destructive action whose target is not uniquely determined.",
+    "Do not treat WhatsApp formatting differences as business ambiguity.",
+    "For stock opname, consult canonical item aliases, confirmed prior SO history, and learned conversation knowledge before asking the operator to classify a recurring spelling or shorthand again.",
+    "A goods receipt arriving one day before the distribution date is normal and must not by itself trigger clarification.",
+    "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
+    "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice.",
+    "When a transfer screenshot is available, extract the visible amount, date/time, beneficiary, beneficiary account, reference number, remarks, and masked source account where present. Do not guess unreadable digits.",
+    "Original transfer evidence is archived to Google Drive through the payment-evidence upload endpoint; extracted text alone is not a substitute for the original proof file."
+  ],
+  "canonicalFacts": {
+    "accountants": {
+      "MAJA": "TIARA",
+      "CEMPLANG": "UYA"
+    },
+    "vendors": {
+      "HOLIL": {"label": "Haji Holil", "role": "sayur/buah"},
+      "DEDE": {"label": "Dede", "role": "beras"},
+      "HAJI_BADRI": {"label": "Haji Badri", "role": "tahu Cemplang"}
+    },
+    "paymentEvidenceConventions": {
+      "MAJA": {"bank": "BCA", "channel": "Mobile BCA", "status": "OWNER_CONFIRMED"},
+      "CEMPLANG": {"bank": "BCA", "channel": "myBCA", "status": "OWNER_CONFIRMED"}
+    },
+    "itemConventions": [
+      "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording.",
+      "Mie telor ayam / mie telur ayam is a Mie item; the word ayam is part of the product name and must not classify it as chicken.",
+      "Bombay means Bawang Bombay; Langkuas means Lengkuas; telor means Telur; kuyit bubuk means Kunyit Bubuk; mayonnese means Mayonnaise.",
+      "For confirmed CEMPLANG SO convention, Sapu and Kain Pel/Pel use pcs when the report omits the unit."
+    ],
+    "stockOpnameConversions": [
+      {"itemFamily": "Beras", "fromUnit": "karung", "toUnit": "kg", "factor": 25, "status": "OWNER_CONFIRMED"},
+      {"itemFamily": "Minyak Goreng", "fromUnit": "dus", "toUnit": "liter", "factor": 12, "status": "OWNER_CONFIRMED"}
+    ],
+    "stockOpnameParsing": [
+      "Ignore report-title/date lines such as 'SO BARANG CEMPLANG 2026-08-20' and weekday/date headings; they are not inventory items.",
+      "When one arithmetic line is written like '10,20 + 3,38 kg', the explicit trailing unit applies to the components on that same line unless conflicting units are explicitly written.",
+      "Confirmed reviewed SO rows are operational history and should be reused as aliases on later SO previews instead of asking the same mapping again."
+    ]
+  },
+  "reconciliationPriority": [
+    "site",
+    "vendor",
+    "item identity or canonical alias",
+    "unit compatibility",
+    "distribution/cooking date relevance",
+    "outstanding PO quantity",
+    "PO lifecycle status"
+  ]
+}

@@ -11,12 +11,16 @@ from backend.chat_api import router as chat_router
 from backend.control_tower_api import router as control_tower_router
 from backend.inventory_summary_api import router as inventory_summary_router
 from backend.auth_api import router as auth_router
+from backend.knowledge_runtime_api import router as knowledge_runtime_router
+from backend.hermes_knowledge_api import router as hermes_knowledge_router
 from backend.accountant_excel_api import router as accountant_excel_router
 from backend.accountant_status_api import router as accountant_status_router
 
 # Public login/session endpoints live under /v1/auth. Login enforcement is only
 # activated after Railway has all role passwords + auth secret.
 operational_router.include_router(auth_router)
+operational_router.include_router(knowledge_runtime_router)
+operational_router.include_router(hermes_knowledge_router)
 
 # chat_router contains the domain router, restoring these live routes under /v1:
 # /parse-message, /goods-receipts, /actual-usage, /accountant-flow,

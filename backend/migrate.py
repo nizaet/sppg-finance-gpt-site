@@ -20,6 +20,7 @@ MIGRATIONS = [
     ROOT / "schema" / "whatsapp_ingress_v018.sql",
     ROOT / "schema" / "operational_rules_v019.sql",
     ROOT / "schema" / "accountant_excel_v020.sql",
+    ROOT / "schema" / "llm_conversation_memory_v031.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 
