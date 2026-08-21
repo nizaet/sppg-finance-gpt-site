@@ -125,6 +125,8 @@ export const operationsApi = {
   getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
   getReviewQueue: () => request("/v1/review-queue"),
   submitReviewDecision: (id, decision, note = "") => request(`/v1/review-queue/${id}`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  getHermesActionProposals: ({ site = "", status = "PENDING", limit = 100 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); if (status) q.set("status", status); return request(`/v1/hermes-actions/proposals?${q}`); },
+  decideHermesActionProposal: (actionId, decision, note = "") => request(`/v1/hermes-actions/proposals/${encodeURIComponent(actionId)}/decision`, { method: "POST", body: JSON.stringify({ decision, note }) }),
   ingestEvent: (payload) => request("/v1/events", { method: "POST", body: JSON.stringify(payload) }),
 };
 

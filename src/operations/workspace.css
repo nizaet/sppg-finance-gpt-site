@@ -26,6 +26,8 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 18px 14px;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   background: #0b1627;
@@ -50,6 +52,9 @@ body {
 .ops-sidebar nav {
   display: grid;
   gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
 }
 .ops-sidebar nav button,
 .ops-sidebar nav a {
@@ -74,10 +79,7 @@ body {
   background: rgba(59, 130, 246, 0.13);
 }
 .ops-sidebar-note {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 18px;
+  margin-top: 12px;
   padding: 10px;
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 10px;

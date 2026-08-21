@@ -11,6 +11,7 @@ import {
   PackageCheck,
   Store,
   Sun,
+  ShieldCheck,
   WalletCards,
   Warehouse,
 } from "lucide-react";
@@ -27,6 +28,7 @@ const OperationsVendorMaster = lazy(() => import("./OperationsVendorMaster.jsx")
 const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
 const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
 const OperationsCalculatorData = lazy(() => import("./OperationsCalculatorData.jsx"));
+const OperationsHermesApprovals = lazy(() => import("./OperationsHermesApprovals.jsx"));
 
 const tabs = [
   ["today", "Control Tower", LayoutDashboard],
@@ -38,6 +40,7 @@ const tabs = [
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
   ["review", "Review", ListChecks],
+  ["hermes", "Persetujuan Hermes", ShieldCheck],
   ["chat", "Sumber Chat", MessageSquareText],
 ];
 
@@ -50,6 +53,7 @@ const moduleComponents = {
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
   review: OperationsReviewQueue,
+  hermes: OperationsHermesApprovals,
   chat: OperationsChatIngest,
 };
 
