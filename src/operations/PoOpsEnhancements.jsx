@@ -137,12 +137,14 @@ export default function PoOpsEnhancements({
     try { setProgress({ active: true, percent: 35, label: "2/4 · Barang belum datang" }); await refreshDelivery(); }
     catch (err) { failures.push(`Barang belum datang: ${err.message || "gagal"}`); }
     try {
-      setProgress({ active: true, percent: 65, label: "3/3 · Pengingat lengkap" });
+      setProgress({ active: true, percent: 60, label: "3/4 · Pengingat lengkap" });
       const reminderResult = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
       const rows = (reminderResult?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
       setReminders?.(rows);
       setRemindersPulled?.(true);
     } catch (err) { failures.push(`Pengingat (data sebelumnya dipertahankan): ${err.message || "gagal"}`); }
+    try { setProgress({ active: true, percent: 85, label: "4/4 · Kalender PO" }); await refreshCalendar(); }
+    catch (err) { failures.push(`Kalender PO: ${err.message || "gagal"}`); }
     setProgress({ active: false, percent: 100, label: failures.length ? "Sinkron selesai sebagian" : "Semua blok tersinkron" });
     if (failures.length) setLocalError(failures.join("; "));
   };
