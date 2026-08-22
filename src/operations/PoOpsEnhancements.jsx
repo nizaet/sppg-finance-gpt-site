@@ -49,6 +49,17 @@ function activePoRows(rows) {
   return (rows || []).filter((po) => !["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"].includes(String(po?.status || "").toUpperCase()));
 }
 
+function reminderDistributionDates(rows) {
+  const dates = new Set();
+  (rows || []).forEach((row) => {
+    [row?.distribution_date, ...(row?.distribution_dates || [])].filter(Boolean).forEach((value) => dates.add(String(value).slice(0, 10)));
+    (row?.requirement_details || []).forEach((detail) => {
+      if (detail?.distribution_date) dates.add(String(detail.distribution_date).slice(0, 10));
+    });
+  });
+  return Array.from(dates).filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)).sort();
+}
+
 async function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   const area = document.createElement("textarea");
@@ -80,6 +91,7 @@ function localPoMessage(po) {
 export default function PoOpsEnhancements({
   mode,
   activeSite,
+  reminders = [],
   setReminders,
   setRemindersPulled,
   setPurchaseOrders,
@@ -110,14 +122,32 @@ export default function PoOpsEnhancements({
     setDeliveryAlerts?.(result?.items || []);
   };
 
+  const refreshReminderFromCalculator = async (progressLabel = "Menyinkronkan revisi Kalkulator") => {
+    let sourceRows = reminders;
+    if (!sourceRows.length) {
+      const discovered = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+      sourceRows = discovered?.items || [];
+    }
+    const distributionDates = reminderDistributionDates(sourceRows);
+    if (distributionDates.length) {
+      setProgress({ active: true, percent: 45, label: `${progressLabel} · ${distributionDates.length} tanggal` });
+      await Promise.all(distributionDates.map((distributionDate) => operationsApi.syncCalculatorPlanning({
+        site: activeSite,
+        distributionDate,
+        deactivateMissing: true,
+      })));
+    }
+    return operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2, refresh: true });
+  };
+
   const syncReminderStages = async () => {
     setLocalError("");
     setProgress({ active: true, percent: 15, label: `Menarik pengingat lengkap ${activeSite}` });
     try {
-      // One authoritative request covers overdue + today + tomorrow. Updating
-      // the screen only after the complete response prevents a timed-out stage
-      // from replacing good reminder data with a partial list.
-      const result = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+      // Refresh every Calculator distribution date represented by the current
+      // queue before recalculating it. This replaces stale PostgreSQL planning
+      // snapshots when an ingredient was edited or removed in the Calculator.
+      const result = await refreshReminderFromCalculator();
       const rows = (result?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
       setReminders?.(rows);
       setRemindersPulled?.(true);
@@ -138,7 +168,7 @@ export default function PoOpsEnhancements({
     catch (err) { failures.push(`Barang belum datang: ${err.message || "gagal"}`); }
     try {
       setProgress({ active: true, percent: 60, label: "3/4 · Pengingat lengkap" });
-      const reminderResult = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+      const reminderResult = await refreshReminderFromCalculator("3/4 · Sinkron planning Kalkulator");
       const rows = (reminderResult?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
       setReminders?.(rows);
       setRemindersPulled?.(true);
