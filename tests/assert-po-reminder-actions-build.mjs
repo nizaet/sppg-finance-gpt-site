@@ -23,6 +23,7 @@ const requiredMarkers = [
   "data-po-staged-sync",
   "data-po-sync-progress",
   "Tarik / Sinkron Pengingat",
+  "Menyinkronkan revisi Kalkulator",
   "Refresh PO Aktual",
   "Sinkron Semua Blok",
   "4/4 · Kalender PO",
@@ -64,13 +65,19 @@ const reminderEnhancementSource = fs.readFileSync(
 );
 const reminderRequestCount = (reminderEnhancementSource.match(/operationsApi\.getPoReminders\(/g) || []).length;
 if (reminderRequestCount !== 2) {
-  throw new Error(`Expected one atomic reminder request per sync action, found ${reminderRequestCount} source calls`);
+  throw new Error(`Expected one fresh reminder request plus one empty-state discovery request, found ${reminderRequestCount} source calls`);
 }
 if (!reminderEnhancementSource.includes("date: today(), horizonDays: 2")) {
   throw new Error("Atomic reminder sync must request overdue + today + tomorrow in one horizonDays=2 snapshot");
 }
 if (reminderEnhancementSource.includes("date: shiftDate(today(), 1), horizonDays: 1")) {
   throw new Error("Staged tomorrow-only reminder request can expose partial data and must stay retired");
+}
+if (!reminderEnhancementSource.includes("deactivateMissing: true")) {
+  throw new Error("Reminder sync must retire a stale Calculator snapshot when its source plan was deleted");
+}
+if (!reminderEnhancementSource.includes("refresh: true")) {
+  throw new Error("Reminder sync must bypass the short v4 cache after refreshing Calculator planning");
 }
 if (reminderEnhancementSource.includes("useEffect(() =>")) {
   throw new Error("PO enhancement must not fetch calendar or reminder data automatically on tab mount");
