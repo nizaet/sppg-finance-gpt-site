@@ -184,7 +184,7 @@ def test_v0183_preserves_v0182_and_forbids_split_stock_opname_commits():
 
 def test_v0184_exposes_multi_day_po_coverage_and_runtime_extensions_within_builder_limit():
     unified = schema_v0184()
-    assert unified["info"]["version"] == "0.18.9"
+    assert unified["info"]["version"] == "0.18.10"
     assert "/v1/inventory/stock-opname/whatsapp" in unified["paths"]
     opname_description = unified["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]["description"]
     assert "replaces the prior physical count" in opname_description
