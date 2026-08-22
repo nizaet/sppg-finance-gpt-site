@@ -1,4 +1,4 @@
-# SPPG Hermes Lab v0.5.1
+# SPPG Hermes Lab v0.5.2
 
 Eksperimen terisolasi untuk menghubungkan Custom GPT ke Hermes Agent. Hermes dapat membaca konteks, berbagi memory, dan membuat proposal staging yang wajib disetujui operator. Gateway Hermes tetap tidak memiliki endpoint approval atau eksekusi.
 
@@ -8,7 +8,7 @@ Custom GPT -> HTTPS `hermes_lab` gateway -> Hermes Agent API -> approved read-on
 
 Kode gateway berada di repo yang sama dengan branch Railway `llm-wiki-v0`, tetapi image gateway tetap dibangun dan dijalankan terpisah di VM.
 
-## Batas v0.5.1
+## Batas v0.5.2
 
 - Data operasional tetap READ ONLY.
 - Hermes boleh menulis shared memory dan proposal ke staging queue.

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 app = FastAPI(
     title="SPPG Hermes Lab Gateway",
-    version="0.5.1",
+    version="0.5.2",
     description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals. The gateway cannot execute operations.",
 )
 
@@ -64,6 +64,52 @@ class LabChatResponse(BaseModel):
     model: str
     memory_loaded: bool = False
     memory_stored: bool = False
+
+
+class LabHealthResponse(BaseModel):
+    ok: bool
+    service: str
+    mode: str
+    hermes_configured: bool
+    shared_memory_configured: bool
+    operational_read_configured: bool
+    action_proposals_configured: bool
+    action_execution_exposed: bool
+    gpt_action_schema: str
+
+
+class LabPurchaseOrderItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    purchase_order_item_id: int | None = None
+    item_code: str | None = None
+    item_name: str | None = None
+    planned_qty: float | None = None
+    po_qty: float | None = None
+    unit: str | None = None
+    planning_price: float | None = None
+    po_price: float | None = None
+
+
+class LabPurchaseOrderRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    purchase_order_id: int
+    po_code: str
+    revision_no: int | None = None
+    site: str | None = None
+    vendor_code: str | None = None
+    status: str | None = None
+    distribution_date: date | None = None
+    item_count: int = 0
+    items: list[LabPurchaseOrderItem] = Field(default_factory=list)
+
+
+class LabPurchaseOrderSearchResponse(BaseModel):
+    items: list[LabPurchaseOrderRecord]
+    count: int
+    readOnly: bool
+    sourceOfTruth: str
 
 
 ActionType = Literal[
@@ -275,7 +321,20 @@ def _build_chatgpt_action_schema(public_origin: str) -> dict[str, Any]:
         "type": "http",
         "scheme": "bearer",
     }
+    _ensure_object_schema_properties(schema)
     return schema
+
+
+def _ensure_object_schema_properties(node: Any) -> None:
+    """Make every object schema explicit for the strict GPT Action importer."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" and not isinstance(node.get("properties"), dict):
+            node["properties"] = {}
+        for value in node.values():
+            _ensure_object_schema_properties(value)
+    elif isinstance(node, list):
+        for value in node:
+            _ensure_object_schema_properties(value)
 
 
 def _last_user_message(messages: List[Message]) -> str:
@@ -349,7 +408,7 @@ async def _store_shared_turn(
         return False
 
 
-@app.get("/health")
+@app.get("/health", response_model=LabHealthResponse)
 def health() -> Dict[str, Any]:
     return {
         "ok": True,
@@ -370,7 +429,7 @@ def chatgpt_action_schema(request: Request) -> dict[str, Any]:
     return _build_chatgpt_action_schema(_request_public_origin(request))
 
 
-@app.get("/v1/lab/purchase-orders")
+@app.get("/v1/lab/purchase-orders", response_model=LabPurchaseOrderSearchResponse)
 async def search_purchase_orders_read_only(
     authorization: str | None = Header(default=None),
     site: Literal["MAJA", "CEMPLANG"] | None = None,

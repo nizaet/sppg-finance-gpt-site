@@ -47,6 +47,22 @@ class HermesLabActionProposalTests(unittest.TestCase):
             [{"bearerAuth": []}],
             schema["paths"]["/v1/lab/purchase-orders"]["get"]["security"],
         )
+        health_schema = schema["components"]["schemas"]["LabHealthResponse"]
+        po_schema = schema["components"]["schemas"]["LabPurchaseOrderSearchResponse"]
+        self.assertIn("properties", health_schema)
+        self.assertIn("properties", po_schema)
+
+        def assert_explicit_object_schemas(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object":
+                    self.assertIsInstance(node.get("properties"), dict)
+                for value in node.values():
+                    assert_explicit_object_schemas(value)
+            elif isinstance(node, list):
+                for value in node:
+                    assert_explicit_object_schemas(value)
+
+        assert_explicit_object_schemas(schema)
 
     def test_gateway_schema_endpoint_is_hidden_from_its_own_action_contract(self):
         paths = {route.path for route in app.routes}
