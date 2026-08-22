@@ -20,11 +20,15 @@ def search_purchase_orders(
     site: str = "",
     vendor: str = "",
     distribution_date: date | None = Query(default=None, alias="distributionDate"),
+    date_from: date | None = Query(default=None, alias="dateFrom"),
+    date_to: date | None = Query(default=None, alias="dateTo"),
     status: str = "",
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Read-only PO search for GPT reconciliation."""
     require_db()
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "dateFrom must be on or before dateTo")
     sql = """
         select po.id as purchase_order_id, po.po_code, po.revision_no, po.site,
                po.vendor_code, po.status, po.sent_at, po.acknowledged_at,
@@ -45,6 +49,12 @@ def search_purchase_orders(
     if distribution_date is not None:
         sql += " and pc.distribution_date=%s"
         params.append(distribution_date)
+    if date_from is not None:
+        sql += " and pc.distribution_date>=%s"
+        params.append(date_from)
+    if date_to is not None:
+        sql += " and pc.distribution_date<=%s"
+        params.append(date_to)
     if status:
         sql += " and upper(po.status)=upper(%s)"
         params.append(status)

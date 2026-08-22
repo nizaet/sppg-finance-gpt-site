@@ -8,6 +8,18 @@ from backend import unified_action_schema_api as schema_api
 _ORIGINAL_V0184 = schema_api.schema_v0184
 _INSTALLED = False
 
+# GPT Builder currently accepts at most 30 operations in one imported OpenAPI
+# document. These one-off/admin workflows remain available in SPPG Core and the
+# web application; they are omitted only from the primary Custom GPT schema.
+_GPT_ACTION_OPERATION_LIMIT = 30
+_SCHEMA_ONLY_EXCLUDED_PATHS = {
+    "/v1/operations/history/import",
+    "/v1/gpt/backfill-firestore",
+    "/v1/calculator-data/plan-preview",
+    "/v1/calculator-data/import",
+    "/v1/accountant-excel/from-planning",
+}
+
 
 def _obj(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     value: dict[str, Any] = {"type": "object", "properties": properties}
@@ -202,8 +214,8 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     payload = deepcopy(_ORIGINAL_V0184())
     payload["info"] = {
         "title": "SPPG Operations, Runtime Knowledge, Accountant and BGN Bridge",
-        "version": "0.18.8",
-        "description": "Stable v0.18.4 URL with explicit LLM Wiki writes, shared GPT/Hermes memory, and guarded operational workflows.",
+        "version": "0.18.9",
+        "description": "Stable v0.18.4 URL with explicit LLM Wiki writes, shared GPT/Hermes memory, guarded operational workflows, and a GPT Builder-safe operation count.",
     }
     paths = payload.setdefault("paths", {})
     paths["/v1/gpt/operational-context"] = _knowledge_operation()
@@ -215,6 +227,21 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     paths["/v1/accountant-excel/from-planning"] = _excel_operation()
     paths["/v1/bgn-makers/{maker_id}/confirm-approved"] = _bgn_approve_operation()
     paths["/v1/bgn-makers/{maker_id}/confirm-paid"] = _bgn_paid_operation()
+
+    for path in _SCHEMA_ONLY_EXCLUDED_PATHS:
+        paths.pop(path, None)
+
+    operation_count = sum(
+        1
+        for path_item in paths.values()
+        for method in path_item
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+    )
+    if operation_count > _GPT_ACTION_OPERATION_LIMIT:
+        raise RuntimeError(
+            f"Custom GPT schema exposes {operation_count} operations; "
+            f"maximum is {_GPT_ACTION_OPERATION_LIMIT}"
+        )
 
     receiving = paths.get("/v1/receiving/whatsapp", {}).get("post")
     if receiving:
