@@ -9,6 +9,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.db import connection, database_ready
 from backend.google_services import SITE_TARGETS, firestore_client
 from backend.item_taxonomy import vendor_for_item
 from backend.planning_api import PlanningItemIn, PlanningSnapshotIn, ingest_planning_snapshot, get_planning_snapshot
@@ -33,6 +34,7 @@ DISCOVERY_LIMIT = 50
 class CalculatorPlanningSyncIn(BaseModel):
     site: Literal["MAJA", "CEMPLANG"]
     distribution_date: date
+    deactivate_missing: bool = False
 
 
 def _json_safe(value: Any) -> Any:
@@ -411,7 +413,37 @@ def preview_calculator_planning(
 
 @router.post("/calculator-planning/sync")
 def sync_calculator_planning(payload: CalculatorPlanningSyncIn) -> dict[str, Any]:
-    planning, preview = _planning_payload(payload.site, payload.distribution_date)
+    try:
+        planning, preview = _planning_payload(payload.site, payload.distribution_date)
+    except HTTPException as exc:
+        if exc.status_code != 404 or not payload.deactivate_missing:
+            raise
+        if not database_ready():
+            raise HTTPException(503, "database unavailable") from exc
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update planning_snapshots
+                    set status='SUPERSEDED'
+                    where upper(site)=%s
+                      and distribution_date=%s
+                      and source_system='CALCULATOR_FIRESTORE'
+                      and status='ACTIVE'
+                    returning id
+                    """,
+                    (payload.site, payload.distribution_date),
+                )
+                superseded_ids = [int(row["id"]) for row in cur.fetchall()]
+            conn.commit()
+        return {
+            "committed": True,
+            "sourceMissing": True,
+            "site": payload.site,
+            "distributionDate": payload.distribution_date.isoformat(),
+            "supersededSnapshotIds": superseded_ids,
+            "itemCount": 0,
+        }
     result = ingest_planning_snapshot(planning)
     detail = get_planning_snapshot(result["snapshotId"])
     return {
