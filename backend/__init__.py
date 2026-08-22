@@ -56,6 +56,7 @@ from backend.firebase_auth_api import router as firebase_auth_router
 from backend.knowledge_runtime_api import router as knowledge_runtime_router
 from backend.hermes_knowledge_api import router as hermes_knowledge_router
 from backend.hermes_action_api import owner_router as hermes_action_owner_router, router as hermes_action_router
+from backend.hermes_receiving_preview_api import router as hermes_receiving_preview_router
 from backend.po_reminder_projection_cache_patch import install as install_po_reminder_projection_cache_patch
 from backend.po_delivery_receipt_reconcile_patch import install as install_po_delivery_receipt_reconcile_patch
 
@@ -74,6 +75,7 @@ operational_router.include_router(knowledge_runtime_router)
 operational_router.include_router(hermes_knowledge_router)
 operational_router.include_router(hermes_action_router)
 operational_router.include_router(hermes_action_owner_router)
+operational_router.include_router(hermes_receiving_preview_router)
 operational_router.include_router(accountant_bgn_flow_router)
 operational_router.include_router(chat_router)
 operational_router.include_router(control_tower_router)
