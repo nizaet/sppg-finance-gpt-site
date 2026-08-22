@@ -50,7 +50,7 @@ export const operationsApi = {
   getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return request(`/v1/control-tower-v2?${q}`); },
   getPoCalendar: ({ from, to, site }) => { const q = new URLSearchParams({ from, to }); if (site) q.set("site", site); return request(`/v1/po-calendar?${q}`); },
   previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => { const q = new URLSearchParams({ distributionDate }); if (cookingDate) q.set("cookingDate", cookingDate); if (site) q.set("site", site); return request(`/v1/po-schedule/preview?${q}`); },
-  getPoReminders: ({ site = "", date = "", horizonDays = PO_REMINDER_ACTION_HORIZON_DAYS } = {}) => { const q = new URLSearchParams({ horizonDays: String(poReminderHorizon(horizonDays)) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-reminders-v3?${q}`); },
+  getPoReminders: ({ site = "", date = "", horizonDays = PO_REMINDER_ACTION_HORIZON_DAYS, refresh = false } = {}) => { const q = new URLSearchParams({ horizonDays: String(poReminderHorizon(horizonDays)) }); if (site) q.set("site", site); if (date) q.set("date", date); if (refresh) q.set("refresh", "true"); return request(`/v1/po-reminders-v3?${q}`); },
   getPoDeliveryAlerts: ({ site = "", date = "", minimumHour = 17 } = {}) => { const q = new URLSearchParams({ minimumHour: String(minimumHour) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-delivery-alerts?${q}`); },
   overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),
   clearPoReminderOverride: (reminderKey) => request(`/v1/po-reminders/override/${encodeURIComponent(reminderKey)}`, { method: "DELETE" }),
@@ -89,7 +89,7 @@ export const operationsApi = {
   previewCalculatorPlans: (payload) => request("/v1/calculator-data/plan-preview", { method: "POST", body: JSON.stringify(payload) }),
   previewCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
   commitCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
-  syncCalculatorPlanning: ({ site, distributionDate }) => request("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) }),
+  syncCalculatorPlanning: ({ site, distributionDate, deactivateMissing = false }) => request("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate, deactivate_missing: deactivateMissing }) }),
   previewCalculatorPlanning: ({ site, distributionDate }) => { const q = new URLSearchParams({ site, distributionDate }); return request(`/v1/calculator-planning/preview?${q}`); },
   getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = true } = {}) => {
     if (syncCalculator && site && distributionDate) {
