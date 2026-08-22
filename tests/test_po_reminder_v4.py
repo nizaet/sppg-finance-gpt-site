@@ -173,6 +173,34 @@ class CompatibilityRegressionTests(unittest.TestCase):
             site="MAJA", as_of=date(2026, 8, 16), horizon_days=2
         )
 
+    def test_force_refresh_bypasses_short_v4_cache(self):
+        from backend import po_reminder_v3_api
+
+        po_reminder_v3_api._v4_cache.clear()
+        po_reminder_v3_api._v4_key_locks.clear()
+        with patch.object(
+            po_reminder_v3_api,
+            "po_reminders_v4",
+            side_effect=[{"value": 1}, {"value": 2}],
+        ) as delegated:
+            first, first_hit, _ = po_reminder_v3_api._cached_v4_payload(
+                "MAJA", date(2026, 8, 22), 2
+            )
+            cached, cached_hit, _ = po_reminder_v3_api._cached_v4_payload(
+                "MAJA", date(2026, 8, 22), 2
+            )
+            refreshed, refreshed_hit, _ = po_reminder_v3_api._cached_v4_payload(
+                "MAJA", date(2026, 8, 22), 2, force_refresh=True
+            )
+
+        self.assertEqual(first["value"], 1)
+        self.assertFalse(first_hit)
+        self.assertEqual(cached["value"], 1)
+        self.assertTrue(cached_hit)
+        self.assertEqual(refreshed["value"], 2)
+        self.assertFalse(refreshed_hit)
+        self.assertEqual(delegated.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
