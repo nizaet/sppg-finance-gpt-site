@@ -39,13 +39,19 @@ _v4_cache: dict[tuple[str, date, int], tuple[float, dict[str, Any]]] = {}
 _v4_key_locks: dict[tuple[str, date, int], Lock] = {}
 
 
-def _cached_v4_payload(site: str, target: date, horizon_days: int) -> tuple[dict[str, Any], bool, float]:
+def _cached_v4_payload(
+    site: str,
+    target: date,
+    horizon_days: int,
+    *,
+    force_refresh: bool = False,
+) -> tuple[dict[str, Any], bool, float]:
     key = (str(site or "").upper().strip(), target, int(horizon_days))
     now = monotonic()
 
     with _v4_cache_guard:
         cached = _v4_cache.get(key)
-        if cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
+        if not force_refresh and cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
             return deepcopy(cached[1]), True, 0.0
         key_lock = _v4_key_locks.setdefault(key, Lock())
 
@@ -55,7 +61,7 @@ def _cached_v4_payload(site: str, target: date, horizon_days: int) -> tuple[dict
         now = monotonic()
         with _v4_cache_guard:
             cached = _v4_cache.get(key)
-            if cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
+            if not force_refresh and cached and now - cached[0] <= _V4_CACHE_TTL_SECONDS:
                 return deepcopy(cached[1]), True, 0.0
 
         started = perf_counter()
@@ -208,6 +214,7 @@ def po_reminders_v3(
     site: str = "",
     as_of: date | None = Query(default=None, alias="date"),
     horizon_days: int = Query(default=PO_ACTION_HORIZON_DAYS, ge=1, le=31, alias="horizonDays"),
+    refresh: bool = False,
 ) -> dict[str, Any]:
     """Stable reminder endpoint with operational reconciliation.
 
@@ -226,7 +233,12 @@ def po_reminders_v3(
     target = as_of or date.today()
     effective_horizon_days = min(max(int(horizon_days or PO_ACTION_HORIZON_DAYS), 1), PO_ACTION_HORIZON_DAYS)
 
-    payload, cache_hit, compute_ms = _cached_v4_payload(site, target, effective_horizon_days)
+    payload, cache_hit, compute_ms = _cached_v4_payload(
+        site,
+        target,
+        effective_horizon_days,
+        force_refresh=refresh,
+    )
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
