@@ -101,7 +101,7 @@ function deliveryApiClientCompatibility() {
         }
         plannerCode = plannerCode.replace(
           reminderTitleAnchor,
-          `${reminderTitleAnchor}<PoOpsEnhancements mode="reminder" activeSite={activeSite} setReminders={setReminders} setRemindersPulled={setRemindersPulled} setPurchaseOrders={setPurchaseOrders} setDeliveryAlerts={setDeliveryAlerts} />`,
+          `${reminderTitleAnchor}<PoOpsEnhancements mode="reminder" activeSite={activeSite} reminders={reminders} setReminders={setReminders} setRemindersPulled={setRemindersPulled} setPurchaseOrders={setPurchaseOrders} setDeliveryAlerts={setDeliveryAlerts} />`,
         );
 
         const detailAnchor = `        {viewingPo && <div className="ops-po-detail" id="po-detail-panel">`;

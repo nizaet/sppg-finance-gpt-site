@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from backend.calculator_planning_bridge_api import _daily_plan_matches, _planning_payload
+from backend.calculator_planning_bridge_api import (
+    CalculatorPlanningSyncIn,
+    _daily_plan_matches,
+    _planning_payload,
+    sync_calculator_planning,
+)
 
 
 class _FakeFirestoreQuery:
@@ -227,3 +232,52 @@ def test_planning_bridge_combines_distinct_plans_on_same_date(monkeypatch):
     assert by_name["Beras"].planned_qty == 10
     assert preview["dailyPlanDocumentIds"] == ["balita", "regular"]
     assert preview["grandTotal"] == 150
+
+
+def test_explicit_reminder_sync_retires_stale_snapshot_when_source_plan_was_deleted(monkeypatch):
+    missing = HTTPException(404, detail={"message": "not found"})
+    monkeypatch.setattr("backend.calculator_planning_bridge_api._planning_payload", lambda *_: (_ for _ in ()).throw(missing))
+    monkeypatch.setattr("backend.calculator_planning_bridge_api.database_ready", lambda: True)
+
+    class _Cursor:
+        def execute(self, sql, params):
+            assert "source_system='CALCULATOR_FIRESTORE'" in sql
+            assert params == ("MAJA", date(2026, 8, 28))
+
+        def fetchall(self):
+            return [{"id": 91}]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class _Connection:
+        committed = False
+
+        def cursor(self):
+            return _Cursor()
+
+        def commit(self):
+            self.committed = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    fake_connection = _Connection()
+    monkeypatch.setattr("backend.calculator_planning_bridge_api.connection", lambda: fake_connection)
+
+    result = sync_calculator_planning(CalculatorPlanningSyncIn(
+        site="MAJA",
+        distribution_date=date(2026, 8, 28),
+        deactivate_missing=True,
+    ))
+
+    assert result["sourceMissing"] is True
+    assert result["supersededSnapshotIds"] == [91]
+    assert result["itemCount"] == 0
+    assert fake_connection.committed is True
