@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: SPPG Hermes Lab
-  version: 0.5.1
+  version: 0.5.2
   description: Experimental bridge from a Custom GPT to Hermes Agent with authenticated read-only operational access, shared memory, and approval-required staging proposals. This gateway cannot approve or execute operations.
 servers:
   - url: https://REPLACE_WITH_HERMES_LAB_HOST
@@ -17,7 +17,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [ok, service, mode, hermes_configured, shared_memory_configured, operational_read_configured, action_proposals_configured, action_execution_exposed, gpt_action_schema]
+                properties:
+                  ok: {type: boolean}
+                  service: {type: string}
+                  mode: {type: string}
+                  hermes_configured: {type: boolean}
+                  shared_memory_configured: {type: boolean}
+                  operational_read_configured: {type: boolean}
+                  action_proposals_configured: {type: boolean}
+                  action_execution_exposed: {type: boolean}
+                  gpt_action_schema: {type: string}
   /v1/lab/chat:
     post:
       operationId: askHermesLab
@@ -131,7 +141,28 @@ paths:
                     type: array
                     items:
                       type: object
-                      additionalProperties: true
+                      properties:
+                        purchase_order_id: {type: integer}
+                        po_code: {type: string}
+                        revision_no: {type: [integer, 'null']}
+                        site: {type: [string, 'null']}
+                        vendor_code: {type: [string, 'null']}
+                        status: {type: [string, 'null']}
+                        distribution_date: {type: [string, 'null'], format: date}
+                        item_count: {type: integer}
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              purchase_order_item_id: {type: [integer, 'null']}
+                              item_code: {type: [string, 'null']}
+                              item_name: {type: [string, 'null']}
+                              planned_qty: {type: [number, 'null']}
+                              po_qty: {type: [number, 'null']}
+                              unit: {type: [string, 'null']}
+                              planning_price: {type: [number, 'null']}
+                              po_price: {type: [number, 'null']}
                   count:
                     type: integer
                   readOnly:
