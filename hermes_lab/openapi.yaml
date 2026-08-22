@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: SPPG Hermes Lab
-  version: 0.4.0
-  description: Experimental bridge from a Custom GPT to Hermes Agent with read-only operational access, shared memory, and approval-required staging proposals. This gateway cannot approve or execute operations.
+  version: 0.5.0
+  description: Experimental bridge from a Custom GPT to Hermes Agent with authenticated read-only operational access, shared memory, and approval-required staging proposals. This gateway cannot approve or execute operations.
 servers:
   - url: https://REPLACE_WITH_HERMES_LAB_HOST
 paths:
@@ -71,6 +71,73 @@ paths:
                     type: boolean
                   memory_stored:
                     type: boolean
+  /v1/lab/purchase-orders:
+    get:
+      operationId: searchHermesSppgPurchaseOrders
+      summary: Search live SPPG purchase orders without changing data
+      description: READ-ONLY. Use whenever the user asks about live or historical PO records. Supply site, vendor, and distribution date or date range when known. The result comes from SPPG Core PostgreSQL and this action cannot create, update, delete, finalize, or send a PO.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: site
+          schema:
+            type: string
+            enum: [MAJA, CEMPLANG]
+        - in: query
+          name: vendor
+          schema:
+            type: string
+            maxLength: 100
+        - in: query
+          name: distributionDate
+          description: Exact distribution date. Do not combine with dateFrom/dateTo unless intentionally narrowing the same date.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: dateFrom
+          description: Inclusive start of the distribution-date range.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: dateTo
+          description: Inclusive end of the distribution-date range.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Matching PO headers and line items from SPPG Core PostgreSQL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count, readOnly, sourceOfTruth]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  count:
+                    type: integer
+                  readOnly:
+                    type: boolean
+                  sourceOfTruth:
+                    type: string
   /v1/lab/proposals:
     post:
       operationId: createHermesActionProposal

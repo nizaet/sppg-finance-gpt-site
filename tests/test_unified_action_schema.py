@@ -182,9 +182,9 @@ def test_v0183_preserves_v0182_and_forbids_split_stock_opname_commits():
     assert len(description) <= 300
 
 
-def test_v0184_exposes_multi_day_po_coverage_without_losing_previous_actions():
+def test_v0184_exposes_multi_day_po_coverage_and_runtime_extensions_within_builder_limit():
     unified = schema_v0184()
-    assert unified["info"]["version"] == "0.18.4"
+    assert unified["info"]["version"] == "0.18.9"
     assert "/v1/inventory/stock-opname/whatsapp" in unified["paths"]
     opname_description = unified["paths"]["/v1/inventory/stock-opname/whatsapp"]["post"]["description"]
     assert "replaces the prior physical count" in opname_description
@@ -193,3 +193,10 @@ def test_v0184_exposes_multi_day_po_coverage_without_losing_previous_actions():
     response = unified["paths"]["/v1/po-whatsapp-preview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert response["properties"]["coverageDates"]["type"] == "array"
     assert response["properties"]["coverageDayCount"]["type"] == "integer"
+    operations = [
+        (method, path)
+        for path, path_item in unified["paths"].items()
+        for method in path_item
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+    ]
+    assert len(operations) == 30

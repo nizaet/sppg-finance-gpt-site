@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import os
 from collections import defaultdict
@@ -7,12 +8,12 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 app = FastAPI(
     title="SPPG Hermes Lab Gateway",
-    version="0.4.0",
+    version="0.5.0",
     description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals. The gateway cannot execute operations.",
 )
 
@@ -31,6 +32,7 @@ Use the supplied behavior memory to preserve the user's established corrections,
 Treat assistant inference as weaker than explicit user statements or confirmed actions. Never turn an inferred pattern directly into an operational mutation.
 If the user asks for a production mutation, explain or propose the action only unless a separately approved production tool is explicitly provided later.
 Prefer explicit site/date/vendor identifiers and report genuine uncertainty rather than guessing.
+For live PO questions, use the dedicated read-only purchase-order search result supplied by the Custom GPT action. Never claim database access succeeded when that action returned an authentication or connection error.
 For CREATE_PO proposals, provide only a complete canonical DRAFT payload using snake_case fields: po_code, distribution_date, optional cooking_at/source_planning_snapshot_id, status DRAFT, items, and optional per-day coverage. Every item requires item_name and po_qty greater than zero. Never invent a quantity, price, planning identifier, vendor, site, or date.
 """
 
@@ -182,8 +184,13 @@ class LabActionProposalResponse(BaseModel):
 def _authorize(authorization: str | None) -> None:
     if not LAB_GATEWAY_KEY:
         raise HTTPException(status_code=503, detail="LAB_GATEWAY_KEY is not configured")
-    if authorization != f"Bearer {LAB_GATEWAY_KEY}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    scheme, separator, credential = (authorization or "").partition(" ")
+    if not separator or scheme.lower() != "bearer" or not hmac.compare_digest(credential, LAB_GATEWAY_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def _memory_headers() -> dict[str, str]:
@@ -272,9 +279,72 @@ def health() -> Dict[str, Any]:
         "mode": "read_operational_write_memory_propose_actions",
         "hermes_configured": bool(HERMES_API_URL and HERMES_API_KEY),
         "shared_memory_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
+        "operational_read_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
         "action_proposals_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
         "action_execution_exposed": False,
     }
+
+
+@app.get("/v1/lab/purchase-orders")
+async def search_purchase_orders_read_only(
+    authorization: str | None = Header(default=None),
+    site: Literal["MAJA", "CEMPLANG"] | None = None,
+    vendor: str = Query(default="", max_length=100),
+    distribution_date: date | None = Query(default=None, alias="distributionDate"),
+    date_from: date | None = Query(default=None, alias="dateFrom"),
+    date_to: date | None = Query(default=None, alias="dateTo"),
+    status: str = Query(default="", max_length=60),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Proxy an authenticated, read-only PO search to SPPG Core."""
+    _authorize(authorization)
+    if not SPPG_CORE_URL or not SPPG_GPT_API_KEY:
+        raise HTTPException(status_code=503, detail="SPPG Core operational read API is not configured")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="dateFrom must be on or before dateTo")
+
+    params: dict[str, Any] = {"limit": limit}
+    if site:
+        params["site"] = site
+    if vendor.strip():
+        params["vendor"] = vendor.strip()
+    if distribution_date:
+        params["distributionDate"] = distribution_date.isoformat()
+    if date_from:
+        params["dateFrom"] = date_from.isoformat()
+    if date_to:
+        params["dateTo"] = date_to.isoformat()
+    if status.strip():
+        params["status"] = status.strip()
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{SPPG_CORE_URL}/v1/purchase-orders/search",
+                params=params,
+                headers=_memory_headers(),
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"SPPG Core PO search connection failed: {exc.__class__.__name__}",
+        ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "SPPG Core rejected the read-only PO search",
+                "upstreamStatus": response.status_code,
+            },
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Unexpected SPPG Core PO search response") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Unexpected SPPG Core PO search response")
+    return {**data, "readOnly": True, "sourceOfTruth": "SPPG Core PostgreSQL"}
 
 
 @app.post("/v1/lab/proposals", response_model=LabActionProposalResponse)

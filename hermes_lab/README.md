@@ -1,4 +1,4 @@
-# SPPG Hermes Lab v0.4
+# SPPG Hermes Lab v0.5
 
 Eksperimen terisolasi untuk menghubungkan Custom GPT ke Hermes Agent. Hermes dapat membaca konteks, berbagi memory, dan membuat proposal staging yang wajib disetujui operator. Gateway Hermes tetap tidak memiliki endpoint approval atau eksekusi.
 
@@ -12,6 +12,7 @@ Kode gateway berada di repo yang sama dengan branch Railway `llm-wiki-v0`, tetap
 
 - Data operasional tetap READ ONLY.
 - Hermes boleh menulis shared memory dan proposal ke staging queue.
+- Query PO memakai proxy read-only `/v1/lab/purchase-orders` ke PostgreSQL melalui SPPG Core; filter tanggal dapat berupa tanggal tunggal atau rentang inklusif.
 - Proposal selalu dimulai sebagai `PENDING`/`PLANNED`, membutuhkan approval OWNER, dan tidak pernah dieksekusi oleh gateway/Hermes.
 - Tidak boleh membuat/mengubah/menghapus transaksi, PO, receiving, stok, file Drive, GitHub, Firestore, PostgreSQL, atau data SPPG lainnya.
 - Tidak boleh mengirim WhatsApp/email/pesan.
@@ -82,9 +83,12 @@ Harus menampilkan `mode: read_operational_write_memory_propose_actions`, `hermes
 4. Auth Action: Bearer/API Key = nilai `LAB_GATEWAY_KEY`.
 5. Jangan berikan endpoint approval, endpoint OWNER `create-po-draft`, atau kunci `SPPG_HERMES_APPROVAL_KEY` kepada Hermes.
 
+Jika Action mengembalikan `401 Unauthorized`, nilai API key pada GPT Builder tidak sama dengan `LAB_GATEWAY_KEY` yang aktif di container gateway. Perbarui API key GPT, bukan `SPPG_GPT_API_KEY` atau `SPPG_HERMES_APPROVAL_KEY`.
+
 ### Instruksi GPT v0
 
 - Gunakan Hermes Lab untuk analisis operasional SPPG yang membutuhkan penelusuran atau reasoning agentik.
+- Untuk pertanyaan PO aktual/historis, selalu panggil `searchHermesSppgPurchaseOrders` dengan site, vendor, dan tanggal/rentang tanggal yang diminta sebelum menjawab.
 - Semua tool gateway bersifat read-only atau staging-only.
 - Untuk create/update/delete/send/commit/pay/approve, buat proposal bila schema lengkap; keputusan dan eksekusi DRAFT hanya dilakukan OWNER di aplikasi Railway.
 - Jangan menebak site, tanggal, vendor, PO, atau identifier bila data tidak cukup.
