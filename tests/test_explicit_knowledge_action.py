@@ -6,7 +6,7 @@ def test_explicit_knowledge_action_is_distinct_from_operational_review():
     schema = schema_v0184_core_repair()
     operation = schema["paths"]["/v1/gpt/knowledge"]["post"]
 
-    assert schema["info"]["version"] == "0.18.9"
+    assert schema["info"]["version"] == "0.18.10"
     assert operation["operationId"] == "recordExplicitSppgKnowledge"
     assert operation["x-openai-isConsequential"] is False
     assert "never send them to operational review" in operation["description"]
@@ -30,6 +30,28 @@ def test_primary_custom_gpt_schema_stays_within_operation_limit():
     assert "/v1/calculator-data/plan-preview" not in schema["paths"]
     assert "/v1/calculator-data/import" not in schema["paths"]
     assert "/v1/accountant-excel/from-planning" not in schema["paths"]
+
+
+def test_primary_custom_gpt_schema_has_properties_on_every_object():
+    schema = schema_v0184_core_repair()
+    missing = []
+
+    def inspect(node, path=()):
+        if isinstance(node, dict):
+            schema_type = node.get("type")
+            is_object = schema_type == "object" or (
+                isinstance(schema_type, list) and "object" in schema_type
+            )
+            if is_object and "properties" not in node:
+                missing.append(path)
+            for key, value in node.items():
+                inspect(value, path + (str(key),))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                inspect(value, path + (str(index),))
+
+    inspect(schema)
+    assert missing == []
 
 
 def test_explicit_knowledge_is_promoted_as_confirmed_user_fact(monkeypatch):

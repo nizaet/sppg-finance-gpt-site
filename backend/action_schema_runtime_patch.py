@@ -28,6 +28,22 @@ def _obj(properties: dict[str, Any], required: list[str] | None = None) -> dict[
     return value
 
 
+def _ensure_gpt_builder_object_properties(node: Any) -> None:
+    """Make every object schema explicit enough for GPT Builder validation."""
+    if isinstance(node, dict):
+        schema_type = node.get("type")
+        is_object = schema_type == "object" or (
+            isinstance(schema_type, list) and "object" in schema_type
+        )
+        if is_object and "properties" not in node:
+            node["properties"] = {}
+        for value in node.values():
+            _ensure_gpt_builder_object_properties(value)
+    elif isinstance(node, list):
+        for value in node:
+            _ensure_gpt_builder_object_properties(value)
+
+
 def _knowledge_operation() -> dict[str, Any]:
     return {"get": {
         "operationId": "getSppgOperationalRuntimeContext",
@@ -214,8 +230,8 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     payload = deepcopy(_ORIGINAL_V0184())
     payload["info"] = {
         "title": "SPPG Operations, Runtime Knowledge, Accountant and BGN Bridge",
-        "version": "0.18.9",
-        "description": "Stable v0.18.4 URL with explicit LLM Wiki writes, shared GPT/Hermes memory, guarded operational workflows, and a GPT Builder-safe operation count.",
+        "version": "0.18.10",
+        "description": "Stable v0.18.4 URL with explicit LLM Wiki writes, shared GPT/Hermes memory, guarded operational workflows, and GPT Builder-compatible object schemas.",
     }
     paths = payload.setdefault("paths", {})
     paths["/v1/gpt/operational-context"] = _knowledge_operation()
@@ -247,6 +263,7 @@ def schema_v0184_core_repair() -> dict[str, Any]:
     if receiving:
         receiving["summary"] = "Preview or record a deterministic goods receipt across one or more POs"
         receiving["description"] = "Resolve receiving text against all relevant open POs for the same site/vendor. If canCommit=true and the user explicitly says commit, execute; ask only on genuine ambiguity."
+    _ensure_gpt_builder_object_properties(payload)
     return payload
 
 
