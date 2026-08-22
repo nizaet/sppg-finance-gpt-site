@@ -1,4 +1,4 @@
-# SPPG Hermes Lab v0.5
+# SPPG Hermes Lab v0.5.1
 
 Eksperimen terisolasi untuk menghubungkan Custom GPT ke Hermes Agent. Hermes dapat membaca konteks, berbagi memory, dan membuat proposal staging yang wajib disetujui operator. Gateway Hermes tetap tidak memiliki endpoint approval atau eksekusi.
 
@@ -8,7 +8,7 @@ Custom GPT -> HTTPS `hermes_lab` gateway -> Hermes Agent API -> approved read-on
 
 Kode gateway berada di repo yang sama dengan branch Railway `llm-wiki-v0`, tetapi image gateway tetap dibangun dan dijalankan terpisah di VM.
 
-## Batas v0.4
+## Batas v0.5.1
 
 - Data operasional tetap READ ONLY.
 - Hermes boleh menulis shared memory dan proposal ke staging queue.
@@ -45,6 +45,7 @@ Jangan mengisi nilai yang belum mempunyai sumber. Proposal tidak lengkap harus d
 - `HERMES_MODEL` = opsional, default `hermes-agent`.
 - `SPPG_CORE_URL` = URL Railway SPPG Core.
 - `SPPG_GPT_API_KEY` = kunci gateway untuk context, memory, dan pembuatan proposal saja.
+- `HERMES_PUBLIC_URL` = opsional tetapi disarankan untuk production; origin HTTPS stabil milik named Cloudflare Tunnel, tanpa path di akhir.
 
 ## Hermes Agent
 
@@ -78,12 +79,14 @@ Harus menampilkan `mode: read_operational_write_memory_propose_actions`, `hermes
 ## Custom GPT
 
 1. Buat GPT baru: `SPPG Hermes Lab`.
-2. Tambahkan Action dari `hermes_lab/openapi.yaml`.
-3. Ganti server placeholder dengan URL HTTPS gateway.
+2. Setelah gateway hidup, import Action langsung dari `https://<HOST-HERMES>/v1/schema/chatgpt-hermes.json`.
+3. Endpoint schema tersebut otomatis memakai origin publik gateway dan tidak mengandung placeholder. `hermes_lab/openapi.yaml` hanya template pengembangan.
 4. Auth Action: Bearer/API Key = nilai `LAB_GATEWAY_KEY`.
 5. Jangan berikan endpoint approval, endpoint OWNER `create-po-draft`, atau kunci `SPPG_HERMES_APPROVAL_KEY` kepada Hermes.
 
 Jika Action mengembalikan `401 Unauthorized`, nilai API key pada GPT Builder tidak sama dengan `LAB_GATEWAY_KEY` yang aktif di container gateway. Perbarui API key GPT, bukan `SPPG_GPT_API_KEY` atau `SPPG_HERMES_APPROVAL_KEY`.
+
+Schema Action adalah kontrak capability dan keamanan, bukan tempat knowledge disimpan. Penambahan aturan, koreksi, vendor, alias, pola percakapan, atau memory tidak memerlukan import schema ulang. Import ulang hanya diperlukan jika gateway menambah atau mengubah operation/tool. Untuk URL yang tidak berubah setelah restart, gunakan named Cloudflare Tunnel dan isi `HERMES_PUBLIC_URL` dengan hostname stabilnya.
 
 ### Instruksi GPT v0
 

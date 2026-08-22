@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: SPPG Hermes Lab
-  version: 0.5.0
+  version: 0.5.1
   description: Experimental bridge from a Custom GPT to Hermes Agent with authenticated read-only operational access, shared memory, and approval-required staging proposals. This gateway cannot approve or execute operations.
 servers:
   - url: https://REPLACE_WITH_HERMES_LAB_HOST
@@ -273,6 +273,7 @@ paths:
                   executionLocked:
                     type: boolean
 components:
+  schemas: {}
   securitySchemes:
     bearerAuth:
       type: http

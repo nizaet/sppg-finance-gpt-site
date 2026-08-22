@@ -3,17 +3,19 @@ import hmac
 import json
 import os
 from collections import defaultdict
+from copy import deepcopy
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Literal
+from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 app = FastAPI(
     title="SPPG Hermes Lab Gateway",
-    version="0.5.0",
+    version="0.5.1",
     description="Isolated SPPG gateway that lets Hermes read context, share durable memory, and stage approval-required action proposals. The gateway cannot execute operations.",
 )
 
@@ -23,6 +25,14 @@ LAB_GATEWAY_KEY = os.getenv("LAB_GATEWAY_KEY", "")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes-agent")
 SPPG_CORE_URL = os.getenv("SPPG_CORE_URL", "").rstrip("/")
 SPPG_GPT_API_KEY = os.getenv("SPPG_GPT_API_KEY", "")
+HERMES_PUBLIC_URL = os.getenv("HERMES_PUBLIC_URL", "").strip().rstrip("/")
+
+GPT_ACTION_OPERATIONS = {
+    "/health": {"get": "hermesLabHealth"},
+    "/v1/lab/chat": {"post": "askHermesLab"},
+    "/v1/lab/purchase-orders": {"get": "searchHermesSppgPurchaseOrders"},
+    "/v1/lab/proposals": {"post": "createHermesActionProposal"},
+}
 
 SYSTEM_POLICY = """You are SPPG Hermes Lab, an experimental operations agent in migration mode.
 You may inspect and reason over approved SPPG/LLM Wiki context, including confirmed knowledge and conversation behavior learned from the legacy GPTS.
@@ -200,6 +210,74 @@ def _memory_headers() -> dict[str, str]:
     }
 
 
+def _validated_origin(value: str) -> str | None:
+    candidate = value.strip().rstrip("/")
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _request_public_origin(request: Request) -> str:
+    if HERMES_PUBLIC_URL:
+        configured = _validated_origin(HERMES_PUBLIC_URL)
+        if not configured:
+            raise HTTPException(status_code=503, detail="HERMES_PUBLIC_URL is invalid")
+        return configured
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    scheme = forwarded_proto or request.url.scheme
+    host = forwarded_host or request.headers.get("host", "").strip()
+    inferred = _validated_origin(f"{scheme}://{host}")
+    if not inferred:
+        raise HTTPException(status_code=503, detail="Unable to determine the public Hermes origin")
+    return inferred
+
+
+def _build_chatgpt_action_schema(public_origin: str) -> dict[str, Any]:
+    """Return the small, stable GPT Action contract with a real runtime origin."""
+    schema = deepcopy(app.openapi())
+    schema["info"] = {
+        **schema.get("info", {}),
+        "title": "SPPG Hermes Lab",
+        "version": app.version,
+        "description": (
+            "Authenticated SPPG Hermes gateway with shared behavior memory, "
+            "read-only operational access, and approval-required staging proposals."
+        ),
+    }
+    schema["servers"] = [{"url": public_origin}]
+    schema["paths"] = {
+        path: deepcopy(schema["paths"][path])
+        for path in GPT_ACTION_OPERATIONS
+        if path in schema.get("paths", {})
+    }
+
+    for path, methods in GPT_ACTION_OPERATIONS.items():
+        for method, operation_id in methods.items():
+            operation = schema["paths"][path][method]
+            operation["operationId"] = operation_id
+            if path != "/health":
+                operation["security"] = [{"bearerAuth": []}]
+                operation["parameters"] = [
+                    parameter
+                    for parameter in operation.get("parameters", [])
+                    if str(parameter.get("name", "")).lower() != "authorization"
+                ]
+
+    components = schema.setdefault("components", {})
+    if not isinstance(components.get("schemas"), dict):
+        components["schemas"] = {}
+    components.setdefault("securitySchemes", {})["bearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+    }
+    return schema
+
+
 def _last_user_message(messages: List[Message]) -> str:
     for message in reversed(messages):
         if message.role == "user":
@@ -282,7 +360,14 @@ def health() -> Dict[str, Any]:
         "operational_read_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
         "action_proposals_configured": bool(SPPG_CORE_URL and SPPG_GPT_API_KEY),
         "action_execution_exposed": False,
+        "gpt_action_schema": "/v1/schema/chatgpt-hermes.json",
     }
+
+
+@app.get("/v1/schema/chatgpt-hermes.json", include_in_schema=False)
+def chatgpt_action_schema(request: Request) -> dict[str, Any]:
+    """Serve an import-ready GPT Action schema for the gateway's current origin."""
+    return _build_chatgpt_action_schema(_request_public_origin(request))
 
 
 @app.get("/v1/lab/purchase-orders")

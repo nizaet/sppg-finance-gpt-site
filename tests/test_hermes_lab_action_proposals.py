@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import hermes_lab.app as hermes_gateway
@@ -29,6 +30,45 @@ class HermesLabActionProposalTests(unittest.TestCase):
         custom_schema = Path("hermes_lab/openapi.yaml").read_text(encoding="utf-8")
         self.assertIn("operationId: searchHermesSppgPurchaseOrders", custom_schema)
         self.assertIn("READ-ONLY", custom_schema)
+
+    def test_importable_gpt_schema_has_runtime_origin_and_explicit_components(self):
+        schema = hermes_gateway._build_chatgpt_action_schema("https://hermes.example.test")
+
+        self.assertEqual([{"url": "https://hermes.example.test"}], schema["servers"])
+        self.assertEqual(set(hermes_gateway.GPT_ACTION_OPERATIONS), set(schema["paths"]))
+        self.assertIsInstance(schema["components"]["schemas"], dict)
+        self.assertEqual(
+            "searchHermesSppgPurchaseOrders",
+            schema["paths"]["/v1/lab/purchase-orders"]["get"]["operationId"],
+        )
+        po_parameters = schema["paths"]["/v1/lab/purchase-orders"]["get"].get("parameters", [])
+        self.assertNotIn("authorization", {str(row.get("name", "")).lower() for row in po_parameters})
+        self.assertEqual(
+            [{"bearerAuth": []}],
+            schema["paths"]["/v1/lab/purchase-orders"]["get"]["security"],
+        )
+
+    def test_gateway_schema_endpoint_is_hidden_from_its_own_action_contract(self):
+        paths = {route.path for route in app.routes}
+        self.assertIn("/v1/schema/chatgpt-hermes.json", paths)
+        schema = hermes_gateway._build_chatgpt_action_schema("https://hermes.example.test")
+        self.assertNotIn("/v1/schema/chatgpt-hermes.json", schema["paths"])
+
+    def test_gateway_schema_endpoint_uses_forwarded_public_origin(self):
+        with TestClient(app) as client:
+            response = client.get(
+                "/v1/schema/chatgpt-hermes.json",
+                headers={
+                    "x-forwarded-proto": "https",
+                    "x-forwarded-host": "hermes.example.test",
+                },
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(
+            [{"url": "https://hermes.example.test"}],
+            response.json()["servers"],
+        )
 
     def test_gateway_bearer_auth_accepts_active_lab_key_only(self):
         original = hermes_gateway.LAB_GATEWAY_KEY
