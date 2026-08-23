@@ -1,93 +1,59 @@
-import React, { useState } from "react";
-import { CalendarDays, ChevronDown, CircleCheck, CircleAlert, RefreshCw, Scale, ShieldCheck, Sparkles } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { CalendarDays, ChevronDown, CircleCheck, CircleAlert, ClipboardCheck, Plus, RefreshCw, Scale, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
-function todayJakarta() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-}
-function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  return Number.isNaN(parsed.getTime()) ? String(value) : new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "short" }).format(parsed);
-}
-function money(value) {
-  return value === null || value === undefined ? "Belum dapat dihitung" : new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
-}
-function number(value) { return value === null || value === undefined ? "-" : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(Number(value)); }
+function todayJakarta() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
+function formatDate(value) { if (!value) return "-"; const parsed = new Date(`${String(value).slice(0, 10)}T00:00:00`); return Number.isNaN(parsed.getTime()) ? String(value) : new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "short" }).format(parsed); }
+function money(value) { return value === null || value === undefined || Number.isNaN(Number(value)) ? "Belum dapat dihitung" : new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value)); }
+function number(value) { return value === null || value === undefined || value === "" ? "-" : new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(Number(value)); }
+function asNumber(value) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : null; }
 
-function DayCard({ day }) {
+function recalculateDay(day) {
+  const materials = day.materials || [];
+  const complete = materials.length > 0 && materials.every((item) => String(item.itemName || "").trim() && asNumber(item.quantity) !== null && asNumber(item.planningPrice) !== null);
+  const total = complete ? Math.round(materials.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.planningPrice)), 0)) : null;
+  const perPm = total !== null && Number(day.targetPm) > 0 ? Math.round(total / Number(day.targetPm)) : null;
+  return { ...day, estimatedTotal: total, estimatedPerPm: perPm, withinPagu: perPm === null || !Number(day.paguPerPm) ? null : perPm <= Number(day.paguPerPm), state: total === null ? "NEEDS_DATA" : "PROPOSED_DRAFT" };
+}
+
+function DayCard({ day, onMaterialChange, onAddMaterial, onRemoveMaterial }) {
   const isExisting = day.state === "EXISTING";
   const isReady = day.state === "PROPOSED_DRAFT";
+  const editable = Boolean(day.draft);
+  const breakdown = day.targetPmBreakdown || {};
   return <article className={`weekly-menu-day ${isExisting ? "existing" : isReady ? "ready" : "needs-data"}`}>
-    <div className="weekly-menu-day-head">
-      <div><span className="weekly-menu-date">{formatDate(day.date)}</span><h4>{day.menuTitle || "Belum bisa dibuat"}</h4></div>
-      <span className={`weekly-menu-status ${isExisting ? "existing" : isReady ? "ready" : "missing"}`}>{isExisting ? "SUDAH ADA" : isReady ? "DRAFT" : "PERLU DATA"}</span>
-    </div>
+    <div className="weekly-menu-day-head"><div><span className="weekly-menu-date">{formatDate(day.date)}</span><h4>{day.menuTitle || "Belum bisa dibuat"}</h4></div><span className={`weekly-menu-status ${isExisting ? "existing" : isReady ? "ready" : "missing"}`}>{isExisting ? "SUDAH ADA" : isReady ? "DRAFT" : "PERLU DATA"}</span></div>
     {day.recipeNames?.length > 0 && <p className="weekly-menu-recipes">{day.recipeNames.join(" · ")}</p>}
     {day.fruitNames?.length > 0 && <p className="weekly-menu-fruit">Buah: {day.fruitNames.join(", ")}</p>}
-    <div className="weekly-menu-metrics">
-      <span><small>Target PM</small><strong>{number(day.targetPm)}</strong></span>
-      <span><small>Estimasi total</small><strong>{money(day.estimatedTotal)}</strong></span>
-      <span><small>Biaya / PM</small><strong>{money(day.estimatedPerPm)}</strong></span>
-      <span><small>Pagu / PM</small><strong>{money(day.paguPerPm)}</strong></span>
-    </div>
-    {day.withinPagu !== null && <div className={`weekly-menu-pagu ${day.withinPagu ? "pass" : "over"}`}>{day.withinPagu ? <CircleCheck size={15} /> : <CircleAlert size={15} />}{day.withinPagu ? "Masuk pagu berdasarkan harga planning" : "Melebihi pagu — jangan dipindahkan ke Kalkulator"}</div>}
+    <div className="weekly-menu-metrics"><span><small>Target PM</small><strong>{number(day.targetPm)}</strong>{breakdown.small !== null && breakdown.small !== undefined && <em>{number(breakdown.small)} kecil + {number(breakdown.large)} besar</em>}</span><span><small>Estimasi total</small><strong>{money(day.estimatedTotal)}</strong></span><span><small>Biaya / PM</small><strong>{money(day.estimatedPerPm)}</strong></span><span><small>Pagu / PM</small><strong>{money(day.paguPerPm)}</strong></span></div>
+    {day.withinPagu !== null && <div className={`weekly-menu-pagu ${day.withinPagu ? "pass" : "over"}`}>{day.withinPagu ? <CircleCheck size={15} /> : <CircleAlert size={15} />}{day.withinPagu ? "Masuk pagu berdasarkan bahan DRAFT" : "Belum masuk pagu — periksa bahan atau harga"}</div>}
     {day.sourceTemplate && <p className="weekly-menu-source">Pola sumber: {formatDate(day.sourceTemplate.distributionDate)} · {day.sourceTemplate.daysSinceLastPlanned !== null && day.sourceTemplate.daysSinceLastPlanned !== undefined ? `terakhir dipakai ${day.sourceTemplate.daysSinceLastPlanned} hari lalu` : `snapshot #${day.sourceTemplate.snapshotId}`}</p>}
-    {(day.materials?.length > 0 || day.dataGaps?.length > 0) && <details className="weekly-menu-details">
-      <summary><ChevronDown size={15} /> Bahan & perhitungan</summary>
-      {day.materials?.length > 0 && <div className="weekly-menu-materials">{day.materials.map((item, index) => <div key={`${item.itemName}-${index}`}><strong>{item.itemName || "Tanpa nama"}</strong><span>{number(item.quantity ?? item.plannedQty)} {item.unit || ""} × {money(item.planningPrice)}</span><b>{money(item.estimatedLineTotal)}</b></div>)}</div>}
+    {(day.materials?.length > 0 || day.dataGaps?.length > 0) && <details className="weekly-menu-details"><summary><ChevronDown size={15} /> Bahan & perhitungan {editable && <small>edit hanya pada DRAFT ini</small>}</summary>
+      {day.materials?.length > 0 && <div className={`weekly-menu-materials ${editable ? "editable" : ""}`}>{day.materials.map((item, index) => editable ? <div className="weekly-menu-material-row" key={`${item.itemName}-${index}`}><input aria-label="Nama bahan" value={item.itemName || ""} onChange={(event) => onMaterialChange(index, "itemName", event.target.value)} /><input aria-label="Jumlah" type="number" min="0" step="0.01" value={item.quantity ?? ""} onChange={(event) => onMaterialChange(index, "quantity", event.target.value)} /><input aria-label="Satuan" value={item.unit || ""} onChange={(event) => onMaterialChange(index, "unit", event.target.value)} /><input aria-label="Harga satuan" type="number" min="0" value={item.planningPrice ?? ""} onChange={(event) => onMaterialChange(index, "planningPrice", event.target.value)} /><b>{money(item.estimatedLineTotal ?? (asNumber(item.quantity) !== null && asNumber(item.planningPrice) !== null ? Number(item.quantity) * Number(item.planningPrice) : null))}</b><button type="button" aria-label="Hapus bahan" onClick={() => onRemoveMaterial(index)}><Trash2 size={14} /></button></div> : <div key={`${item.itemName}-${index}`}><strong>{item.itemName || "Tanpa nama"}</strong><span>{number(item.quantity ?? item.plannedQty)} {item.unit || ""} × {money(item.planningPrice)}</span><b>{money(item.estimatedLineTotal)}</b></div>)}</div>}
+      {editable && <button className="weekly-menu-add" type="button" onClick={onAddMaterial}><Plus size={15} /> Tambah bahan</button>}
       {day.dataGaps?.length > 0 && <ul className="weekly-menu-gaps">{day.dataGaps.map((gap, index) => <li key={index}>{gap}</li>)}</ul>}
     </details>}
   </article>;
 }
 
 export default function OperationsMenuPlanningAdvisor() {
-  const [site, setSite] = useState("MAJA");
-  const [weekStart, setWeekStart] = useState(todayJakarta);
-  const [days, setDays] = useState("7");
-  const [targetPm, setTargetPm] = useState("");
-  const [paguPerPm, setPaguPerPm] = useState("");
-  const [draft, setDraft] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [site, setSite] = useState("MAJA"); const [weekStart, setWeekStart] = useState(todayJakarta); const [days, setDays] = useState("7");
+  const [porsiKecil, setPorsiKecil] = useState(""); const [porsiBesar, setPorsiBesar] = useState(""); const [paguPerPm, setPaguPerPm] = useState("");
+  const [draft, setDraft] = useState(null); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [loading, setLoading] = useState(false); const [transferring, setTransferring] = useState(false);
+  const totalPm = (asNumber(porsiKecil) || 0) + (asNumber(porsiBesar) || 0);
+  const transferReady = useMemo(() => { const proposed = draft?.days?.filter((day) => day.draft) || []; return proposed.length > 0 && proposed.every((day) => day.state === "PROPOSED_DRAFT" && day.withinPagu === true && (day.materials || []).length > 0); }, [draft]);
 
-  const buildDraft = async () => {
-    setLoading(true); setError("");
-    try {
-      const data = await operationsApi.getWeeklyMenuDraft({ site, weekStart, days: Number(days), targetPm, paguPerPm });
-      setDraft(data);
-      if (!targetPm && data.targetPm) setTargetPm(String(data.targetPm));
-      if (!paguPerPm && data.paguPerPm) setPaguPerPm(String(data.paguPerPm));
-    } catch (err) { setDraft(null); setError(err.message || "Gagal membuat draft menu mingguan."); }
-    finally { setLoading(false); }
-  };
+  const buildDraft = async () => { setLoading(true); setError(""); setMessage(""); try { const data = await operationsApi.getWeeklyMenuDraft({ site, weekStart, days: Number(days), targetPm: totalPm || "", paguPerPm }); const breakdown = data.targetPmBreakdown || {}; const small = asNumber(porsiKecil) ?? breakdown.small; const large = asNumber(porsiBesar) ?? breakdown.large; const selectedTotal = (small || 0) + (large || 0); if (!porsiKecil && small !== null && small !== undefined) setPorsiKecil(String(small)); if (!porsiBesar && large !== null && large !== undefined) setPorsiBesar(String(large)); if (!paguPerPm && data.paguPerPm) setPaguPerPm(String(data.paguPerPm)); if (selectedTotal) data.days = (data.days || []).map((day) => day.draft ? { ...day, targetPm: selectedTotal, targetPmBreakdown: { small, large, total: selectedTotal } } : day); setDraft(data); } catch (err) { setDraft(null); setError(err.message || "Gagal membuat draft menu mingguan."); } finally { setLoading(false); } };
+  const changeMaterial = (dayDate, index, field, value) => setDraft((current) => ({ ...current, days: current.days.map((day) => { if (day.date !== dayDate) return day; const materials = day.materials.map((item, position) => position === index ? { ...item, [field]: value, estimatedLineTotal: field === "quantity" || field === "planningPrice" ? null : item.estimatedLineTotal } : item); return recalculateDay({ ...day, materials }); }) }));
+  const addMaterial = (dayDate) => setDraft((current) => ({ ...current, days: current.days.map((day) => day.date === dayDate ? recalculateDay({ ...day, materials: [...day.materials, { itemName: "", quantity: "", unit: "kg", planningPrice: "", estimatedLineTotal: null }] }) : day) }));
+  const removeMaterial = (dayDate, index) => setDraft((current) => ({ ...current, days: current.days.map((day) => day.date === dayDate ? recalculateDay({ ...day, materials: day.materials.filter((_, position) => position !== index) }) : day) }));
+  const transferToCalculator = async () => { if (!transferReady || !window.confirm("Pindahkan hanya hari DRAFT yang sudah masuk pagu ke Kalkulator? Hari yang sudah ada tidak akan diubah.")) return; setTransferring(true); setError(""); try { const result = await operationsApi.transferWeeklyMenuDraft({ site, porsiKecil: Number(porsiKecil || 0), porsiBesar: Number(porsiBesar || 0), paguPerPm: Number(paguPerPm || 0), confirmed: true, plans: draft.days.filter((day) => day.draft).map((day) => ({ date: String(day.date).slice(0, 10), planName: day.menuTitle, recipeNames: day.recipeNames, materials: day.materials })) }); setMessage(`${result.committedCount || 0} draft dipindahkan ke Kalkulator. Hari existing tidak diubah.`); } catch (err) { setError(err.message || "Gagal memindahkan draft ke Kalkulator."); } finally { setTransferring(false); } };
 
-  return <section className="ops-module menu-advisor weekly-menu-planner">
-    <div className="ops-module-header">
-      <div><span className="ops-kicker">DRAFT SAJA · TIDAK MENYIMPAN</span><h3><Sparkles size={21} /> Rencana Menu Mingguan</h3><p>Mengisi hari yang belum ada planning dari pola menu, bahan, bumbu, harga, dan porsi historis Calculator.</p></div>
-    </div>
-    <div className="menu-advisor-boundary"><ShieldCheck size={19} /><div><strong>Belum mengubah apa pun.</strong> Hasil ini hanya DRAFT; tidak membuat Kalkulator, PO, penerimaan, pembayaran, atau Excel.</div></div>
-    <div className="weekly-menu-form">
-      <label>Site<select value={site} onChange={(event) => setSite(event.target.value)}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
-      <label>Mulai minggu<input type="date" value={weekStart} onChange={(event) => setWeekStart(event.target.value)} /></label>
-      <label>Jumlah hari<select value={days} onChange={(event) => setDays(event.target.value)}><option value="5">5 hari</option><option value="6">6 hari</option><option value="7">7 hari</option></select></label>
-      <label>Target PM<input type="number" min="1" placeholder="Ambil dari histori" value={targetPm} onChange={(event) => setTargetPm(event.target.value)} /></label>
-      <label>Pagu per PM<input type="number" min="1" placeholder="Rp, ambil dari histori" value={paguPerPm} onChange={(event) => setPaguPerPm(event.target.value)} /></label>
-      <button type="button" onClick={buildDraft} disabled={loading}><RefreshCw size={16} className={loading ? "ops-spin" : ""} />{loading ? "Menyusun…" : "Buat DRAFT Mingguan"}</button>
-    </div>
-    <p className="weekly-menu-form-help">Kosongkan Target PM atau Pagu/PM bila ingin mengambil nilai dari planning historis terakhir. Jika tidak tersedia, asisten akan menandainya sebagai data wajib.</p>
-    {error && <div className="ops-error">{error}</div>}
-    {!draft && !loading && <div className="ops-empty weekly-menu-empty"><CalendarDays size={20} /> Tentukan minggu, target PM dan pagu bila ada, lalu buat DRAFT.</div>}
-    {draft && <>
-      <div className="weekly-menu-summary">
-        <span><small>Hari sudah ada</small><strong>{draft.summary?.existingDays || 0}</strong></span>
-        <span><small>Draft hari kosong</small><strong>{draft.summary?.proposedDays || 0}</strong></span>
-        <span><small>Perlu data</small><strong>{draft.summary?.needsDataDays || 0}</strong></span>
-        <span><small>Total draft</small><strong>{money(draft.summary?.totalEstimatedSpend)}</strong></span>
-        <span className={draft.summary?.allProposedWithinPagu ? "ok" : ""}><small>Status pagu</small><strong>{draft.summary?.allProposedWithinPagu === null ? "Belum lengkap" : draft.summary?.allProposedWithinPagu ? "Masuk pagu" : "Ada yang lewat"}</strong></span>
-      </div>
-      <div className="weekly-menu-rules"><Scale size={17} /><div><strong>Aturan yang dipakai</strong><span>{draft.rulesApplied?.join(" ")}</span></div></div>
-      <div className="weekly-menu-days">{draft.days?.map((day) => <DayCard key={day.date} day={day} />)}</div>
-    </>}
+  return <section className="ops-module menu-advisor weekly-menu-planner"><div className="ops-module-header"><div><span className="ops-kicker">DRAFT MENU MINGGUAN</span><h3><Sparkles size={21} /> Rencana Menu Mingguan</h3><p>Menu basah, bahan, bumbu, harga, dan porsi historis Calculator sebagai acuan. Susu/B3 kering tidak dijadikan pola menu.</p></div></div><div className="menu-advisor-boundary"><ShieldCheck size={19} /><div><strong>Draft dapat diedit di halaman ini.</strong> Tidak ada data yang berubah sampai tombol pindahkan dikonfirmasi.</div></div>
+    <div className="weekly-menu-form"><label>Site<select value={site} onChange={(event) => setSite(event.target.value)}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label><label>Mulai minggu<input type="date" value={weekStart} onChange={(event) => setWeekStart(event.target.value)} /></label><label>Jumlah hari<select value={days} onChange={(event) => setDays(event.target.value)}><option value="5">5 hari</option><option value="6">6 hari</option><option value="7">7 hari</option></select></label><label>PM kecil<input type="number" min="0" value={porsiKecil} placeholder="Ambil histori" onChange={(event) => setPorsiKecil(event.target.value)} /></label><label>PM besar<input type="number" min="0" value={porsiBesar} placeholder="Ambil histori" onChange={(event) => setPorsiBesar(event.target.value)} /></label><label>Pagu / PM<input type="number" min="1" value={paguPerPm} placeholder="Rp" onChange={(event) => setPaguPerPm(event.target.value)} /></label><button type="button" onClick={buildDraft} disabled={loading}><RefreshCw size={16} className={loading ? "ops-spin" : ""} />{loading ? "Menyusun…" : "Buat DRAFT"}</button></div>
+    <div className="weekly-menu-total-pm"><strong>Total target PM: {number(totalPm || draft?.targetPm)}</strong><span>PM kecil + PM besar. Qty bahan dibulatkan ke atas.</span></div>
+    {error && <div className="ops-error">{error}</div>}{message && <div className="ops-success">{message}</div>}
+    {!draft && !loading && <div className="ops-empty weekly-menu-empty"><CalendarDays size={20} /> Tentukan minggu dan porsi, lalu buat DRAFT.</div>}
+    {draft && <><div className="weekly-menu-summary"><span><small>Hari sudah ada</small><strong>{draft.summary?.existingDays || 0}</strong></span><span><small>Draft hari kosong</small><strong>{draft.summary?.proposedDays || 0}</strong></span><span><small>Perlu data</small><strong>{draft.summary?.needsDataDays || 0}</strong></span><span><small>Total draft</small><strong>{money(draft.summary?.totalEstimatedSpend)}</strong></span><span className={draft.summary?.allProposedWithinPagu ? "ok" : ""}><small>Status pagu</small><strong>{draft.summary?.allProposedWithinPagu === null ? "Belum lengkap" : draft.summary?.allProposedWithinPagu ? "Masuk pagu" : "Perlu revisi"}</strong></span></div><div className="weekly-menu-actions"><div><Scale size={17} /><span>Bahan/qty/harga pada kartu DRAFT dapat diedit. Tambahkan bahan bila diperlukan, lalu total dan Rp/PM dihitung ulang.</span></div><button type="button" disabled={!transferReady || transferring} onClick={transferToCalculator}><ClipboardCheck size={16} />{transferring ? "Memindahkan…" : "Pindahkan ke Kalkulator"}</button></div><div className="weekly-menu-days">{draft.days?.map((day) => <DayCard key={day.date} day={day} onMaterialChange={(index, field, value) => changeMaterial(day.date, index, field, value)} onAddMaterial={() => addMaterial(day.date)} onRemoveMaterial={(index) => removeMaterial(day.date, index)} />)}</div></>}
   </section>;
 }

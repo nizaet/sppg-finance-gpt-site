@@ -11,15 +11,42 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from math import ceil
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
 
 
 router = APIRouter(prefix="/v1/menu-planning-advisor", tags=["menu-planning-advisor"])
 Site = Literal["MAJA", "CEMPLANG"]
+
+
+class MenuDraftMaterialIn(BaseModel):
+    itemName: str = Field(min_length=1, max_length=300)
+    quantity: float = Field(gt=0)
+    unit: str = Field(min_length=1, max_length=50)
+    planningPrice: float = Field(ge=0)
+    categoryCode: str | None = Field(default=None, max_length=100)
+    preferredVendorCode: str | None = Field(default=None, max_length=100)
+
+
+class MenuDraftTransferDayIn(BaseModel):
+    date: date
+    planName: str = Field(min_length=1, max_length=500)
+    recipeNames: list[str] = Field(min_length=1, max_length=30)
+    materials: list[MenuDraftMaterialIn] = Field(min_length=1, max_length=300)
+
+
+class MenuDraftTransferIn(BaseModel):
+    site: Site
+    porsiKecil: int = Field(ge=0)
+    porsiBesar: int = Field(ge=0)
+    paguPerPm: float = Field(gt=0)
+    plans: list[MenuDraftTransferDayIn] = Field(min_length=1, max_length=7)
+    confirmed: Literal[True]
 
 
 def _number(value: Any) -> float | None:
@@ -132,17 +159,31 @@ def _first_number(payload: dict[str, Any], keys: tuple[str, ...]) -> float | Non
 
 
 def _total_pm(payload: dict[str, Any]) -> int | None:
-    explicit = _first_number(payload, ("targetPm", "targetPM", "totalPm", "totalPM", "totalPorsi", "totalPortion"))
-    if explicit:
-        return int(round(explicit))
     small = _number(payload.get("porsiKecil")) or 0
     large = _number(payload.get("porsiBesar")) or 0
     total = small + large
-    return int(round(total)) if total > 0 else None
+    if total > 0:
+        return int(round(total))
+    explicit = _first_number(payload, ("targetPm", "targetPM", "totalPm", "totalPM", "totalPorsi", "totalPortion"))
+    return int(round(explicit)) if explicit else None
+
+
+def _pm_breakdown(payload: dict[str, Any]) -> dict[str, int | None]:
+    small = _number(payload.get("porsiKecil"))
+    large = _number(payload.get("porsiBesar"))
+    if small is not None or large is not None:
+        return {"small": int(round(small or 0)), "large": int(round(large or 0)), "total": int(round((small or 0) + (large or 0)))}
+    explicit = _first_number(payload, ("targetPm", "targetPM", "totalPm", "totalPM", "totalPorsi", "totalPortion"))
+    return {"small": None, "large": None, "total": int(round(explicit)) if explicit else None}
 
 
 def _pagu_per_pm(payload: dict[str, Any]) -> float | None:
     return _first_number(payload, ("paguPerPm", "paguPerPM", "paguPerPorsi", "budgetPerPortion", "budgetPerPm"))
+
+
+def _is_b3_milk_name(value: str) -> bool:
+    normalized = value.casefold()
+    return "susu" in normalized or "milk" in normalized
 
 
 def _recipe_names(payload: dict[str, Any]) -> list[str]:
@@ -154,14 +195,14 @@ def _recipe_names(payload: dict[str, Any]) -> list[str]:
         if not isinstance(recipe, dict):
             continue
         name = str(recipe.get("name") or recipe.get("recipeName") or recipe.get("title") or "").strip()
-        if name and name.lower() not in {value.lower() for value in names}:
+        if name and not _is_b3_milk_name(name) and name.lower() not in {value.lower() for value in names}:
             names.append(name)
     return names
 
 
 def _menu_title(payload: dict[str, Any], recipe_names: list[str]) -> str:
     title = str(payload.get("planName") or payload.get("menuName") or "").strip()
-    return title or " + ".join(recipe_names[:4]) or "Menu historis tanpa nama"
+    return " + ".join(recipe_names[:4]) or title or "Menu historis tanpa nama"
 
 
 def _fruit_names(items: list[dict[str, Any]]) -> list[str]:
@@ -195,19 +236,33 @@ def _material_cost(items: list[dict[str, Any]]) -> tuple[float | None, list[str]
     return (round(total, 2) if not gaps else None), gaps
 
 
+def _wet_menu_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Exclude B3 milk from the wet-menu draft; retain rice and cooking bumbu."""
+    return [item for item in items if not _is_b3_milk_name(str(item.get("item_name") or ""))]
+
+
+def _round_up_quantity(value: float, unit: Any) -> float:
+    normalized = str(unit or "").casefold().strip()
+    whole_units = {"pcs", "pc", "buah", "butir", "papan", "ikat", "dus", "box", "kotak", "karung", "pack", "pak"}
+    precision = 1 if normalized in whole_units or normalized in {"gr", "gram"} else 100
+    return ceil((value * precision) - 1e-9) / precision
+
+
 def _template(snapshot: dict[str, Any]) -> dict[str, Any]:
     payload = _payload(snapshot.get("payload"))
     recipes = _recipe_names(payload)
-    pm = _total_pm(payload)
-    cost, cost_gaps = _material_cost(snapshot.get("items") or [])
+    pm_breakdown = _pm_breakdown(payload)
+    pm = pm_breakdown["total"]
+    wet_items = _wet_menu_items(snapshot.get("items") or [])
+    cost, cost_gaps = _material_cost(wet_items)
     last_date = snapshot.get("distribution_date")
     return {
         "snapshotId": snapshot.get("id"), "distributionDate": last_date,
         "menuTitle": _menu_title(payload, recipes), "recipeNames": recipes,
         "menuKey": "|".join(value.casefold() for value in recipes) or str(payload.get("planName") or "").casefold(),
-        "fruitNames": _fruit_names(snapshot.get("items") or []),
+        "fruitNames": _fruit_names(wet_items),
         "sourcePm": pm, "sourcePaguPerPm": _pagu_per_pm(payload),
-        "sourceCost": cost, "sourceItems": snapshot.get("items") or [], "dataGaps": cost_gaps,
+        "sourcePmBreakdown": pm_breakdown, "sourceCost": cost, "sourceItems": wet_items, "dataGaps": cost_gaps,
     }
 
 
@@ -219,7 +274,7 @@ def _scale_materials(items: list[dict[str, Any]], factor: float) -> tuple[list[d
         quantity = _number(item.get("planned_qty"))
         price = _number(item.get("planning_price"))
         name = str(item.get("item_name") or "bahan tanpa nama")
-        scaled_quantity = round(quantity * factor, 4) if quantity is not None else None
+        scaled_quantity = _round_up_quantity(quantity * factor, item.get("unit")) if quantity is not None else None
         line_total = round(scaled_quantity * price, 2) if scaled_quantity is not None and price is not None else None
         if line_total is None:
             gaps.append(f"Jumlah atau harga {name} belum lengkap.")
@@ -244,7 +299,8 @@ def _day_from_existing(day: date, snapshot: dict[str, Any], pagu: float | None) 
         gaps.append("Target PM dari planning yang sudah ada belum tercatat.")
     return {
         "date": day, "state": "EXISTING", "draft": False, "menuTitle": template["menuTitle"],
-        "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": pm, "estimatedTotal": cost,
+        "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": pm,
+        "targetPmBreakdown": template["sourcePmBreakdown"], "estimatedTotal": cost,
         "estimatedPerPm": per_pm, "paguPerPm": pagu or template["sourcePaguPerPm"],
         "withinPagu": None if per_pm is None or not (pagu or template["sourcePaguPerPm"]) else per_pm <= (pagu or template["sourcePaguPerPm"]),
         "materials": [_item_view(item) for item in template["sourceItems"]], "dataGaps": gaps,
@@ -256,7 +312,8 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
     if not target_pm or not template["sourcePm"]:
         return {
             "date": day, "state": "NEEDS_DATA", "draft": True, "menuTitle": template["menuTitle"],
-            "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm, "estimatedTotal": None,
+            "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm,
+            "targetPmBreakdown": template["sourcePmBreakdown"], "estimatedTotal": None,
             "estimatedPerPm": None, "paguPerPm": pagu, "withinPagu": None, "materials": [],
             "dataGaps": ["Target PM belum tersedia sehingga jumlah bahan tidak boleh dihitung."],
             "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
@@ -269,6 +326,7 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
     return {
         "date": day, "state": "PROPOSED_DRAFT" if total is not None else "NEEDS_DATA", "draft": True,
         "menuTitle": template["menuTitle"], "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm,
+        "targetPmBreakdown": template["sourcePmBreakdown"],
         "estimatedTotal": total, "estimatedPerPm": per_pm, "paguPerPm": effective_pagu,
         "withinPagu": None if per_pm is None or not effective_pagu else per_pm <= effective_pagu,
         "materials": materials, "dataGaps": gaps,
@@ -308,7 +366,9 @@ def _build_week_draft(
     # The menu least recently used gets priority; a menu absent for a month
     # naturally rises ahead of a menu served yesterday.
     templates.sort(key=lambda template: template["distributionDate"], reverse=False)
-    suggested_pm = target_pm or next((template["sourcePm"] for template in reversed(templates) if template["sourcePm"]), None)
+    suggested_template = next((template for template in reversed(templates) if template["sourcePm"]), None)
+    suggested_pm = target_pm or (suggested_template["sourcePm"] if suggested_template else None)
+    suggested_pm_breakdown = suggested_template["sourcePmBreakdown"] if suggested_template else {"small": None, "large": None, "total": suggested_pm}
     suggested_pagu = pagu_per_pm or next((template["sourcePaguPerPm"] for template in reversed(templates) if template["sourcePaguPerPm"]), None)
 
     result_days: list[dict[str, Any]] = []
@@ -333,7 +393,7 @@ def _build_week_draft(
         if not candidates:
             result_days.append({
                 "date": target_date, "state": "NEEDS_DATA", "draft": True, "menuTitle": None,
-                "recipeNames": [], "targetPm": suggested_pm, "estimatedTotal": None, "estimatedPerPm": None,
+                "recipeNames": [], "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown, "estimatedTotal": None, "estimatedPerPm": None,
                 "paguPerPm": suggested_pagu, "withinPagu": None, "fruitNames": [], "materials": [],
                 "dataGaps": ["Belum ada menu historis lengkap untuk dijadikan draft yang aman."], "sourceTemplate": None,
             })
@@ -351,7 +411,7 @@ def _build_week_draft(
     return {
         "engine": "menu-planning-weekly-v2", "readOnly": True, "draftOnly": True, "site": site,
         "weekStart": week_start, "weekEnd": week_end, "requestedDays": days,
-        "targetPm": suggested_pm, "paguPerPm": suggested_pagu, "days": result_days,
+        "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown, "paguPerPm": suggested_pagu, "days": result_days,
         "summary": {
             "existingDays": sum(day["state"] == "EXISTING" for day in result_days),
             "proposedDays": len(proposed), "needsDataDays": sum(day["state"] == "NEEDS_DATA" for day in result_days),
@@ -362,6 +422,7 @@ def _build_week_draft(
         "rulesApplied": [
             "Hari yang sudah memiliki planning ditampilkan sebagai EXISTING dan tidak ditimpa.",
             "Hari kosong hanya memakai menu historis Calculator dengan bahan, jumlah, dan harga yang tersedia.",
+            "Menu dan bahan susu/B3 kering tidak dijadikan acuan; pemilihan memakai menu masak basah.",
             "Menu yang sama tidak dipilih untuk dua hari berturut-turut bila alternatif tersedia.",
             "Buah dari histori tidak diulang pada hari berikutnya bila alternatif buah tersedia.",
             "Jumlah tiap bahan, termasuk bumbu, diskalakan dari histori menu sumber menurut target PM.",
@@ -416,3 +477,85 @@ def menu_planning_preview(site: Site, distribution_date: date | None = Query(def
         "planningHistory": [_snapshot_view(snapshot, snapshot.get("items") or []) for snapshot in history],
         "confirmedKnowledge": knowledge, "dataGaps": [],
     }
+
+
+def _supplier_override(category: str | None) -> str | None:
+    return {
+        "AYAM": "supplier_ayam", "IKAN": "supplier_ikan", "TEMPE_TAHU": "supplier_tempe_tahu",
+        "TELUR": "supplier_telur", "BERAS": "supplier_beras", "BAHAN_KERING": "supplier_kering",
+        "SAYUR_BUAH_BUMBU": "supplier_sayur",
+    }.get(str(category or "").upper())
+
+
+def _calculator_payload_from_draft(day: MenuDraftTransferDayIn, porsi_kecil: int, porsi_besar: int) -> dict[str, Any]:
+    shopping_list: list[dict[str, Any]] = []
+    total = 0.0
+    for material in day.materials:
+        quantity = _round_up_quantity(float(material.quantity), material.unit)
+        line_total = quantity * float(material.planningPrice)
+        total += line_total
+        shopping_list.append({
+            "item": material.itemName.strip(), "jumlah": quantity, "satuan": material.unit.strip(),
+            "harga_satuan": float(material.planningPrice), "category_code": material.categoryCode,
+            "supplierOverride": _supplier_override(material.categoryCode), "source": "menu_advisor_draft",
+        })
+    return {
+        "date": day.date.isoformat(), "planName": day.planName.strip(),
+        "porsiKecil": porsi_kecil, "porsiBesar": porsi_besar,
+        "recipes": [{"name": value.strip(), "source": "menu_advisor_wet_history"} for value in day.recipeNames if value.strip()],
+        "shoppingListJSON": {"shoppingList": shopping_list, "grand_total_num": round(total, 2)},
+        "menuAdvisorDraft": True,
+    }
+
+
+@router.post("/transfer-to-calculator")
+def transfer_weekly_draft_to_calculator(payload: MenuDraftTransferIn) -> dict[str, Any]:
+    """Commit explicitly confirmed, within-pagu menu drafts as new Calculator plans.
+
+    Existing plans are never overwritten.  This is intentionally the only
+    write endpoint in the advisor, and it is guarded by an explicit UI
+    confirmation plus server-side completeness and pagu checks.
+    """
+    if payload.porsiKecil + payload.porsiBesar <= 0:
+        raise HTTPException(422, "PM kecil dan PM besar tidak boleh sama-sama nol")
+    if len({item.date for item in payload.plans}) != len(payload.plans):
+        raise HTTPException(422, "tanggal draft tidak boleh ganda")
+    total_pm = payload.porsiKecil + payload.porsiBesar
+    calculator_plans = [_calculator_payload_from_draft(day, payload.porsiKecil, payload.porsiBesar) for day in payload.plans]
+    for plan in calculator_plans:
+        total = float((plan.get("shoppingListJSON") or {}).get("grand_total_num") or 0)
+        if round(total / total_pm, 2) > payload.paguPerPm:
+            raise HTTPException(422, f"draft {plan['date']} masih melebihi pagu per PM")
+
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    try:
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select distribution_date from planning_snapshots
+                    where upper(site)=upper(%s) and status='ACTIVE' and distribution_date = any(%s)
+                    """,
+                    (payload.site, [day.date for day in payload.plans]),
+                )
+                occupied = [row["distribution_date"].isoformat() for row in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(503, "gagal memeriksa planning yang sudah ada") from exc
+    if occupied:
+        raise HTTPException(409, {"message": "hari ini sudah memiliki planning; transfer dihentikan agar tidak menimpa", "dates": occupied})
+
+    # Reuse the Calculator's audited import path. Preview first so an
+    # independently-created Firestore plan can never be silently added beside
+    # this draft after the weekly preview was shown.
+    from backend.calculator_data_api import CalculatorImportIn, CalculatorImportItem, preview_or_commit_calculator_data
+
+    import_request = CalculatorImportIn(
+        site=payload.site, data_type="DAILY_PLANS", source_ref="menu-advisor-weekly-draft",
+        actor="menu_advisor", items=[CalculatorImportItem(client_key=plan["date"], payload=plan) for plan in calculator_plans], commit=False,
+    )
+    preview = preview_or_commit_calculator_data(import_request)
+    blocked = [item for item in preview.get("items", []) if item.get("status") != "NEW"]
+    if blocked:
+        raise HTTPException(409, {"message": "Kalkulator sudah memiliki planning pada salah satu tanggal; transfer dihentikan", "items": blocked})
+    return preview_or_commit_calculator_data(import_request.model_copy(update={"commit": True}))
