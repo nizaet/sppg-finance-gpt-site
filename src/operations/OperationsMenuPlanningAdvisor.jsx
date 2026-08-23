@@ -32,7 +32,7 @@ function DayCard({ day }) {
       <span><small>Pagu / PM</small><strong>{money(day.paguPerPm)}</strong></span>
     </div>
     {day.withinPagu !== null && <div className={`weekly-menu-pagu ${day.withinPagu ? "pass" : "over"}`}>{day.withinPagu ? <CircleCheck size={15} /> : <CircleAlert size={15} />}{day.withinPagu ? "Masuk pagu berdasarkan harga planning" : "Melebihi pagu — jangan dipindahkan ke Kalkulator"}</div>}
-    {day.sourceTemplate && <p className="weekly-menu-source">Pola sumber: {formatDate(day.sourceTemplate.distributionDate)} · snapshot #{day.sourceTemplate.snapshotId}</p>}
+    {day.sourceTemplate && <p className="weekly-menu-source">Pola sumber: {formatDate(day.sourceTemplate.distributionDate)} · {day.sourceTemplate.daysSinceLastPlanned !== null && day.sourceTemplate.daysSinceLastPlanned !== undefined ? `terakhir dipakai ${day.sourceTemplate.daysSinceLastPlanned} hari lalu` : `snapshot #${day.sourceTemplate.snapshotId}`}</p>}
     {(day.materials?.length > 0 || day.dataGaps?.length > 0) && <details className="weekly-menu-details">
       <summary><ChevronDown size={15} /> Bahan & perhitungan</summary>
       {day.materials?.length > 0 && <div className="weekly-menu-materials">{day.materials.map((item, index) => <div key={`${item.itemName}-${index}`}><strong>{item.itemName || "Tanpa nama"}</strong><span>{number(item.quantity ?? item.plannedQty)} {item.unit || ""} × {money(item.planningPrice)}</span><b>{money(item.estimatedLineTotal)}</b></div>)}</div>}
