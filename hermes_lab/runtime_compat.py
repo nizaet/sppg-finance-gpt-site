@@ -8,7 +8,7 @@ from hermes_lab import runtime as runtime
 
 
 app = runtime.app
-app.version = "0.5.7"
+app.version = "0.5.8"
 _original_builder = base._build_chatgpt_action_schema
 
 
@@ -39,6 +39,22 @@ def _success_schema_for(path: str) -> dict[str, Any]:
     additional fields, but the Action schema advertises only the stable subset
     GPT needs to decide what happened.
     """
+
+    if path == "/health":
+        return _object(
+            {
+                "ok": {"type": "boolean"},
+                "service": {"type": "string"},
+                "mode": {"type": "string"},
+                "hermes_configured": {"type": "boolean"},
+                "shared_memory_configured": {"type": "boolean"},
+                "operational_read_configured": {"type": "boolean"},
+                "action_proposals_configured": {"type": "boolean"},
+                "action_execution_exposed": {"type": "boolean"},
+                "gpt_action_schema": {"type": "string"},
+            },
+            ["ok", "service"],
+        )
 
     if path == "/v1/lab/knowledge":
         return _object(
@@ -170,7 +186,7 @@ def build_chatgpt_action_schema_compat(public_origin: str) -> dict[str, Any]:
     schema = deepcopy(_original_builder(public_origin))
     schema.setdefault("info", {})["version"] = app.version
     for path, methods in schema.get("paths", {}).items():
-        if path == "/health" or not isinstance(methods, dict):
+        if not isinstance(methods, dict):
             continue
         for method, operation in methods.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
