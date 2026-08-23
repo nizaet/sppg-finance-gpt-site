@@ -106,6 +106,11 @@ export const operationsApi = {
     return request(`/v1/planning-snapshots?${q}`);
   },
   getPlanningSnapshot: (id) => request(`/v1/planning-snapshots/${id}`),
+  getMenuPlanningPreview: ({ site, distributionDate = "" }) => {
+    const q = new URLSearchParams({ site });
+    if (distributionDate) q.set("distributionDate", distributionDate);
+    return request(`/v1/menu-planning-advisor/preview?${q}`);
+  },
   ingestPlanningSnapshot: (payload) => request("/v1/planning-snapshots", { method: "POST", body: JSON.stringify(payload) }),
   parseMessage: (payload) => request("/v1/parse-message", { method: "POST", body: JSON.stringify(payload) }),
   getGoodsReceipts: ({ site = "", vendor = "", poId = "", poCode = "", fromDate = "", toDate = "", distributionDate = "", search = "", limit = 150 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); if (poId) q.set("poId", String(poId)); if (poCode) q.set("poCode", poCode); if (fromDate) q.set("fromDate", fromDate); if (toDate) q.set("toDate", toDate); if (distributionDate) q.set("distributionDate", distributionDate); if (search) q.set("search", search); return request(`/v1/goods-receipts-visible?${q}`); },
