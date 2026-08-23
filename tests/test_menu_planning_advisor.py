@@ -63,3 +63,18 @@ def test_existing_day_is_never_replaced_and_missing_price_blocks_pagu_claim():
     assert result["days"][0]["menuTitle"] == "Sudah direncanakan"
     assert result["days"][0]["withinPagu"] is None
     assert result["automationBoundary"]["canCreateOrEditCalculator"] is False
+
+
+def test_menu_priority_uses_the_real_latest_use_not_the_oldest_duplicate():
+    snapshots = [
+        _snapshot(1, date(2026, 6, 1), "Sate ayam", "Sate Ayam", "Jeruk Medan"),
+        _snapshot(2, date(2026, 8, 1), "Sate ayam", "Sate Ayam", "Jeruk Medan"),
+        _snapshot(3, date(2026, 7, 1), "Ikan bumbu kuning", "Ikan Bumbu Kuning", "Pisang"),
+    ]
+    result = _build_week_draft(
+        site="MAJA", week_start=date(2026, 8, 4), days=1, snapshots=snapshots,
+        target_pm=120, pagu_per_pm=5000, knowledge=[],
+    )
+    # Ikan was last served on 1 July, while sate appeared again on 1 August.
+    assert result["days"][0]["menuTitle"] == "Ikan bumbu kuning"
+    assert result["days"][0]["sourceTemplate"]["daysSinceLastPlanned"] == 34
