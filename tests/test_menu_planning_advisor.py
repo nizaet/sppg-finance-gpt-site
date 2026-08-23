@@ -1,6 +1,6 @@
 from datetime import date
 
-from backend.menu_planning_advisor_api import _build_week_draft, router
+from backend.menu_planning_advisor_api import _build_week_draft, _round_up_quantity, _total_pm, router
 
 
 def _snapshot(snapshot_id, distribution_date, menu_name, recipe, fruit, price=10000):
@@ -20,14 +20,20 @@ def _snapshot(snapshot_id, distribution_date, menu_name, recipe, fruit, price=10
     }
 
 
-def test_menu_advisor_exposes_only_read_only_routes():
+def test_menu_advisor_exposes_read_only_draft_routes_and_one_explicit_transfer_route():
     methods = {
         method
         for route in router.routes
         for method in getattr(route, "methods", set())
         if method not in {"HEAD", "OPTIONS"}
     }
-    assert methods == {"GET"}
+    assert methods == {"GET", "POST"}
+
+
+def test_pm_is_always_small_plus_large_and_quantities_round_up():
+    assert _total_pm({"porsiKecil": 1000, "porsiBesar": 43, "targetPm": 1000}) == 1043
+    assert _round_up_quantity(2.001, "kg") == 2.01
+    assert _round_up_quantity(10.01, "pcs") == 11
 
 
 def test_weekly_draft_scales_historical_bumbu_and_varies_menu_and_fruit():
