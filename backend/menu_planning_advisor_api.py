@@ -259,7 +259,7 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
             "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm, "estimatedTotal": None,
             "estimatedPerPm": None, "paguPerPm": pagu, "withinPagu": None, "materials": [],
             "dataGaps": ["Target PM belum tersedia sehingga jumlah bahan tidak boleh dihitung."],
-            "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"]},
+            "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
         }
     materials, total, gaps = _scale_materials(template["sourceItems"], target_pm / template["sourcePm"])
     per_pm = round(total / target_pm, 2) if total is not None else None
@@ -272,7 +272,7 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
         "estimatedTotal": total, "estimatedPerPm": per_pm, "paguPerPm": effective_pagu,
         "withinPagu": None if per_pm is None or not effective_pagu else per_pm <= effective_pagu,
         "materials": materials, "dataGaps": gaps,
-        "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "sourcePm": template["sourcePm"]},
+        "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "sourcePm": template["sourcePm"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
     }
 
 
@@ -292,8 +292,21 @@ def _build_week_draft(
         elif distribution_date < week_start:
             historical.append(snapshot)
 
-    templates = [_template(snapshot) for snapshot in historical]
-    templates = [template for template in templates if template["sourcePm"] and template["sourceItems"]]
+    template_occurrences = [_template(snapshot) for snapshot in historical]
+    # Keep only the latest occurrence for each menu.  The date used for
+    # priority is therefore its real last use, not its oldest record.
+    latest_by_menu: dict[str, dict[str, Any]] = {}
+    for template in template_occurrences:
+        if not template["sourcePm"] or not template["sourceItems"] or not template["menuKey"]:
+            continue
+        previous = latest_by_menu.get(template["menuKey"])
+        if previous is None or template["distributionDate"] > previous["distributionDate"]:
+            latest_by_menu[template["menuKey"]] = template
+    templates = list(latest_by_menu.values())
+    for template in templates:
+        template["daysSinceLastPlanned"] = max(0, (week_start - template["distributionDate"]).days)
+    # The menu least recently used gets priority; a menu absent for a month
+    # naturally rises ahead of a menu served yesterday.
     templates.sort(key=lambda template: template["distributionDate"], reverse=False)
     suggested_pm = target_pm or next((template["sourcePm"] for template in reversed(templates) if template["sourcePm"]), None)
     suggested_pagu = pagu_per_pm or next((template["sourcePaguPerPm"] for template in reversed(templates) if template["sourcePaguPerPm"]), None)
