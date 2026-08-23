@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
+  Sparkles,
   Moon,
   PackageCheck,
   Store,
@@ -29,6 +30,7 @@ const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
 const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
 const OperationsCalculatorData = lazy(() => import("./OperationsCalculatorData.jsx"));
 const OperationsHermesApprovals = lazy(() => import("./OperationsHermesApprovals.jsx"));
+const OperationsMenuPlanningAdvisor = lazy(() => import("./OperationsMenuPlanningAdvisor.jsx"));
 
 const tabs = [
   ["today", "Control Tower", LayoutDashboard],
@@ -36,6 +38,7 @@ const tabs = [
   ["receiving", "Penerimaan", PackageCheck],
   ["inventory", "Gudang", Warehouse],
   ["calculator-data", "Data Kalkulator", FolderUp],
+  ["menu-advisor", "Asisten Menu", Sparkles],
   ["payments", "Invoice & Pembayaran", WalletCards],
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
@@ -49,6 +52,7 @@ const moduleComponents = {
   receiving: OperationsReceiving,
   inventory: OperationsInventory,
   "calculator-data": OperationsCalculatorData,
+  "menu-advisor": OperationsMenuPlanningAdvisor,
   payments: OperationsPayments,
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
