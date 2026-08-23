@@ -111,10 +111,14 @@ export const operationsApi = {
     if (distributionDate) q.set("distributionDate", distributionDate);
     return request(`/v1/menu-planning-advisor/preview?${q}`);
   },
-  getWeeklyMenuDraft: ({ site, weekStart, days = 7, targetPm = "", paguPerPm = "" }) => {
+  getWeeklyMenuDraft: ({ site, weekStart, days = 7, targetPm = "", paguPerPm = "", porsiKecil = "", porsiBesar = "", paguKecil = "", paguBesar = "" }) => {
     const q = new URLSearchParams({ site, weekStart, days: String(days) });
     if (targetPm !== "" && targetPm !== null && targetPm !== undefined) q.set("targetPm", String(targetPm));
     if (paguPerPm !== "" && paguPerPm !== null && paguPerPm !== undefined) q.set("paguPerPm", String(paguPerPm));
+    if (porsiKecil !== "" && porsiKecil !== null && porsiKecil !== undefined) q.set("porsiKecil", String(porsiKecil));
+    if (porsiBesar !== "" && porsiBesar !== null && porsiBesar !== undefined) q.set("porsiBesar", String(porsiBesar));
+    if (paguKecil !== "" && paguKecil !== null && paguKecil !== undefined) q.set("paguKecil", String(paguKecil));
+    if (paguBesar !== "" && paguBesar !== null && paguBesar !== undefined) q.set("paguBesar", String(paguBesar));
     return request(`/v1/menu-planning-advisor/week-preview?${q}`);
   },
   transferWeeklyMenuDraft: (payload) => request("/v1/menu-planning-advisor/transfer-to-calculator", { method: "POST", body: JSON.stringify(payload) }),

@@ -44,7 +44,8 @@ class MenuDraftTransferIn(BaseModel):
     site: Site
     porsiKecil: int = Field(ge=0)
     porsiBesar: int = Field(ge=0)
-    paguPerPm: float = Field(gt=0)
+    paguKecil: float = Field(gt=0)
+    paguBesar: float = Field(gt=0)
     plans: list[MenuDraftTransferDayIn] = Field(min_length=1, max_length=7)
     confirmed: Literal[True]
 
@@ -181,6 +182,21 @@ def _pagu_per_pm(payload: dict[str, Any]) -> float | None:
     return _first_number(payload, ("paguPerPm", "paguPerPM", "paguPerPorsi", "budgetPerPortion", "budgetPerPm"))
 
 
+def _pagu_total(
+    porsi_kecil: int | None,
+    porsi_besar: int | None,
+    pagu_kecil: float | None,
+    pagu_besar: float | None,
+) -> float | None:
+    """Return the exact daily ceiling, without averaging small and large PM."""
+    if porsi_kecil is None or porsi_besar is None or not pagu_kecil or not pagu_besar:
+        return None
+    total_pm = porsi_kecil + porsi_besar
+    if total_pm <= 0:
+        return None
+    return round((porsi_kecil * pagu_kecil) + (porsi_besar * pagu_besar), 2)
+
+
 def _is_b3_milk_name(value: str) -> bool:
     normalized = value.casefold()
     return "susu" in normalized or "milk" in normalized
@@ -308,13 +324,20 @@ def _day_from_existing(day: date, snapshot: dict[str, Any], pagu: float | None) 
     }
 
 
-def _day_from_template(day: date, template: dict[str, Any], target_pm: int | None, pagu: float | None) -> dict[str, Any]:
+def _day_from_template(
+    day: date,
+    template: dict[str, Any],
+    target_pm: int | None,
+    target_pm_breakdown: dict[str, int | None],
+    pagu: float | None,
+    pagu_total: float | None,
+) -> dict[str, Any]:
     if not target_pm or not template["sourcePm"]:
         return {
             "date": day, "state": "NEEDS_DATA", "draft": True, "menuTitle": template["menuTitle"],
             "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm,
-            "targetPmBreakdown": template["sourcePmBreakdown"], "estimatedTotal": None,
-            "estimatedPerPm": None, "paguPerPm": pagu, "withinPagu": None, "materials": [],
+            "targetPmBreakdown": target_pm_breakdown, "estimatedTotal": None,
+            "estimatedPerPm": None, "paguPerPm": pagu, "paguTotal": pagu_total, "withinPagu": None, "materials": [],
             "dataGaps": ["Target PM belum tersedia sehingga jumlah bahan tidak boleh dihitung."],
             "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
         }
@@ -326,9 +349,9 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
     return {
         "date": day, "state": "PROPOSED_DRAFT" if total is not None else "NEEDS_DATA", "draft": True,
         "menuTitle": template["menuTitle"], "recipeNames": template["recipeNames"], "fruitNames": template["fruitNames"], "targetPm": target_pm,
-        "targetPmBreakdown": template["sourcePmBreakdown"],
-        "estimatedTotal": total, "estimatedPerPm": per_pm, "paguPerPm": effective_pagu,
-        "withinPagu": None if per_pm is None or not effective_pagu else per_pm <= effective_pagu,
+        "targetPmBreakdown": target_pm_breakdown,
+        "estimatedTotal": total, "estimatedPerPm": per_pm, "paguPerPm": effective_pagu, "paguTotal": pagu_total,
+        "withinPagu": None if total is None or not (pagu_total or effective_pagu) else total <= pagu_total if pagu_total is not None else per_pm <= effective_pagu,
         "materials": materials, "dataGaps": gaps,
         "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "sourcePm": template["sourcePm"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
     }
@@ -337,6 +360,9 @@ def _day_from_template(day: date, template: dict[str, Any], target_pm: int | Non
 def _build_week_draft(
     *, site: str, week_start: date, days: int, snapshots: list[dict[str, Any]],
     target_pm: int | None, pagu_per_pm: float | None, knowledge: list[dict[str, Any]],
+    target_pm_breakdown: dict[str, int | None] | None = None,
+    pagu_kecil: float | None = None,
+    pagu_besar: float | None = None,
 ) -> dict[str, Any]:
     week_end = week_start + timedelta(days=days - 1)
     existing_by_date: dict[date, dict[str, Any]] = {}
@@ -367,9 +393,20 @@ def _build_week_draft(
     # naturally rises ahead of a menu served yesterday.
     templates.sort(key=lambda template: template["distributionDate"], reverse=False)
     suggested_template = next((template for template in reversed(templates) if template["sourcePm"]), None)
-    suggested_pm = target_pm or (suggested_template["sourcePm"] if suggested_template else None)
-    suggested_pm_breakdown = suggested_template["sourcePmBreakdown"] if suggested_template else {"small": None, "large": None, "total": suggested_pm}
-    suggested_pagu = pagu_per_pm or next((template["sourcePaguPerPm"] for template in reversed(templates) if template["sourcePaguPerPm"]), None)
+    requested_breakdown = target_pm_breakdown or {}
+    requested_small = requested_breakdown.get("small")
+    requested_large = requested_breakdown.get("large")
+    requested_total = (requested_small or 0) + (requested_large or 0) if requested_small is not None and requested_large is not None else None
+    suggested_pm = requested_total or target_pm or (suggested_template["sourcePm"] if suggested_template else None)
+    suggested_pm_breakdown = (
+        {"small": requested_small, "large": requested_large, "total": requested_total}
+        if requested_total else suggested_template["sourcePmBreakdown"] if suggested_template else {"small": None, "large": None, "total": suggested_pm}
+    )
+    suggested_pagu_total = _pagu_total(requested_small, requested_large, pagu_kecil, pagu_besar)
+    suggested_pagu = (
+        round(suggested_pagu_total / suggested_pm, 2) if suggested_pagu_total is not None and suggested_pm
+        else pagu_per_pm or next((template["sourcePaguPerPm"] for template in reversed(templates) if template["sourcePaguPerPm"]), None)
+    )
 
     result_days: list[dict[str, Any]] = []
     last_key = ""
@@ -400,7 +437,10 @@ def _build_week_draft(
             continue
         candidate = min(candidates, key=lambda template: (use_counts.get(int(template["snapshotId"]), 0), template["distributionDate"]))
         use_counts[int(candidate["snapshotId"])] = use_counts.get(int(candidate["snapshotId"]), 0) + 1
-        record = _day_from_template(target_date, candidate, suggested_pm, pagu_per_pm)
+        record = _day_from_template(
+            target_date, candidate, suggested_pm, suggested_pm_breakdown,
+            suggested_pagu, suggested_pagu_total,
+        )
         last_key = candidate["menuKey"]
         last_fruit = "|".join(value.casefold() for value in candidate["fruitNames"])
         result_days.append(record)
@@ -411,7 +451,9 @@ def _build_week_draft(
     return {
         "engine": "menu-planning-weekly-v2", "readOnly": True, "draftOnly": True, "site": site,
         "weekStart": week_start, "weekEnd": week_end, "requestedDays": days,
-        "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown, "paguPerPm": suggested_pagu, "days": result_days,
+        "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown,
+        "paguPerPm": suggested_pagu, "paguKecil": pagu_kecil, "paguBesar": pagu_besar,
+        "paguTotal": suggested_pagu_total, "days": result_days,
         "summary": {
             "existingDays": sum(day["state"] == "EXISTING" for day in result_days),
             "proposedDays": len(proposed), "needsDataDays": sum(day["state"] == "NEEDS_DATA" for day in result_days),
@@ -426,7 +468,7 @@ def _build_week_draft(
             "Menu yang sama tidak dipilih untuk dua hari berturut-turut bila alternatif tersedia.",
             "Buah dari histori tidak diulang pada hari berikutnya bila alternatif buah tersedia.",
             "Jumlah tiap bahan, termasuk bumbu, diskalakan dari histori menu sumber menurut target PM.",
-            "Status hemat pagu hanya diberikan jika harga bahan, target PM, dan pagu per PM tersedia.",
+            "Pagu dihitung tepat dari PM kecil × pagu kecil ditambah PM besar × pagu besar; tidak dirata-ratakan untuk validasi.",
         ],
         "automationBoundary": {
             "canCreateOrEditCalculator": False, "canCreateOrEditPurchaseOrder": False,
@@ -442,10 +484,15 @@ def weekly_menu_preview(
     days: int = Query(default=7, ge=1, le=7),
     target_pm: int | None = Query(default=None, alias="targetPm", ge=1),
     pagu_per_pm: float | None = Query(default=None, alias="paguPerPm", gt=0),
+    porsi_kecil: int | None = Query(default=None, alias="porsiKecil", ge=0),
+    porsi_besar: int | None = Query(default=None, alias="porsiBesar", ge=0),
+    pagu_kecil: float | None = Query(default=None, alias="paguKecil", gt=0),
+    pagu_besar: float | None = Query(default=None, alias="paguBesar", gt=0),
 ) -> dict[str, Any]:
     """Build a read-only weekly draft from historical Calculator snapshots."""
+    breakdown = {"small": porsi_kecil, "large": porsi_besar} if porsi_kecil is not None and porsi_besar is not None else None
     if not database_ready():
-        return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=[], target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=[])
+        return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=[], target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=[], target_pm_breakdown=breakdown, pagu_kecil=pagu_kecil, pagu_besar=pagu_besar)
     try:
         with connection() as conn:
             with conn.cursor() as cur:
@@ -453,7 +500,7 @@ def weekly_menu_preview(
                 knowledge = _load_confirmed_knowledge(cur, site)
     except Exception as exc:
         raise HTTPException(503, "menu planning data is temporarily unavailable") from exc
-    return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=snapshots, target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=knowledge)
+    return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=snapshots, target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=knowledge, target_pm_breakdown=breakdown, pagu_kecil=pagu_kecil, pagu_besar=pagu_besar)
 
 
 @router.get("/preview")
@@ -520,12 +567,13 @@ def transfer_weekly_draft_to_calculator(payload: MenuDraftTransferIn) -> dict[st
         raise HTTPException(422, "PM kecil dan PM besar tidak boleh sama-sama nol")
     if len({item.date for item in payload.plans}) != len(payload.plans):
         raise HTTPException(422, "tanggal draft tidak boleh ganda")
-    total_pm = payload.porsiKecil + payload.porsiBesar
+    pagu_total = _pagu_total(payload.porsiKecil, payload.porsiBesar, payload.paguKecil, payload.paguBesar)
+    assert pagu_total is not None
     calculator_plans = [_calculator_payload_from_draft(day, payload.porsiKecil, payload.porsiBesar) for day in payload.plans]
     for plan in calculator_plans:
         total = float((plan.get("shoppingListJSON") or {}).get("grand_total_num") or 0)
-        if round(total / total_pm, 2) > payload.paguPerPm:
-            raise HTTPException(422, f"draft {plan['date']} masih melebihi pagu per PM")
+        if total > pagu_total:
+            raise HTTPException(422, f"draft {plan['date']} masih melebihi pagu gabungan PM kecil dan PM besar")
 
     if not database_ready():
         raise HTTPException(503, "database unavailable")

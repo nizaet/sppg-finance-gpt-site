@@ -1,6 +1,6 @@
 from datetime import date
 
-from backend.menu_planning_advisor_api import _build_week_draft, _round_up_quantity, _total_pm, router
+from backend.menu_planning_advisor_api import _build_week_draft, _pagu_total, _round_up_quantity, _total_pm, router
 
 
 def _snapshot(snapshot_id, distribution_date, menu_name, recipe, fruit, price=10000):
@@ -34,6 +34,11 @@ def test_pm_is_always_small_plus_large_and_quantities_round_up():
     assert _total_pm({"porsiKecil": 1000, "porsiBesar": 43, "targetPm": 1000}) == 1043
     assert _round_up_quantity(2.001, "kg") == 2.01
     assert _round_up_quantity(10.01, "pcs") == 11
+
+
+def test_split_pagu_uses_each_pm_group_without_averaging():
+    # 1,000 PM kecil × 8,000 plus 43 PM besar × 10,000.
+    assert _pagu_total(1000, 43, 8000, 10000) == 8_430_000
 
 
 def test_weekly_draft_scales_historical_bumbu_and_varies_menu_and_fruit():

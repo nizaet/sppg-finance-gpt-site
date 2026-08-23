@@ -595,7 +595,8 @@ html[data-app-theme="light"] .ops-po-site-tabs button.active { color: #1e40af; b
 
 /* Weekly menu planner: a focused draft workspace, not a raw-data dashboard. */
 .weekly-menu-planner { max-width: 1440px; }
-.weekly-menu-form { display: grid; grid-template-columns: 1fr 1.15fr .85fr 1fr 1fr auto; gap: 10px; align-items: end; margin: 8px 0; }
+.weekly-menu-form { display: grid; grid-template-columns: repeat(4, minmax(118px, 1fr)); gap: 10px; align-items: end; margin: 8px 0; }
+.weekly-menu-form button { grid-column: span 1; }
 .weekly-menu-form label { display: grid; gap: 5px; color: #cbd5e1; font-size: 11px; font-weight: 750; }
 .weekly-menu-form select, .weekly-menu-form input { min-height: 38px; box-sizing: border-box; border: 1px solid rgba(148,163,184,.28); border-radius: 9px; padding: 8px 9px; background: #0c1829; color: #e5edf7; }
 .weekly-menu-form button { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid rgba(96,165,250,.48); border-radius: 9px; padding: 8px 12px; background: #1d4ed8; color: #eff6ff; font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; }
