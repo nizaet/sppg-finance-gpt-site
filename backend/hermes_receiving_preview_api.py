@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.gpt_bridge_api import require_gpt_auth
+from backend.hermes_receiving_guard import (
+    issue_receiving_confirmation_token,
+    receiving_commit_eligible,
+    token_ttl_seconds,
+)
 from backend.operational_api import WhatsAppReceiptIn
 from backend.receiving_multi_po_runtime_patch import receive_from_whatsapp_v2
 
@@ -33,6 +38,10 @@ class HermesReceivingPreviewIn(BaseModel):
     reporter: str | None = Field(default=None, max_length=200)
 
 
+def _token_payload(payload: HermesReceivingPreviewIn) -> dict[str, Any]:
+    return payload.model_dump(mode="json", exclude_none=True)
+
+
 @router.post("/receiving-preview")
 def preview_receiving_multi_po(
     payload: HermesReceivingPreviewIn,
@@ -41,9 +50,8 @@ def preview_receiving_multi_po(
     """Reconcile receiving text against live PO state without writing anything.
 
     The production multi-PO resolver is reused with `commit=False` forced by the
-    server. This lets Hermes inspect all relevant active POs, cumulative receipt
-    quantities, item matches, outstanding quantities, and proposed allocations
-    while preserving PostgreSQL as the source of truth.
+    server. A short-lived confirmation token is returned only when the current
+    preview is unambiguous, can safely commit, and has no over-receipt.
     """
 
     operational_payload = WhatsAppReceiptIn(
@@ -58,9 +66,11 @@ def preview_receiving_multi_po(
     )
     result = receive_from_whatsapp_v2(operational_payload)
 
-    # Defensive guard: this route must never report an operational commit.
     if bool(result.get("committed")):
         raise RuntimeError("read-only Hermes receiving preview attempted an operational commit")
+
+    eligible = receiving_commit_eligible(result)
+    confirmation_token = issue_receiving_confirmation_token(_token_payload(payload)) if eligible else None
 
     return {
         **result,
@@ -69,4 +79,10 @@ def preview_receiving_multi_po(
         "sourceOfTruth": "SPPG Core PostgreSQL",
         "operationalMutation": False,
         "resolver": "multi-po-v2",
+        "commitEligible": eligible,
+        "confirmationToken": confirmation_token,
+        "confirmationExpiresInSeconds": token_ttl_seconds() if confirmation_token else None,
+        "commitBlockReason": None if eligible else (
+            "over-receipt requires manual review" if bool(result.get("canCommit")) else "resolver is not safe to commit"
+        ),
     }
