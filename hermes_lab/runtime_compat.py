@@ -8,7 +8,18 @@ from hermes_lab import runtime as runtime
 
 
 app = runtime.app
+app.version = "0.5.7"
 _original_builder = base._build_chatgpt_action_schema
+
+
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+async def root_probe() -> dict[str, Any]:
+    """Return 200 for origin probes without exposing operational data."""
+    return {
+        "ok": True,
+        "service": "sppg-hermes-lab",
+        "version": app.version,
+    }
 
 
 def _object(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -157,6 +168,7 @@ def build_chatgpt_action_schema_compat(public_origin: str) -> dict[str, Any]:
     """Keep request schemas strict and advertise small explicit success schemas."""
 
     schema = deepcopy(_original_builder(public_origin))
+    schema.setdefault("info", {})["version"] = app.version
     for path, methods in schema.get("paths", {}).items():
         if path == "/health" or not isinstance(methods, dict):
             continue
