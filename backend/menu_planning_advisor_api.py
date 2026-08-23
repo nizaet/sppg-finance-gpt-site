@@ -82,6 +82,7 @@ def _item_view(item: dict[str, Any]) -> dict[str, Any]:
         "categoryCode": item.get("category_code"), "plannedQty": item.get("planned_qty"),
         "unit": item.get("unit"), "planningPrice": item.get("planning_price"),
         "preferredVendorCode": item.get("preferred_vendor_code"), "notes": item.get("notes"),
+        "sourcePayload": _payload(item.get("source_payload")),
     }
 
 
@@ -89,7 +90,7 @@ def _load_items(cur: Any, snapshot_id: int) -> list[dict[str, Any]]:
     cur.execute(
         """
         select item_code, item_name, category_code, planned_qty, unit, planning_price,
-               preferred_vendor_code, notes
+               preferred_vendor_code, notes, source_payload
         from planning_snapshot_items where planning_snapshot_id=%s order by id
         """,
         (snapshot_id,),
@@ -236,6 +237,59 @@ def _fruit_names(items: list[dict[str, Any]]) -> list[str]:
     return found
 
 
+def _menu_profile(template: dict[str, Any]) -> dict[str, Any]:
+    """Describe a complete historical menu package for safe weekly selection.
+
+    Calculator snapshots store one combined shopping list, not a reliable
+    ingredient-to-recipe map.  We therefore score complete historical menu
+    packages, preserving their real bumbu and quantities, rather than mixing
+    disconnected ingredients into a made-up recipe.
+    """
+    items = template.get("sourceItems") or []
+    categories = {str(item.get("category_code") or "").upper() for item in items}
+    names = " ".join(str(item.get("item_name") or "").casefold() for item in items)
+    recipes = " ".join(str(value).casefold() for value in template.get("recipeNames") or [])
+    haystack = f"{names} {recipes}"
+    if "telur" in haystack or "TELUR" in categories:
+        protein = "TELUR"
+    elif "AYAM" in categories or "ayam" in haystack:
+        protein = "AYAM"
+    elif "IKAN" in categories or any(token in haystack for token in ("ikan", "dori", "lele", "bandeng")):
+        protein = "IKAN"
+    elif "TEMPE_TAHU" in categories or any(token in haystack for token in ("tempe", "tahu")):
+        protein = "TEMPE_TAHU"
+    else:
+        protein = "LAINNYA"
+    return {
+        "proteinType": protein,
+        "isEggMenu": protein == "TELUR",
+        "hasFruit": bool(template.get("fruitNames")),
+        "recipeCount": len(template.get("recipeNames") or []),
+    }
+
+
+def _material_catalog(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Offer only known Calculator material names for draft editing."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        for item in snapshot.get("items") or []:
+            name = str(item.get("item_name") or "").strip()
+            if not name:
+                continue
+            key = name.casefold()
+            candidate = {
+                "itemName": name,
+                "unit": item.get("unit") or "kg",
+                "planningPrice": item.get("planning_price"),
+                "categoryCode": item.get("category_code"),
+                "preferredVendorCode": item.get("preferred_vendor_code"),
+            }
+            previous = by_name.get(key)
+            if previous is None or (candidate.get("planningPrice") is not None and previous.get("planningPrice") is None):
+                by_name[key] = candidate
+    return sorted(by_name.values(), key=lambda item: str(item["itemName"]).casefold())[:500]
+
+
 def _material_cost(items: list[dict[str, Any]]) -> tuple[float | None, list[str]]:
     total = 0.0
     gaps: list[str] = []
@@ -272,7 +326,7 @@ def _template(snapshot: dict[str, Any]) -> dict[str, Any]:
     wet_items = _wet_menu_items(snapshot.get("items") or [])
     cost, cost_gaps = _material_cost(wet_items)
     last_date = snapshot.get("distribution_date")
-    return {
+    template = {
         "snapshotId": snapshot.get("id"), "distributionDate": last_date,
         "menuTitle": _menu_title(payload, recipes), "recipeNames": recipes,
         "menuKey": "|".join(value.casefold() for value in recipes) or str(payload.get("planName") or "").casefold(),
@@ -280,6 +334,8 @@ def _template(snapshot: dict[str, Any]) -> dict[str, Any]:
         "sourcePm": pm, "sourcePaguPerPm": _pagu_per_pm(payload),
         "sourcePmBreakdown": pm_breakdown, "sourceCost": cost, "sourceItems": wet_items, "dataGaps": cost_gaps,
     }
+    template["profile"] = _menu_profile(template)
+    return template
 
 
 def _scale_materials(items: list[dict[str, Any]], factor: float) -> tuple[list[dict[str, Any]], float | None, list[str]]:
@@ -290,7 +346,10 @@ def _scale_materials(items: list[dict[str, Any]], factor: float) -> tuple[list[d
         quantity = _number(item.get("planned_qty"))
         price = _number(item.get("planning_price"))
         name = str(item.get("item_name") or "bahan tanpa nama")
-        scaled_quantity = _round_up_quantity(quantity * factor, item.get("unit")) if quantity is not None else None
+        raw_quantity = quantity * factor if quantity is not None else None
+        # Keep operational quantities safe: kg keeps two decimals, while
+        # whole units (pcs/buah/butir/etc.) always go to the next full unit.
+        scaled_quantity = _round_up_quantity(raw_quantity, item.get("unit")) if raw_quantity is not None else None
         line_total = round(scaled_quantity * price, 2) if scaled_quantity is not None and price is not None else None
         if line_total is None:
             gaps.append(f"Jumlah atau harga {name} belum lengkap.")
@@ -298,7 +357,8 @@ def _scale_materials(items: list[dict[str, Any]], factor: float) -> tuple[list[d
             total += line_total
         materials.append({
             "itemName": item.get("item_name"), "categoryCode": item.get("category_code"),
-            "quantity": scaled_quantity, "unit": item.get("unit"), "planningPrice": price,
+            "quantity": scaled_quantity, "rawQuantity": raw_quantity, "roundingApplied": raw_quantity != scaled_quantity,
+            "unit": item.get("unit"), "planningPrice": price,
             "estimatedLineTotal": line_total, "preferredVendorCode": item.get("preferred_vendor_code"),
             "notes": item.get("notes"),
         })
@@ -331,6 +391,7 @@ def _day_from_template(
     target_pm_breakdown: dict[str, int | None],
     pagu: float | None,
     pagu_total: float | None,
+    selection_reasons: list[str] | None = None,
 ) -> dict[str, Any]:
     if not target_pm or not template["sourcePm"]:
         return {
@@ -339,6 +400,7 @@ def _day_from_template(
             "targetPmBreakdown": target_pm_breakdown, "estimatedTotal": None,
             "estimatedPerPm": None, "paguPerPm": pagu, "paguTotal": pagu_total, "withinPagu": None, "materials": [],
             "dataGaps": ["Target PM belum tersedia sehingga jumlah bahan tidak boleh dihitung."],
+            "selectionReasons": selection_reasons or [], "menuProfile": template["profile"],
             "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
         }
     materials, total, gaps = _scale_materials(template["sourceItems"], target_pm / template["sourcePm"])
@@ -352,7 +414,7 @@ def _day_from_template(
         "targetPmBreakdown": target_pm_breakdown,
         "estimatedTotal": total, "estimatedPerPm": per_pm, "paguPerPm": effective_pagu, "paguTotal": pagu_total,
         "withinPagu": None if total is None or not (pagu_total or effective_pagu) else total <= pagu_total if pagu_total is not None else per_pm <= effective_pagu,
-        "materials": materials, "dataGaps": gaps,
+        "materials": materials, "dataGaps": gaps, "selectionReasons": selection_reasons or [], "menuProfile": template["profile"],
         "sourceTemplate": {"snapshotId": template["snapshotId"], "distributionDate": template["distributionDate"], "sourcePm": template["sourcePm"], "daysSinceLastPlanned": template.get("daysSinceLastPlanned")},
     }
 
@@ -411,7 +473,32 @@ def _build_week_draft(
     result_days: list[dict[str, Any]] = []
     last_key = ""
     last_fruit = ""
+    last_protein = ""
+    egg_days = 0
     use_counts: dict[int, int] = {}
+
+    def expected_total(template: dict[str, Any]) -> float | None:
+        if template["sourceCost"] is None or not template["sourcePm"] or not suggested_pm:
+            return None
+        return template["sourceCost"] * suggested_pm / template["sourcePm"]
+
+    def candidate_rank(template: dict[str, Any]) -> tuple[Any, ...]:
+        profile = template["profile"]
+        total = expected_total(template)
+        over_pagu = bool(suggested_pagu_total is not None and total is not None and total > suggested_pagu_total)
+        same_fruit = bool(last_fruit and "|".join(value.casefold() for value in template["fruitNames"]) == last_fruit)
+        same_protein = bool(last_protein and profile["proteinType"] == last_protein)
+        return (
+            1 if over_pagu else 0,
+            1 if profile["recipeCount"] < 2 else 0,
+            1 if not profile["hasFruit"] else 0,
+            1 if same_fruit else 0,
+            1 if same_protein else 0,
+            use_counts.get(int(template["snapshotId"]), 0),
+            -int(template.get("daysSinceLastPlanned") or 0),
+            total if total is not None else float("inf"),
+        )
+
     for offset in range(days):
         target_date = week_start + timedelta(days=offset)
         existing = existing_by_date.get(target_date)
@@ -419,41 +506,63 @@ def _build_week_draft(
             record = _day_from_existing(target_date, existing, pagu_per_pm)
             last_key = "|".join(value.casefold() for value in record["recipeNames"])
             last_fruit = "|".join(value.casefold() for value in record.get("fruitNames") or [])
+            existing_profile = _template(existing)["profile"]
+            last_protein = existing_profile["proteinType"]
+            egg_days += int(existing_profile["isEggMenu"])
             result_days.append(record)
             continue
         candidates = [template for template in templates if template["menuKey"] and template["menuKey"] != last_key]
+        if egg_days >= 1:
+            candidates = [template for template in candidates if not template["profile"]["isEggMenu"]]
         fruit_varied = [template for template in candidates if not last_fruit or "|".join(value.casefold() for value in template["fruitNames"]) != last_fruit]
         if fruit_varied:
             candidates = fruit_varied
         if not candidates:
-            candidates = templates
+            # A small history may have only one non-egg menu. Reuse it only
+            # after the full variation filter is exhausted; never add a second
+            # egg menu merely to fill the week.
+            candidates = [template for template in templates if not template["profile"]["isEggMenu"]]
         if not candidates:
             result_days.append({
                 "date": target_date, "state": "NEEDS_DATA", "draft": True, "menuTitle": None,
                 "recipeNames": [], "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown, "estimatedTotal": None, "estimatedPerPm": None,
-                "paguPerPm": suggested_pagu, "withinPagu": None, "fruitNames": [], "materials": [],
-                "dataGaps": ["Belum ada menu historis lengkap untuk dijadikan draft yang aman."], "sourceTemplate": None,
+                "paguPerPm": suggested_pagu, "paguTotal": suggested_pagu_total, "withinPagu": None, "fruitNames": [], "materials": [],
+                "dataGaps": ["Tidak ada kombinasi menu historis non-telur yang lengkap untuk hari ini; telur dibatasi satu hari per minggu."], "sourceTemplate": None,
             })
             continue
-        candidate = min(candidates, key=lambda template: (use_counts.get(int(template["snapshotId"]), 0), template["distributionDate"]))
+        candidate = min(candidates, key=candidate_rank)
         use_counts[int(candidate["snapshotId"])] = use_counts.get(int(candidate["snapshotId"]), 0) + 1
+        profile = candidate["profile"]
+        reasons = [
+            "Paket resep historis lengkap dipilih agar bumbu dan kebutuhan bahan tetap nyambung.",
+            f"Protein {profile['proteinType'].lower()} dibandingkan dengan variasi hari lain.",
+            f"Terakhir digunakan {candidate.get('daysSinceLastPlanned') or 0} hari lalu.",
+        ]
+        if profile["hasFruit"] and (not last_fruit or "|".join(value.casefold() for value in candidate["fruitNames"]) != last_fruit):
+            reasons.append("Buah berbeda dari hari sebelumnya.")
+        if suggested_pagu_total is not None:
+            estimated = expected_total(candidate)
+            reasons.append("Estimasi berada dalam pagu gabungan." if estimated is not None and estimated <= suggested_pagu_total else "Dipilih sebagai alternatif historis terdekat; pagu wajib ditinjau.")
         record = _day_from_template(
             target_date, candidate, suggested_pm, suggested_pm_breakdown,
-            suggested_pagu, suggested_pagu_total,
+            suggested_pagu, suggested_pagu_total, reasons,
         )
         last_key = candidate["menuKey"]
         last_fruit = "|".join(value.casefold() for value in candidate["fruitNames"])
+        last_protein = profile["proteinType"]
+        egg_days += int(profile["isEggMenu"])
         result_days.append(record)
 
     proposed = [day for day in result_days if day["state"] == "PROPOSED_DRAFT"]
     known_totals = [day["estimatedTotal"] for day in proposed if day["estimatedTotal"] is not None]
     all_within = [day["withinPagu"] for day in proposed if day["withinPagu"] is not None]
     return {
-        "engine": "menu-planning-weekly-v2", "readOnly": True, "draftOnly": True, "site": site,
+        "engine": "menu-planning-weekly-v3", "readOnly": True, "draftOnly": True, "site": site,
         "weekStart": week_start, "weekEnd": week_end, "requestedDays": days,
         "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown,
         "paguPerPm": suggested_pagu, "paguKecil": pagu_kecil, "paguBesar": pagu_besar,
         "paguTotal": suggested_pagu_total, "days": result_days,
+        "materialCatalog": _material_catalog(snapshots),
         "summary": {
             "existingDays": sum(day["state"] == "EXISTING" for day in result_days),
             "proposedDays": len(proposed), "needsDataDays": sum(day["state"] == "NEEDS_DATA" for day in result_days),
@@ -465,7 +574,8 @@ def _build_week_draft(
             "Hari yang sudah memiliki planning ditampilkan sebagai EXISTING dan tidak ditimpa.",
             "Hari kosong hanya memakai menu historis Calculator dengan bahan, jumlah, dan harga yang tersedia.",
             "Menu dan bahan susu/B3 kering tidak dijadikan acuan; pemilihan memakai menu masak basah.",
-            "Menu yang sama tidak dipilih untuk dua hari berturut-turut bila alternatif tersedia.",
+            "Paket resep lengkap dinilai sebagai satu kombinasi, lalu dipilih berdasarkan kecocokan pagu, protein, buah, frekuensi, dan jarak pemakaian.",
+            "Menu telur dibatasi maksimal satu hari dalam satu minggu; bila alternatif non-telur tidak ada, hari tersebut ditandai perlu data.",
             "Buah dari histori tidak diulang pada hari berikutnya bila alternatif buah tersedia.",
             "Jumlah tiap bahan, termasuk bumbu, diskalakan dari histori menu sumber menurut target PM.",
             "Pagu dihitung tepat dari PM kecil × pagu kecil ditambah PM besar × pagu besar; tidak dirata-ratakan untuk validasi.",

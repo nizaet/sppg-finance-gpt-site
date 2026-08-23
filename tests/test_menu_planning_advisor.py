@@ -89,3 +89,19 @@ def test_menu_priority_uses_the_real_latest_use_not_the_oldest_duplicate():
     # Ikan was last served on 1 July, while sate appeared again on 1 August.
     assert result["days"][0]["menuTitle"] == "Ikan bumbu kuning"
     assert result["days"][0]["sourceTemplate"]["daysSinceLastPlanned"] == 34
+
+
+def test_egg_menu_is_only_scheduled_once_per_week_when_other_choices_exist():
+    egg = _snapshot(1, date(2026, 7, 1), "Telur bumbu", "Telur Bumbu", "Jeruk Medan")
+    egg["items"][0]["category_code"] = "TELUR"
+    chicken = _snapshot(2, date(2026, 7, 2), "Ayam kecap", "Ayam Kecap", "Pisang")
+    chicken["items"][0]["category_code"] = "AYAM"
+    result = _build_week_draft(
+        site="MAJA", week_start=date(2026, 8, 3), days=4, snapshots=[egg, chicken],
+        target_pm=120, pagu_per_pm=5000, knowledge=[],
+        target_pm_breakdown={"small": 100, "large": 20}, pagu_kecil=8000, pagu_besar=10000,
+    )
+
+    egg_days = [day for day in result["days"] if (day.get("menuProfile") or {}).get("isEggMenu")]
+    assert len(egg_days) <= 1
+    assert result["materialCatalog"]
