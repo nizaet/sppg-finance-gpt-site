@@ -225,6 +225,26 @@ function itemSplitPoCode(site, distributionDate, item) {
   return `PO-${site}-${String(distributionDate || "").replaceAll("-", "")}-${String(item.vendor_code || "").toUpperCase()}-ITEM-${poItemSlug(item.item_name)}`;
 }
 
+function remainingItemsPoCode(site, distributionDate, vendor, items) {
+  const ids = items.map((item) => item.planning_snapshot_item_id || poItemSlug(item.item_name)).sort();
+  return `PO-${site}-${String(distributionDate || "").replaceAll("-", "")}-${String(vendor || "").toUpperCase()}-SISA-${ids.join("-").slice(0, 48)}`;
+}
+
+function poCoversItem(po, item, forDate) {
+  if (!isActivePurchaseOrder(po) || !coverageDatesFor(po).includes(String(forDate))) return false;
+  const datedRefs = Array.isArray(po.coverage_item_refs) ? po.coverage_item_refs : [];
+  const refs = datedRefs.length
+    ? datedRefs.filter((ref) => String(ref.distribution_date || "") === String(forDate))
+    : (Array.isArray(po.item_refs) ? po.item_refs : []);
+  return refs.some((ref) => {
+    if (item.planning_snapshot_item_id && ref.planning_snapshot_item_id) {
+      return String(item.planning_snapshot_item_id) === String(ref.planning_snapshot_item_id);
+    }
+    if (item.item_code && ref.item_code) return normalize(item.item_code) === normalize(ref.item_code);
+    return normalize(item.item_name) === normalize(ref.item_name) && normalizeUnit(item.unit) === normalizeUnit(ref.unit);
+  });
+}
+
 function remainingReminderQty(item) {
   return Number((item.requirement_details || []).reduce((sum, detail) => sum + Math.max(0, Number(detail.remaining_po_qty || 0)), 0).toFixed(4));
 }
@@ -328,6 +348,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     const expected = itemSplitPoCode(activeSite, forDate, item);
     return purchaseOrders.find((po) => isActivePurchaseOrder(po) && String(po.po_code || "") === expected) || null;
   };
+
+  const findActivePoForItem = (item, forDate = distributionDate) => (
+    purchaseOrders.find((po) => String(po.vendor_code || "").toUpperCase() === String(item.vendor_code || "").toUpperCase() && poCoversItem(po, item, forDate))
+    || findActiveItemSplitPo(item, forDate)
+  );
 
   const refreshReminders = async () => {
     const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
@@ -499,13 +524,16 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const createVendorPo = async (vendor) => {
     if (!planningSnapshot?.id || !vendor || vendor === "UNASSIGNED") return;
-    const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0 && !findActiveItemSplitPo(item, distributionDate));
+    const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0 && !findActivePoForItem(item, distributionDate));
     if (!lines.length) return;
 
-    const code = `PO-${activeSite}-${distributionDate.replaceAll("-", "")}-${vendor}`;
+    const hasPoForVendorDate = Boolean(activePoByVendorDate.get(`${vendor}|${distributionDate}`));
+    const code = hasPoForVendorDate
+      ? remainingItemsPoCode(activeSite, distributionDate, vendor, lines)
+      : `PO-${activeSite}-${distributionDate.replaceAll("-", "")}-${vendor}`;
     const confirmed = window.confirm(
       `Buat DRAFT PO ${vendor} untuk ${activeSite} tanggal distribusi ${distributionDate}?\n\n` +
-      `${lines.length} item akan disimpan. PO Qty yang disimpan adalah nilai EDIT terakhir, bukan planned_qty dan bukan rekomendasi otomatis.`
+      `${lines.length} item yang belum pernah masuk PO akan disimpan${hasPoForVendorDate ? " sebagai PO tambahan" : ""}. PO Qty yang disimpan adalah nilai EDIT terakhir, bukan planned_qty dan bukan rekomendasi otomatis.`
     );
     if (!confirmed) return;
 
@@ -1163,11 +1191,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                   <div>
                     <strong>{group.vendor === "UNASSIGNED" ? "⚠ Vendor belum ditentukan" : group.vendor}</strong>
                     <span>{group.items.length} item</span>
-                    {existingPo && <div className="ops-muted"><strong>PO sudah dibuat:</strong> {existingPo.po_code} · Rev {existingPo.revision_no} · {existingPo.status}. Tidak akan dibuat ulang.</div>}
+                    {existingPo && <div className="ops-muted"><strong>Sudah ada PO parsial:</strong> {existingPo.po_code} · Rev {existingPo.revision_no} · {existingPo.status}. Item yang belum masuk tetap dapat dibuatkan PO.</div>}
                   </div>
-                  {group.vendor !== "UNASSIGNED" && !existingPo && (
-                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Number(x.po_qty || 0) <= 0)}>
-                      <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : "Buat Draft PO"}
+                  {group.vendor !== "UNASSIGNED" && (
+                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Number(x.po_qty || 0) <= 0 || Boolean(findActivePoForItem(x, distributionDate)))}>
+                      <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : existingPo ? "Buat PO Item Tersisa" : "Buat Draft PO"}
                     </button>
                   )}
                   {existingPo && <div className="ops-row-actions">
@@ -1183,7 +1211,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     <tbody>
                       {group.items.map((item) => {
                         const isManual = Number(item.po_qty) !== Number(item.recommended_po_qty);
-                        const splitPo = findActiveItemSplitPo(item, distributionDate);
+                        const splitPo = findActivePoForItem(item, distributionDate);
                         const hasStock = Number(item.stock_qty || 0) > 0;
                         const coveredByStock = hasStock && Number(item.recommended_po_qty || 0) <= 0;
                         return (
