@@ -494,6 +494,24 @@ def _day_from_template(
     }
 
 
+def _snapshot_completeness(snapshot: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Prefer a full Calculator daily plan over a one-item fragment.
+
+    A date can contain an old/imported fragment beside the actual daily plan.
+    The Firestore stream order is not a business rule, so selecting its first
+    document can make a fruit such as Jeruk Medan appear to be the whole menu.
+    """
+    payload = _payload(snapshot.get("payload"))
+    items = _wet_menu_items(snapshot.get("items") or [])
+    recipes = _recipe_names(payload)
+    priced_items = sum(
+        _number(item.get("planned_qty")) is not None
+        and _number(item.get("planning_price")) is not None
+        for item in items
+    )
+    return (len(items), len(recipes), priced_items, int(_total_pm(payload) or 0))
+
+
 def _build_week_draft(
     *, site: str, week_start: date, days: int, snapshots: list[dict[str, Any]],
     target_pm: int | None, pagu_per_pm: float | None, knowledge: list[dict[str, Any]],
@@ -502,16 +520,28 @@ def _build_week_draft(
     pagu_besar: float | None = None,
 ) -> dict[str, Any]:
     week_end = week_start + timedelta(days=days - 1)
-    existing_by_date: dict[date, dict[str, Any]] = {}
-    historical: list[dict[str, Any]] = []
+    # Multiple documents for one distribution date can exist in Firestore.
+    # Collapse them first, always retaining the complete daily plan rather
+    # than whichever fragment happens to arrive first from the stream.
+    best_by_date: dict[date, dict[str, Any]] = {}
     for snapshot in snapshots:
         distribution_date = snapshot.get("distribution_date")
         if not isinstance(distribution_date, date):
             continue
-        if week_start <= distribution_date <= week_end:
-            existing_by_date.setdefault(distribution_date, snapshot)
-        elif distribution_date < week_start:
-            historical.append(snapshot)
+        current = best_by_date.get(distribution_date)
+        if current is None or _snapshot_completeness(snapshot) > _snapshot_completeness(current):
+            best_by_date[distribution_date] = snapshot
+
+    existing_by_date = {
+        distribution_date: snapshot
+        for distribution_date, snapshot in best_by_date.items()
+        if week_start <= distribution_date <= week_end
+    }
+    historical = [
+        snapshot
+        for distribution_date, snapshot in best_by_date.items()
+        if distribution_date < week_start
+    ]
 
     template_occurrences = [_template(snapshot) for snapshot in historical]
     # Keep only the latest occurrence for each menu.  The date used for
