@@ -10,7 +10,7 @@ safe: no invented recipes, portions, prices, or bumbu quantities.
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from math import ceil
 from typing import Any, Literal
 
@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.google_services import SITE_TARGETS, firestore_client
 
 
 router = APIRouter(prefix="/v1/menu-planning-advisor", tags=["menu-planning-advisor"])
@@ -150,6 +151,78 @@ def _load_snapshots(cur: Any, site: str, start: date | None, end: date | None, l
         snapshot["items"] = _load_items(cur, int(snapshot["id"]))
         result.append(snapshot)
     return result
+
+
+def _plan_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    for candidate in (text[:10], text):
+        try:
+            return date.fromisoformat(candidate)
+        except ValueError:
+            pass
+    for pattern in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _load_calculator_history(site: str, end: date, limit: int = 365) -> tuple[list[dict[str, Any]], str | None]:
+    """Read historical daily plans directly from Calculator Firestore.
+
+    PostgreSQL snapshots are only created when a day has been synced. They are
+    not a complete menu archive, so the planner must read the Calculator's
+    full historical daily-plan collection before it declares that variation is
+    unavailable. This is read-only and affects only Asisten Menu.
+    """
+    try:
+        target = SITE_TARGETS[site]
+        root = (
+            firestore_client(target["database_id"])
+            .collection("artifacts").document(target["site_id"])
+            .collection("public").document("data").collection("dailyPlans")
+        )
+        result: list[dict[str, Any]] = []
+        for document in root.stream():
+            payload = document.to_dict() or {}
+            distribution_date = _plan_date(payload.get("date") or payload.get("distributionDate") or payload.get("planDate"))
+            if not distribution_date or distribution_date > end:
+                continue
+            shopping = ((payload.get("shoppingListJSON") or {}).get("shoppingList") or [])
+            if not isinstance(shopping, list) or not shopping:
+                continue
+            items: list[dict[str, Any]] = []
+            for raw in shopping:
+                if not isinstance(raw, dict):
+                    continue
+                name = str(raw.get("item") or raw.get("name") or "").strip()
+                quantity = _number(raw.get("jumlah"))
+                if not name or quantity is None:
+                    continue
+                items.append({
+                    "item_code": raw.get("item_code"), "item_name": name,
+                    "category_code": raw.get("category_code"), "planned_qty": quantity,
+                    "unit": raw.get("satuan") or "kg", "planning_price": _number(raw.get("harga_satuan")),
+                    "preferred_vendor_code": raw.get("supplierOverride"), "notes": raw.get("note"),
+                    "source_payload": raw,
+                })
+            if items:
+                result.append({
+                    "id": f"firestore:{document.id}", "snapshot_key": f"calculator-history:{document.id}",
+                    "site": site, "distribution_date": distribution_date, "status": "ACTIVE",
+                    "source_system": "CALCULATOR_FIRESTORE_HISTORY", "payload": payload, "items": items,
+                })
+        result.sort(key=lambda snapshot: snapshot["distribution_date"], reverse=True)
+        return result[:limit], None
+    except Exception as exc:
+        # A database snapshot remains a safe fallback when Firestore is
+        # temporarily unreachable; never make the advisor invent a menu.
+        return [], type(exc).__name__
 
 
 def _first_number(payload: dict[str, Any], keys: tuple[str, ...]) -> float | None:
@@ -314,7 +387,9 @@ def _wet_menu_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _round_up_quantity(value: float, unit: Any) -> float:
     normalized = str(unit or "").casefold().strip()
     whole_units = {"pcs", "pc", "buah", "butir", "papan", "ikat", "dus", "box", "kotak", "karung", "pack", "pak"}
-    precision = 1 if normalized in whole_units or normalized in {"gr", "gram"} else 100
+    # The displayed buying quantity must be visibly usable: count units are
+    # whole, weights are rounded up to the next 0.1 kg (not hidden at 0.01).
+    precision = 1 if normalized in whole_units or normalized in {"gr", "gram"} else 10
     return ceil((value * precision) - 1e-9) / precision
 
 
@@ -347,8 +422,8 @@ def _scale_materials(items: list[dict[str, Any]], factor: float) -> tuple[list[d
         price = _number(item.get("planning_price"))
         name = str(item.get("item_name") or "bahan tanpa nama")
         raw_quantity = quantity * factor if quantity is not None else None
-        # Keep operational quantities safe: kg keeps two decimals, while
-        # whole units (pcs/buah/butir/etc.) always go to the next full unit.
+        # Keep operational quantities safe: weights go up to the next 0.1 kg,
+        # while whole units (pcs/buah/butir/etc.) go to the next full unit.
         scaled_quantity = _round_up_quantity(raw_quantity, item.get("unit")) if raw_quantity is not None else None
         line_total = round(scaled_quantity * price, 2) if scaled_quantity is not None and price is not None else None
         if line_total is None:
@@ -475,12 +550,27 @@ def _build_week_draft(
     last_fruit = ""
     last_protein = ""
     egg_days = 0
-    use_counts: dict[int, int] = {}
+    used_menu_keys: set[str] = set()
+    candidate_totals: dict[str, float | None] = {}
+    # The weekly ceiling applies to the days this assistant is actually
+    # proposing. Existing Calculator days are immutable and therefore are not
+    # silently counted as editable budget for a new draft.
+    draft_slots = sum(
+        (week_start + timedelta(days=offset)) not in existing_by_date
+        for offset in range(days)
+    )
+    weekly_spend = 0.0
+    weekly_budget = round((suggested_pagu_total or 0) * draft_slots, 2) if suggested_pagu_total is not None else None
 
     def expected_total(template: dict[str, Any]) -> float | None:
-        if template["sourceCost"] is None or not template["sourcePm"] or not suggested_pm:
-            return None
-        return template["sourceCost"] * suggested_pm / template["sourcePm"]
+        key = str(template["snapshotId"])
+        if key not in candidate_totals:
+            if not template["sourcePm"] or not suggested_pm:
+                candidate_totals[key] = None
+            else:
+                _, total, _ = _scale_materials(template["sourceItems"], suggested_pm / template["sourcePm"])
+                candidate_totals[key] = total
+        return candidate_totals[key]
 
     def candidate_rank(template: dict[str, Any]) -> tuple[Any, ...]:
         profile = template["profile"]
@@ -494,7 +584,6 @@ def _build_week_draft(
             1 if not profile["hasFruit"] else 0,
             1 if same_fruit else 0,
             1 if same_protein else 0,
-            use_counts.get(int(template["snapshotId"]), 0),
             -int(template.get("daysSinceLastPlanned") or 0),
             total if total is not None else float("inf"),
         )
@@ -509,29 +598,30 @@ def _build_week_draft(
             existing_profile = _template(existing)["profile"]
             last_protein = existing_profile["proteinType"]
             egg_days += int(existing_profile["isEggMenu"])
+            used_menu_keys.add(last_key)
             result_days.append(record)
             continue
-        candidates = [template for template in templates if template["menuKey"] and template["menuKey"] != last_key]
+        candidates = [template for template in templates if template["menuKey"] and template["menuKey"] not in used_menu_keys]
         if egg_days >= 1:
             candidates = [template for template in candidates if not template["profile"]["isEggMenu"]]
-        fruit_varied = [template for template in candidates if not last_fruit or "|".join(value.casefold() for value in template["fruitNames"]) != last_fruit]
-        if fruit_varied:
-            candidates = fruit_varied
-        if not candidates:
-            # A small history may have only one non-egg menu. Reuse it only
-            # after the full variation filter is exhausted; never add a second
-            # egg menu merely to fill the week.
-            candidates = [template for template in templates if not template["profile"]["isEggMenu"]]
+        if suggested_pagu_total is not None:
+            candidates = [
+                template for template in candidates
+                if expected_total(template) is not None
+                and (weekly_budget is None or weekly_spend + float(expected_total(template) or 0) <= weekly_budget)
+            ]
         if not candidates:
             result_days.append({
                 "date": target_date, "state": "NEEDS_DATA", "draft": True, "menuTitle": None,
                 "recipeNames": [], "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown, "estimatedTotal": None, "estimatedPerPm": None,
                 "paguPerPm": suggested_pagu, "paguTotal": suggested_pagu_total, "withinPagu": None, "fruitNames": [], "materials": [],
-                "dataGaps": ["Tidak ada kombinasi menu historis non-telur yang lengkap untuk hari ini; telur dibatasi satu hari per minggu."], "sourceTemplate": None,
+                "dataGaps": ["Tidak ada variasi menu historis unik yang masih bisa masuk total pagu DRAFT minggu. Hari ini tidak dibuat agar menu tidak diulang atau melebihi pagu minggu."], "sourceTemplate": None,
             })
             continue
         candidate = min(candidates, key=candidate_rank)
-        use_counts[int(candidate["snapshotId"])] = use_counts.get(int(candidate["snapshotId"]), 0) + 1
+        candidate_total = expected_total(candidate)
+        if candidate_total is not None:
+            weekly_spend += candidate_total
         profile = candidate["profile"]
         reasons = [
             "Paket resep historis lengkap dipilih agar bumbu dan kebutuhan bahan tetap nyambung.",
@@ -541,8 +631,10 @@ def _build_week_draft(
         if profile["hasFruit"] and (not last_fruit or "|".join(value.casefold() for value in candidate["fruitNames"]) != last_fruit):
             reasons.append("Buah berbeda dari hari sebelumnya.")
         if suggested_pagu_total is not None:
-            estimated = expected_total(candidate)
-            reasons.append("Estimasi berada dalam pagu gabungan." if estimated is not None and estimated <= suggested_pagu_total else "Dipilih sebagai alternatif historis terdekat; pagu wajib ditinjau.")
+            if candidate_total is not None and candidate_total > suggested_pagu_total:
+                reasons.append("Biaya hari ini di atas batas harian, tetapi masih ditutup penghematan hari lain dalam pagu DRAFT minggu.")
+            else:
+                reasons.append("Estimasi menjaga sisa pagu DRAFT minggu.")
         record = _day_from_template(
             target_date, candidate, suggested_pm, suggested_pm_breakdown,
             suggested_pagu, suggested_pagu_total, reasons,
@@ -551,34 +643,43 @@ def _build_week_draft(
         last_fruit = "|".join(value.casefold() for value in candidate["fruitNames"])
         last_protein = profile["proteinType"]
         egg_days += int(profile["isEggMenu"])
+        used_menu_keys.add(candidate["menuKey"])
         result_days.append(record)
 
     proposed = [day for day in result_days if day["state"] == "PROPOSED_DRAFT"]
     known_totals = [day["estimatedTotal"] for day in proposed if day["estimatedTotal"] is not None]
     all_within = [day["withinPagu"] for day in proposed if day["withinPagu"] is not None]
+    weekly_estimated = round(sum(known_totals), 2) if len(known_totals) == len(proposed) else None
+    weekly_within = None if weekly_estimated is None or weekly_budget is None else weekly_estimated <= weekly_budget
+    for record in proposed:
+        record["withinWeeklyPagu"] = weekly_within
     return {
-        "engine": "menu-planning-weekly-v3", "readOnly": True, "draftOnly": True, "site": site,
+        "engine": "menu-planning-weekly-v4", "readOnly": True, "draftOnly": True, "site": site,
         "weekStart": week_start, "weekEnd": week_end, "requestedDays": days,
         "targetPm": suggested_pm, "targetPmBreakdown": suggested_pm_breakdown,
         "paguPerPm": suggested_pagu, "paguKecil": pagu_kecil, "paguBesar": pagu_besar,
-        "paguTotal": suggested_pagu_total, "days": result_days,
+        "paguTotal": suggested_pagu_total, "weeklyPaguTotal": weekly_budget, "days": result_days,
         "materialCatalog": _material_catalog(snapshots),
         "summary": {
             "existingDays": sum(day["state"] == "EXISTING" for day in result_days),
             "proposedDays": len(proposed), "needsDataDays": sum(day["state"] == "NEEDS_DATA" for day in result_days),
-            "totalEstimatedSpend": round(sum(known_totals), 2) if len(known_totals) == len(proposed) else None,
-            "allProposedWithinPagu": all(all_within) if len(all_within) == len(proposed) and proposed else None,
+            "totalEstimatedSpend": weekly_estimated,
+            "weeklyPaguTotal": weekly_budget,
+            "weeklyVariance": None if weekly_estimated is None or weekly_budget is None else round(weekly_budget - weekly_estimated, 2),
+            "withinWeeklyPagu": weekly_within,
+            "allProposedWithinPagu": weekly_within if len(all_within) == len(proposed) and proposed and not any(day["state"] == "NEEDS_DATA" for day in result_days) and weekly_within is not None else None,
         },
         "confirmedKnowledge": knowledge,
         "rulesApplied": [
             "Hari yang sudah memiliki planning ditampilkan sebagai EXISTING dan tidak ditimpa.",
             "Hari kosong hanya memakai menu historis Calculator dengan bahan, jumlah, dan harga yang tersedia.",
             "Menu dan bahan susu/B3 kering tidak dijadikan acuan; pemilihan memakai menu masak basah.",
-            "Paket resep lengkap dinilai sebagai satu kombinasi, lalu dipilih berdasarkan kecocokan pagu, protein, buah, frekuensi, dan jarak pemakaian.",
+            "Paket resep lengkap dinilai sebagai satu kombinasi; satu menu tidak diulang dalam minggu sebelum semua variasi unik yang aman tersedia.",
             "Menu telur dibatasi maksimal satu hari dalam satu minggu; bila alternatif non-telur tidak ada, hari tersebut ditandai perlu data.",
             "Buah dari histori tidak diulang pada hari berikutnya bila alternatif buah tersedia.",
             "Jumlah tiap bahan, termasuk bumbu, diskalakan dari histori menu sumber menurut target PM.",
             "Pagu dihitung tepat dari PM kecil × pagu kecil ditambah PM besar × pagu besar; tidak dirata-ratakan untuk validasi.",
+            "Total biaya semua DRAFT wajib tidak melebihi total pagu DRAFT minggu. Satu hari boleh di atas batas harian hanya bila ditutup penghematan hari lain; bila dipindahkan sendiri, batas hariannya tetap berlaku.",
         ],
         "automationBoundary": {
             "canCreateOrEditCalculator": False, "canCreateOrEditPurchaseOrder": False,
@@ -599,18 +700,30 @@ def weekly_menu_preview(
     pagu_kecil: float | None = Query(default=None, alias="paguKecil", gt=0),
     pagu_besar: float | None = Query(default=None, alias="paguBesar", gt=0),
 ) -> dict[str, Any]:
-    """Build a read-only weekly draft from historical Calculator snapshots."""
+    """Build a read-only weekly draft from Calculator history and snapshots."""
     breakdown = {"small": porsi_kecil, "large": porsi_besar} if porsi_kecil is not None and porsi_besar is not None else None
-    if not database_ready():
-        return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=[], target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=[], target_pm_breakdown=breakdown, pagu_kecil=pagu_kecil, pagu_besar=pagu_besar)
-    try:
-        with connection() as conn:
-            with conn.cursor() as cur:
-                snapshots = _load_snapshots(cur, site, None, week_start + timedelta(days=days - 1), limit=180)
-                knowledge = _load_confirmed_knowledge(cur, site)
-    except Exception as exc:
-        raise HTTPException(503, "menu planning data is temporarily unavailable") from exc
-    return _build_week_draft(site=site, week_start=week_start, days=days, snapshots=snapshots, target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=knowledge, target_pm_breakdown=breakdown, pagu_kecil=pagu_kecil, pagu_besar=pagu_besar)
+    history_end = week_start + timedelta(days=days - 1)
+    # Firestore is the Calculator's complete daily-plan archive. PostgreSQL is
+    # retained as a safe fallback and also supplies confirmed knowledge.
+    firestore_snapshots, firestore_error = _load_calculator_history(site, history_end)
+    database_snapshots: list[dict[str, Any]] = []
+    knowledge: list[dict[str, Any]] = []
+    if database_ready():
+        try:
+            with connection() as conn:
+                with conn.cursor() as cur:
+                    database_snapshots = _load_snapshots(cur, site, None, history_end, limit=180)
+                    knowledge = _load_confirmed_knowledge(cur, site)
+        except Exception:
+            # A useful Calculator-history draft must not become unavailable
+            # merely because the optional snapshot cache is momentarily down.
+            database_snapshots = []
+            knowledge = []
+    snapshots = firestore_snapshots + database_snapshots
+    result = _build_week_draft(site=site, week_start=week_start, days=days, snapshots=snapshots, target_pm=target_pm, pagu_per_pm=pagu_per_pm, knowledge=knowledge, target_pm_breakdown=breakdown, pagu_kecil=pagu_kecil, pagu_besar=pagu_besar)
+    result["historySource"] = "Calculator Firestore + snapshot planning" if firestore_snapshots else "Snapshot planning"
+    result["historyFallback"] = bool(firestore_error)
+    return result
 
 
 @router.get("/preview")
@@ -680,10 +793,13 @@ def transfer_weekly_draft_to_calculator(payload: MenuDraftTransferIn) -> dict[st
     pagu_total = _pagu_total(payload.porsiKecil, payload.porsiBesar, payload.paguKecil, payload.paguBesar)
     assert pagu_total is not None
     calculator_plans = [_calculator_payload_from_draft(day, payload.porsiKecil, payload.porsiBesar) for day in payload.plans]
+    combined_total = 0.0
     for plan in calculator_plans:
         total = float((plan.get("shoppingListJSON") or {}).get("grand_total_num") or 0)
-        if total > pagu_total:
-            raise HTTPException(422, f"draft {plan['date']} masih melebihi pagu gabungan PM kecil dan PM besar")
+        combined_total += total
+    weekly_ceiling = pagu_total * len(calculator_plans)
+    if combined_total > weekly_ceiling:
+        raise HTTPException(422, "total draft terpilih masih melebihi pagu gabungan untuk jumlah hari yang dipindahkan")
 
     if not database_ready():
         raise HTTPException(503, "database unavailable")

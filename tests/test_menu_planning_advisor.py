@@ -32,7 +32,7 @@ def test_menu_advisor_exposes_read_only_draft_routes_and_one_explicit_transfer_r
 
 def test_pm_is_always_small_plus_large_and_quantities_round_up():
     assert _total_pm({"porsiKecil": 1000, "porsiBesar": 43, "targetPm": 1000}) == 1043
-    assert _round_up_quantity(2.001, "kg") == 2.01
+    assert _round_up_quantity(2.001, "kg") == 2.1
     assert _round_up_quantity(10.01, "pcs") == 11
 
 
@@ -45,6 +45,7 @@ def test_weekly_draft_scales_historical_bumbu_and_varies_menu_and_fruit():
     snapshots = [
         _snapshot(1, date(2026, 7, 1), "Sate ayam", "Sate Ayam", "Jeruk Medan"),
         _snapshot(2, date(2026, 7, 2), "Ikan bumbu kuning", "Ikan Bumbu Kuning", "Pisang"),
+        _snapshot(3, date(2026, 7, 3), "Tempe orek", "Tempe Orek", "Apel"),
     ]
     result = _build_week_draft(
         site="MAJA", week_start=date(2026, 8, 3), days=3, snapshots=snapshots,
@@ -60,6 +61,26 @@ def test_weekly_draft_scales_historical_bumbu_and_varies_menu_and_fruit():
     # Source recipe is for 120 PM; 240 PM doubles the historical bumbu.
     assert days[0]["materials"][0]["quantity"] == 12
     assert days[0]["estimatedPerPm"] is not None
+
+
+def test_weekly_draft_never_repeats_a_menu_or_exceeds_the_combined_weekly_pagu():
+    affordable_a = _snapshot(1, date(2026, 7, 1), "Sate ayam", "Sate Ayam", "Jeruk Medan")
+    affordable_b = _snapshot(2, date(2026, 7, 2), "Ikan bumbu", "Ikan Bumbu", "Pisang")
+    expensive = _snapshot(3, date(2026, 7, 3), "Daging premium", "Daging Premium", "Apel", price=50_000)
+    result = _build_week_draft(
+        site="MAJA", week_start=date(2026, 8, 3), days=3,
+        snapshots=[affordable_a, affordable_b, expensive], target_pm=120,
+        pagu_per_pm=None, knowledge=[], target_pm_breakdown={"small": 100, "large": 20},
+        pagu_kecil=4_000, pagu_besar=4_000,
+    )
+
+    proposed = [day for day in result["days"] if day["state"] == "PROPOSED_DRAFT"]
+    menu_keys = ["|".join(day["recipeNames"]).casefold() for day in proposed]
+    assert len(proposed) == 3
+    assert len(menu_keys) == len(set(menu_keys))
+    assert any(day["withinPagu"] is False for day in proposed)
+    assert result["summary"]["withinWeeklyPagu"] is True
+    assert result["summary"]["totalEstimatedSpend"] <= result["summary"]["weeklyPaguTotal"]
 
 
 def test_existing_day_is_never_replaced_and_missing_price_blocks_pagu_claim():
