@@ -416,6 +416,19 @@ def list_purchase_orders(
                (select count(*) from purchase_order_items poi where poi.purchase_order_id=po.id) as item_count,
                coalesce((select sum(poi.po_qty * coalesce(poi.po_price,0))
                          from purchase_order_items poi where poi.purchase_order_id=po.id),0) as po_total
+               ,coalesce((select jsonb_agg(jsonb_build_object(
+                            'planning_snapshot_item_id',poi.planning_snapshot_item_id,
+                            'item_code',poi.item_code,'item_name',poi.item_name,'unit',poi.unit
+                          ) order by poi.id)
+                          from purchase_order_items poi where poi.purchase_order_id=po.id),'[]'::jsonb) as item_refs
+               ,coalesce((select jsonb_agg(jsonb_build_object(
+                            'distribution_date',poc.distribution_date,
+                            'planning_snapshot_item_id',poci.planning_snapshot_item_id,
+                            'item_code',poci.item_code,'item_name',poci.item_name,'unit',poci.unit
+                          ) order by poc.distribution_date,poci.id)
+                          from purchase_order_coverage poc
+                          join purchase_order_coverage_items poci on poci.purchase_order_coverage_id=poc.id
+                          where poc.purchase_order_id=po.id),'[]'::jsonb) as coverage_item_refs
         from purchase_orders po
         left join production_cycles pc on pc.id=po.production_cycle_id
         where true
