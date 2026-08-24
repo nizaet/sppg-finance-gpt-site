@@ -39,7 +39,14 @@ from backend.domain_api import (
     save_actual_usage,
 )
 from backend.gpt_bridge_api import require_gpt_auth
-from backend.inventory_api import delete_stock_opname, stock_opname_detail, stock_opnames
+from backend.inventory_api import (
+    InventoryMasterItemIn,
+    delete_stock_opname,
+    inventory_items,
+    stock_opname_detail,
+    stock_opnames,
+    upsert_inventory_item,
+)
 from backend.operational_api import (
     PurchaseOrderCreateIn,
     create_purchase_order,
@@ -79,6 +86,7 @@ ReadResource = Literal[
     "GOODS_RECEIPTS",
     "RECEIVING_VARIANCE",
     "STOCK_OPNAMES",
+    "INVENTORY_ITEM_MASTER",
     "ACTUAL_USAGE",
     "ACCOUNTANT_FLOW",
     "BGN_FLOW",
@@ -96,6 +104,7 @@ class GptOperationReadIn(BaseModel):
     vendor: str | None = None
     status: str | None = None
     location: str | None = None
+    search: str | None = None
     record_id: int | None = Field(default=None, ge=1)
     production_cycle_id: int | None = Field(default=None, ge=1)
     limit: int | None = Field(default=None, ge=1, le=500)
@@ -133,6 +142,8 @@ def read_application_operation(payload: GptOperationReadIn) -> dict[str, Any]:
         result = receiving_variance(p.site or "", p.limit or 200)
     elif p.resource == "STOCK_OPNAMES":
         result = stock_opname_detail(p.record_id) if p.record_id else stock_opnames(p.location or "", p.limit or 50, False)
+    elif p.resource == "INVENTORY_ITEM_MASTER":
+        result = inventory_items(p.search or "", p.limit or 500)
     elif p.resource == "ACTUAL_USAGE":
         if not p.production_cycle_id:
             raise HTTPException(400, "production_cycle_id is required for ACTUAL_USAGE")
@@ -166,6 +177,7 @@ WriteOperation = Literal[
     "SET_VENDOR_LEAD_TIME",
     "REVIEW_EVENT",
     "VOID_STOCK_OPNAME",
+    "UPSERT_INVENTORY_ITEM_MASTER",
     "CREATE_ACCOUNTANT_SUBMISSION",
     "MARK_ACCOUNTANT_SUBMISSION_SENT",
     "CREATE_ACCOUNTANT_INVOICE",
@@ -243,6 +255,7 @@ def preview_or_execute_application_operation(payload: GptOperationWriteIn) -> di
         "SET_VENDOR_LEAD_TIME": VendorLeadTimeUpdateIn,
         "REVIEW_EVENT": ReviewEventCommandIn,
         "VOID_STOCK_OPNAME": StockOpnameVoidCommandIn,
+        "UPSERT_INVENTORY_ITEM_MASTER": InventoryMasterItemIn,
         "CREATE_ACCOUNTANT_SUBMISSION": AccountantSubmissionIn,
         "MARK_ACCOUNTANT_SUBMISSION_SENT": AccountantSubmissionCommandIn,
         "CREATE_ACCOUNTANT_INVOICE": AccountantInvoiceIn,
@@ -301,6 +314,8 @@ def preview_or_execute_application_operation(payload: GptOperationWriteIn) -> di
         )
     elif operation == "VOID_STOCK_OPNAME":
         result = delete_stock_opname(validated.stock_opname_id, validated.reason)  # type: ignore[union-attr]
+    elif operation == "UPSERT_INVENTORY_ITEM_MASTER":
+        result = upsert_inventory_item(validated.model_copy(update={"commit": True}))  # type: ignore[union-attr]
     elif operation == "CREATE_ACCOUNTANT_SUBMISSION":
         result = create_accountant_submission(validated)  # type: ignore[arg-type]
     elif operation == "MARK_ACCOUNTANT_SUBMISSION_SENT":
