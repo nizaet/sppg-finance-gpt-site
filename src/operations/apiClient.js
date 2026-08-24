@@ -1,172 +1,150 @@
 import { readSessionToken } from "../auth/session.js";
 
 const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
-
 const inflightGets = new Map();
 const REQUEST_TIMEOUT_MS = 20000;
+const PO_REMINDER_ACTION_HORIZON_DAYS = 2;
 
 function requestHeaders(options = {}) {
   const token = readSessionToken();
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
-  };
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) };
 }
 
 async function doRequest(path, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, {
-      ...options,
-      signal: controller.signal,
-      headers: requestHeaders(options),
-    });
-
+    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, { ...options, signal: controller.signal, headers: requestHeaders(options) });
     if (!res.ok) {
       let detail = "";
       try { detail = await res.text(); } catch {}
       throw new Error(`SPPG Core API ${res.status}: ${detail || res.statusText}`);
     }
-
-    if (res.status === 204) return null;
-    return res.json();
+    return res.status === 204 ? null : res.json();
   } catch (err) {
-    if (err?.name === "AbortError") {
-      throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");
-    }
+    if (err?.name === "AbortError") throw new Error("SPPG Core API terlalu lama merespons. Coba Refresh.");
     throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
+  } finally { clearTimeout(timeout); }
 }
 
 function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (method !== "GET") return doRequest(path, options);
-
   const key = `${DEFAULT_BASE_URL}${path}`;
   const existing = inflightGets.get(key);
   if (existing) return existing;
-
   const pending = doRequest(path, options).finally(() => inflightGets.delete(key));
   inflightGets.set(key, pending);
   return pending;
 }
 
+function poReminderHorizon(value) {
+  const requested = Number(value || PO_REMINDER_ACTION_HORIZON_DAYS);
+  if (!Number.isFinite(requested) || requested < 1) return PO_REMINDER_ACTION_HORIZON_DAYS;
+  return Math.min(Math.trunc(requested), PO_REMINDER_ACTION_HORIZON_DAYS);
+}
+
 export const operationsApi = {
   health: () => request("/health"),
   getSchemaStatus: () => request("/v1/schema-status"),
-  getControlTower: (date, site = "") => {
-    const q = new URLSearchParams({ date });
-    if (site) q.set("site", site);
-    return request(`/v1/control-tower-v2?${q.toString()}`);
-  },
-  getPoCalendar: ({ from, to, site }) => {
-    const q = new URLSearchParams({ from, to });
-    if (site) q.set("site", site);
-    return request(`/v1/po-calendar?${q.toString()}`);
-  },
-  previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => {
-    const q = new URLSearchParams({ distributionDate });
-    if (cookingDate) q.set("cookingDate", cookingDate);
-    if (site) q.set("site", site);
-    return request(`/v1/po-schedule/preview?${q.toString()}`);
-  },
+  getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return request(`/v1/control-tower-v2?${q}`); },
+  getPoCalendar: ({ from, to, site }) => { const q = new URLSearchParams({ from, to }); if (site) q.set("site", site); return request(`/v1/po-calendar?${q}`); },
+  previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => { const q = new URLSearchParams({ distributionDate }); if (cookingDate) q.set("cookingDate", cookingDate); if (site) q.set("site", site); return request(`/v1/po-schedule/preview?${q}`); },
+  getPoReminders: ({ site = "", date = "", horizonDays = PO_REMINDER_ACTION_HORIZON_DAYS, refresh = false } = {}) => { const q = new URLSearchParams({ horizonDays: String(poReminderHorizon(horizonDays)) }); if (site) q.set("site", site); if (date) q.set("date", date); if (refresh) q.set("refresh", "true"); return request(`/v1/po-reminders-v3?${q}`); },
+  getPoDeliveryAlerts: ({ site = "", date = "", minimumHour = 17 } = {}) => { const q = new URLSearchParams({ minimumHour: String(minimumHour) }); if (site) q.set("site", site); if (date) q.set("date", date); return request(`/v1/po-delivery-alerts?${q}`); },
+  overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),
+  clearPoReminderOverride: (reminderKey) => request(`/v1/po-reminders/override/${encodeURIComponent(reminderKey)}`, { method: "DELETE" }),
+  confirmPoShortageStock: (payload) => request("/v1/po-reminders/stock-confirmation", { method: "POST", body: JSON.stringify(payload) }),
   getReferenceSites: () => request("/v1/reference/sites"),
-  getReferenceVendors: (site = "") => {
-    const q = new URLSearchParams();
-    if (site) q.set("site", site);
-    return request(`/v1/reference/vendors${q.toString() ? `?${q.toString()}` : ""}`);
-  },
-  getPurchaseOrders: ({ site = "", vendor = "", status = "", limit = 100 } = {}) => {
-    const q = new URLSearchParams({ limit: String(limit) });
-    if (site) q.set("site", site);
-    if (vendor) q.set("vendor", vendor);
-    if (status) q.set("status", status);
-    return request(`/v1/purchase-orders?${q.toString()}`);
-  },
-  getPurchaseOrder: (purchaseOrderId) => request(`/v1/purchase-orders/${encodeURIComponent(purchaseOrderId)}`),
+  getReferenceVendors: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/reference/vendors${q.toString() ? `?${q}` : ""}`); },
+  updateVendorLeadTime: (payload) => request("/v1/reference/vendor-rules/lead-time", { method: "POST", body: JSON.stringify(payload) }),
+  updateVendorWhatsApp: (vendorCode, whatsappPhone) => request(`/v1/reference/vendors/${encodeURIComponent(vendorCode)}/whatsapp`, { method: "POST", body: JSON.stringify({ whatsapp_phone: whatsappPhone }) }),
+  getPurchaseOrders: ({ site = "", vendor = "", status = "", search = "", includeArchived = false, fromDate = "", toDate = "", limit = 100 } = {}) => { const q = new URLSearchParams({ limit: String(limit), includeArchived: includeArchived ? "true" : "false" }); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); if (status) q.set("status", status); if (search) q.set("search", search); if (fromDate) q.set("fromDate", fromDate); if (toDate) q.set("toDate", toDate); return request(`/v1/purchase-orders-active?${q}`); },
+  getPurchaseOrder: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}`),
   createPurchaseOrder: (payload) => request("/v1/purchase-orders", { method: "POST", body: JSON.stringify(payload) }),
-  previewWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit: false }),
-  }),
-  commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit: true }),
-  }),
-  getReceivingVariance: ({ site = "", limit = 200 } = {}) => {
-    const q = new URLSearchParams({ limit: String(limit) });
-    if (site) q.set("site", site);
-    return request(`/v1/receiving/variance?${q.toString()}`);
+  createSplitPurchaseOrder: (payload) => request("/v1/purchase-orders/split", { method: "POST", body: JSON.stringify(payload) }),
+  editPurchaseOrder: (id, payload) => request(`/v1/purchase-orders/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deletePurchaseOrder: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  revisePurchaseOrder: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}/revise`, { method: "POST", body: "{}" }),
+  cancelPurchaseOrder: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  finalizePurchaseOrder: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}/finalize`, { method: "POST", body: "{}" }),
+  markPurchaseOrderSent: (id) => request(`/v1/purchase-orders/${encodeURIComponent(id)}/mark-sent`, { method: "POST", body: "{}" }),
+  getPoWhatsAppPreview: ({ purchaseOrderId = "", site = "", vendor = "", distributionDate = "" } = {}) => { const q = new URLSearchParams(); if (purchaseOrderId) q.set("purchaseOrderId", String(purchaseOrderId)); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); if (distributionDate) q.set("distributionDate", distributionDate); return request(`/v1/po-whatsapp-preview?${q}`); },
+  previewWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitWhatsAppReceipt: (payload) => request("/v1/receiving/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
+  getReceivingVariance: ({ site = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); return request(`/v1/receiving/variance?${q}`); },
+  parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", { method: "POST", body: JSON.stringify(payload) }),
+  confirmVendorPayment: (payload, commit = false) => request("/v1/vendor-payments/confirm", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
+  getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (status) q.set("status", status); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); return request(`/v1/vendor-payables?${q}`); },
+  getVendorPayments: ({ status = "", site = "" } = {}) => { const q = new URLSearchParams(); if (status) q.set("status", status); if (site) q.set("site", site); return request(`/v1/vendor-payments?${q}`); },
+  getInventoryBalances: ({ site, search = "", limit = 300, forDate = "" }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); if (forDate) q.set("forDate", forDate); return request(`/v1/inventory/balances-v2?${q}`); },
+  previewStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
+  getStockOpnames: ({ location = "", limit = 50 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (location) q.set("location", location); return request(`/v1/inventory/stock-opnames?${q}`); },
+  getStockOpname: (id) => request(`/v1/inventory/stock-opnames/${encodeURIComponent(id)}`),
+  deleteStockOpname: (id, reason = "") => { const q = new URLSearchParams(); if (reason) q.set("reason", reason); return request(`/v1/inventory/stock-opnames/${encodeURIComponent(id)}${q.toString() ? `?${q}` : ""}`, { method: "DELETE" }); },
+  manualStockAdjustment: (payload, commit = true) => request("/v1/inventory/manual-adjustment", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
+  getInventoryItems: (search = "") => { const q = new URLSearchParams(); if (search) q.set("search", search); return request(`/v1/inventory/items${q.toString() ? `?${q}` : ""}`); },
+  saveInventoryItem: (payload, commit = false) => request("/v1/inventory/items", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
+  previewCalculatorPlans: (payload) => request("/v1/calculator-data/plan-preview", { method: "POST", body: JSON.stringify(payload) }),
+  previewCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
+  commitCalculatorImport: (payload) => request("/v1/calculator-data/import", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
+  syncCalculatorPlanning: ({ site, distributionDate, deactivateMissing = false }) => request("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate, deactivate_missing: deactivateMissing }) }),
+  previewCalculatorPlanning: ({ site, distributionDate }) => { const q = new URLSearchParams({ site, distributionDate }); return request(`/v1/calculator-planning/preview?${q}`); },
+  getPlanningSnapshots: async ({ site = "", distributionDate = "", activeOnly = true, syncCalculator = true } = {}) => {
+    if (syncCalculator && site && distributionDate) {
+      try {
+        await doRequest("/v1/calculator-planning/sync", { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate }) });
+      } catch (err) {
+        // A calculator may legitimately have no plan for the chosen date.
+        // Continue to read the local planning/PO data instead of making the
+        // whole Control Tower look empty (including already-saved POs).
+        if (!String(err?.message || "").includes("SPPG Core API 404")) throw err;
+      }
+    }
+    const q = new URLSearchParams(); if (site) q.set("site", site); if (distributionDate) q.set("distributionDate", distributionDate); q.set("activeOnly", activeOnly ? "true" : "false");
+    return request(`/v1/planning-snapshots?${q}`);
   },
-  parseVendorInvoice: (payload) => request("/v1/vendor-invoices/parse-whatsapp", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }),
-  getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => {
-    const q = new URLSearchParams({ limit: String(limit) });
-    if (status) q.set("status", status);
-    if (site) q.set("site", site);
-    if (vendor) q.set("vendor", vendor);
-    return request(`/v1/vendor-payables?${q.toString()}`);
-  },
-  getVendorPayments: ({ status = "", site = "" } = {}) => {
-    const q = new URLSearchParams();
-    if (status) q.set("status", status);
-    if (site) q.set("site", site);
-    return request(`/v1/vendor-payments?${q.toString()}`);
-  },
-  getInventoryBalances: ({ site, search = "", limit = 300 }) => {
-    const q = new URLSearchParams({ site, limit: String(limit) });
-    if (search) q.set("search", search);
-    return request(`/v1/inventory/balances?${q.toString()}`);
-  },
-  getPlanningSnapshots: ({ site = "", distributionDate = "", activeOnly = true } = {}) => {
-    const q = new URLSearchParams();
-    if (site) q.set("site", site);
+  getPlanningSnapshot: (id) => request(`/v1/planning-snapshots/${id}`),
+  getMenuPlanningPreview: ({ site, distributionDate = "" }) => {
+    const q = new URLSearchParams({ site });
     if (distributionDate) q.set("distributionDate", distributionDate);
-    q.set("activeOnly", activeOnly ? "true" : "false");
-    return request(`/v1/planning-snapshots?${q.toString()}`);
+    return request(`/v1/menu-planning-advisor/preview?${q}`);
   },
-  getPlanningSnapshot: (snapshotId) => request(`/v1/planning-snapshots/${snapshotId}`),
+  getWeeklyMenuDraft: ({ site, weekStart, days = 7, targetPm = "", paguPerPm = "", porsiKecil = "", porsiBesar = "", paguKecil = "", paguBesar = "" }) => {
+    const q = new URLSearchParams({ site, weekStart, days: String(days) });
+    if (targetPm !== "" && targetPm !== null && targetPm !== undefined) q.set("targetPm", String(targetPm));
+    if (paguPerPm !== "" && paguPerPm !== null && paguPerPm !== undefined) q.set("paguPerPm", String(paguPerPm));
+    if (porsiKecil !== "" && porsiKecil !== null && porsiKecil !== undefined) q.set("porsiKecil", String(porsiKecil));
+    if (porsiBesar !== "" && porsiBesar !== null && porsiBesar !== undefined) q.set("porsiBesar", String(porsiBesar));
+    if (paguKecil !== "" && paguKecil !== null && paguKecil !== undefined) q.set("paguKecil", String(paguKecil));
+    if (paguBesar !== "" && paguBesar !== null && paguBesar !== undefined) q.set("paguBesar", String(paguBesar));
+    return request(`/v1/menu-planning-advisor/week-preview?${q}`);
+  },
+  transferWeeklyMenuDraft: (payload) => request("/v1/menu-planning-advisor/transfer-to-calculator", { method: "POST", body: JSON.stringify(payload) }),
   ingestPlanningSnapshot: (payload) => request("/v1/planning-snapshots", { method: "POST", body: JSON.stringify(payload) }),
   parseMessage: (payload) => request("/v1/parse-message", { method: "POST", body: JSON.stringify(payload) }),
-  getGoodsReceipts: ({ site = "", limit = 100 } = {}) => {
-    const q = new URLSearchParams({ limit: String(limit) });
-    if (site) q.set("site", site);
-    return request(`/v1/goods-receipts?${q.toString()}`);
-  },
+  getGoodsReceipts: ({ site = "", vendor = "", poId = "", poCode = "", fromDate = "", toDate = "", distributionDate = "", search = "", limit = 150 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); if (poId) q.set("poId", String(poId)); if (poCode) q.set("poCode", poCode); if (fromDate) q.set("fromDate", fromDate); if (toDate) q.set("toDate", toDate); if (distributionDate) q.set("distributionDate", distributionDate); if (search) q.set("search", search); return request(`/v1/goods-receipts-visible?${q}`); },
   createGoodsReceipt: (payload) => request("/v1/goods-receipts", { method: "POST", body: JSON.stringify(payload) }),
-  getActualUsage: (productionCycleId) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(productionCycleId)}`),
+  getActualUsage: (id) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(id)}`),
   saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
-  generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", {
-    method: "POST",
-    body: JSON.stringify({ ...payload, commit }),
-  }),
-  markAccountantSubmissionSent: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/mark-sent`, { method: "POST", body: "{}" }),
-  getAccountantFlow: (site = "") => {
-    const q = new URLSearchParams(); if (site) q.set("site", site);
-    return request(`/v1/accountant-flow${q.toString() ? `?${q.toString()}` : ""}`);
-  },
+  generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
+  markAccountantSubmissionSent: (id) => request(`/v1/accountant-submissions/${encodeURIComponent(id)}/mark-sent`, { method: "POST", body: "{}" }),
+  getAccountantFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/accountant-flow${q.toString() ? `?${q}` : ""}`); },
   createAccountantSubmission: (payload) => request("/v1/accountant-submissions", { method: "POST", body: JSON.stringify(payload) }),
   createAccountantInvoice: (payload) => request("/v1/accountant-invoices", { method: "POST", body: JSON.stringify(payload) }),
-  getBgnFlow: (site = "") => {
-    const q = new URLSearchParams(); if (site) q.set("site", site);
-    return request(`/v1/bgn-flow${q.toString() ? `?${q.toString()}` : ""}`);
-  },
+  getBgnFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/bgn-flow${q.toString() ? `?${q}` : ""}`); },
   createBgnMaker: (payload) => request("/v1/bgn-makers", { method: "POST", body: JSON.stringify(payload) }),
   createBgnApproval: (payload) => request("/v1/bgn-approvals", { method: "POST", body: JSON.stringify(payload) }),
   createBgnReceipt: (payload) => request("/v1/bgn-receipts", { method: "POST", body: JSON.stringify(payload) }),
   createSettlement: (payload) => request("/v1/settlements", { method: "POST", body: JSON.stringify(payload) }),
   getAuditLog: (limit = 200) => request(`/v1/audit-log?limit=${encodeURIComponent(limit)}`),
   getReviewQueue: () => request("/v1/review-queue"),
-  submitReviewDecision: (eventId, decision, note = "") => request(`/v1/review-queue/${eventId}`, {
-    method: "POST",
-    body: JSON.stringify({ decision, note }),
-  }),
+  submitReviewDecision: (id, decision, note = "") => request(`/v1/review-queue/${id}`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  getHermesActionProposals: ({ site = "", status = "PENDING", limit = 100 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); if (status) q.set("status", status); return request(`/v1/hermes-actions/proposals?${q}`); },
+  decideHermesActionProposal: (actionId, decision, note = "") => request(`/v1/hermes-actions/proposals/${encodeURIComponent(actionId)}/decision`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  previewHermesPoDraft: (actionId) => request(`/v1/hermes-actions/proposals/${encodeURIComponent(actionId)}/po-draft-preview`),
+  createHermesPoDraft: (actionId) => request(`/v1/hermes-actions/proposals/${encodeURIComponent(actionId)}/create-po-draft`, { method: "POST", body: "{}" }),
   ingestEvent: (payload) => request("/v1/events", { method: "POST", body: JSON.stringify(payload) }),
 };
 

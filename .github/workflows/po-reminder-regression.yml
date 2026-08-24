@@ -1,0 +1,118 @@
+name: PO Reminder Regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - llm-wiki-v0
+      - fix/po-reminder-coverage-tempe-v2
+      - fix/po-reminder-completed-shortage-20260816
+      - fix/po-reminder-wikian-tempe-sync-20260816
+      - feat/po-ux-split-override-colors-20260817
+      - fix/control-tower-receiving-vendor-sync-20260817
+      - fix/po-reminder-shortage-review-stock-confirm-20260817
+      - fix/po-reminder-actual-po-reconcile-20260817
+
+jobs:
+  po-reminder-regression:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sppg_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sppg_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sppg_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Run strict PO reminder tests
+        run: |
+          python -m unittest -v tests.test_po_reminder_v4
+          python -m unittest -v tests.test_po_reminder_completed_shortage
+          python -m unittest -v tests.test_po_reminder_operational_reconcile
+          python -m unittest -v tests.test_po_reminder_legacy_po_reconcile
+          python -m unittest -v tests.test_po_reminder_tools
+          python -m unittest -v tests.test_po_shortage_stock
+          python -m unittest -v tests.test_item_taxonomy_vendor_sync
+          python -m unittest -v tests.test_control_tower_po_sync
+          python -m unittest -v tests.test_po_performance_receiving_regression
+          python -m unittest -v tests.test_receiving_runtime_parser
+          python -m unittest -v tests.test_inventory_manual_route
+      - name: Compile reminder and planning bridge modules
+        run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_projection_cache_patch.py backend/po_delivery_alerts_api.py backend/po_delivery_receipt_reconcile_patch.py backend/receiving_runtime_patch.py backend/inventory_manual_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_legacy_po_reconcile.py backend/po_reminder_tools_api.py backend/po_shortage_stock_api.py backend/item_taxonomy.py backend/control_tower_api.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
+      - name: Validate migration and dedicated Tempe rules
+        run: |
+          python -m backend.migrate
+          python - <<'PY'
+          from backend.db import connection
+
+          with connection() as conn:
+              with conn.cursor() as cur:
+                  cur.execute("""
+                    select site_code, category_code, lead_time_days_before_cooking
+                    from vendor_rules
+                    where vendor_code='KOPERASI'
+                      and effective_from=date '2026-08-16'
+                      and category_code in ('TEMPE','TAHU')
+                    order by site_code, category_code
+                  """)
+                  rules = {
+                      (row['site_code'], row['category_code']): row['lead_time_days_before_cooking']
+                      for row in cur.fetchall()
+                  }
+                  cur.execute("select to_regclass('public.po_reminder_overrides') as table_name")
+                  override_table = cur.fetchone()['table_name']
+                  cur.execute("""
+                    select pg_get_constraintdef(oid) as definition
+                    from pg_constraint
+                    where conrelid='po_reminder_overrides'::regclass
+                      and conname='po_reminder_overrides_resolution_check'
+                  """)
+                  resolution_check = cur.fetchone()['definition']
+          assert rules[('MAJA','TEMPE')] == 4, rules
+          assert rules[('MAJA','TAHU')] == 2, rules
+          assert rules[('CEMPLANG','TEMPE')] is None, rules
+          assert override_table == 'po_reminder_overrides', override_table
+          assert 'CHECKED' in resolution_check, resolution_check
+          print('procurement migration rules ok:', rules)
+          print('override table + CHECKED resolution ok')
+          PY
+      - name: Exercise synchronized Control Tower SQL
+        run: |
+          python - <<'PY'
+          from datetime import date
+          from backend.control_tower_api import control_tower_v2
+
+          payload = control_tower_v2(target_date=date(2026, 8, 17), site='CEMPLANG')
+          assert payload['databaseReady'] is True, payload
+          assert len(payload['sites']) == 1, payload
+          site = payload['sites'][0]
+          assert 'procurement' in site['lanes'], site
+          assert 'receiving' in site['lanes'], site
+          assert 'receiptsToday' in site['summary'], site
+          assert 'poShortage' in site['summary'], site
+          print('control tower synchronized query ok')
+          PY
+      - name: Validate split same-vendor order support
+        run: python -m unittest -v tests.test_po_split_integration
+      - name: Assert stable frontend endpoints
+        run: |
+          grep -q '/v1/po-reminders-v3?' src/operations/apiClient.js
+          grep -q '/v1/po-reminders/override' src/operations/apiClient.js
+          grep -q '/v1/purchase-orders/split' src/operations/apiClient.js
+          grep -q '/v1/po-reminders/stock-confirmation' src/operations/apiClient.js
+          grep -q 'SHORTAGE_REVIEW' src/operations/OperationsPoPlanner.jsx
+          grep -q 'Sudah dicek / biarkan' src/operations/OperationsPoPlanner.jsx

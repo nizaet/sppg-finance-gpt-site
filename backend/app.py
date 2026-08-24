@@ -13,18 +13,24 @@ from backend.db import connection, database_ready
 from backend.reference_api import router as reference_router
 from backend.planning_api import router as planning_router
 from backend.gpt_bridge_api import router as gpt_bridge_router
+from backend.gpt_operations_api import router as gpt_operations_router
 from backend.firestore_backfill_api import router as firestore_backfill_router
 from backend.operational_api import router as operational_router
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.vendor_workflow_api import router as vendor_workflow_router
+from backend.menu_planning_advisor_api import router as menu_planning_advisor_router
+from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184, schema_v0185
 
-app = FastAPI(title="SPPG Core API", version="0.16.1")
+app = FastAPI(title="SPPG Core API", version="0.16.6")
 app.include_router(reference_router)
 app.include_router(planning_router)
 app.include_router(gpt_bridge_router)
+app.include_router(gpt_operations_router)
 app.include_router(firestore_backfill_router)
 app.include_router(operational_router)
+app.include_router(menu_planning_advisor_router)
 app.include_router(vendor_payables_router, prefix="/v1")
 app.include_router(inventory_router)
 app.include_router(vendor_workflow_router)
@@ -97,7 +103,7 @@ def _chatgpt_operations_schema() -> dict[str, Any]:
         "openapi": full.get("openapi", "3.1.0"),
         "info": {
             "title": "SPPG Vendor and Inventory Operations",
-            "version": "0.16.1",
+            "version": "0.16.5",
             "description": (
                 "Vendor invoice parsing, payable reconciliation, operational stock, and vendor payment confirmation. "
                 "For newly supplied invoice text, always use parseOnlySuppliedSppgVendorInvoiceText and only the user's supplied text."
@@ -112,6 +118,54 @@ def _chatgpt_operations_schema() -> dict[str, Any]:
 @app.get("/v1/schema/chatgpt-operations-v0161.json", include_in_schema=False)
 def chatgpt_operations_schema_json() -> JSONResponse:
     return JSONResponse(_chatgpt_operations_schema())
+
+
+# Compatibility aliases. The canonical schema routes live under /v1/schema,
+# but these aliases prevent the SPA fallback from being mistaken for an empty
+# OpenAPI document when a GPT Builder import omits the /v1 prefix.
+@app.get("/schema/chatgpt-operations-v0170.json", include_in_schema=False)
+def chatgpt_operations_schema_v0170_alias() -> JSONResponse:
+    return JSONResponse(schema_v0170())
+
+
+@app.get("/schema/chatgpt-operations-v0171.json", include_in_schema=False)
+def chatgpt_operations_schema_v0171_alias() -> JSONResponse:
+    return JSONResponse(schema_v0171())
+
+
+@app.get("/schema/chatgpt-operations-v0172.json", include_in_schema=False)
+def chatgpt_operations_schema_v0172_alias() -> JSONResponse:
+    return JSONResponse(schema_v0172())
+
+
+@app.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0180_alias() -> JSONResponse:
+    return JSONResponse(schema_v0180())
+
+
+@app.get("/schema/chatgpt-sppg-v0181.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0181_alias() -> JSONResponse:
+    return JSONResponse(schema_v0181())
+
+
+@app.get("/schema/chatgpt-sppg-v0182.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0182_alias() -> JSONResponse:
+    return JSONResponse(schema_v0182())
+
+
+@app.get("/schema/chatgpt-sppg-v0183.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0183_alias() -> JSONResponse:
+    return JSONResponse(schema_v0183())
+
+
+@app.get("/schema/chatgpt-sppg-v0184.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0184_alias() -> JSONResponse:
+    return JSONResponse(schema_v0184())
+
+
+@app.get("/schema/chatgpt-sppg-v0185.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0185_alias() -> JSONResponse:
+    return JSONResponse(schema_v0185())
 
 
 def empty_site(site: dict[str, str]) -> dict[str, Any]:
@@ -179,7 +233,7 @@ def stable_event_key(payload: CandidateEventIn) -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "sppg-core", "version": "0.16.1", "databaseReady": database_ready()}
+    return {"status": "ok", "service": "sppg-core", "version": "0.16.5", "databaseReady": database_ready()}
 
 
 @app.post("/v1/events")
@@ -357,7 +411,8 @@ def review_queue() -> dict[str, Any]:
             cur.execute(
                 """select id, event_key, event_type, site, vendor_code, entity_code, event_time,
                           confidence, requires_confirmation, payload, raw_text, parser_version, status, created_at
-                   from candidate_events where status='PENDING'
+                   from candidate_events
+                   where status='PENDING' and event_type not like 'HERMES_PROPOSAL_%'
                    order by requires_confirmation desc, confidence asc, created_at asc limit 500"""
             )
             return {"items": cur.fetchall()}
@@ -377,12 +432,14 @@ def review_decision(event_id: int, payload: ReviewDecision) -> dict[str, Any]:
             cur.execute(
                 """update candidate_events set status=%s, validated_at=now(), validated_by=%s,
                           rejection_reason=case when %s='REJECTED' then %s else null end
-                   where id=%s and status='PENDING' returning id, status""",
+                   where id=%s and status='PENDING'
+                     and event_type not like 'HERMES_PROPOSAL_%%'
+                   returning id, status""",
                 (status, payload.actor, status, payload.note, event_id),
             )
             row = cur.fetchone()
             if row is None:
-                raise HTTPException(409, "event not found or no longer pending")
+                raise HTTPException(409, "event not found, no longer pending, or requires Hermes Approval Center")
             cur.execute(
                 "insert into event_audit_log(candidate_event_id, action,actor,details) values (%s,%s,%s,%s::jsonb)",
                 (event_id, f"REVIEW_{decision}", payload.actor, json.dumps({"note": payload.note}, ensure_ascii=False)),

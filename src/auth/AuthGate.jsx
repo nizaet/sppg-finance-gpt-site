@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { LockKeyhole, LogOut, ShieldCheck, WalletCards } from "lucide-react";
+import { Calculator, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, WalletCards, Workflow } from "lucide-react";
 import { authApi, clearSession, readSessionRole, readSessionToken, storeSession } from "./session.js";
 import "./auth.css";
 
-const ROLES = ["OWNER", "MAJA", "CEMPLANG"];
+const ALL_ROLES = ["OWNER", "MAJA", "CEMPLANG"];
+const ROLE_LABELS = { OWNER: "YAYASAN", MAJA: "MAJA", CEMPLANG: "CEMPLANG" };
 
-function LoginScreen({ onAuthenticated }) {
-  const [role, setRole] = useState("OWNER");
+function LoginScreen({ onAuthenticated, configuredRoles = ["OWNER"] }) {
+  const roles = configuredRoles.length ? configuredRoles : ["OWNER"];
+  const [role, setRole] = useState(roles.includes("OWNER") ? "OWNER" : roles[0]);
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -34,13 +36,12 @@ function LoginScreen({ onAuthenticated }) {
         <div>
           <div className="sppg-login-kicker">SPPG OPERATIONS</div>
           <h1>Pusat Kontrol SPPG</h1>
-          <p>Masuk dengan akun operasional. Akun ChatGPT tidak diperlukan.</p>
         </div>
 
         <label>
           Akun
           <select value={role} onChange={(e) => setRole(e.target.value)}>
-            {ROLES.map((item) => <option key={item} value={item}>{item}</option>)}
+            {roles.map((item) => <option key={item} value={item}>{ROLE_LABELS[item] || item}</option>)}
           </select>
         </label>
 
@@ -71,14 +72,40 @@ function LoginScreen({ onAuthenticated }) {
   );
 }
 
-function SessionBar({ role, onLogout }) {
+function ConfigurationLocked({ config }) {
+  const missing = config?.missingRoles || ALL_ROLES;
+  return (
+    <main className="sppg-login-page">
+      <section className="sppg-login-card">
+        <div className="sppg-login-icon"><ShieldAlert size={22} /></div>
+        <div>
+          <div className="sppg-login-kicker">AKSES DIKUNCI</div>
+          <h1>Konfigurasi login belum aman</h1>
+          <p>Aplikasi tidak akan memberikan akses YAYASAN otomatis. Pastikan konfigurasi login pusat tersedia di Railway.</p>
+          {missing.length > 0 && <p>Role belum dikonfigurasi: <strong>{missing.join(", ")}</strong>.</p>}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SessionBar({ role, config, onLogout }) {
   const operations = () => { window.location.href = "/operations"; };
-  const accountant = () => { window.location.href = "/"; };
+  const accountantMaja = () => { window.location.href = config?.accountantUrls?.MAJA || "/accountant/maja"; };
+  const accountantCemplang = () => { window.location.href = config?.accountantUrls?.CEMPLANG || "/accountant/cemplang"; };
+  const calculatorSites = role === "OWNER" ? ["MAJA", "CEMPLANG"] : [role];
+
   return (
     <div className="sppg-session-bar">
-      <span>{role}</span>
-      <button type="button" onClick={operations}>Pusat Operasional</button>
-      {role === "OWNER" && <button type="button" onClick={accountant}><WalletCards size={14} /> Akuntan</button>}
+      <span>{ROLE_LABELS[role] || role}</span>
+      {calculatorSites.map((site) => (
+        <a key={site} href={config?.calculatorUrls?.[site] || `/dapur/${site.toLowerCase()}`}>
+          <Calculator size={14} /> Kalkulator {site === "MAJA" ? "Maja" : "Cemplang"}
+        </a>
+      ))}
+      {role === "OWNER" && <button type="button" onClick={operations}><Workflow size={14} /> Pusat Operasional</button>}
+      {role === "OWNER" && <button type="button" onClick={accountantMaja}><WalletCards size={14} /> Akuntan Maja</button>}
+      {role === "OWNER" && <button type="button" onClick={accountantCemplang}><WalletCards size={14} /> Akuntan Cemplang</button>}
       <button type="button" className="danger" onClick={onLogout}><LogOut size={14} /> Keluar</button>
     </div>
   );
@@ -97,10 +124,9 @@ export default function AuthGate({ children }) {
         if (cancelled) return;
         setConfig(cfg);
 
-        // Failsafe: until Railway has all four secrets, preserve the current app
-        // so configuration cannot accidentally lock the owner out.
         if (!cfg?.enabled) {
-          setRole("OWNER");
+          clearSession();
+          setRole("");
           return;
         }
 
@@ -118,9 +144,7 @@ export default function AuthGate({ children }) {
           if (!cancelled) setRole("");
         }
       } catch {
-        // Backend unavailable must not turn into an insecure implicit login once
-        // auth has been configured. Show login and let its error explain failure.
-        setConfig({ enabled: true, backendUnavailable: true });
+        setConfig({ enabled: false, backendUnavailable: true, missingRoles: ALL_ROLES });
         clearSession();
         setRole("");
       } finally {
@@ -131,13 +155,9 @@ export default function AuthGate({ children }) {
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) {
-    return <main className="sppg-auth-loading">Memeriksa akses SPPG…</main>;
-  }
-
-  if (config?.enabled && !role) {
-    return <LoginScreen onAuthenticated={setRole} />;
-  }
+  if (loading) return <main className="sppg-auth-loading">Memeriksa akses SPPG…</main>;
+  if (!config?.enabled) return <ConfigurationLocked config={config} />;
+  if (!role) return <LoginScreen configuredRoles={config?.configuredRoles || ["OWNER"]} onAuthenticated={setRole} />;
 
   const logout = async () => {
     await authApi.logout();
@@ -147,8 +167,8 @@ export default function AuthGate({ children }) {
 
   return (
     <>
-      {config?.enabled && <SessionBar role={role} onLogout={logout} />}
-      {children({ role: role || "OWNER", authEnabled: Boolean(config?.enabled) })}
+      <SessionBar role={role} config={config} onLogout={logout} />
+      {children({ role, authEnabled: true, config })}
     </>
   );
 }

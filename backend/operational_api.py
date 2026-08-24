@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.inventory_api import commit_receipt_stock
+from backend.po_schedule import resolve_purchase_order_schedule
 
 router = APIRouter(prefix="/v1", tags=["operational"])
 
@@ -193,6 +195,13 @@ class PurchaseOrderItemIn(BaseModel):
     notes: str | None = None
 
 
+class PurchaseOrderCoverageIn(BaseModel):
+    distribution_date: date
+    cooking_date: date | None = None
+    source_planning_snapshot_id: int | None = None
+    items: list[PurchaseOrderItemIn] = Field(min_length=1)
+
+
 class PurchaseOrderCreateIn(BaseModel):
     po_code: str = Field(min_length=1)
     site: Literal["MAJA", "CEMPLANG"]
@@ -202,46 +211,190 @@ class PurchaseOrderCreateIn(BaseModel):
     source_planning_snapshot_id: int | None = None
     status: Literal["DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED"] = "DRAFT"
     items: list[PurchaseOrderItemIn] = Field(min_length=1)
+    coverage: list[PurchaseOrderCoverageIn] = Field(default_factory=list)
+
+
+ACTIVE_PO_STATUSES = ("DRAFT", "FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED")
+
+
+def find_active_purchase_order_for_coverage(
+    cur: Any,
+    *,
+    site: str,
+    vendor: str,
+    coverage_dates: list[date],
+) -> dict[str, Any] | None:
+    """Find the current PO before a duplicate draft can be created.
+
+    A single range PO is represented by several coverage dates.  Matching any
+    one of those dates is enough to stop an accidental second PO; the operator
+    can open the result and edit/revise it instead.
+    """
+    cur.execute(
+        """select po.id,po.po_code,po.revision_no,po.site,po.vendor_code,po.status,
+                  po.sent_at,po.finalized_at,po.created_at,pc.distribution_date,pc.cooking_at
+           from purchase_orders po
+           join production_cycles pc on pc.id=po.production_cycle_id
+           where upper(po.site)=upper(%s)
+             and upper(po.vendor_code)=upper(%s)
+             and upper(po.status)=any(%s)
+             and (
+                pc.distribution_date=any(%s)
+                or exists(
+                    select 1 from purchase_order_coverage poc
+                    where poc.purchase_order_id=po.id
+                      and poc.distribution_date=any(%s)
+                )
+             )
+           order by po.created_at desc,po.revision_no desc
+           limit 1""",
+        (site, vendor, list(ACTIVE_PO_STATUSES), coverage_dates, coverage_dates),
+    )
+    existing = cur.fetchone()
+    if existing:
+        existing.update(resolve_purchase_order_schedule(cur, existing))
+    return existing
+
+
+def create_purchase_order_record(
+    cur: Any,
+    payload: PurchaseOrderCreateIn,
+    *,
+    provenance: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
+    """Create a PO through the canonical operational write path.
+
+    The caller owns the surrounding database transaction.  Keeping the PO
+    insert and any workflow-state transition in one transaction is required by
+    the narrowly scoped Hermes DRAFT executor.
+    """
+    site = normalize_site(payload.site)
+    vendor = payload.vendor_code.upper().strip()
+    coverage_dates = [row.distribution_date for row in payload.coverage] or [payload.distribution_date]
+    if len(set(coverage_dates)) != len(coverage_dates):
+        raise HTTPException(400, "tanggal cakupan PO tidak boleh duplikat")
+    if min(coverage_dates) != payload.distribution_date:
+        raise HTTPException(400, "distribution_date PO harus tanggal pertama dalam cakupan")
+
+    # Serialize creation for the same vendor/date coverage.  Workflow row locks
+    # prevent replay of one action; this advisory lock also prevents two
+    # different actions from racing into duplicate active POs.
+    lock_identity = json.dumps(
+        {
+            "site": site,
+            "vendor": vendor,
+            "coverageDates": sorted(value.isoformat() for value in coverage_dates),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"purchase-order:{lock_identity}",))
+
+    cycle_code = f"{site}-{payload.distribution_date.strftime('%Y%m%d')}"
+    existing = find_active_purchase_order_for_coverage(
+        cur,
+        site=site,
+        vendor=vendor,
+        coverage_dates=coverage_dates,
+    )
+    if existing:
+        overlapping_dates = sorted(set(coverage_dates) & set(existing.get("coverage_dates") or []))
+        return {
+            "alreadyExists": True,
+            "purchaseOrderId": existing["id"],
+            "poCode": existing["po_code"],
+            "revisionNo": existing["revision_no"],
+            "status": existing["status"],
+            "coverageDates": existing.get("coverage_dates") or [],
+            "duplicateCoverageDates": overlapping_dates,
+            "scheduledOrderDate": existing.get("scheduled_order_date"),
+            "sentAt": existing.get("sent_at"),
+        }
+
+    cur.execute(
+        """insert into production_cycles(cycle_code,site,distribution_date,cooking_at,status)
+           values (%s,%s,%s,%s,'PLANNING')
+           on conflict (cycle_code) do update set cooking_at=coalesce(excluded.cooking_at,production_cycles.cooking_at)
+           returning id""",
+        (cycle_code, site, payload.distribution_date, payload.cooking_at),
+    )
+    cycle_id = cur.fetchone()["id"]
+    cur.execute("select coalesce(max(revision_no),0)+1 as revision from purchase_orders where po_code=%s", (payload.po_code,))
+    revision = cur.fetchone()["revision"]
+    finalized_at = datetime.now(timezone.utc) if payload.status != "DRAFT" else None
+    source = provenance or {}
+    cur.execute(
+        """insert into purchase_orders(
+             po_code,revision_no,production_cycle_id,site,vendor_code,status,finalized_at,
+             source_planning_snapshot_id,source_type,source_external_id,source_hash,source_raw_text
+           ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+        (
+            payload.po_code,
+            revision,
+            cycle_id,
+            site,
+            vendor,
+            payload.status,
+            finalized_at,
+            payload.source_planning_snapshot_id,
+            source.get("source_type"),
+            source.get("source_external_id"),
+            source.get("source_hash"),
+            source.get("source_raw_text"),
+        ),
+    )
+    po_id = cur.fetchone()["id"]
+    for item in payload.items:
+        cur.execute(
+            """insert into purchase_order_items(
+                 purchase_order_id,item_code,item_name,planning_snapshot_item_id,planned_qty,po_qty,unit,
+                 planning_price,po_price,item_aliases,notes
+               ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)""",
+            (po_id, item.item_code, item.item_name.strip(), item.planning_snapshot_item_id,
+             item.planned_qty, item.po_qty, canonical_unit(item.unit), item.planning_price,
+             item.po_price, json.dumps(item.aliases, ensure_ascii=False), item.notes),
+        )
+    coverage_rows = payload.coverage or [PurchaseOrderCoverageIn(
+        distribution_date=payload.distribution_date,
+        cooking_date=payload.cooking_at.date() if payload.cooking_at else None,
+        source_planning_snapshot_id=payload.source_planning_snapshot_id,
+        items=payload.items,
+    )]
+    for coverage in coverage_rows:
+        cur.execute(
+            """insert into purchase_order_coverage(
+                 purchase_order_id,distribution_date,cooking_date,planning_snapshot_id
+               ) values (%s,%s,%s,%s) returning id""",
+            (po_id, coverage.distribution_date, coverage.cooking_date, coverage.source_planning_snapshot_id),
+        )
+        coverage_id = cur.fetchone()["id"]
+        for item in coverage.items:
+            cur.execute(
+                """insert into purchase_order_coverage_items(
+                     purchase_order_coverage_id,planning_snapshot_item_id,item_code,item_name,
+                     planned_qty,po_qty,unit
+                   ) values (%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    coverage_id, item.planning_snapshot_item_id, item.item_code,
+                    item.item_name.strip(), item.planned_qty, item.po_qty, canonical_unit(item.unit),
+                ),
+            )
+    return {
+        "alreadyExists": False,
+        "purchaseOrderId": po_id, "poCode": payload.po_code, "revisionNo": revision,
+        "status": payload.status, "itemCount": len(payload.items),
+        "coverageDates": sorted(coverage_dates), "coverageDayCount": len(coverage_dates),
+    }
 
 
 @router.post("/purchase-orders")
 def create_purchase_order(payload: PurchaseOrderCreateIn) -> dict[str, Any]:
     require_db()
-    site = normalize_site(payload.site)
-    vendor = payload.vendor_code.upper().strip()
-    cycle_code = f"{site}-{payload.distribution_date.strftime('%Y%m%d')}"
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """insert into production_cycles(cycle_code,site,distribution_date,cooking_at,status)
-                   values (%s,%s,%s,%s,'PLANNING')
-                   on conflict (cycle_code) do update set cooking_at=coalesce(excluded.cooking_at,production_cycles.cooking_at)
-                   returning id""",
-                (cycle_code, site, payload.distribution_date, payload.cooking_at),
-            )
-            cycle_id = cur.fetchone()["id"]
-            cur.execute("select coalesce(max(revision_no),0)+1 as revision from purchase_orders where po_code=%s", (payload.po_code,))
-            revision = cur.fetchone()["revision"]
-            finalized_at = datetime.now(timezone.utc) if payload.status != "DRAFT" else None
-            cur.execute(
-                """insert into purchase_orders(
-                     po_code,revision_no,production_cycle_id,site,vendor_code,status,finalized_at,source_planning_snapshot_id
-                   ) values (%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
-                (payload.po_code, revision, cycle_id, site, vendor, payload.status, finalized_at, payload.source_planning_snapshot_id),
-            )
-            po_id = cur.fetchone()["id"]
-            for item in payload.items:
-                cur.execute(
-                    """insert into purchase_order_items(
-                         purchase_order_id,item_code,item_name,planning_snapshot_item_id,planned_qty,po_qty,unit,
-                         planning_price,po_price,item_aliases,notes
-                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)""",
-                    (po_id, item.item_code, item.item_name.strip(), item.planning_snapshot_item_id,
-                     item.planned_qty, item.po_qty, canonical_unit(item.unit), item.planning_price,
-                     item.po_price, json.dumps(item.aliases, ensure_ascii=False), item.notes),
-                )
-            conn.commit()
-    return {"purchaseOrderId": po_id, "poCode": payload.po_code, "revisionNo": revision, "status": payload.status, "itemCount": len(payload.items)}
+            result = create_purchase_order_record(cur, payload)
+        conn.commit()
+    return result
 
 
 @router.get("/purchase-orders")
@@ -255,11 +408,16 @@ def list_purchase_orders(
     sql = """
         select po.id, po.po_code, po.revision_no, po.site, po.vendor_code, po.status,
                po.sent_at, po.acknowledged_at, po.finalized_at, po.created_at,
-               pc.distribution_date, count(poi.id) as item_count,
-               coalesce(sum(poi.po_qty * coalesce(poi.po_price,0)),0) as po_total
+               pc.distribution_date,pc.cooking_at,
+               coalesce((select array_agg(poc.distribution_date order by poc.distribution_date)
+                         from purchase_order_coverage poc where poc.purchase_order_id=po.id),
+                        array[pc.distribution_date]) as coverage_dates,
+               coalesce((select count(*) from purchase_order_coverage poc where poc.purchase_order_id=po.id),1) as coverage_day_count,
+               (select count(*) from purchase_order_items poi where poi.purchase_order_id=po.id) as item_count,
+               coalesce((select sum(poi.po_qty * coalesce(poi.po_price,0))
+                         from purchase_order_items poi where poi.purchase_order_id=po.id),0) as po_total
         from purchase_orders po
         left join production_cycles pc on pc.id=po.production_cycle_id
-        left join purchase_order_items poi on poi.purchase_order_id=po.id
         where true
     """
     params: list[Any] = []
@@ -272,12 +430,15 @@ def list_purchase_orders(
     if status:
         sql += " and upper(po.status)=upper(%s)"
         params.append(status)
-    sql += " group by po.id,pc.id order by pc.distribution_date desc nulls last, po.created_at desc limit %s"
+    sql += " order by pc.distribution_date desc nulls last, po.created_at desc limit %s"
     params.append(limit)
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
-            return {"items": cur.fetchall()}
+            items = cur.fetchall()
+            for item in items:
+                item.update(resolve_purchase_order_schedule(cur, item))
+            return {"items": items}
 
 
 @router.get("/purchase-orders/{purchase_order_id}")
@@ -294,8 +455,33 @@ def get_purchase_order(purchase_order_id: int) -> dict[str, Any]:
             po = cur.fetchone()
             if not po:
                 raise HTTPException(404, "purchase order not found")
+            po.update(resolve_purchase_order_schedule(cur, po))
             cur.execute("select * from purchase_order_items where purchase_order_id=%s order by id", (purchase_order_id,))
             po["items"] = cur.fetchall()
+            cur.execute(
+                """select id,distribution_date,cooking_date,planning_snapshot_id
+                   from purchase_order_coverage where purchase_order_id=%s
+                   order by distribution_date""",
+                (purchase_order_id,),
+            )
+            coverage = cur.fetchall()
+            if not coverage:
+                coverage = [{
+                    "id": None, "distribution_date": po.get("distribution_date"),
+                    "cooking_date": po.get("cooking_at").date() if po.get("cooking_at") else None,
+                    "planning_snapshot_id": po.get("source_planning_snapshot_id"), "items": po["items"],
+                }]
+            else:
+                for row in coverage:
+                    cur.execute(
+                        """select id,planning_snapshot_item_id,item_code,item_name,planned_qty,po_qty,unit
+                           from purchase_order_coverage_items
+                           where purchase_order_coverage_id=%s order by id""",
+                        (row["id"],),
+                    )
+                    row["items"] = cur.fetchall()
+            po["coverage"] = coverage
+            po["coverage_dates"] = [row["distribution_date"] for row in coverage]
             return po
 
 
@@ -428,7 +614,16 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
             cur.execute("select id from goods_receipts where source_key=%s", (key,))
             duplicate = cur.fetchone()
             if duplicate:
-                result.update({"committed": True, "duplicate": True, "receiptId": duplicate["id"]})
+                stock = commit_receipt_stock(cur, duplicate["id"], site)
+                conn.commit()
+                result.update({
+                    "committed": True,
+                    "duplicate": True,
+                    "receiptId": duplicate["id"],
+                    "stockCommitted": True,
+                    "stockInserted": stock["inserted"],
+                    "stockDuplicates": stock["duplicates"],
+                })
                 return result
 
             min_confidence = min(x["match_confidence"] for x in matches)
@@ -452,6 +647,8 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
                      item["match_confidence"], item["match_method"]),
                 )
 
+            stock = commit_receipt_stock(cur, receipt_id, site)
+
             # Determine status from cumulative accepted receipts; PO quantity itself is never overwritten.
             cur.execute(
                 """select poi.id,poi.po_qty,coalesce(sum(gri.accepted_qty),0) as received_total
@@ -466,7 +663,15 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
             new_status = "RECEIVED" if complete else "PARTIAL_RECEIVED"
             cur.execute("update purchase_orders set status=%s,updated_at=now() where id=%s", (new_status, po["id"]))
             conn.commit()
-            result.update({"committed": True, "duplicate": False, "receiptId": receipt_id, "purchaseOrderStatus": new_status})
+            result.update({
+                "committed": True,
+                "duplicate": False,
+                "receiptId": receipt_id,
+                "purchaseOrderStatus": new_status,
+                "stockCommitted": True,
+                "stockInserted": stock["inserted"],
+                "stockDuplicates": stock["duplicates"],
+            })
             return result
 
 

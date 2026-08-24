@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function cemplangCalculatorUser() {
+      return request.auth != null
+        && request.auth.token.sppg_site == 'CEMPLANG'
+        && request.auth.token.sppg_role in ['OWNER', 'CEMPLANG'];
+    }
+
+    function cemplangOwner() {
+      return request.auth != null
+        && request.auth.token.sppg_site == 'CEMPLANG'
+        && request.auth.token.sppg_role == 'OWNER';
+    }
+
+    match /artifacts/sppg-cemplang2-gpt-site/public/data/{document=**} {
+      allow read, write: if cemplangCalculatorUser();
+    }
+
+    match /gpt_sites/sppg-cemplang2-gpt-site/ledger/meta/{document=**} {
+      allow read, write: if cemplangOwner();
+    }
+  }
+}

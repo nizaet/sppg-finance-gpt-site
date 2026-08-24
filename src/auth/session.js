@@ -51,7 +51,7 @@ export const authApi = {
   me: (token = readSessionToken()) => api("/v1/auth/me", {
     headers: { Authorization: `Bearer ${token}` },
   }),
-  firebaseCemplangToken: (token = readSessionToken()) => api("/v1/auth/firebase-token/cemplang", {
+  firebaseCemplangToken: (token = readSessionToken()) => api("/v1/auth/firebase/cemplang-token", {
     headers: { Authorization: `Bearer ${token}` },
   }),
   logout: () => api("/v1/auth/logout", { method: "POST" }).catch(() => null),

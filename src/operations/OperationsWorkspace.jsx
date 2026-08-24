@@ -1,19 +1,26 @@
-import React, { Suspense, lazy, useMemo, useState } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import {
+  Calculator,
   CalendarDays,
   FileSpreadsheet,
+  FolderUp,
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
+  Sparkles,
+  Moon,
   PackageCheck,
   Store,
+  Sun,
+  ShieldCheck,
   WalletCards,
   Warehouse,
 } from "lucide-react";
+import { useAppTheme } from "../theme.js";
 import OperationsControlTower from "./OperationsControlTower.jsx";
 import "./workspace.css";
 
-const OperationsPoPlanner = lazy(() => import("./OperationsPoPlanner.jsx"));
+const OperationsPoSiteTabs = lazy(() => import("./OperationsPoSiteTabs.jsx"));
 const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
 const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
@@ -21,52 +28,70 @@ const OperationsAccountantBgn = lazy(() => import("./OperationsAccountantBgn.jsx
 const OperationsVendorMaster = lazy(() => import("./OperationsVendorMaster.jsx"));
 const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
 const OperationsChatIngest = lazy(() => import("./OperationsChatIngest.jsx"));
+const OperationsCalculatorData = lazy(() => import("./OperationsCalculatorData.jsx"));
+const OperationsHermesApprovals = lazy(() => import("./OperationsHermesApprovals.jsx"));
+const OperationsMenuPlanningAdvisor = lazy(() => import("./OperationsMenuPlanningAdvisor.jsx"));
 
 const tabs = [
-  ["today", "Hari Ini", LayoutDashboard],
+  ["today", "Control Tower", LayoutDashboard],
   ["po", "PO Vendor", CalendarDays],
   ["receiving", "Penerimaan", PackageCheck],
   ["inventory", "Gudang", Warehouse],
+  ["calculator-data", "Data Kalkulator", FolderUp],
+  ["menu-advisor", "Asisten Menu", Sparkles],
   ["payments", "Invoice & Pembayaran", WalletCards],
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
   ["review", "Review", ListChecks],
+  ["hermes", "Persetujuan Hermes", ShieldCheck],
   ["chat", "Sumber Chat", MessageSquareText],
 ];
 
-const OWNER_ONLY_TABS = new Set(["accounting", "review", "chat"]);
-
 const moduleComponents = {
-  po: OperationsPoPlanner,
+  po: OperationsPoSiteTabs,
   receiving: OperationsReceiving,
   inventory: OperationsInventory,
+  "calculator-data": OperationsCalculatorData,
+  "menu-advisor": OperationsMenuPlanningAdvisor,
   payments: OperationsPayments,
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
   review: OperationsReviewQueue,
+  hermes: OperationsHermesApprovals,
   chat: OperationsChatIngest,
 };
 
 function ModuleFallback() {
-  return (
-    <section className="ops-module">
-      <div className="ops-empty">Membuka modul…</div>
-    </section>
-  );
+  return <section className="ops-module"><div className="ops-empty">Membuka modul…</div></section>;
 }
 
 export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const role = String(accessRole || "OWNER").toUpperCase();
-  const fixedSite = role === "MAJA" || role === "CEMPLANG" ? role : "";
-  const visibleTabs = useMemo(
-    () => tabs.filter(([id]) => role === "OWNER" || !OWNER_ONLY_TABS.has(id)),
-    [role],
-  );
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
+  const [theme, setTheme] = useAppTheme();
+
+  useEffect(() => {
+    document.title = "Pusat Operasional | SPPG";
+    ["icon", "shortcut icon"].forEach((rel) => {
+      let link = document.querySelector(`link[rel='${rel}']`);
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = rel;
+        document.head.appendChild(link);
+      }
+      link.href = "/favicon-operations.svg?v=27";
+      link.type = "image/svg+xml";
+    });
+  }, []);
+
+  // Defense in depth: site roles should have been routed to /calculator by main.jsx.
+  if (role !== "OWNER") {
+    window.location.replace("/calculator");
+    return null;
+  }
 
   const openTab = (id) => {
-    if (role !== "OWNER" && OWNER_ONLY_TABS.has(id)) return;
     setTab(id);
     setVisitedTabs((current) => {
       if (current.has(id)) return current;
@@ -82,11 +107,13 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
         <div className="ops-brand">
           <span>SPPG</span>
           <strong>Pusat Operasional</strong>
-          <small>{fixedSite ? `Akses ${fixedSite}` : "Maja + Cemplang"}</small>
+          <small>YAYASAN · MAJA + CEMPLANG</small>
         </div>
 
         <nav>
-          {visibleTabs.map(([id, label, Icon]) => (
+          <a href="/dapur/maja"><Calculator size={17} /> Kalkulator Maja</a>
+          <a href="/dapur/cemplang"><Calculator size={17} /> Kalkulator Cemplang</a>
+          {tabs.map(([id, label, Icon]) => (
             <button
               type="button"
               key={id}
@@ -99,24 +126,26 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
           ))}
         </nav>
 
+        <button className="ops-theme-toggle" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          {theme === "dark" ? "Gunakan Tema Terang" : "Gunakan Tema Gelap"}
+        </button>
+
         <div className="ops-sidebar-note">
-          Pusat Resep, Master Harga, dan Kalkulator tetap menjadi sumber planning terpusat.
-          {fixedSite
-            ? ` Akun ${fixedSite} hanya melihat dan bekerja pada operasional ${fixedSite}.`
-            : " Pusat Operasional mengelola kedua dapur; Akuntan & BGN tetap khusus OWNER."}
+          <strong>Alur:</strong> Kalkulator → planning → kurangi stok gudang → PO editable → invoice vendor → pembayaran → Excel akuntan → maker/approval BGN.
         </div>
       </aside>
 
       <main className="ops-content">
         <div hidden={tab !== "today"}>
-          <OperationsControlTower fixedSite={fixedSite} />
+          <OperationsControlTower />
         </div>
 
         <Suspense fallback={<ModuleFallback />}>
           {Object.entries(moduleComponents).map(([id, Component]) => (
-            visitedTabs.has(id) && (role === "OWNER" || !OWNER_ONLY_TABS.has(id)) ? (
+            visitedTabs.has(id) ? (
               <div key={id} hidden={tab !== id}>
-                <Component fixedSite={fixedSite} accessRole={role} />
+                <Component accessRole="OWNER" />
               </div>
             ) : null
           ))}

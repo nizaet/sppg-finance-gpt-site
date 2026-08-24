@@ -20,7 +20,18 @@ MIGRATIONS = [
     ROOT / "schema" / "whatsapp_ingress_v018.sql",
     ROOT / "schema" / "operational_rules_v019.sql",
     ROOT / "schema" / "accountant_excel_v020.sql",
+    ROOT / "schema" / "inventory_stock_opname_v021.sql",
+    ROOT / "schema" / "calculator_data_control_v022.sql",
+    ROOT / "schema" / "calculator_shared_master_v023.sql",
+    ROOT / "schema" / "purchase_order_coverage_v024.sql",
+    ROOT / "schema" / "inventory_stock_opname_lifecycle_v025.sql",
+    ROOT / "schema" / "po_reminder_rules_v026.sql",
+    ROOT / "schema" / "po_reminder_overrides_v027.sql",
+    ROOT / "schema" / "po_reminder_review_resolution_v028.sql",
+    ROOT / "schema" / "vendor_payment_unreconciled_v029.sql",
+    ROOT / "schema" / "accountant_plan_selection_v030.sql",
     ROOT / "schema" / "llm_conversation_memory_v031.sql",
+    ROOT / "schema" / "accountant_source_freshness_v032.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 

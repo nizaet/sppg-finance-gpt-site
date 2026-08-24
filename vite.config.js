@@ -1,6 +1,76 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+function poPlannerVariant() {
+  return {
+    name: "sppg-po-planner-ui",
+    enforce: "pre",
+    transform(code, id) {
+      if (id.includes("/src/operations/apiClient.js")) {
+        if (code.includes("/v1/po-reminders-v3?")) return null;
+        const next = code.replace("/v1/po-reminders?", "/v1/po-reminders-v3?");
+        if (next === code) throw new Error("[po-planner] Missing reminder API anchor");
+        return { code: next, map: null };
+      }
+      if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
+
+      let next = code;
+      const replaceOnce = (needle, replacement, label) => {
+        if (!next.includes(needle)) {
+          throw new Error(`[po-planner] Missing transform anchor: ${label}`);
+        }
+        next = next.replace(needle, replacement);
+      };
+      const replaceRegex = (pattern, replacement, label) => {
+        if (!pattern.test(next)) {
+          throw new Error(`[po-planner] Missing transform section: ${label}`);
+        }
+        next = next.replace(pattern, replacement);
+      };
+
+      replaceOnce(
+        "function normalize(value) {",
+        `function canDeletePo(po) {\n  const status = String(po?.status || "").toUpperCase();\n  const poCode = String(po?.po_code || "").toUpperCase();\n  return status === "DRAFT" || status === "CANCELLED" || status === "HISTORICAL_IMPORTED" || poCode.startsWith("TEST-");\n}\n\nfunction normalize(value) {`,
+        "delete eligibility helper",
+      );
+
+      replaceOnce(
+        `  const deletePo = async (po) => {\n    if (!window.confirm(\`Hapus permanen DRAFT \${po.po_code} rev \${po.revision_no}?\`)) return;`,
+        `  const deletePo = async (po) => {\n    const status = String(po?.status || "").toUpperCase();\n    const isTest = String(po?.po_code || "").toUpperCase().startsWith("TEST-");\n    const kind = isTest ? "PO TEST" : status === "HISTORICAL_IMPORTED" ? "PO HISTORICAL IMPORT" : status === "CANCELLED" ? "PO CANCELLED" : "PO DRAFT";\n    if (!window.confirm(\`Hapus permanen \${kind} \${po.po_code} rev \${po.revision_no}?\\n\\nTindakan ini tidak dapat dibatalkan.\`)) return;`,
+        "delete confirmation",
+      );
+
+      replaceOnce(
+        `{REVISABLE_PO_STATUSES.has(status) && <button type="button" onClick={() => cancelPo(po)} disabled={actionId === po.id}><XCircle size={14} /> Batalkan</button>}`,
+        `{REVISABLE_PO_STATUSES.has(status) && <button type="button" onClick={() => cancelPo(po)} disabled={actionId === po.id}><XCircle size={14} /> Batalkan</button>}\n                      {canDeletePo(po) && <button type="button" className="danger" onClick={() => deletePo(po)} disabled={actionId === po.id}><Trash2 size={14} /> Hapus</button>}`,
+        "delete button",
+      );
+
+      next = next.replaceAll("horizonDays: 21", "horizonDays: 2");
+
+      replaceOnce(
+        `  return (\n    <div className="ops-domain-stack">`,
+        `  const reminderOverdue = reminders.filter((item) => String(item.po_date || "") < today() && item.reminder_status === "OVERDUE");\n  const reminderToday = reminders.filter((item) => String(item.po_date || "") === today());\n  const reminderTomorrow = reminders.filter((item) => String(item.po_date || "") === shiftDate(today(), 1));\n  const reminderActionStatuses = new Set(["OVERDUE", "DUE_TODAY", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"]);\n  const reminderNames = (item) => {\n    const names = (item.missing_item_names || []).length ? item.missing_item_names : (item.item_names || []);\n    return names;\n  };\n\n  return (\n    <div className="ops-domain-stack">`,
+        "reminder day buckets",
+      );
+
+      replaceRegex(
+        /      <section className="ops-module">\n        <div className="ops-module-header">\n          <div><span className="ops-kicker">PENGINGAT OTOMATIS<\/span><h3>PO yang Harus Dikerjakan<\/h3>[\s\S]*?      <\/section>\n\n/,
+        `      <section className="ops-module">\n        <div className="ops-module-header">\n          <div><span className="ops-kicker">PENGINGAT PO BERDASARKAN LEAD TIME</span><h3>PO yang Harus Dikerjakan</h3><p>Kebutuhan berasal dari planning aktif setelah dikurangi stok proyeksi. Tanggal kirim PO mengikuti lead time vendor. PO yang sudah lewat tanggal pesan tetap muncul sebagai TERLAMBAT sampai selesai.</p></div>\n          <BellRing size={32} />\n        </div>\n        <div className="ops-summary-strip">\n          <span>Terlambat <strong>{reminderOverdue.length}</strong></span>\n          <span>Harus dikerjakan hari ini <strong>{reminderToday.filter((item) => reminderActionStatuses.has(item.reminder_status)).length}</strong></span>\n          <span>Untuk besok <strong>{reminderTomorrow.filter((item) => item.reminder_status !== "DONE").length}</strong></span>\n          <span>Cakupan <strong>terlambat 7 hari + H-0 + besok</strong></span>\n        </div>\n\n        {reminderOverdue.length > 0 && <div className="ops-draft-group">\n          <div className="ops-draft-group-head"><div><strong>⚠ TERLAMBAT — Segera Buat / Kirim PO</strong><span>Sudah melewati tanggal pesan berdasarkan lead time vendor</span></div></div>\n          <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item Kurang</th><th>PO</th></tr></thead><tbody>\n            {reminderOverdue.map((item, index) => <tr key={\`overdue-\${item.vendor_code}-\${item.po_date}-\${index}\`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td><strong>{item.po_date}</strong></td><td>{item.vendor_name || item.vendor_code}</td><td>{(item.cooking_dates || [item.cooking_date]).filter(Boolean).join(", ")}</td><td>{(item.distribution_dates || [item.distribution_date]).filter(Boolean).join(", ")}</td><td><strong>{reminderNames(item).length || item.item_count}</strong>{reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}</div>{item.po_sent_at && <div className="ops-muted">Terkirim: {compactTimestamp(item.po_sent_at)}</div>}<button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : <div><strong>Belum ada PO yang mencukupi</strong><div className="ops-muted">Sisa kebutuhan belum tercakup: {(item.missing_distribution_dates || item.distribution_dates || []).filter(Boolean).join(", ")}</div></div>}</td></tr>)}\n          </tbody></table></div>\n        </div>}\n\n        <div className="ops-draft-group">\n          <div className="ops-draft-group-head"><div><strong>Harus di-PO Hari Ini</strong><span>{today()} · berdasarkan planning, stok proyeksi + lead time</span></div></div>\n          <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item Kurang</th><th>PO</th></tr></thead><tbody>\n            {reminderToday.map((item, index) => <tr key={\`today-\${item.vendor_code}-\${index}\`}><td><strong>{REMINDER_LABELS[item.reminder_status] || item.reminder_status}</strong></td><td>{item.vendor_name || item.vendor_code}</td><td>{(item.cooking_dates || [item.cooking_date]).filter(Boolean).join(", ")}</td><td>{(item.distribution_dates || [item.distribution_date]).filter(Boolean).join(", ")}</td><td><strong>{reminderNames(item).length || item.item_count}</strong>{reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}</div>{item.po_sent_at && <div className="ops-muted">Terkirim: {compactTimestamp(item.po_sent_at)}</div>}<button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : <div><strong>Belum ada PO yang mencukupi</strong><div className="ops-muted">Belum tercakup: {(item.missing_distribution_dates || item.distribution_dates || []).filter(Boolean).join(", ")}</div></div>}</td></tr>)}\n            {!loading && reminderToday.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO yang jatuh pada hari ini setelah memperhitungkan stok proyeksi.</td></tr>}\n          </tbody></table></div>\n        </div>\n\n        <div className="ops-draft-group">\n          <div className="ops-draft-group-head"><div><strong>Untuk Di-PO Besok</strong><span>{shiftDate(today(), 1)} · persiapan satu hari ke depan</span></div></div>\n          <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item Kurang</th><th>PO</th></tr></thead><tbody>\n            {reminderTomorrow.map((item, index) => <tr key={\`tomorrow-\${item.vendor_code}-\${index}\`}><td><strong>{item.reminder_status === "UPCOMING" ? "Besok" : (REMINDER_LABELS[item.reminder_status] || item.reminder_status)}</strong></td><td>{item.vendor_name || item.vendor_code}</td><td>{(item.cooking_dates || [item.cooking_date]).filter(Boolean).join(", ")}</td><td>{(item.distribution_dates || [item.distribution_date]).filter(Boolean).join(", ")}</td><td><strong>{reminderNames(item).length || item.item_count}</strong>{reminderNames(item).length > 0 && <div className="ops-muted">{reminderNames(item).join(", ")}</div>}</td><td>{item.purchase_order_id ? <div><strong>{item.po_code || item.po_status}</strong><div className="ops-muted">{item.po_status}</div>{item.po_sent_at && <div className="ops-muted">Terkirim: {compactTimestamp(item.po_sent_at)}</div>}<button type="button" onClick={() => viewPoDetail(item.purchase_order_id)}><Eye size={13} /> Lihat PO</button></div> : <div><strong>Belum ada PO yang mencukupi</strong><div className="ops-muted">Belum tercakup: {(item.missing_distribution_dates || item.distribution_dates || []).filter(Boolean).join(", ")}</div></div>}</td></tr>)}\n            {!loading && reminderTomorrow.length === 0 && <tr><td colSpan="6" className="ops-empty-cell">Tidak ada kebutuhan PO untuk besok setelah memperhitungkan stok proyeksi.</td></tr>}\n          </tbody></table></div>\n        </div>\n      </section>\n\n`,
+        "lead-time PO reminder",
+      );
+
+      replaceRegex(
+        /      <section className="ops-module">\n        <div className="ops-module-header">\n          <div><span className="ops-kicker">JADWAL PO<\/span><h3>Waktu Pesan Vendor<\/h3>[\s\S]*?      <\/section>\n\n/,
+        "",
+        "remove duplicated PO schedule table",
+      );
+
+      return { code: next, map: null };
+    },
+  };
+}
+
 function cemplangAccountantVariant() {
   return {
     name: "sppg-cemplang-accountant-variant",
@@ -56,7 +126,7 @@ function cemplangAccountantVariant() {
 }
 
 export default defineConfig({
-  plugins: [cemplangAccountantVariant(), react()],
+  plugins: [poPlannerVariant(), cemplangAccountantVariant(), react()],
   preview: {
     host: "0.0.0.0",
     allowedHosts: true

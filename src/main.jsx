@@ -1,43 +1,63 @@
-import React, { Suspense, lazy } from "react";
+import React, { Suspense, lazy, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import AuthGate from "./auth/AuthGate.jsx";
+import CalculatorGateway from "./auth/CalculatorGateway.jsx";
+import { applyAppTheme } from "./theme.js";
+import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
+
+applyAppTheme();
+installRuntimeUiPolish();
 
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
-const isCemplangAccountantRoute =
-  pathname === "/accountant/cemplang" || pathname.startsWith("/accountant/cemplang/");
+const isCalculatorRoute = pathname === "/calculator" || pathname.startsWith("/calculator/");
+const isCemplangAccountantRoute = pathname === "/accountant/cemplang" || pathname.startsWith("/accountant/cemplang/");
 
-const RootComponent = isOperationsRoute
-  ? lazy(() => import("./operations/OperationsWorkspace.jsx"))
-  : isCemplangAccountantRoute
-    ? lazy(() => Promise.all([
-        import("./App.jsx?cemplang-accountant"),
-        import("./styles.css"),
-      ]).then(([appModule]) => ({ default: appModule.default })))
-    : lazy(() => Promise.all([
-        import("./App.jsx"),
-        import("./styles.css"),
-      ]).then(([appModule]) => ({ default: appModule.default })));
+const OperationsApp = lazy(() => import("./operations/OperationsWorkspace.jsx"));
+const AccountantApp = lazy(() => Promise.all([
+  import("./App.jsx"),
+  import("./styles.css"),
+]).then(([appModule]) => ({ default: appModule.default })));
+const CemplangAccountantApp = lazy(() => Promise.all([
+  import("./App.jsx?cemplang-accountant"),
+  import("./styles.css"),
+]).then(([appModule]) => ({ default: appModule.default })));
 
 function BootFallback({ text = "Memuat SPPG…" }) {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#08111f", color: "#e5edf7", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--app-bg, #08111f)", color: "var(--app-text, #e5edf7)", fontFamily: "Inter, system-ui, sans-serif" }}>
       {text}
     </div>
   );
 }
 
-function RoutedApp({ role }) {
-  // Aplikasi Akuntan di root adalah OWNER-only. Site role yang membuka URL root
-  // diarahkan ke Pusat Operasional sebelum bundle App.jsx dimuat.
-  if (!isOperationsRoute && role !== "OWNER") {
-    window.location.replace("/operations");
-    return <BootFallback text="Mengalihkan ke Pusat Operasional…" />;
+function CalculatorRedirect({ role }) {
+  useEffect(() => {
+    window.location.replace(`/dapur/${String(role).toLowerCase()}`);
+  }, [role]);
+  return <BootFallback text={`Membuka Kalkulator ${role}…`} />;
+}
+
+function RoutedApp({ role, config }) {
+  const normalizedRole = String(role || "OWNER").toUpperCase();
+
+  // MAJA/CEMPLANG are calculator-only. This routing rule applies regardless of
+  // which browser URL they manually type after login.
+  if (normalizedRole !== "OWNER") {
+    return <CalculatorRedirect role={normalizedRole} />;
+  }
+
+  if (isCalculatorRoute) {
+    return <CalculatorGateway role="OWNER" config={config} />;
   }
 
   return (
     <Suspense fallback={<BootFallback />}>
-      <RootComponent accessRole={role} />
+      {isOperationsRoute
+        ? <OperationsApp accessRole="OWNER" />
+        : isCemplangAccountantRoute
+          ? <CemplangAccountantApp accessRole="OWNER" />
+          : <AccountantApp accessRole="OWNER" />}
     </Suspense>
   );
 }
@@ -45,7 +65,7 @@ function RoutedApp({ role }) {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <AuthGate>
-      {({ role }) => <RoutedApp role={role} />}
+      {({ role, config }) => <RoutedApp role={role} config={config} />}
     </AuthGate>
   </React.StrictMode>
 );

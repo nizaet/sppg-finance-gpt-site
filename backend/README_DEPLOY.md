@@ -98,7 +98,11 @@ Protected routes:
 
 Action schema:
 
-`api/openapi_chatgpt_finance_v011.yaml`
+Use the single live schema below for the complete Operations + Accountant GPTS. It preserves the v0.17.2 operations actions and adds the finance bridge plus final-PO WhatsApp retrieval:
+
+`https://sppg-finance-gpt-site-production-5b7d.up.railway.app/v1/schema/chatgpt-sppg-v0180.json`
+
+The older finance-only YAML remains a compatibility artifact and should not replace the unified GPTS action.
 
 Create flow:
 
@@ -139,5 +143,5 @@ Do not put `DATABASE_URL`, service-account JSON, or `SPPG_GPT_API_KEY` in Vite/f
 8. Retry the same request and confirm no duplicate transaction.
 9. Search it through the GPT bridge.
 10. Patch/correct it and confirm Firestore UI updates.
-11. Configure the ChatGPT Action with `api/openapi_chatgpt_finance_v011.yaml` and the same bearer secret.
+11. Configure one ChatGPT Action from `/v1/schema/chatgpt-sppg-v0180.json` and use the same bearer secret.
 12. Only after these checks use chat for live operational finance entry.

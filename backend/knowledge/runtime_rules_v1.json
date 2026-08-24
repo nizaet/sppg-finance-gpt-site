@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-20.v4",
+  "version": "2026-08-21.v5",
   "architecture": {
     "operationalSourceOfTruth": "PostgreSQL",
     "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules, confirmed operational history, and confirmed GPT conversation knowledge",
@@ -48,7 +48,8 @@
     ],
     "stockOpnameConversions": [
       {"itemFamily": "Beras", "fromUnit": "karung", "toUnit": "kg", "factor": 25, "status": "OWNER_CONFIRMED"},
-      {"itemFamily": "Minyak Goreng", "fromUnit": "dus", "toUnit": "liter", "factor": 12, "status": "OWNER_CONFIRMED"}
+      {"itemFamily": "Minyak Goreng", "fromUnit": "dus", "toUnit": "liter", "factor": 12, "status": "OWNER_CONFIRMED"},
+      {"itemFamily": "Minyak Goreng", "fromUnit": "pcs", "toUnit": "liter", "factor": 2, "status": "OWNER_CONFIRMED"}
     ],
     "stockOpnameParsing": [
       "Ignore report-title/date lines such as 'SO BARANG CEMPLANG 2026-08-20' and weekday/date headings; they are not inventory items.",

@@ -3,24 +3,23 @@ from __future__ import annotations
 import io
 import json
 import os
-import time
 from functools import lru_cache
 from typing import Any
 
-from google.auth import crypt, jwt
 from google.cloud import firestore
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/drive",
 ]
-
-FIREBASE_CUSTOM_TOKEN_AUDIENCE = (
-    "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit"
-)
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 SITE_TARGETS = {
     "MAJA": {
@@ -68,30 +67,25 @@ def google_project_id() -> str:
     return str(_service_account_info().get("project_id") or "sppg-finance-gpt")
 
 
+@lru_cache(maxsize=1)
+def firebase_admin_app():
+    try:
+        return firebase_admin.get_app("sppg-core")
+    except ValueError:
+        credential = firebase_credentials.Certificate(_service_account_info())
+        return firebase_admin.initialize_app(
+            credential,
+            {"projectId": google_project_id()},
+            name="sppg-core",
+        )
+
+
 def create_firebase_custom_token(uid: str, claims: dict[str, Any]) -> str:
-    """Create a Firebase custom token using the existing Google service account.
-
-    This is intentionally server-only. It bridges the already-authenticated SPPG
-    OWNER session to Firebase Auth so Firestore Security Rules can evaluate
-    request.auth.token without exposing the service-account private key.
-    """
-    uid_value = str(uid or "").strip()
-    if not uid_value or len(uid_value) > 128:
-        raise ValueError("Firebase uid must contain 1-128 characters")
-
-    info = _service_account_info()
-    signer = crypt.RSASigner.from_service_account_info(info)
-    now = int(time.time())
-    payload = {
-        "iss": info["client_email"],
-        "sub": info["client_email"],
-        "aud": FIREBASE_CUSTOM_TOKEN_AUDIENCE,
-        "iat": now,
-        "exp": now + 3600,
-        "uid": uid_value,
-        "claims": dict(claims or {}),
-    }
-    token = jwt.encode(signer, payload)
+    token = firebase_auth.create_custom_token(
+        uid,
+        developer_claims=claims,
+        app=firebase_admin_app(),
+    )
     return token.decode("utf-8") if isinstance(token, bytes) else str(token)
 
 
@@ -150,9 +144,55 @@ def update_existing_finance_transaction(site: str, transaction_id: str, data: di
     return doc_ref.path
 
 
+def _drive_oauth_info() -> dict[str, str]:
+    """Load optional human-user OAuth credentials used only for Google Drive.
+
+    Firestore/Firebase continue using the service account. Personal My Drive
+    uploads must be owned by a human OAuth identity because service accounts do
+    not have Drive storage quota.
+    """
+    raw = os.getenv("SPPG_GOOGLE_DRIVE_OAUTH_JSON", "").strip()
+    parsed: dict[str, Any] = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise GoogleServicesNotConfigured("SPPG_GOOGLE_DRIVE_OAUTH_JSON is not valid JSON") from exc
+    return {
+        "client_id": str(parsed.get("client_id") or os.getenv("SPPG_GOOGLE_DRIVE_OAUTH_CLIENT_ID", "")).strip(),
+        "client_secret": str(parsed.get("client_secret") or os.getenv("SPPG_GOOGLE_DRIVE_OAUTH_CLIENT_SECRET", "")).strip(),
+        "refresh_token": str(parsed.get("refresh_token") or os.getenv("SPPG_GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN", "")).strip(),
+        "token_uri": str(parsed.get("token_uri") or "https://oauth2.googleapis.com/token").strip(),
+    }
+
+
+@lru_cache(maxsize=1)
+def drive_user_credentials():
+    info = _drive_oauth_info()
+    if not info["client_id"] and not info["client_secret"] and not info["refresh_token"]:
+        return None
+    if not info["client_id"] or not info["client_secret"] or not info["refresh_token"]:
+        raise GoogleServicesNotConfigured(
+            "Drive OAuth incomplete: client_id, client_secret, and refresh_token are all required"
+        )
+    return UserCredentials(
+        token=None,
+        refresh_token=info["refresh_token"],
+        token_uri=info["token_uri"],
+        client_id=info["client_id"],
+        client_secret=info["client_secret"],
+        scopes=[DRIVE_SCOPE],
+    )
+
+
+def drive_auth_mode() -> str:
+    return "USER_OAUTH" if drive_user_credentials() is not None else "SERVICE_ACCOUNT"
+
+
 @lru_cache(maxsize=1)
 def drive_service():
-    return build("drive", "v3", credentials=google_credentials(), cache_discovery=False)
+    credentials = drive_user_credentials() or google_credentials()
+    return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
 def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type: str) -> str:

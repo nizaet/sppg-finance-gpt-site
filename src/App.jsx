@@ -6,8 +6,9 @@ import {
   Wallet, Landmark, TrendingUp, ArrowRightLeft, Eye, Edit2, Trash2, Search, Save,
   ArrowDownCircle, ArrowUpCircle, Sparkles, Loader2, X, CheckCircle2, Printer,
   PieChart as PieChartIcon, History, DollarSign, Eraser, ChefHat, Lightbulb,
-  RefreshCw, Database, AlertTriangle, Check, ClipboardPaste
+  RefreshCw, Database, AlertTriangle, Check, ClipboardPaste, Moon, Sun
 } from "lucide-react";
+import { useAppTheme } from "./theme.js";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, AreaChart, Area
@@ -104,34 +105,28 @@ const siteShortLabel =
   import.meta.env.VITE_SITE_SHORT_LABEL ||
   "Maja";
 
-// BEGIN RUNTIME BROWSER BRAND V8.3
-const browserBrand =
-  firestoreDatabaseId === "cemplang2"
-    ? {
-        title: "Cemplang 2 | SPPG Finance",
-        favicon: "/favicon-cemplang.svg?v=83"
-      }
-    : {
-        title: "Maja | SPPG Finance",
-        favicon: "/favicon-maja.svg?v=83"
-      };
+// BEGIN RUNTIME BROWSER BRAND V9.0
+const browserPathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "";
+const browserIsCemplangAccountant = browserPathname === "/accountant/cemplang" || browserPathname.startsWith("/accountant/cemplang/");
+const browserBrand = browserIsCemplangAccountant
+  ? { title: "Akuntan Cemplang | SPPG", favicon: "/favicon-accountant-cemplang.svg?v=90" }
+  : { title: "Akuntan Maja | SPPG", favicon: "/favicon-accountant-maja.svg?v=90" };
 
 if (typeof document !== "undefined") {
   document.title = browserBrand.title;
-
-  let favicon = document.querySelector("link[rel='icon']");
-
-  if (!favicon) {
-    favicon = document.createElement("link");
-    favicon.rel = "icon";
-    document.head.appendChild(favicon);
-  }
-
-  favicon.type = "image/svg+xml";
-  favicon.sizes = "any";
-  favicon.href = browserBrand.favicon;
+  ["icon", "shortcut icon"].forEach((rel) => {
+    let favicon = document.querySelector(`link[rel='${rel}']`);
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = rel;
+      document.head.appendChild(favicon);
+    }
+    favicon.type = "image/svg+xml";
+    favicon.sizes = "any";
+    favicon.href = browserBrand.favicon;
+  });
 }
-// END RUNTIME BROWSER BRAND V8.3
+// END RUNTIME BROWSER BRAND V9.0
 
 const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
@@ -465,6 +460,7 @@ const descTokens = (desc) => normalizeDescKey(desc)
   .slice(0, 10);
 
 function SmartCateringAccountant() {
+  const [appTheme, setAppTheme] = useAppTheme();
   const [activeTab, setActiveTab] = useState("dashboard");
   const fileInputRef = useRef(null);
   const csvInputRef = useRef(null);
@@ -1809,6 +1805,9 @@ function SmartCateringAccountant() {
             <p>Sistem Akuntansi Katering 3 Pintu (Bahan, Ops, Sewa) · {siteShortLabel} · DB {firestoreDatabaseId}</p>
           </div>
           <div className="header-actions">
+            <Button variant="outline" size="sm" onClick={() => setAppTheme(appTheme === "dark" ? "light" : "dark")}>
+              {appTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>} {appTheme === "dark" ? "Terang" : "Gelap"}
+            </Button>
             <Button variant="green" size="sm" onClick={handleExportExcelStyled}><FileSpreadsheet size={16}/> Export Excel DB</Button>
             <Button variant="outline" size="sm" onClick={()=>setSheetSyncOpen(true)}><Database size={16}/> Google Sheet</Button>
             <Button variant="blue" size="sm" onClick={() => csvInputRef.current?.click()}><Upload size={16}/> Import CSV DB</Button>

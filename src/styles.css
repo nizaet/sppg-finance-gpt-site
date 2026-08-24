@@ -382,3 +382,100 @@
 }
 
 /* END TRACKING COLUMN WIDTH FIX V8.7 */
+
+/* Global light/dark appearance shared with Pusat Operasional and Kalkulator. */
+:root {
+  --app-bg: #f8fafc;
+  --app-text: #334155;
+}
+
+html[data-app-theme="dark"] {
+  --app-bg: #08111f;
+  --app-text: #e5edf7;
+}
+
+html[data-app-theme="dark"] body,
+html[data-app-theme="dark"] #root,
+html[data-app-theme="dark"] .app-shell {
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+html[data-app-theme="dark"] .legacy-header,
+html[data-app-theme="dark"] .tabs-list,
+html[data-app-theme="dark"] .card,
+html[data-app-theme="dark"] .filterbar,
+html[data-app-theme="dark"] .subtabs,
+html[data-app-theme="dark"] .boxed-table,
+html[data-app-theme="dark"] .modal,
+html[data-app-theme="dark"] .backup-row,
+html[data-app-theme="dark"] .debt-filterbar,
+html[data-app-theme="dark"] .filter-paybox {
+  background: #0f1b2d;
+  color: #e5edf7;
+  border-color: #26364d;
+  box-shadow: none;
+}
+
+html[data-app-theme="dark"] .legacy-header h1,
+html[data-app-theme="dark"] .card-title,
+html[data-app-theme="dark"] .item-cell b,
+html[data-app-theme="dark"] .history-title,
+html[data-app-theme="dark"] .modal-head h3,
+html[data-app-theme="dark"] .asset-box b,
+html[data-app-theme="dark"] .analysis b {
+  color: #f1f5f9;
+}
+
+html[data-app-theme="dark"] .legacy-header p,
+html[data-app-theme="dark"] .card-desc,
+html[data-app-theme="dark"] .label,
+html[data-app-theme="dark"] .checkbox,
+html[data-app-theme="dark"] .table small,
+html[data-app-theme="dark"] .bulk-status,
+html[data-app-theme="dark"] .share-add label,
+html[data-app-theme="dark"] .two-cols label,
+html[data-app-theme="dark"] .edit-grid label,
+html[data-app-theme="dark"] .backup-row small {
+  color: #9fb0c7;
+}
+
+html[data-app-theme="dark"] .input,
+html[data-app-theme="dark"] .select,
+html[data-app-theme="dark"] .textarea,
+html[data-app-theme="dark"] input,
+html[data-app-theme="dark"] select,
+html[data-app-theme="dark"] textarea {
+  background: #0b1627;
+  color: #e5edf7;
+  border-color: #334155;
+}
+
+html[data-app-theme="dark"] .btn.outline,
+html[data-app-theme="dark"] .btn.ghost {
+  background: #13233a;
+  color: #e5edf7;
+  border-color: #334155;
+}
+
+html[data-app-theme="dark"] .tabs-list button { color: #aebed2; }
+html[data-app-theme="dark"] .tabs-list button:hover { background: #13233a; }
+html[data-app-theme="dark"] .tabs-list button.active { background: #12362f; color: #6ee7b7; }
+html[data-app-theme="dark"] .table th { background: #13233a; color: #b8c6d9; border-color: #26364d; }
+html[data-app-theme="dark"] .table td,
+html[data-app-theme="dark"] .mini-report div,
+html[data-app-theme="dark"] .modal-head { border-color: #26364d; }
+html[data-app-theme="dark"] .table tr:hover { background: #13233a; }
+html[data-app-theme="dark"] .wide-table,
+html[data-app-theme="dark"] .scroll-table { border-color: #26364d; }
+html[data-app-theme="dark"] .asset-box,
+html[data-app-theme="dark"] .info-box,
+html[data-app-theme="dark"] .formula-box,
+html[data-app-theme="dark"] .audit-summary span,
+html[data-app-theme="dark"] .chart-empty { background: #0b1627; color: #aebed2; border-color: #334155; }
+html[data-app-theme="dark"] .subtotal td { background: #13233a; }
+html[data-app-theme="dark"] .blue-soft { background: #102b4e !important; color: #bfdbfe !important; border-color: #1e3a5f; }
+html[data-app-theme="dark"] .green-soft { background: #12362f !important; color: #bbf7d0 !important; }
+html[data-app-theme="dark"] .orange-soft { background: #422613 !important; color: #fed7aa !important; }
+html[data-app-theme="dark"] .purple-soft { background: #302050 !important; color: #e9d5ff !important; }
+html[data-app-theme="dark"] .emerald-soft { background: #12362f !important; color: #a7f3d0 !important; }
