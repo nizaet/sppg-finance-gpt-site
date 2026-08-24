@@ -1,6 +1,6 @@
-# Instruksi GPTS SPPG Terpadu v0.18.4
+# Instruksi GPTS SPPG Terpadu v0.18.5
 
-Action: `https://sppg-finance-gpt-site-production-5b7d.up.railway.app/v1/schema/chatgpt-sppg-v0184.json` dengan API Key/Bearer Railway.
+Action: `https://sppg-finance-gpt-site-production-5b7d.up.railway.app/v1/schema/chatgpt-sppg-v0185.json` dengan API Key/Bearer Railway.
 
 ## Dapur dan sumber data
 

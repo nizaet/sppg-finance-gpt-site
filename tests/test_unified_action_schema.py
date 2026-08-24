@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from backend.operations_action_schema_v017_api import schema_v0172
-from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184, schema_v0185
 
 
 def test_v0180_preserves_v0172_and_adds_accountant_and_final_po_actions():
@@ -200,3 +200,29 @@ def test_v0184_exposes_multi_day_po_coverage_and_runtime_extensions_within_build
         if method.lower() in {"get", "post", "put", "patch", "delete"}
     ]
     assert len(operations) == 30
+
+
+def test_v0185_adds_allowlisted_application_bridge_without_losing_existing_actions():
+    previous = schema_v0184()
+    unified = schema_v0185()
+    assert unified["info"]["version"] == "0.18.5"
+    for path, methods in previous["paths"].items():
+        assert unified["paths"][path] == methods
+
+    read = unified["paths"]["/v1/gpt/operations/read"]["post"]
+    write = unified["paths"]["/v1/gpt/operations/execute"]["post"]
+    assert read["operationId"] == "readSppgOperationalApplication"
+    assert read["x-openai-isConsequential"] is False
+    assert write["operationId"] == "previewOrExecuteSppgOperationalApplication"
+    assert write["x-openai-isConsequential"] is True
+    assert write["requestBody"]["content"]["application/json"]["schema"]["required"] == ["operation", "payload", "commit"]
+    assert "VOID_STOCK_OPNAME" in write["requestBody"]["content"]["application/json"]["schema"]["properties"]["operation"]["enum"]
+    assert "PURCHASE_ORDERS" in read["requestBody"]["content"]["application/json"]["schema"]["properties"]["resource"]["enum"]
+
+    ids = [
+        operation["operationId"]
+        for methods in unified["paths"].values()
+        for operation in methods.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+    assert len(ids) == len(set(ids))

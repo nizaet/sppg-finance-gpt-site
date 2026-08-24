@@ -718,6 +718,93 @@ def schema_v0184() -> dict[str, Any]:
     return payload
 
 
+def _application_operations_gateway() -> dict[str, Any]:
+    """Compact Action surface for application screens absent from the legacy GPT.
+
+    The backend validates each named operation against the same Pydantic model
+    and domain function used by the Operations application.  The gateway is
+    intentionally allow-listed so an Action cannot invoke auth/webhook routes.
+    """
+    read_resources = [
+        "DASHBOARD", "PO_CALENDAR", "PO_REMINDERS", "VENDORS", "PLANNING_SNAPSHOTS",
+        "PURCHASE_ORDERS", "GOODS_RECEIPTS", "RECEIVING_VARIANCE", "STOCK_OPNAMES",
+        "ACTUAL_USAGE", "ACCOUNTANT_FLOW", "BGN_FLOW", "VENDOR_PAYMENTS", "AUDIT_LOG",
+    ]
+    write_operations = [
+        "CREATE_PLANNING_SNAPSHOT", "CREATE_PURCHASE_ORDER", "EDIT_DRAFT_PURCHASE_ORDER",
+        "REVISE_PURCHASE_ORDER", "CANCEL_PURCHASE_ORDER", "FINALIZE_PURCHASE_ORDER",
+        "MARK_PURCHASE_ORDER_SENT", "RECORD_GOODS_RECEIPT_MANUAL", "RECORD_ACTUAL_USAGE",
+        "SYNC_CALCULATOR_PLANNING", "SET_VENDOR_WHATSAPP", "SET_VENDOR_LEAD_TIME",
+        "REVIEW_EVENT", "VOID_STOCK_OPNAME", "CREATE_ACCOUNTANT_SUBMISSION",
+        "MARK_ACCOUNTANT_SUBMISSION_SENT", "CREATE_ACCOUNTANT_INVOICE", "CREATE_BGN_MAKER",
+        "CREATE_BGN_APPROVAL", "CREATE_BGN_RECEIPT", "CREATE_SETTLEMENT",
+    ]
+    read_schema = obj({
+        "resource": {"type": "string", "enum": read_resources},
+        "site": {"type": ["string", "null"]},
+        "date": {"type": ["string", "null"], "format": "date"},
+        "from_date": {"type": ["string", "null"], "format": "date"},
+        "to_date": {"type": ["string", "null"], "format": "date"},
+        "vendor": {"type": ["string", "null"]},
+        "status": {"type": ["string", "null"]},
+        "location": {"type": ["string", "null"], "enum": ["KOPERASI", "MAJA", "CEMPLANG", None]},
+        "record_id": {"type": ["integer", "null"], "minimum": 1},
+        "production_cycle_id": {"type": ["integer", "null"], "minimum": 1},
+        "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 500},
+        "horizon_days": {"type": ["integer", "null"], "minimum": 1, "maximum": 31},
+    }, ["resource"])
+    read_response = obj({
+        "resource": {"type": "string"},
+        "result": {"type": "object", "properties": {}, "additionalProperties": True},
+    }, ["resource", "result"])
+    write_schema = obj({
+        "operation": {"type": "string", "enum": write_operations},
+        "payload": {"type": "object", "properties": {}, "additionalProperties": True},
+        "commit": {"type": "boolean", "default": False},
+    }, ["operation", "payload", "commit"])
+    write_response = obj({
+        "committed": {"type": "boolean"},
+        "canCommit": {"type": ["boolean", "null"]},
+        "operation": {"type": "string"},
+        "normalizedPayload": {"type": "object", "properties": {}, "additionalProperties": True},
+        "result": {"type": "object", "properties": {}, "additionalProperties": True},
+        "message": {"type": ["string", "null"]},
+    }, ["committed", "operation"])
+    return {
+        "/v1/gpt/operations/read": {
+            "post": {
+                "operationId": "readSppgOperationalApplication",
+                "summary": "Read an operational application workspace through GPT",
+                "description": "READ-ONLY. Use this for the Operations dashboard, planning, POs, receipts, stock-opname history, flows, vendor/payment lists, and audit log. Select only the needed resource and filters.",
+                "x-openai-isConsequential": False,
+                "requestBody": {"required": True, "content": {"application/json": {"schema": read_schema}}},
+                "responses": {"200": {"description": "Operational application data", "content": {"application/json": {"schema": read_response}}}},
+            }
+        },
+        "/v1/gpt/operations/execute": {
+            "post": {
+                "operationId": "previewOrExecuteSppgOperationalApplication",
+                "summary": "Preview or send an approved operational command to the application",
+                "description": "Use commit=false first. With commit=true, validates and runs the named allow-listed application operation using the same backend workflow as the Operations screen. Never use for login, webhooks, or arbitrary routes.",
+                "x-openai-isConsequential": True,
+                "requestBody": {"required": True, "content": {"application/json": {"schema": write_schema}}},
+                "responses": {"200": {"description": "Preview or committed application operation", "content": {"application/json": {"schema": write_response}}}},
+            }
+        },
+    }
+
+
+def schema_v0185() -> dict[str, Any]:
+    payload = deepcopy(schema_v0184())
+    payload["info"] = {
+        "title": "SPPG Full Operations Application Bridge",
+        "version": "0.18.5",
+        "description": "The v0.18.4 SPPG workflow plus an allow-listed bridge for all operational application screens and commands not previously exposed to GPT.",
+    }
+    payload["paths"].update(_application_operations_gateway())
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
@@ -741,3 +828,33 @@ def chatgpt_sppg_schema_v0183() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0184.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0184() -> JSONResponse:
     return JSONResponse(schema_v0184())
+
+
+@router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0180() -> JSONResponse:
+    return JSONResponse(schema_v0180())
+
+
+@router.get("/schema/chatgpt-sppg-v0181.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0181() -> JSONResponse:
+    return JSONResponse(schema_v0181())
+
+
+@router.get("/schema/chatgpt-sppg-v0182.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0182() -> JSONResponse:
+    return JSONResponse(schema_v0182())
+
+
+@router.get("/schema/chatgpt-sppg-v0183.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0183() -> JSONResponse:
+    return JSONResponse(schema_v0183())
+
+
+@router.get("/schema/chatgpt-sppg-v0184.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0184() -> JSONResponse:
+    return JSONResponse(schema_v0184())
+
+
+@router.get("/schema/chatgpt-sppg-v0185.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0185() -> JSONResponse:
+    return JSONResponse(schema_v0185())
