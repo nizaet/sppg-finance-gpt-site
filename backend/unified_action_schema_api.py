@@ -528,7 +528,7 @@ def _inventory_master_operation() -> dict[str, Any]:
             "operationId": "previewOrSaveSppgInventoryItemMaster",
             "summary": "Preview or save a canonical item type and aliases",
             "description": "Use commit=false first. Save only item types, units, categories, and aliases explicitly supplied by the user. Brand aliases may map to one type; never merge changed item types.",
-            "x-openai-isConsequential": True,
+            "x-openai-isConsequential": False,
             "requestBody": {"required": True, "content": {"application/json": {"schema": obj({
                 "code": {"type": ["string", "null"]}, "canonical_name": {"type": "string", "minLength": 1},
                 "category_code": {"type": ["string", "null"]}, "base_unit": {"type": ["string", "null"]},
