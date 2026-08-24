@@ -487,13 +487,21 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
     location = normalize_location(payload.location)
     parsed = parse_stock_opname_text(payload.text)
     detected = date.fromisoformat(parsed["detectedStockDate"]) if parsed["detectedStockDate"] else None
-    stock_date = payload.stock_date or detected
     parse_warnings = list(parsed["warnings"])
-    if not stock_date:
+    if detected:
+        stock_date = payload.stock_date or detected
+    elif payload.stock_date and payload.actor.strip().lower() != "chatgpt":
+        stock_date = payload.stock_date
+    else:
         stock_date = datetime.now(ZoneInfo("Asia/Jakarta")).date()
-        parse_warnings.append(
-            f"Tanggal tidak disebutkan; memakai tanggal Jakarta saat pencatatan: {stock_date.isoformat()}."
-        )
+        if payload.stock_date:
+            parse_warnings.append(
+                f"Tanggal {payload.stock_date.isoformat()} dari GPT diabaikan karena tidak ada tanggal di teks; memakai tanggal Jakarta: {stock_date.isoformat()}."
+            )
+        else:
+            parse_warnings.append(
+                f"Tanggal tidak disebutkan; memakai tanggal Jakarta saat pencatatan: {stock_date.isoformat()}."
+            )
     if payload.stock_date and detected and payload.stock_date != detected:
         parse_warnings.append(
             f"Tanggal input {payload.stock_date.isoformat()} berbeda dari tanggal dalam chat {detected.isoformat()}. Tanggal input akan dipakai."
