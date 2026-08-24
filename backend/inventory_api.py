@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -441,10 +442,10 @@ def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
 
 
 class StockOpnameReviewedItemIn(BaseModel):
-    client_key: str
+    client_key: str | None = None
     include: bool = True
     area_code: str | None = None
-    raw_item_name: str = Field(min_length=1)
+    raw_item_name: str | None = None
     canonical_item_name: str | None = None
     inventory_item_code: str | None = None
     qty: float = Field(ge=0)
@@ -487,9 +488,12 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
     parsed = parse_stock_opname_text(payload.text)
     detected = date.fromisoformat(parsed["detectedStockDate"]) if parsed["detectedStockDate"] else None
     stock_date = payload.stock_date or detected
-    if not stock_date:
-        raise HTTPException(400, "stock_date is required when no Indonesian date is detected in the message")
     parse_warnings = list(parsed["warnings"])
+    if not stock_date:
+        stock_date = datetime.now(ZoneInfo("Asia/Jakarta")).date()
+        parse_warnings.append(
+            f"Tanggal tidak disebutkan; memakai tanggal Jakarta saat pencatatan: {stock_date.isoformat()}."
+        )
     if payload.stock_date and detected and payload.stock_date != detected:
         parse_warnings.append(
             f"Tanggal input {payload.stock_date.isoformat()} berbeda dari tanggal dalam chat {detected.isoformat()}. Tanggal input akan dipakai."
@@ -511,10 +515,18 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
 
             if payload.reviewed_items is not None:
                 reviewed: list[dict[str, Any]] = []
-                for supplied in payload.reviewed_items:
+                for review_index, supplied in enumerate(payload.reviewed_items):
                     if not supplied.include:
                         continue
-                    raw_name = supplied.raw_item_name.strip()
+                    parsed_item = parsed["items"][review_index] if review_index < len(parsed["items"]) else {}
+                    raw_name = str(
+                        supplied.raw_item_name
+                        or parsed_item.get("itemName")
+                        or supplied.canonical_item_name
+                        or ""
+                    ).strip()
+                    if not raw_name:
+                        raise HTTPException(400, "reviewed_items membutuhkan nama item atau teks laporan yang dapat diparsing")
                     unit = canonical_unit(supplied.unit)
                     classification = classify_item(supplied.canonical_item_name or raw_name, masters)
                     if supplied.inventory_item_code:
@@ -545,7 +557,7 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                         })
                     warnings = [] if unit else ["Satuan belum ditetapkan oleh pengguna."]
                     reviewed.append({
-                        "clientKey": supplied.client_key,
+                        "clientKey": supplied.client_key or str(review_index),
                         "selected": True,
                         "areaCode": supplied.area_code or "UNSPECIFIED",
                         "itemName": raw_name,
@@ -553,7 +565,7 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                         "qty": float(supplied.qty),
                         "unit": unit,
                         "parseStatus": "READY" if unit else "REVIEW",
-                        "rawLine": supplied.raw_line or raw_name,
+                        "rawLine": supplied.raw_line or parsed_item.get("rawLine") or raw_name,
                         "warnings": warnings,
                         **classification,
                     })

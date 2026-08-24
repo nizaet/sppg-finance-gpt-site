@@ -98,3 +98,16 @@ def test_confirmed_oil_packages_merge_dus_pcs_and_liters():
     assert oil[0]["unit"] == "liter"
     assert any("1 dus = 12 liter" in warning for warning in oil[0]["warnings"])
     assert any("1 pcs = 2 liter" in warning for warning in oil[0]["warnings"])
+
+
+def test_stock_opname_review_accepts_simple_gpt_item_without_technical_keys():
+    from backend.inventory_api import StockOpnameReviewedItemIn
+
+    item = StockOpnameReviewedItemIn.model_validate({
+        "canonical_item_name": "Kecap Jamur",
+        "qty": 1,
+        "unit": "botol",
+    })
+    assert item.client_key is None
+    assert item.raw_item_name is None
+    assert item.qty == 1

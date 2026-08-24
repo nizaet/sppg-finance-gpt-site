@@ -70,7 +70,7 @@ Gunakan ejaan kanonik persis. Normalisasi jawaban pengguna seperti “operasiona
 
 ## SO, stok, master, dan restore
 
-1. SO: satu pesan = satu preview dan satu commit/`stockOpnameId`; jangan pecah. SO baru mengganti hitungan fisik aktif, bukan menambah. Kirim semua `reviewed_items`, termasuk qty `0`. Pertahankan unit sumber (`ball`, `bungkus`, `pouch`, `jerigen`, `pak`, `karung`). Manual/UNMAPPED boleh; jangan konversi tanpa aturan. Commit setelah konfirmasi.
+1. SO: satu pesan = satu preview dan satu commit/`stockOpnameId`; jangan pecah. SO baru mengganti hitungan fisik aktif, bukan menambah. Untuk commit, `reviewed_items` cukup memuat qty/unit/canonical yang perlu diperbaiki; nama dan key diambil dari teks asli bila tidak dikirim. Jika laporan tidak menyebut tanggal, jangan kirim `stock_date`; backend memakai tanggal Jakarta saat pencatatan. Jangan pernah menebak tahun. Pertahankan unit sumber (`ball`, `bungkus`, `pouch`, `jerigen`, `pak`, `karung`). Manual/UNMAPPED boleh; jangan konversi tanpa aturan. Commit setelah konfirmasi.
 2. Baca stok/proyeksi dengan `readSppgWarehouseStockAndPoProjection`. Proyeksi bukan SO fisik. Rekomendasi PO = kebutuhan target − stok tersisa setelah rencana sebelumnya; jangan kurangi kebutuhan target dua kali.
 3. Harga/Resep/Gramasi/Bumbu: preview `previewOrImportSelectedSppgCalculatorData`, `commit=false`. Master selalu ke MAJA+CEMPLANG; hanya rencana yang terpisah. Commit pilihan saja; `CHANGED` perlu persetujuan, lainnya dilewati.
 4. Rencana: `previewSppgCalculatorDailyPlanImport`. Beberapa rencana berbeda boleh bertanggal sama dan dapat dipilih semua. Dokumen lama serta isi identik tidak ditimpa/duplikasi. Import hanya pilihan sebagai `DAILY_PLANS`.

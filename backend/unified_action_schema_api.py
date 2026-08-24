@@ -367,17 +367,17 @@ def _po_whatsapp_operation() -> dict[str, Any]:
 def _stock_opname_operation() -> dict[str, Any]:
     reviewed_item = obj(
         {
-            "client_key": {"type": "string"},
+            "client_key": {"type": ["string", "null"]},
             "include": {"type": "boolean", "default": True},
             "area_code": {"type": ["string", "null"]},
-            "raw_item_name": {"type": "string", "minLength": 1},
+            "raw_item_name": {"type": ["string", "null"]},
             "canonical_item_name": {"type": ["string", "null"]},
             "inventory_item_code": {"type": ["string", "null"]},
             "qty": {"type": "number", "minimum": 0},
             "unit": {"type": ["string", "null"]},
             "raw_line": {"type": ["string", "null"]},
         },
-        ["client_key", "include", "raw_item_name", "qty"],
+        ["qty"],
     )
     parsed_item = obj(
         {
@@ -402,7 +402,7 @@ def _stock_opname_operation() -> dict[str, Any]:
         "post": {
             "operationId": "previewOrRecordSppgStockOpnameFromWhatsApp",
             "summary": "Preview or record a warehouse stock opname report",
-            "description": "One WhatsApp SO must remain one baseline: preview once, then commit once with every reviewed_items row. Never split by area or mapping status. Manual canonical names are allowed; preserve raw names and mixed units.",
+            "description": "One WhatsApp SO is one baseline: preview then commit once. reviewed_items only needs qty; names/keys are taken from the original text when omitted. If no date is written, omit stock_date so Jakarta current date is used.",
             "x-openai-isConsequential": True,
             "requestBody": {
                 "required": True,
