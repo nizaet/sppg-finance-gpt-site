@@ -208,7 +208,11 @@ def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type:
             fields="id,webViewLink",
             supportsAllDrives=True,
         )
-        .execute()
+        # Google API transport can occasionally close the TLS connection while
+        # Railway is waiting for the response. The client retries SSL/socket
+        # transport failures and retryable HTTP responses when num_retries is
+        # set; without it a brief EOF becomes a user-facing 503 immediately.
+        .execute(num_retries=3)
     )
     return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
 
