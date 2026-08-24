@@ -71,6 +71,14 @@ QUANTITY_PATTERN = re.compile(
 )
 
 
+INLINE_SECTION_HEADER_PATTERN = re.compile(
+    r"(?im)(?:^|\n|[ \t]*[-•][ \t]*)\*?\s*(?P<section>gudang\s+kering|gudang\s+basah|kantor|protein|ayam\s+ikan)\s*\*?\s*(?=\d+\s*[\.)]\s+)",
+)
+INLINE_ITEM_PATTERN = re.compile(
+    r"(?i)(?P<unit>\b(?:kg|kgs|kilogram|kilograms|gram|grams|gr|pcs|pc|piece|pieces|pack|packs|pak|dus|karton|karung|kantong|liter|litre|ltr|lt|l|ons|butir|botol|pouch|ball|bungkus|jerigen|dirigen|drigen|drigent|ikat|papan|roll|rol|unit)\b)[ \t]+(?P<index>\d{1,3})\s*[\.)]\s+(?=[A-Za-z])",
+)
+
+
 def normalize_name(value: str) -> str:
     text = value.lower().strip()
     text = re.sub(r"[^a-z0-9]+", " ", text)
@@ -119,6 +127,41 @@ def _section_for(line: str) -> str | None:
     return SECTION_NAMES.get(normalized)
 
 
+def _logical_stock_opname_lines(text: str) -> list[str]:
+    """Split compact WhatsApp lists before parsing the quantities.
+
+    GPT Actions can collapse Markdown newlines.  A section heading or a numbered
+    item must therefore still be recognized when it appears inline.
+    """
+
+    content = text.replace("\r\n", "\n").replace("\r", "\n")
+    content = INLINE_SECTION_HEADER_PATTERN.sub(
+        lambda match: f"\n{match.group('section')}\n",
+        content,
+    )
+    content = INLINE_ITEM_PATTERN.sub(
+        lambda match: f"{match.group('unit')}\n{match.group('index')}. ",
+        content,
+    )
+    return content.splitlines()
+
+
+def _section_with_remainder(line: str) -> tuple[str | None, str]:
+    found_section = _section_for(line)
+    if found_section:
+        return found_section, ""
+
+    match = re.match(
+        r"^\s*(?P<section>gudang\s+kering|gudang\s+basah|kantor|protein|ayam\s+ikan)\s*"
+        r"(?P<remainder>\d+\s*[\.)]\s+.+)$",
+        line,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None, line
+    return SECTION_NAMES[normalize_name(match.group("section"))], match.group("remainder")
+
+
 def _item_name_before_quantity(line: str, match: re.Match[str]) -> str:
     name = line[: match.start()].strip(" :;=-+*_")
     return re.sub(r"\s+", " ", name).strip()
@@ -138,16 +181,18 @@ def parse_stock_opname_text(text: str) -> dict[str, Any]:
     parsed: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    for raw_line in text.splitlines():
+    for raw_line in _logical_stock_opname_lines(text):
         line = _clean_line(raw_line)
         if not line:
             continue
-        found_section = _section_for(line)
+        found_section, remainder = _section_with_remainder(line)
         if found_section:
             section = found_section
             last_area = section
             pending_name = None
-            continue
+            if not remainder:
+                continue
+            line = _clean_line(remainder)
         normalized_line = normalize_name(line.replace("*", ""))
         if not normalized_line or normalized_line in {"so barang"}:
             continue
