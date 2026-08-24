@@ -481,6 +481,33 @@ def _replacement_source_ids(source_external_id: str | None) -> list[int]:
     return []
 
 
+def _compact_stock_opname_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep GPT Action previews below the response-size limit.
+
+    Classification internals can contain every known alias/source in the
+    master.  They remain in the database workflow but are not useful in the
+    chat preview.
+    """
+    return [
+        {
+            "clientKey": item.get("clientKey"),
+            "selected": bool(item.get("selected", True)),
+            "areaCode": item.get("areaCode"),
+            "itemName": item.get("itemName"),
+            "canonicalItemName": item.get("canonicalItemName"),
+            "inventoryItemCode": item.get("inventoryItemCode"),
+            "qty": item.get("qty"),
+            "unit": item.get("unit"),
+            "classificationStatus": item.get("classificationStatus"),
+            "classificationMethod": item.get("classificationMethod"),
+            "classificationConfidence": item.get("classificationConfidence"),
+            "parseStatus": item.get("parseStatus"),
+            "warnings": list(item.get("warnings") or [])[:3],
+        }
+        for item in items
+    ]
+
+
 @router.post("/inventory/stock-opname/whatsapp")
 def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
     require_db()
@@ -611,8 +638,8 @@ def stock_opname_whatsapp(payload: StockOpnameWhatsAppIn) -> dict[str, Any]:
                 "reviewCount": sum(1 for item in items if item["parseStatus"] != "READY"),
                 "unmappedCount": unmapped,
                 "ambiguousCount": ambiguous,
-                "warnings": parse_warnings,
-                "items": items,
+                "warnings": parse_warnings[:10],
+                "items": _compact_stock_opname_items(items),
             }
             if not payload.commit:
                 return result
