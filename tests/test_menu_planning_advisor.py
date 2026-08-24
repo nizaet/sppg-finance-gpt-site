@@ -97,6 +97,27 @@ def test_existing_day_is_never_replaced_and_missing_price_blocks_pagu_claim():
     assert result["automationBoundary"]["canCreateOrEditCalculator"] is False
 
 
+def test_existing_day_uses_the_complete_daily_plan_not_a_single_fruit_fragment():
+    fruit_fragment = {
+        "id": "fruit-only", "distribution_date": date(2026, 8, 3),
+        "payload": {"planName": "Jeruk Medan", "porsiKecil": 230, "porsiBesar": 107, "recipes": [{"name": "Jeruk Medan"}]},
+        "items": [{"item_name": "Jeruk Medan", "category_code": "SAYUR_BUAH_BUMBU", "planned_qty": 60, "unit": "kg", "planning_price": 20_000}],
+    }
+    full_plan = _snapshot(9, date(2026, 8, 3), "Menu ayam lengkap", "Ayam Bumbu", "Pisang")
+    full_plan["payload"]["porsiKecil"] = 1_043
+    full_plan["payload"]["porsiBesar"] = 1_944
+    full_plan["items"].append({"item_name": "Beras putih", "category_code": "BERAS", "planned_qty": 185, "unit": "kg", "planning_price": 14_900})
+
+    result = _build_week_draft(
+        site="MAJA", week_start=date(2026, 8, 3), days=1,
+        snapshots=[fruit_fragment, full_plan], target_pm=120, pagu_per_pm=5000, knowledge=[],
+    )
+
+    assert result["days"][0]["state"] == "EXISTING"
+    assert result["days"][0]["menuTitle"] == "Ayam Bumbu"
+    assert len(result["days"][0]["materials"]) == 3
+
+
 def test_menu_priority_uses_the_real_latest_use_not_the_oldest_duplicate():
     snapshots = [
         _snapshot(1, date(2026, 6, 1), "Sate ayam", "Sate Ayam", "Jeruk Medan"),
