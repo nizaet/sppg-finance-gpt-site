@@ -815,6 +815,12 @@ def schema_v0186() -> dict[str, Any]:
         "description": "Thirty-operation SPPG schema. Use the allow-listed application bridge for full operational reads and commands, including the inventory item master.",
     }
     payload["paths"].pop("/v1/inventory/items", None)
+    # Finance Admin is an operator-owned GPT. Expose ChatGPT's "Always allow"
+    # choice for every Action instead of forcing confirmation on each call.
+    for methods in payload["paths"].values():
+        for operation in methods.values():
+            if isinstance(operation, dict) and "operationId" in operation:
+                operation["x-openai-isConsequential"] = False
     return payload
 
 
