@@ -727,7 +727,7 @@ def _application_operations_gateway() -> dict[str, Any]:
     """
     read_resources = [
         "DASHBOARD", "PO_CALENDAR", "PO_REMINDERS", "VENDORS", "PLANNING_SNAPSHOTS",
-        "PURCHASE_ORDERS", "GOODS_RECEIPTS", "RECEIVING_VARIANCE", "STOCK_OPNAMES",
+        "PURCHASE_ORDERS", "GOODS_RECEIPTS", "RECEIVING_VARIANCE", "STOCK_OPNAMES", "INVENTORY_ITEM_MASTER",
         "ACTUAL_USAGE", "ACCOUNTANT_FLOW", "BGN_FLOW", "VENDOR_PAYMENTS", "AUDIT_LOG",
     ]
     write_operations = [
@@ -735,7 +735,7 @@ def _application_operations_gateway() -> dict[str, Any]:
         "REVISE_PURCHASE_ORDER", "CANCEL_PURCHASE_ORDER", "FINALIZE_PURCHASE_ORDER",
         "MARK_PURCHASE_ORDER_SENT", "RECORD_GOODS_RECEIPT_MANUAL", "RECORD_ACTUAL_USAGE",
         "SYNC_CALCULATOR_PLANNING", "SET_VENDOR_WHATSAPP", "SET_VENDOR_LEAD_TIME",
-        "REVIEW_EVENT", "VOID_STOCK_OPNAME", "CREATE_ACCOUNTANT_SUBMISSION",
+        "REVIEW_EVENT", "VOID_STOCK_OPNAME", "UPSERT_INVENTORY_ITEM_MASTER", "CREATE_ACCOUNTANT_SUBMISSION",
         "MARK_ACCOUNTANT_SUBMISSION_SENT", "CREATE_ACCOUNTANT_INVOICE", "CREATE_BGN_MAKER",
         "CREATE_BGN_APPROVAL", "CREATE_BGN_RECEIPT", "CREATE_SETTLEMENT",
     ]
@@ -748,6 +748,7 @@ def _application_operations_gateway() -> dict[str, Any]:
         "vendor": {"type": ["string", "null"]},
         "status": {"type": ["string", "null"]},
         "location": {"type": ["string", "null"], "enum": ["KOPERASI", "MAJA", "CEMPLANG", None]},
+        "search": {"type": ["string", "null"]},
         "record_id": {"type": ["integer", "null"], "minimum": 1},
         "production_cycle_id": {"type": ["integer", "null"], "minimum": 1},
         "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 500},
@@ -805,6 +806,18 @@ def schema_v0185() -> dict[str, Any]:
     return payload
 
 
+def schema_v0186() -> dict[str, Any]:
+    """Thirty-operation GPT schema without duplicated item-master actions."""
+    payload = deepcopy(schema_v0185())
+    payload["info"] = {
+        "title": "SPPG Full Operations Application Bridge",
+        "version": "0.18.6",
+        "description": "Thirty-operation SPPG schema. Use the allow-listed application bridge for full operational reads and commands, including the inventory item master.",
+    }
+    payload["paths"].pop("/v1/inventory/items", None)
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
@@ -858,3 +871,8 @@ def chatgpt_sppg_schema_v0184() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0185.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0185() -> JSONResponse:
     return JSONResponse(schema_v0185())
+
+
+@router.get("/schema/chatgpt-sppg-v0186.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0186() -> JSONResponse:
+    return JSONResponse(schema_v0186())

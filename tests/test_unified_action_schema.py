@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from backend.operations_action_schema_v017_api import schema_v0172
-from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184, schema_v0185
+from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184, schema_v0185, schema_v0186
 
 
 def test_v0180_preserves_v0172_and_adds_accountant_and_final_po_actions():
@@ -225,4 +225,25 @@ def test_v0185_adds_allowlisted_application_bridge_without_losing_existing_actio
         for operation in methods.values()
         if isinstance(operation, dict) and "operationId" in operation
     ]
+    assert len(ids) == len(set(ids))
+
+
+
+def test_v0186_fits_gpt_operation_limit_without_losing_item_master_capability():
+    unified = schema_v0186()
+    assert unified["info"]["version"] == "0.18.6"
+    assert "/v1/inventory/items" not in unified["paths"]
+
+    read = unified["paths"]["/v1/gpt/operations/read"]["post"]
+    write = unified["paths"]["/v1/gpt/operations/execute"]["post"]
+    assert "INVENTORY_ITEM_MASTER" in read["requestBody"]["content"]["application/json"]["schema"]["properties"]["resource"]["enum"]
+    assert "UPSERT_INVENTORY_ITEM_MASTER" in write["requestBody"]["content"]["application/json"]["schema"]["properties"]["operation"]["enum"]
+
+    ids = [
+        operation["operationId"]
+        for methods in unified["paths"].values()
+        for operation in methods.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+    assert len(ids) == 30
     assert len(ids) == len(set(ids))
