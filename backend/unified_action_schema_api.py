@@ -403,7 +403,7 @@ def _stock_opname_operation() -> dict[str, Any]:
             "operationId": "previewOrRecordSppgStockOpnameFromWhatsApp",
             "summary": "Preview or record a warehouse stock opname report",
             "description": "One WhatsApp SO is one baseline: preview then commit once. reviewed_items only needs qty; names/keys are taken from the original text when omitted. If no date is written, omit stock_date so Jakarta current date is used.",
-            "x-openai-isConsequential": True,
+            "x-openai-isConsequential": False,
             "requestBody": {
                 "required": True,
                 "content": {
