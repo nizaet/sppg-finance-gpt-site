@@ -52,6 +52,15 @@ def _friendly_drive_error(exc: Exception) -> tuple[str, bool]:
             "Pastikan akun OAuth pemilik Drive atau service account memiliki akses Editor/Contributor.",
             False,
         )
+    if any(marker in lowered for marker in (
+        "unexpected_eof_while_reading", "unexpected eof while reading",
+        "sslerror", "connection reset", "connection aborted", "timed out",
+    )):
+        return (
+            "Koneksi ke Google Drive terputus sementara saat upload. Sistem sudah mencoba ulang otomatis 3 kali; "
+            "data invoice belum dicatat bila upload Drive belum berhasil. Silakan coba upload kembali.",
+            False,
+        )
     return (raw[:900], False)
 
 
