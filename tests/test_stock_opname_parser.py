@@ -111,3 +111,22 @@ def test_stock_opname_review_accepts_simple_gpt_item_without_technical_keys():
     assert item.client_key is None
     assert item.raw_item_name is None
     assert item.qty == 1
+
+
+def test_inline_section_headers_keep_each_item_and_area_separate():
+    result = parser.parse_stock_opname_text(
+        "*KANTOR* 1. hand towels : 8 pack  2. hand glove : 5 pack "
+        "- *GUDANG KERING* 1. bawang putih : 6,30 kg  2. bawang merah : 9,18 kg "
+        "- *GUDANG BASAH* 1. gula merah : 10 kg"
+    )
+
+    assert [
+        (item["areaCode"], item["itemName"], item["qty"], item["unit"])
+        for item in result["items"]
+    ] == [
+        ("KANTOR", "hand towels", 8.0, "pack"),
+        ("KANTOR", "hand glove", 5.0, "pack"),
+        ("GUDANG_KERING", "bawang putih", 6.3, "kg"),
+        ("GUDANG_KERING", "bawang merah", 9.18, "kg"),
+        ("GUDANG_BASAH", "gula merah", 10.0, "kg"),
+    ]
