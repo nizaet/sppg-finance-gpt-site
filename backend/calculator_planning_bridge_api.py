@@ -4,13 +4,15 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from google.auth.transport.requests import AuthorizedSession
 from pydantic import BaseModel
 
 from backend.db import connection, database_ready
-from backend.google_services import SITE_TARGETS, firestore_client
+from backend.google_services import SITE_TARGETS, firestore_client, google_credentials, google_project_id
 from backend.item_taxonomy import vendor_for_item
 from backend.planning_api import PlanningItemIn, PlanningSnapshotIn, ingest_planning_snapshot, get_planning_snapshot
 
@@ -162,6 +164,97 @@ def _visible_plan_dates(documents: list[Any]) -> list[dict[str, Any]]:
     return rows[:12]
 
 
+def _rest_firestore_value(value: Any) -> Any:
+    """Decode a Firestore REST field value without using the SDK query layer."""
+    if not isinstance(value, dict):
+        return value
+    if "nullValue" in value:
+        return None
+    if "booleanValue" in value:
+        return bool(value["booleanValue"])
+    if "integerValue" in value:
+        try:
+            return int(value["integerValue"])
+        except (TypeError, ValueError):
+            return value["integerValue"]
+    if "doubleValue" in value:
+        try:
+            return float(value["doubleValue"])
+        except (TypeError, ValueError):
+            return value["doubleValue"]
+    if "timestampValue" in value:
+        raw = str(value["timestampValue"])
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return raw
+    if "stringValue" in value:
+        return value["stringValue"]
+    if "referenceValue" in value:
+        return value["referenceValue"]
+    if "bytesValue" in value:
+        return value["bytesValue"]
+    if "geoPointValue" in value:
+        return dict(value["geoPointValue"] or {})
+    if "mapValue" in value:
+        fields = (value["mapValue"] or {}).get("fields") or {}
+        return {str(key): _rest_firestore_value(item) for key, item in fields.items()}
+    if "arrayValue" in value:
+        values = (value["arrayValue"] or {}).get("values") or []
+        return [_rest_firestore_value(item) for item in values]
+    return value
+
+
+class _RestDailyPlanSnapshot:
+    """Small adapter so the normal candidate selection accepts REST documents."""
+
+    def __init__(self, document: dict[str, Any]):
+        name = str(document.get("name") or "")
+        self.id = name.rsplit("/", 1)[-1]
+        path_marker = "/documents/"
+        path = name.split(path_marker, 1)[-1] if path_marker in name else name
+        self.reference = SimpleNamespace(path=path)
+        self._data = {
+            str(key): _rest_firestore_value(value)
+            for key, value in (document.get("fields") or {}).items()
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
+
+
+def _rest_daily_plan_documents(site: str, configured: str, limit: int) -> list[_RestDailyPlanSnapshot]:
+    """List canonical plans through Firestore REST if the SDK raises InvalidArgument.
+
+    Railway has intermittently rejected collection scans from the Firestore SDK
+    for the MAJA default database. REST ListDocuments uses the same credentials
+    but a separate transport/query path, so reminder sync stays available.
+    """
+    database_id = str(SITE_TARGETS[site]["database_id"])
+    base_url = (
+        f"https://firestore.googleapis.com/v1/projects/{google_project_id()}"
+        f"/databases/{database_id}/documents/artifacts/{configured}/public/data/dailyPlans"
+    )
+    session = AuthorizedSession(google_credentials())
+    snapshots: list[_RestDailyPlanSnapshot] = []
+    page_token: str | None = None
+
+    while len(snapshots) < limit:
+        params: dict[str, Any] = {"pageSize": min(100, limit - len(snapshots))}
+        if page_token:
+            params["pageToken"] = page_token
+        response = session.get(base_url, params=params, timeout=20)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Firestore REST ListDocuments HTTP {response.status_code}: {response.text[:240]}")
+        payload = response.json()
+        snapshots.extend(_RestDailyPlanSnapshot(document) for document in (payload.get("documents") or []))
+        page_token = str(payload.get("nextPageToken") or "") or None
+        if not page_token:
+            break
+
+    return snapshots[:limit]
+
+
 def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, dict[str, Any], list[dict[str, Any]]]:
     target = SITE_TARGETS[site]
     client = firestore_client(target["database_id"])
@@ -190,16 +283,23 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
         try:
             canonical_docs = list(daily_plans.limit(CANONICAL_SCAN_LIMIT).stream())
         except Exception as exc:
-            root_error = primary_query_error or exc
-            raise HTTPException(
-                502,
-                detail={
-                    "message": "gagal membaca rencana Kalkulator dari Firestore" if primary_query_error else "gagal memeriksa format tanggal lama pada rencana Kalkulator",
-                    **source_detail,
-                    "errorType": type(root_error).__name__,
-                    "canonicalScanErrorType": type(exc).__name__,
-                },
-            ) from root_error
+            # Do not re-use the failing SDK path. Firestore REST ListDocuments
+            # is intentionally independent from SDK stream()/where() and keeps
+            # PO reminder sync working when the SDK returns InvalidArgument.
+            try:
+                canonical_docs = _rest_daily_plan_documents(site, configured, CANONICAL_SCAN_LIMIT)
+            except Exception as rest_exc:
+                root_error = primary_query_error or exc
+                raise HTTPException(
+                    502,
+                    detail={
+                        "message": "gagal membaca rencana Kalkulator dari Firestore" if primary_query_error else "gagal memeriksa format tanggal lama pada rencana Kalkulator",
+                        **source_detail,
+                        "errorType": type(root_error).__name__,
+                        "canonicalScanErrorType": type(exc).__name__,
+                        "restFallbackErrorType": type(rest_exc).__name__,
+                    },
+                ) from root_error
 
         for snap in canonical_docs:
             candidate = _candidate(configured, snap)

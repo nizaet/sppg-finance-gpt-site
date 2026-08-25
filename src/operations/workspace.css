@@ -162,6 +162,9 @@ body {
 .ops-inline-controls input,
 .ops-form-grid select,
 .ops-form-grid input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
   background: #0c1829;
   color: inherit;
   border: 1px solid rgba(148, 163, 184, 0.25);
@@ -182,6 +185,7 @@ body {
 .ops-form-grid label {
   display: grid;
   gap: 5px;
+  min-width: 0;
   font-size: 12px;
   opacity: 0.9;
 }
@@ -203,6 +207,9 @@ body {
 }
 .ops-table-wrap {
   overflow: auto;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 12px;
 }
@@ -396,6 +403,7 @@ body {
   }
   .ops-content {
     padding: 12px;
+    padding-bottom: 118px;
   }
   .ops-form-grid {
     grid-template-columns: 1fr;
@@ -404,6 +412,16 @@ body {
   .ops-draft-group-head {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1100px) {
+  .ops-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-table {
+    min-width: 820px;
   }
 }
 

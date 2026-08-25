@@ -140,6 +140,29 @@ def test_invalid_indexed_query_falls_back_to_canonical_scan(monkeypatch):
     assert firestore.collection_group_calls == 0
 
 
+def test_invalid_firestore_sdk_scan_falls_back_to_rest_documents(monkeypatch):
+    plan = {
+        "date": "2026-08-26",
+        "planName": "MAJA 26 lewat REST",
+        "shoppingListJSON": {"shoppingList": [{"item": "Beras", "jumlah": 100}]},
+    }
+    document = _snapshot("maja-rest-20260826", plan)
+    firestore = _FakeFirestoreNode(failure=ValueError("InvalidArgument"))
+    monkeypatch.setattr("backend.calculator_planning_bridge_api.firestore_client", lambda _database: firestore)
+    monkeypatch.setattr(
+        "backend.calculator_planning_bridge_api._rest_daily_plan_documents",
+        lambda _site, _configured, _limit: [document],
+    )
+
+    app_id, selected, data, candidates = _daily_plan_matches("MAJA", date(2026, 8, 26))
+
+    assert app_id == "sppg-maja-gpt-site"
+    assert selected.id == "maja-rest-20260826"
+    assert data["planName"] == "MAJA 26 lewat REST"
+    assert len(candidates) == 1
+    assert firestore.collection_group_calls == 0
+
+
 def test_accountant_table_prefers_maker_returned_by_accountant_flow():
     source = Path("src/operations/OperationsAccountantBgn.jsx").read_text(encoding="utf-8")
     assert "const existingMaker = x.maker_id" in source
@@ -196,6 +219,10 @@ def test_multiple_legacy_roots_stop_before_guessing(monkeypatch):
 def test_firestore_failure_is_not_reported_as_plan_not_found(monkeypatch):
     firestore = _FakeFirestoreNode(failure=PermissionError("denied"))
     monkeypatch.setattr("backend.calculator_planning_bridge_api.firestore_client", lambda _database: firestore)
+    monkeypatch.setattr(
+        "backend.calculator_planning_bridge_api._rest_daily_plan_documents",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("REST denied")),
+    )
 
     with pytest.raises(HTTPException) as raised:
         _daily_plan_matches("CEMPLANG", date(2026, 8, 25))

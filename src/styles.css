@@ -479,3 +479,42 @@ html[data-app-theme="dark"] .green-soft { background: #12362f !important; color:
 html[data-app-theme="dark"] .orange-soft { background: #422613 !important; color: #fed7aa !important; }
 html[data-app-theme="dark"] .purple-soft { background: #302050 !important; color: #e9d5ff !important; }
 html[data-app-theme="dark"] .emerald-soft { background: #12362f !important; color: #a7f3d0 !important; }
+
+/* Fold / narrow tablet: keep accountant columns readable.  A dense ledger has
+   more columns than a phone can show, so scroll it instead of shrinking text
+   until labels and values overlap. */
+@media (max-width: 1100px) {
+  .tracking-table-wide,
+  .scroll-table,
+  .wide-table,
+  .boxed-table {
+    max-width: 100%;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .tracking-table-wide .table {
+    min-width: 1240px !important;
+    width: 1240px !important;
+    table-layout: auto !important;
+  }
+
+  .tracking-table-wide th,
+  .tracking-table-wide td {
+    min-width: max-content;
+    white-space: nowrap !important;
+  }
+
+  .tracking-table-wide .item-cell,
+  .tracking-table-wide .item-cell b,
+  .tracking-table-wide .item-cell .mono {
+    min-width: 190px;
+    white-space: normal !important;
+    overflow: visible !important;
+    -webkit-line-clamp: unset !important;
+    max-height: none !important;
+  }
+
+  .page { padding-bottom: 120px; }
+}
