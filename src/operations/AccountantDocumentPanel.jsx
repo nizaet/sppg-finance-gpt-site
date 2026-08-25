@@ -39,11 +39,13 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
   };
 
   const saveInvoice = async () => {
-    if (!preview?.invoiceNumber || !preview?.invoiceDate || Number(preview?.invoiceAmount || 0) <= 0) return reportError("Nomor invoice, tanggal, dan nilai wajib diisi.");
+    const effectiveInvoiceDate = preview?.invoiceDate || preview?.periodEnd || preview?.periodStart;
+    if (!preview?.invoiceNumber || !effectiveInvoiceDate || Number(preview?.invoiceAmount || 0) <= 0) return reportError("Nomor invoice, tanggal/periode, dan nilai wajib diisi.");
+    const readyPreview = { ...preview, invoiceDate: effectiveInvoiceDate };
     if (!window.confirm(`Simpan invoice ${preview.invoiceNumber} sebesar ${money(preview.invoiceAmount)} dan langsung buat Maker?`)) return;
     setBusy(true); reportError("");
     try {
-      const result = await accountantApi.commitInvoiceDocument({ file, preview, site, category });
+      const result = await accountantApi.commitInvoiceDocument({ file, preview: readyPreview, site, category });
       reportMessage(result.duplicate ? `Invoice ${preview.invoiceNumber} sudah pernah tercatat.` : `Invoice #${result.accountantInvoiceId} tersimpan; Maker #${result.makerId} dibuat dan menunggu Approval.`);
       setFile(null); setPreview(null); await loadDirect(); await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyimpan invoice"); }

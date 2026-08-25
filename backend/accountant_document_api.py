@@ -304,17 +304,26 @@ def _normalize_invoice(parsed: dict[str, Any], fallback: dict[str, Any], request
             "unit_price": _number(raw.get("unit_price")),
             "line_total": _number(raw.get("line_total")),
         })
+    invoice_date = _iso_date(merged.get("invoice_date"))
+    period_start = _iso_date(merged.get("period_start"))
+    period_end = _iso_date(merged.get("period_end"))
+    date_derived_from_period = False
+    if not invoice_date and (period_end or period_start):
+        invoice_date = period_end or period_start
+        date_derived_from_period = True
+    warnings_source = parsed.get("warnings") if parsed else fallback.get("warnings")
     return {
         "site": requested_site or (str(merged.get("site") or "").upper() or None),
         "category": requested_category or str(merged.get("category") or "OPERASIONAL_LAIN").upper(),
         "invoiceNumber": str(merged.get("invoice_number") or "").strip() or None,
-        "invoiceDate": _iso_date(merged.get("invoice_date")),
-        "periodStart": _iso_date(merged.get("period_start")),
-        "periodEnd": _iso_date(merged.get("period_end")),
+        "invoiceDate": invoice_date,
+        "periodStart": period_start,
+        "periodEnd": period_end,
+        "dateDerivedFromPeriod": date_derived_from_period,
         "invoiceAmount": _number(merged.get("invoice_amount")),
         "lines": lines,
         "confidence": min(max(float(merged.get("confidence") or 0.5), 0), 1),
-        "warnings": [str(x) for x in (merged.get("warnings") or []) if str(x).strip()],
+        "warnings": [str(x) for x in (warnings_source or []) if str(x).strip()],
     }
 
 
@@ -338,6 +347,10 @@ def preview_invoice_document(payload: InvoicePreviewIn) -> dict[str, Any]:
     ) if not value]
     if missing:
         result["warnings"].append("Perlu dilengkapi: " + ", ".join(missing))
+    if result.get("dateDerivedFromPeriod"):
+        result["warnings"].append(
+            "Dokumen memakai rentang tanggal; tanggal akhir periode digunakan sebagai tanggal pencatatan invoice."
+        )
     operational_plan_count = None
     operational_date_confirmed = None
     if result["category"] == "SEWA_MITRA" and result["site"] and result["invoiceDate"]:
