@@ -144,10 +144,10 @@ def bgn_flow(site: str = "") -> dict[str, Any]:
             receipt_exists = _table_exists(cur, "bgn_receipts")
             receipt_cols = _columns(cur, "bgn_receipts") if receipt_exists else set()
 
-            approval_select = "null as approval_id,null as approver_code,null as approval_status,null as requested_at,null as approved_at,null as rejected_at"
+            approval_select = "null as approval_id,null as approver_code,null as approval_status,null as requested_at,null as approved_at,null as rejected_at,null as approval_evidence_uri,null as approval_method"
             approval_join = ""
             if appr_exists and "bgn_maker_id" in appr_cols:
-                approval_select = f"{_col('a',appr_cols,'id',as_name='approval_id')},{_col('a',appr_cols,'approver_code')},{_col('a',appr_cols,'status',as_name='approval_status')},{_col('a',appr_cols,'requested_at')},{_col('a',appr_cols,'approved_at')},{_col('a',appr_cols,'rejected_at')}"
+                approval_select = f"{_col('a',appr_cols,'id',as_name='approval_id')},{_col('a',appr_cols,'approver_code')},{_col('a',appr_cols,'status',as_name='approval_status')},{_col('a',appr_cols,'requested_at')},{_col('a',appr_cols,'approved_at')},{_col('a',appr_cols,'rejected_at')},{_col('a',appr_cols,'evidence_uri',as_name='approval_evidence_uri')},{_col('a',appr_cols,'approval_method')}"
                 approval_join = f"left join lateral (select * from bgn_approvals x where x.bgn_maker_id=m.id order by {_order('x',appr_cols)} limit 1) a on true"
 
             receipt_select = "null as receipt_id,null as receipt_amount,null as payment_received_at,null as payment_evidence_uri"

@@ -166,6 +166,8 @@ def fresh_selected_plan_excel(payload: FreshSelectedPlanExcelIn) -> dict[str, An
             filename=artifact["filename"],
             data=artifact["xlsx"],
             mime_type=excel.XLSX_MIME,
+            site=payload.site,
+            bucket="EXCEL",
         )
     except AccountantDriveUploadError as exc:
         raise HTTPException(503, str(exc)[:1500]) from exc

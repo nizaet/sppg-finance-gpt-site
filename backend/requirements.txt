@@ -7,3 +7,4 @@ google-api-python-client>=2.170,<3
 google-cloud-firestore>=2.20,<3
 firebase-admin>=6.6,<7
 openpyxl>=3.1,<4
+pypdf>=5,<6

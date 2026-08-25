@@ -158,7 +158,10 @@ def confirm_bgn_paid(maker_id: int, payload: BgnPaidIn) -> dict[str, Any]:
         data, mime, original_name = evidence_upload
         filename = f"bukti_paid_bgn_{str(row.get('site') or '').lower()}_{maker_id}_{original_name}"
         try:
-            uploaded = upload_accountant_artifact(kind="invoice", filename=filename, data=data, mime_type=mime)
+            uploaded = upload_accountant_artifact(
+                kind="paid", filename=filename, data=data, mime_type=mime,
+                site=str(row.get("site") or ""), bucket="BUKTI_PAID",
+            )
         except AccountantDriveUploadError as exc:
             raise HTTPException(503, str(exc)[:1500]) from exc
         evidence_uri = uploaded["driveUri"]

@@ -352,7 +352,10 @@ def commit_vendor_payment_evidence(payload: EvidenceCommitIn) -> dict[str, Any]:
     group_label = f"{len(allocations)}inv" if len(allocations) > 1 else f"inv{allocations[0]['vendor_invoice_id']}"
     filename = f"bukti_vendor_{site.lower()}_{vendor.lower()}_{group_label}_{timestamp}_{_safe_filename(payload.file_name)}"
     try:
-        uploaded = upload_accountant_artifact(kind="invoice", filename=filename, data=data, mime_type=mime)
+        uploaded = upload_accountant_artifact(
+            kind="invoice", filename=filename, data=data, mime_type=mime,
+            site=site, bucket="BUKTI_PEMBAYARAN_VENDOR",
+        )
     except AccountantDriveUploadError as exc:
         raise HTTPException(503, str(exc)[:1500]) from exc
 

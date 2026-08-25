@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ClipboardCopy, Download, ExternalLink, FileCheck2, FileSpreadsheet, MessageCircle, RefreshCw, Send, Stamp, Trash2, Upload, CheckCircle2, WalletCards } from "lucide-react";
 import { operationsApi } from "./apiClient";
 import { accountantApi } from "./accountantApi.js";
+import AccountantDocumentPanel from "./AccountantDocumentPanel.jsx";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 
@@ -67,6 +68,7 @@ export default function OperationsAccountantBgn(){
   const [planOptions,setPlanOptions]=useState([]);
   const [selectedPlanId,setSelectedPlanId]=useState("");
   const [planBusy,setPlanBusy]=useState(false);
+  const [planningError,setPlanningError]=useState("");
   const [excelPreview,setExcelPreview]=useState(null);
   const [excelBusy,setExcelBusy]=useState(false);
   const [invoiceFiles,setInvoiceFiles]=useState({});
@@ -84,7 +86,7 @@ export default function OperationsAccountantBgn(){
   useEffect(()=>{load();},[site]);
 
   const loadPlanningOptions = async () => {
-    setPlanBusy(true); setError(""); setExcelPreview(null);
+    setPlanBusy(true); setPlanningError(""); setExcelPreview(null);
     try {
       const data = await accountantApi.getPlanningOptions({ site: excelSite, distributionDate: excelDate });
       const options = data?.items || [];
@@ -93,7 +95,12 @@ export default function OperationsAccountantBgn(){
       if (!options.length) setMessage(`Tidak ada perencanaan Kalkulator ${excelSite} untuk ${excelDate}.`);
       else if (options.length > 1) setMessage(`${options.length} perencanaan ditemukan. Pilih satu; Excel tidak menggabungkan perencanaan.`);
       else setMessage(`1 perencanaan ditemukan: ${options[0].planName}.`);
-    } catch (e) { setPlanOptions([]); setSelectedPlanId(""); setError(e.message || "Gagal menarik daftar perencanaan Kalkulator"); }
+    } catch (e) {
+      setPlanOptions([]); setSelectedPlanId("");
+      const raw = String(e?.message || "");
+      const failedDate = raw.match(/distributionDate[\\\"':]+(\d{4}-\d{2}-\d{2})/)?.[1] || excelDate;
+      setPlanningError(`Perencanaan Kalkulator ${excelSite} tanggal ${failedDate} belum ditemukan. Fitur Invoice dan BGN tetap dapat digunakan.`);
+    }
     finally { setPlanBusy(false); }
   };
   useEffect(()=>{ loadPlanningOptions(); },[excelSite,excelDate]);
@@ -176,11 +183,20 @@ export default function OperationsAccountantBgn(){
 
   const uploadInvoice = async (row) => {
     const file = invoiceFiles[row.submission_id]; if (!file) return setError("Pilih file invoice PDF/JPG/PNG terlebih dahulu.");
-    const invoiceNumber = window.prompt("Nomor invoice:", row.invoice_number || ""); if (invoiceNumber === null) return;
-    const amountRaw = window.prompt("Nilai invoice (angka tanpa Rp):", row.invoice_amount ? String(row.invoice_amount) : ""); if (amountRaw === null) return;
-    const amount = Number(String(amountRaw).replace(/[^0-9.-]/g, "")); if (!Number.isFinite(amount) || amount <= 0) return setError("Nilai invoice harus lebih dari 0.");
     setSaving(`upload-invoice-${row.submission_id}`); setError("");
-    try { const result = await accountantApi.uploadInvoice({ submissionId: row.submission_id, file, invoiceNumber: invoiceNumber.trim() || null, invoiceAmount: amount }); setInvoiceFiles((current) => ({ ...current, [row.submission_id]: null })); setMessage(`Invoice #${result.accountantInvoiceId} tersimpan dan file masuk Drive.`); await load(); }
+    try {
+      const parsed = await accountantApi.previewInvoiceDocument({ file, site: row.site, category: "BAHAN_BAKU", submissionId: row.submission_id });
+      const invoiceNumber = window.prompt("Nomor invoice (hasil baca dokumen, boleh dikoreksi):", parsed.invoiceNumber || row.invoice_number || ""); if (invoiceNumber === null) return;
+      const invoiceDate = window.prompt("Tanggal invoice YYYY-MM-DD (hasil baca dokumen, boleh dikoreksi):", parsed.invoiceDate || row.source_distribution_date || ""); if (invoiceDate === null) return;
+      const amountRaw = window.prompt("Nilai invoice (hasil baca dokumen, boleh dikoreksi):", parsed.invoiceAmount ? String(parsed.invoiceAmount) : (row.invoice_amount ? String(row.invoice_amount) : "")); if (amountRaw === null) return;
+      const amount = Number(String(amountRaw).replace(/[^0-9.-]/g, "")); if (!Number.isFinite(amount) || amount <= 0) return setError("Nilai invoice harus lebih dari 0.");
+      const corrected = { ...parsed, invoiceNumber: invoiceNumber.trim(), invoiceDate: invoiceDate.trim(), invoiceAmount: amount };
+      if (!corrected.invoiceNumber || !/^\d{4}-\d{2}-\d{2}$/.test(corrected.invoiceDate)) return setError("Nomor dan tanggal invoice wajib valid.");
+      if (!window.confirm(`Simpan invoice ${corrected.invoiceNumber} sebesar ${money(amount)}, arsipkan di Drive, dan buat Maker?`)) return;
+      const result = await accountantApi.commitInvoiceDocument({ file, preview: corrected, site: row.site, category: "BAHAN_BAKU", submissionId: row.submission_id });
+      setInvoiceFiles((current) => ({ ...current, [row.submission_id]: null }));
+      setMessage(`Invoice #${result.accountantInvoiceId} tersimpan; Maker #${result.makerId} dibuat.`); await load();
+    }
     catch (e) { setError(e.message || "Gagal upload invoice akuntan"); }
     finally { setSaving(""); }
   };
@@ -220,8 +236,11 @@ export default function OperationsAccountantBgn(){
   };
 
   return <div className="ops-domain-stack">
+    {error&&<div className="ops-error">{error}</div>}{message&&<div className="ops-success">{message}</div>}
+    <AccountantDocumentPanel onChanged={load} reportError={setError} reportMessage={setMessage}/>
     <section className="ops-module">
       <div className="ops-module-header"><div><span className="ops-kicker">KALKULATOR → EXCEL AKUNTAN</span><h3>Excel Belanja per Perencanaan</h3><p>Preview dan pembuatan Excel selalu membaca ulang dokumen perencanaan terbaru. File lama tidak boleh dipakai diam-diam setelah perencanaan berubah.</p></div></div>
+      {planningError&&<div className="ops-notice">{planningError}</div>}
       <div className="ops-form-grid">
         <label>Site<select value={excelSite} onChange={e=>{setExcelSite(e.target.value);setExcelPreview(null);setSelectedPlanId("");}}><option value="MAJA">Maja → Tiara</option><option value="CEMPLANG">Cemplang → Uya</option></select></label>
         <label>Tanggal Distribusi<input type="date" value={excelDate} onChange={e=>{setExcelDate(e.target.value);setExcelPreview(null);setSelectedPlanId("");}}/></label>

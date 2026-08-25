@@ -65,7 +65,8 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
             if approval:
                 cur.execute(
                     """update bgn_approvals
-                       set status='APPROVED',approved_at=coalesce(approved_at,now()),rejected_at=null
+                       set status='APPROVED',approved_at=coalesce(approved_at,now()),rejected_at=null,
+                           approval_method=coalesce(approval_method,'MANUAL_CLICK')
                        where id=%s
                        returning id,approver_code,status,approved_at""",
                     (approval["id"],),
@@ -76,8 +77,8 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
                 if not approver:
                     raise HTTPException(409, "approver site tidak tersedia")
                 cur.execute(
-                    """insert into bgn_approvals(bgn_maker_id,approver_code,status,requested_at,approved_at)
-                       values (%s,%s,'APPROVED',now(),now())
+                    """insert into bgn_approvals(bgn_maker_id,approver_code,status,requested_at,approved_at,approval_method)
+                       values (%s,%s,'APPROVED',now(),now(),'MANUAL_CLICK')
                        returning id,approver_code,status,approved_at""",
                     (maker_id, approver),
                 )

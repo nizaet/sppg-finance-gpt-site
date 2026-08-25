@@ -92,6 +92,8 @@ def accountant_excel_from_planning_fail_safe(payload: excel.AccountantExcelFromP
                     filename=filename,
                     data=xlsx,
                     mime_type=excel.XLSX_MIME,
+                    site=payload.site,
+                    bucket="EXCEL",
                 )
             except AccountantDriveUploadError as exc:
                 error_text = str(exc)[:1500]
