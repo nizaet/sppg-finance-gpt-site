@@ -38,32 +38,72 @@ def create_goods_receipt(payload: GoodsReceiptIn) -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("select id from purchase_orders where id=%s", (payload.purchase_order_id,))
-            if not cur.fetchone():
+            cur.execute("select id,site,status from purchase_orders where id=%s", (payload.purchase_order_id,))
+            po = cur.fetchone()
+            if not po:
                 raise HTTPException(404, "purchase order not found")
             cur.execute(
-                """insert into goods_receipts(purchase_order_id, receipt_code, received_at)
-                   values (%s,%s,coalesce(%s,now())) returning id""",
-                (payload.purchase_order_id, payload.receipt_code, payload.received_at),
+                "select id,item_name,po_qty,unit from purchase_order_items where purchase_order_id=%s order by id",
+                (payload.purchase_order_id,),
+            )
+            po_items = {int(row["id"]): dict(row) for row in cur.fetchall()}
+            supplied_ids = [int(item.purchase_order_item_id) for item in payload.items if item.purchase_order_item_id is not None]
+            unknown_ids = sorted({item_id for item_id in supplied_ids if item_id not in po_items})
+            if unknown_ids:
+                raise HTTPException(400, f"item bukan milik PO {payload.purchase_order_id}: {unknown_ids}")
+            exact_match = bool(payload.items) and len(supplied_ids) == len(payload.items)
+            cur.execute(
+                """insert into goods_receipts(
+                     purchase_order_id,receipt_code,received_at,source_type,match_status,match_confidence,confirmed_at
+                   ) values (%s,%s,coalesce(%s,now()),'MANUAL',%s,%s,case when %s then now() else null end)
+                   returning id""",
+                (
+                    payload.purchase_order_id, payload.receipt_code, payload.received_at,
+                    "CONFIRMED" if exact_match else "REVIEW", 1 if exact_match else 0, exact_match,
+                ),
             )
             receipt_id = cur.fetchone()["id"]
             for item in payload.items:
                 accepted = item.accepted_qty
                 if accepted is None:
                     accepted = max(0, item.received_qty - item.rejected_qty)
+                po_item = po_items.get(int(item.purchase_order_item_id)) if item.purchase_order_item_id is not None else None
+                po_qty = float(po_item.get("po_qty") or 0) if po_item else None
+                item_confidence = 1 if po_item else 0
                 cur.execute(
                     """insert into goods_receipt_items(
                          goods_receipt_id, purchase_order_item_id, received_qty, rejected_qty,
-                         accepted_qty, unit, quality_status, notes
-                       ) values (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                         accepted_qty, unit, quality_status, notes,reported_item_name,
+                         po_qty_snapshot,variance_qty,match_confidence,match_method
+                       ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (receipt_id, item.purchase_order_item_id, item.received_qty, item.rejected_qty,
-                     accepted, item.unit, item.quality_status, item.notes),
+                     accepted, item.unit or (po_item.get("unit") if po_item else None),
+                     item.quality_status or "ACCEPTED", item.notes,
+                     po_item.get("item_name") if po_item else None, po_qty,
+                     round(float(accepted) - po_qty, 4) if po_qty is not None else None,
+                     item_confidence, "explicit_po_item_id" if po_item else "unmatched_manual"),
                 )
-            stock = commit_receipt_stock(cur, receipt_id)
+            stock = commit_receipt_stock(cur, receipt_id, str(po["site"]))
+            cur.execute(
+                """select poi.po_qty,coalesce(sum(gri.accepted_qty),0) as accepted_total
+                   from purchase_order_items poi
+                   left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
+                   where poi.purchase_order_id=%s group by poi.id order by poi.id""",
+                (payload.purchase_order_id,),
+            )
+            totals = cur.fetchall()
+            complete = bool(totals) and all(float(row["accepted_total"] or 0) >= float(row["po_qty"] or 0) for row in totals)
+            any_received = any(float(row["accepted_total"] or 0) > 0 for row in totals)
+            new_status = "RECEIVED" if complete else "PARTIAL_RECEIVED" if any_received else str(po.get("status") or "")
+            if new_status:
+                cur.execute("update purchase_orders set status=%s,updated_at=now() where id=%s", (new_status, payload.purchase_order_id))
             conn.commit()
     return {
         "receiptId": receipt_id,
         "itemCount": len(payload.items),
+        "matchStatus": "CONFIRMED" if exact_match else "REVIEW",
+        "matchConfidence": 1 if exact_match else 0,
+        "purchaseOrderStatus": new_status,
         "stockCommitted": True,
         "stockInserted": stock["inserted"],
         "stockDuplicates": stock["duplicates"],
