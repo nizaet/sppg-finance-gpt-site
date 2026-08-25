@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FileSearch, RefreshCw, Upload } from "lucide-react";
+import React, { useState } from "react";
+import { CheckCircle2, FileSearch, Upload } from "lucide-react";
 import { accountantApi } from "./accountantApi.js";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
@@ -15,17 +15,10 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [direct, setDirect] = useState([]);
   const [proofSite, setProofSite] = useState("MAJA");
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
   const [proofBusy, setProofBusy] = useState(false);
-
-  const loadDirect = async () => {
-    try { setDirect((await accountantApi.getDirectInvoices("")).items || []); }
-    catch (e) { reportError(e.message || "Gagal memuat invoice langsung"); }
-  };
-  useEffect(() => { loadDirect(); }, []);
 
   const readInvoice = async () => {
     if (!file) return reportError("Pilih file invoice PDF/JPG/PNG terlebih dahulu.");
@@ -42,12 +35,12 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     const effectiveInvoiceDate = preview?.invoiceDate || preview?.periodEnd || preview?.periodStart;
     if (!preview?.invoiceNumber || !effectiveInvoiceDate || Number(preview?.invoiceAmount || 0) <= 0) return reportError("Nomor invoice, tanggal/periode, dan nilai wajib diisi.");
     const readyPreview = { ...preview, invoiceDate: effectiveInvoiceDate };
-    if (!window.confirm(`Simpan invoice ${preview.invoiceNumber} sebesar ${money(preview.invoiceAmount)} dan langsung buat Maker?`)) return;
+    if (!window.confirm(`Simpan invoice ${preview.invoiceNumber} sebesar ${money(preview.invoiceAmount)}? Maker belum dibuat sampai tombol Buat Maker diklik pada Kalender Invoice.`)) return;
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.commitInvoiceDocument({ file, preview: readyPreview, site, category });
-      reportMessage(result.duplicate ? `Invoice ${preview.invoiceNumber} sudah pernah tercatat.` : `Invoice #${result.accountantInvoiceId} tersimpan; Maker #${result.makerId} dibuat dan menunggu Approval.`);
-      setFile(null); setPreview(null); await loadDirect(); await onChanged?.();
+      reportMessage(result.duplicate ? `Invoice ${preview.invoiceNumber} sudah pernah tercatat.` : `Invoice #${result.accountantInvoiceId} tersimpan. Maker belum dibuat; buka invoice pada kalender lalu klik Buat Maker.`);
+      setFile(null); setPreview(null); await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyimpan invoice"); }
     finally { setBusy(false); }
   };
@@ -69,14 +62,14 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: proofSite, parsedPayload: proofPreview.raw });
       reportMessage(`${result.approvedCount} Maker ditandai APPROVED. File bukti hanya diupload sekali dan linknya dipakai bersama.`);
-      setProofFile(null); setProofPreview(null); await loadDirect(); await onChanged?.();
+      setProofFile(null); setProofPreview(null); await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyimpan bukti approval"); }
     finally { setProofBusy(false); }
   };
 
   return <>
     <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">INVOICE LANGSUNG → MAKER</span><h3>Upload Invoice PDF / Gambar Tanpa Excel</h3><p>Untuk sewa mitra, token listrik, gaji relawan, sewa mobil, upah, dan invoice operasional lain. Sistem membaca dokumen lalu menampilkan hasil yang tetap dapat dikoreksi sebelum disimpan.</p></div></div>
+      <div className="ops-module-header"><div><span className="ops-kicker">UPLOAD INVOICE LANGSUNG</span><h3>Upload Invoice PDF / Gambar Tanpa Excel</h3><p>Dokumen disimpan sebagai invoice terlebih dahulu. Maker hanya dibuat setelah Anda membukanya pada Kalender Invoice dan menekan Buat Maker.</p></div></div>
       <div className="ops-form-grid">
         <label>Site<select value={site} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
         <label>Kategori<select value={category} onChange={e=>{setCategory(e.target.value);setPreview(null);}}>{CATEGORIES.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
@@ -97,13 +90,12 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
           <label>Site<select value={site} onChange={e=>setSite(e.target.value)}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
         </div>
         {!!preview.lines?.length&&<div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Item</th><th>Qty</th><th>Satuan</th><th>Harga</th><th>Total</th></tr></thead><tbody>{preview.lines.map((x,i)=><tr key={i}><td>{x.item_name}</td><td>{x.quantity??"-"}</td><td>{x.unit||"-"}</td><td>{money(x.unit_price)}</td><td>{money(x.line_total)}</td></tr>)}</tbody></table></div>}
-        <div className="ops-row-actions"><button type="button" onClick={saveInvoice} disabled={busy}><Upload size={14}/> Simpan Invoice & Buat Maker</button></div>
+        <div className="ops-row-actions"><button type="button" onClick={saveInvoice} disabled={busy}><Upload size={14}/> Simpan Invoice</button></div>
       </div>}
-      <div className="ops-table-wrap" style={{marginTop:16}}><table className="ops-table"><thead><tr><th>Site</th><th>Kategori</th><th>Invoice</th><th>Tanggal</th><th>Nilai</th><th>Maker</th><th>Approval</th><th>File</th></tr></thead><tbody>{direct.map(x=><tr key={x.invoice_id}><td>{x.site}</td><td>{x.invoice_category}</td><td><strong>{x.invoice_number}</strong></td><td>{x.invoice_date||x.period_start||"-"}</td><td>{money(x.invoice_amount)}</td><td>{x.maker_id?`#${x.maker_id} · ${x.maker_status}`:"BELUM DIBUAT"}</td><td><strong>{x.approval_status||"PENDING"}</strong>{x.approval_evidence_uri&&<div><button type="button" onClick={()=>window.open(x.approval_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={13}/> Bukti</button></div>}</td><td>{x.invoice_evidence_uri&&<button type="button" onClick={()=>window.open(x.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={13}/> Invoice</button>}</td></tr>)}</tbody></table></div>
     </section>
 
     <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">BUKTI APPROVAL MASSAL</span><h3>Satu File untuk Beberapa Maker</h3><p>Sistem membaca seluruh transaksi dalam PDF/gambar, mencocokkan nomor referensi atau nilai unik, lalu menautkan satu link Drive ke semua Maker yang cocok. Transaksi Pending/Failed tidak diapprove.</p></div><button type="button" onClick={loadDirect}><RefreshCw size={14}/> Refresh</button></div>
+      <div className="ops-module-header"><div><span className="ops-kicker">BUKTI APPROVAL MASSAL</span><h3>Satu File untuk Beberapa Maker</h3><p>Sistem membaca seluruh transaksi dalam PDF/gambar, mencocokkan nomor referensi atau nilai unik, lalu menautkan satu link Drive ke semua Maker yang cocok. Transaksi Pending/Failed tidak diapprove.</p></div></div>
       <div className="ops-form-grid">
         <label>Site<select value={proofSite} onChange={e=>{setProofSite(e.target.value);setProofPreview(null);}}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
         <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{setProofFile(e.target.files?.[0]||null);setProofPreview(null);}}/></label>

@@ -98,11 +98,12 @@ export const accountantApi = {
         period_start: preview.periodStart || null, period_end: preview.periodEnd || null,
         invoice_amount: Number(preview.invoiceAmount), lines: preview.lines || [],
         parsed_payload: preview.raw || {}, parse_confidence: preview.confidence == null ? null : Number(preview.confidence),
-        create_maker: true, commit: true,
+        create_maker: false, commit: true,
       }),
     });
   },
   getDirectInvoices: (site = "") => request(`/v1/accountant-invoices/direct?site=${encodeURIComponent(site || "")}`),
+  getAllInvoices: (site = "") => request(`/v1/accountant-invoices/all?site=${encodeURIComponent(site || "")}`),
   previewApprovalEvidence: async ({ file, site = null }) => {
     const contentBase64 = await fileToBase64(file);
     return request("/v1/approval-evidence/document-preview", {

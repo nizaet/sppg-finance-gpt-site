@@ -60,7 +60,7 @@ class DirectInvoiceIn(InvoicePreviewIn):
     lines: list[InvoiceLineIn] = Field(default_factory=list)
     parsed_payload: dict[str, Any] = Field(default_factory=dict)
     parse_confidence: float | None = Field(default=None, ge=0, le=1)
-    create_maker: Literal[True] = True
+    create_maker: bool = False
     commit: bool = False
 
 
@@ -401,7 +401,7 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
     preview = {
         "committed": False, "site": payload.site, "category": payload.category,
         "invoiceNumber": payload.invoice_number, "invoiceDate": payload.invoice_date,
-        "invoiceAmount": payload.invoice_amount, "willCreateMaker": payload.create_maker,
+        "invoiceAmount": payload.invoice_amount, "willCreateMaker": False,
     }
     if not payload.commit:
         return preview
@@ -461,14 +461,11 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                        values (%s,%s,%s,%s,%s,%s)""",
                     (invoice_id, line.item_name, line.quantity, line.unit, line.unit_price, line.line_total),
                 )
-            # All invoices in this workflow must enter the BGN Maker queue.
-            maker = _create_maker(
-                cur, invoice_id, payload.site, payload.invoice_amount, payload.invoice_number, production_cycle_id
-            )
             conn.commit()
     return {
         **preview, "committed": True, "duplicate": False, "accountantInvoiceId": invoice_id,
-        "invoiceEvidenceUri": uploaded["driveUri"], "drivePath": uploaded.get("drivePath"), **maker,
+        "invoiceEvidenceUri": uploaded["driveUri"], "drivePath": uploaded.get("drivePath"),
+        "makerCreated": False,
     }
 
 
@@ -483,7 +480,7 @@ def list_direct_invoices(site: str = "") -> dict[str, Any]:
                           m.id as maker_id,m.status as maker_status,a.status as approval_status,
                           a.evidence_uri as approval_evidence_uri
                    from accountant_invoices i
-                   left join bgn_makers m on m.accountant_invoice_id=i.id
+                   left join lateral (select * from bgn_makers x where x.accountant_invoice_id=i.id order by x.id desc limit 1) m on true
                    left join lateral (select * from bgn_approvals x where x.bgn_maker_id=m.id order by x.id desc limit 1) a on true
                    where i.accountant_submission_id is null and (%s='' or upper(i.site)=upper(%s))
                    order by coalesce(i.invoice_date,i.created_at::date) desc,i.id desc limit 250""",
@@ -491,6 +488,38 @@ def list_direct_invoices(site: str = "") -> dict[str, Any]:
             )
             rows = cur.fetchall()
     return {"items": rows, "count": len(rows)}
+
+
+@router.get("/accountant-invoices/all")
+def list_all_accountant_invoices(site: str = "") -> dict[str, Any]:
+    """Single source for calendar: Excel-linked and direct invoices together."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select i.id as invoice_id,coalesce(i.site,s.site) as site,
+                          coalesce(i.invoice_category,'BAHAN_BAKU') as invoice_category,
+                          i.invoice_number,
+                          coalesce(i.invoice_date,s.source_distribution_date,i.received_at::date,i.created_at::date) as invoice_date,
+                          i.period_start,i.period_end,i.invoice_amount,i.invoice_evidence_uri,i.source_type,
+                          i.accountant_submission_id,s.accountant_code,s.source_plan_name,s.source_distribution_date,
+                          m.id as maker_id,m.status as maker_status,m.created_at as maker_created_at,
+                          a.id as approval_id,a.status as approval_status,a.approved_at,
+                          a.evidence_uri as approval_evidence_uri,a.approval_method,
+                          r.id as receipt_id,r.received_at as payment_received_at,r.evidence_uri as payment_evidence_uri,
+                          (select count(*) from accountant_invoice_items ii where ii.accountant_invoice_id=i.id) as line_count
+                   from accountant_invoices i
+                   left join accountant_submissions s on s.id=i.accountant_submission_id
+                   left join lateral (select * from bgn_makers x where x.accountant_invoice_id=i.id order by x.id desc limit 1) m on true
+                   left join lateral (select * from bgn_approvals x where x.bgn_maker_id=m.id order by x.id desc limit 1) a on true
+                   left join lateral (select * from bgn_receipts x where x.bgn_maker_id=m.id order by x.id desc limit 1) r on true
+                   where (%s='' or upper(coalesce(i.site,s.site))=upper(%s))
+                   order by coalesce(i.invoice_date,s.source_distribution_date,i.received_at::date,i.created_at::date) desc,i.id desc
+                   limit 1000""",
+                (site, site),
+            )
+            rows = cur.fetchall()
+    return {"items": rows, "count": len(rows), "dateBasis": "INVOICE_DATE"}
 
 
 APPROVAL_PROMPT = """Baca bukti status transaksi bank/BGN ini. Satu file dapat berisi banyak transaksi.

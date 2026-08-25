@@ -51,3 +51,18 @@ def test_date_range_uses_period_end_as_invoice_date_without_false_fallback_warni
     assert result["invoiceDate"] == "2026-08-21"
     assert result["dateDerivedFromPeriod"] is True
     assert result["warnings"] == []
+
+
+def test_direct_invoice_never_creates_maker_by_default() -> None:
+    payload = api.DirectInvoiceIn(
+        file_name="invoice.jpg",
+        mime_type="image/jpeg",
+        content_base64="YQ==",
+        site="MAJA",
+        category="SEWA_MITRA",
+        invoice_number="168/IM/DMM/VIII/2026",
+        invoice_date="2026-08-28",
+        invoice_amount=6_000_000,
+        commit=True,
+    )
+    assert payload.create_maker is False
