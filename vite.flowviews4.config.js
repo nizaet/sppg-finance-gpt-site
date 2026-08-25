@@ -7,7 +7,7 @@ function makerStatePrePlugin() {
     name: "sppg-maker-state-pre-v7",
     enforce: "pre",
     transform(code, id) {
-      if (!id.includes("/src/operations/OperationsAccountantBgn.jsx")) return null;
+      if (!id.includes("/src/operations/OperationsAccountantBgn.jsx") || code.includes("ACCOUNTANT_UNIFIED_CALENDAR_NATIVE")) return null;
       let out = code;
 
       out = out.replace(
@@ -43,7 +43,7 @@ function makerStateAfterCalendarPlugin() {
     enforce: "pre",
     transform(code, id) {
       let out = code;
-      if (id.includes("/src/operations/OperationsAccountantBgn.jsx")) {
+      if (id.includes("/src/operations/OperationsAccountantBgn.jsx") && !code.includes("ACCOUNTANT_UNIFIED_CALENDAR_NATIVE")) {
         out = out.replace(
           '<td>{existingMaker?`#${existingMaker.maker_id}`:"-"}</td>',
           '<td>{existingMaker?<strong style={{color:"#166534"}}>✓ Maker #{existingMaker.maker_id}</strong>:"-"}</td>'

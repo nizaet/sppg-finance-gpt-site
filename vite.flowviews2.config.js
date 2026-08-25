@@ -10,7 +10,7 @@ function plugin() {
     name: "sppg-flow-calendar-and-filters-v2",
     enforce: "post",
     transform(code, id) {
-      if (id.includes("/src/operations/OperationsAccountantBgn.jsx")) {
+      if (id.includes("/src/operations/OperationsAccountantBgn.jsx") && !code.includes("ACCOUNTANT_UNIFIED_CALENDAR_NATIVE")) {
         let out = code;
         out = mustReplace(
           out,

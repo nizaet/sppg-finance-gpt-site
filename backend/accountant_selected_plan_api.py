@@ -489,9 +489,9 @@ def create_maker_from_accountant_invoice(invoice_id: int) -> dict[str, Any]:
             cur.execute(
                 """
                 select i.id invoice_id,i.invoice_number,i.invoice_amount,
-                       s.id submission_id,s.production_cycle_id,s.site
+                       s.id submission_id,s.production_cycle_id,coalesce(i.site,s.site) as site
                 from accountant_invoices i
-                join accountant_submissions s on s.id=i.accountant_submission_id
+                left join accountant_submissions s on s.id=i.accountant_submission_id
                 where i.id=%s
                 """,
                 (invoice_id,),

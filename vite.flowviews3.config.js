@@ -30,7 +30,7 @@ function monthlyCalendarPlugin() {
     transform(code, id) {
       let out = code;
 
-      if (id.includes("/src/operations/OperationsAccountantBgn.jsx")) {
+      if (id.includes("/src/operations/OperationsAccountantBgn.jsx") && !code.includes("ACCOUNTANT_UNIFIED_CALENDAR_NATIVE")) {
         if (out.includes('const [bgnView,setBgnView]=useState("list");') && !out.includes("accountantMonth,setAccountantMonth")) {
           out = out.replace(
             'const [bgnView,setBgnView]=useState("list");',
