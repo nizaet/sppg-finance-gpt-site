@@ -311,6 +311,8 @@ def named_selected_plan_excel(payload: NamedSelectedPlanExcelIn) -> dict[str, An
                     filename=artifact["filename"],
                     data=artifact["xlsx"],
                     mime_type=excel.XLSX_MIME,
+                    site=payload.site,
+                    bucket="EXCEL",
                 )
             except AccountantDriveUploadError as exc:
                 error_text = str(exc)[:1500]

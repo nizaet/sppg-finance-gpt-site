@@ -77,6 +77,46 @@ export const accountantApi = {
       body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, invoice_number: invoiceNumber || null, invoice_amount: invoiceAmount == null ? null : Number(invoiceAmount), received_at: null }),
     });
   },
+  previewInvoiceDocument: async ({ file, site = null, category = null, submissionId = null }) => {
+    const contentBase64 = await fileToBase64(file);
+    return request("/v1/accountant-invoices/document-preview", {
+      method: "POST",
+      body: JSON.stringify({
+        file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64,
+        site: site || null, category: category || null, accountant_submission_id: submissionId || null,
+      }),
+    });
+  },
+  commitInvoiceDocument: async ({ file, preview, site, category, submissionId = null }) => {
+    const contentBase64 = await fileToBase64(file);
+    return request("/v1/accountant-invoices/direct-upload", {
+      method: "POST",
+      body: JSON.stringify({
+        file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64,
+        site, category, accountant_submission_id: submissionId || null,
+        invoice_number: preview.invoiceNumber, invoice_date: preview.invoiceDate,
+        period_start: preview.periodStart || null, period_end: preview.periodEnd || null,
+        invoice_amount: Number(preview.invoiceAmount), lines: preview.lines || [],
+        parsed_payload: preview.raw || {}, parse_confidence: preview.confidence == null ? null : Number(preview.confidence),
+        create_maker: true, commit: true,
+      }),
+    });
+  },
+  getDirectInvoices: (site = "") => request(`/v1/accountant-invoices/direct?site=${encodeURIComponent(site || "")}`),
+  previewApprovalEvidence: async ({ file, site = null }) => {
+    const contentBase64 = await fileToBase64(file);
+    return request("/v1/approval-evidence/document-preview", {
+      method: "POST",
+      body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, site: site || null, commit: false }),
+    });
+  },
+  commitApprovalEvidence: async ({ file, site = null, parsedPayload }) => {
+    const contentBase64 = await fileToBase64(file);
+    return request("/v1/approval-evidence/upload", {
+      method: "POST",
+      body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, site: site || null, parsed_payload: parsedPayload || null, commit: true }),
+    });
+  },
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, { method: "POST", body: "{}" }),
   deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, { method: "DELETE" }),
   confirmMakerApproved: (makerId) => request(`/v1/bgn-makers/${encodeURIComponent(makerId)}/approve-now`, {

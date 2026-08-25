@@ -33,6 +33,7 @@ MIGRATIONS = [
     ROOT / "schema" / "llm_conversation_memory_v031.sql",
     ROOT / "schema" / "accountant_source_freshness_v032.sql",
     ROOT / "schema" / "manual_receipt_match_backfill_v033.sql",
+    ROOT / "schema" / "accountant_direct_invoice_v034.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 

@@ -217,5 +217,50 @@ def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type:
     return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
 
 
+def ensure_drive_folder(parent_id: str, name: str) -> str:
+    """Return a reusable child folder, creating it when it does not exist."""
+    if not parent_id:
+        raise GoogleServicesNotConfigured("Drive parent folder id is not configured")
+    safe_name = str(name or "").strip()
+    if not safe_name:
+        raise ValueError("Drive folder name is required")
+    escaped_name = safe_name.replace("'", "\\'")
+    escaped_parent = parent_id.replace("'", "\\'")
+    found = (
+        drive_service()
+        .files()
+        .list(
+            q=(
+                f"name='{escaped_name}' and '{escaped_parent}' in parents and "
+                "mimeType='application/vnd.google-apps.folder' and trashed=false"
+            ),
+            spaces="drive",
+            fields="files(id,name)",
+            pageSize=10,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute(num_retries=3)
+    )
+    files = found.get("files") or []
+    if files:
+        return str(files[0]["id"])
+    created = (
+        drive_service()
+        .files()
+        .create(
+            body={
+                "name": safe_name,
+                "parents": [parent_id],
+                "mimeType": "application/vnd.google-apps.folder",
+            },
+            fields="id",
+            supportsAllDrives=True,
+        )
+        .execute(num_retries=3)
+    )
+    return str(created["id"])
+
+
 def upload_text_to_drive(folder_id: str, filename: str, text: str, mime_type: str = "text/plain") -> str:
     return upload_bytes_to_drive(folder_id, filename, text.encode("utf-8"), mime_type)

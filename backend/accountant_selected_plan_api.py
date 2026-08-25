@@ -274,6 +274,8 @@ def accountant_excel_from_selected_plan(payload: SelectedPlanExcelIn) -> dict[st
                     filename=artifact["filename"],
                     data=artifact["xlsx"],
                     mime_type=excel.XLSX_MIME,
+                    site=payload.site,
+                    bucket="EXCEL",
                 )
             except AccountantDriveUploadError as exc:
                 error_text = str(exc)[:1500]
@@ -437,6 +439,8 @@ def upload_accountant_invoice(submission_id: int, payload: AccountantInvoiceUplo
                     filename=filename,
                     data=data,
                     mime_type=payload.mime_type.lower().strip(),
+                    site=str(submission["site"]),
+                    bucket="INVOICE",
                 )
             except AccountantDriveUploadError as exc:
                 raise HTTPException(503, str(exc)[:1500]) from exc
