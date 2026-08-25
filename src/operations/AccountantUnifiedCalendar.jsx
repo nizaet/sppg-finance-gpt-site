@@ -82,14 +82,14 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.createMakerFromInvoice(selected.invoice_id);
-      await afterAction(result.duplicate ? `Maker #${result.makerId} untuk invoice ini sudah ada.` : `Maker #${result.makerId} dibuat dan menunggu approval.`);
+      await afterAction(result.duplicate ? `Maker #${result.makerId} untuk invoice ini sudah ada.` : `Maker #${result.makerId} dibuat dan menunggu approval / pembayaran.`);
     } catch (error) { reportError(error.message || "Gagal membuat Maker"); }
     finally { setBusy(false); }
   };
   const approveWithoutEvidence = async () => {
     if (!selected?.maker_id || !window.confirm(`Tandai Maker #${selected.maker_id} sebagai APPROVED tanpa bukti file?`)) return;
     setBusy(true); reportError("");
-    try { await accountantApi.confirmMakerApproved(selected.maker_id); await afterAction(`Maker #${selected.maker_id} ditandai APPROVED tanpa bukti file.`); }
+    try { await accountantApi.confirmMakerApproved(selected.maker_id); await afterAction(`Maker #${selected.maker_id} ditandai APPROVED dan PAID.`); }
     catch (error) { reportError(error.message || "Gagal mengubah status approval"); }
     finally { setBusy(false); }
   };
@@ -113,14 +113,14 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: selected?.site || null, parsedPayload: proofPreview.raw });
-      await afterAction(`${result.approvedCount} Maker ditandai APPROVED; satu link bukti dipakai pada semua transaksi yang cocok.`);
+      await afterAction(`${result.paidCount || result.approvedCount} Maker ditandai APPROVED dan PAID; satu link bukti dipakai pada semua transaksi yang cocok.`);
     } catch (error) { reportError(error.message || "Gagal menyimpan bukti approval"); }
     finally { setBusy(false); }
   };
 
   return <section className="ops-module">
     <div className="ops-module-header">
-      <div><span className="ops-kicker">KALENDER INVOICE & BGN TERPADU</span><h3>Invoice → Maker → Approval → Paid</h3><p>Semua invoice bahan baku dan operasional tampil pada tanggal invoice. Klik kartu untuk membuat Maker atau mengelola approval.</p></div>
+      <div><span className="ops-kicker">KALENDER INVOICE & BGN TERPADU</span><h3>Invoice → Maker → Approval / Paid</h3><p>Semua invoice bahan baku dan operasional tampil pada tanggal invoice. Pada alur BGN, approval berarti transaksi PAID.</p></div>
       <div className="ops-inline-controls"><select value={site} onChange={(event)=>setSite(event.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select><button type="button" onClick={load} disabled={busy}><RefreshCw size={14}/> Refresh</button></div>
     </div>
     <div className="ops-summary-strip" style={{ marginBottom: 12 }}>{Object.entries(STATUS).map(([key, meta])=><span key={key} style={{ background: meta.bg, border: `1px solid ${meta.border}` }}>{meta.label} <strong>{counts[key]}</strong></span>)}</div>
@@ -138,7 +138,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
       <div style={{ margin:"14px 0", padding:12, borderRadius:10, background:STATUS[stateOf(selected)].bg, border:`1px solid ${STATUS[stateOf(selected)].border}` }}><strong style={{ color:STATUS[stateOf(selected)].color }}>{STATUS[stateOf(selected)].label}</strong>{selected.maker_id&&<div>Maker #{selected.maker_id} · {selected.maker_status||"CREATED"}</div>}</div>
       <div className="ops-row-actions">{selected.invoice_evidence_uri&&<button type="button" onClick={()=>window.open(selected.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Invoice</button>}{selected.approval_evidence_uri&&<button type="button" onClick={()=>window.open(selected.approval_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Bukti Approval</button>}</div>
       {!selected.maker_id&&<div style={{ marginTop:14 }}><p>Invoice sudah tersimpan, tetapi belum masuk daftar Maker.</p><button type="button" onClick={createMaker} disabled={busy}><Stamp size={14}/> Buat Maker</button></div>}
-      {selected.maker_id&&stateOf(selected)==="PENDING"&&<div style={{ marginTop:14 }}><h4>Approval Maker</h4><div className="ops-row-actions"><button type="button" onClick={approveWithoutEvidence} disabled={busy}><CheckCircle2 size={14}/> Approve tanpa bukti</button></div><div className="ops-form-grid" style={{ marginTop:10 }}><label>Bukti approval PDF / gambar<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event)=>{setProofFile(event.target.files?.[0]||null);setProofPreview(null);}}/></label><label>Aksi<button type="button" onClick={readProof} disabled={busy||!proofFile}><FileSearch size={14}/> Baca Bukti</button></label></div>{proofPreview&&<div className="ops-parse-result"><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan diapprove</strong><p>Satu file dapat mengapprove beberapa Maker yang cocok; file hanya disimpan sekali dan setiap item memakai link yang sama.</p><button type="button" onClick={saveProof} disabled={busy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Approve</button></div>}</div>}
+      {selected.maker_id&&stateOf(selected)==="PENDING"&&<div style={{ marginTop:14 }}><h4>Approval / Paid Maker</h4><div className="ops-row-actions"><button type="button" onClick={approveWithoutEvidence} disabled={busy}><CheckCircle2 size={14}/> Approve = PAID tanpa bukti</button></div><div className="ops-form-grid" style={{ marginTop:10 }}><label>Bukti approval PDF / gambar<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event)=>{setProofFile(event.target.files?.[0]||null);setProofPreview(null);}}/></label><label>Aksi<button type="button" onClick={readProof} disabled={busy||!proofFile}><FileSearch size={14}/> Baca Bukti</button></label></div>{proofPreview&&<div className="ops-parse-result"><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong><p>Satu file dapat menandai beberapa Maker yang cocok sebagai APPROVED dan PAID; file hanya disimpan sekali dan setiap item memakai link yang sama.</p><button type="button" onClick={saveProof} disabled={busy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Tandai PAID</button></div>}</div>}
       {stateOf(selected)==="APPROVED"&&<div className="ops-row-actions" style={{ marginTop:14 }}><button type="button" className="danger" onClick={cancelApproval} disabled={busy}>Batal Approve</button></div>}
       {stateOf(selected)==="PAID"&&<div className="ops-success" style={{ marginTop:14 }}>Alur selesai: Maker sudah APPROVED dan pembayaran sudah diterima.</div>}
     </div></div>}

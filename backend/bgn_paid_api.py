@@ -112,9 +112,24 @@ def confirm_bgn_approved(maker_id: int, payload: BgnApproveIn) -> dict[str, Any]
             )
             approval = cur.fetchone()
             cur.execute(
-                "update bgn_makers set status=case when status='PAID' then status else 'APPROVED' end where id=%s",
+                "update bgn_makers set status='PAID' where id=%s",
                 (maker_id,),
             )
+            if row.get("receipt_id"):
+                cur.execute(
+                    """update bgn_receipts set amount=%s,received_at=coalesce(received_at,%s,now()),
+                           destination_account_type=coalesce(destination_account_type,'SPPG') where id=%s
+                       returning id,received_at,evidence_uri""",
+                    (row.get("amount"), payload.approved_at, row["receipt_id"]),
+                )
+            else:
+                cur.execute(
+                    """insert into bgn_receipts(bgn_maker_id,destination_account_type,amount,received_at,evidence_uri)
+                       values (%s,'SPPG',%s,coalesce(%s,now()),null)
+                       returning id,received_at,evidence_uri""",
+                    (maker_id, row.get("amount"), payload.approved_at),
+                )
+            receipt = cur.fetchone()
             conn.commit()
     return {
         **preview,
@@ -122,6 +137,9 @@ def confirm_bgn_approved(maker_id: int, payload: BgnApproveIn) -> dict[str, Any]
         "approvalId": approval["id"],
         "approvalStatus": approval["status"],
         "approvedAt": approval["approved_at"],
+        "makerStatus": "PAID",
+        "receiptId": receipt["id"],
+        "paidAt": receipt["received_at"],
         "actor": payload.actor,
         "note": payload.note,
     }
