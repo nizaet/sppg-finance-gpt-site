@@ -36,3 +36,18 @@ def test_approval_does_not_approve_pending_bank_transaction() -> None:
     assert result[0]["matchedMakerId"] == 9
     assert result[0]["willApprove"] is False
 
+
+def test_date_range_uses_period_end_as_invoice_date_without_false_fallback_warning() -> None:
+    fallback = api._fallback_invoice("")
+    parsed = {
+        "invoice_number": "93/OP/DMM/VIII/2026",
+        "period_start": "2026-08-17",
+        "period_end": "2026-08-21",
+        "invoice_amount": 10_990_700,
+        "lines": [],
+        "confidence": 0.98,
+    }
+    result = api._normalize_invoice(parsed, fallback, "CEMPLANG", "OPERASIONAL_LAIN")
+    assert result["invoiceDate"] == "2026-08-21"
+    assert result["dateDerivedFromPeriod"] is True
+    assert result["warnings"] == []
