@@ -128,6 +128,10 @@ export const accountantApi = {
     method: "POST",
     body: "{}",
   }),
+  cancelMaker: (makerId) => request(`/v1/bgn-makers/${encodeURIComponent(makerId)}/cancel-maker`, {
+    method: "POST",
+    body: "{}",
+  }),
   confirmMakerPaid: async ({ makerId, file = null, evidenceUri = null, commit = true }) => {
     const payload = { commit, paid_at: null, evidence_uri: evidenceUri || null, actor: "web-owner" };
     if (file) {

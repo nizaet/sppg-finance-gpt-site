@@ -655,7 +655,24 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
                         (maker_id, APPROVERS[site], uploaded["driveUri"], _safe_filename(payload.file_name)),
                     )
                     approval_id = int(cur.fetchone()["id"])
-                cur.execute("update bgn_makers set status=case when status='PAID' then status else 'APPROVED' end where id=%s", (maker_id,))
+                cur.execute("select amount from bgn_makers where id=%s", (maker_id,))
+                maker = cur.fetchone()
+                cur.execute("update bgn_makers set status='PAID' where id=%s", (maker_id,))
+                cur.execute("select id from bgn_receipts where bgn_maker_id=%s order by created_at desc,id desc limit 1", (maker_id,))
+                receipt = cur.fetchone()
+                if receipt:
+                    cur.execute(
+                        """update bgn_receipts set amount=%s,received_at=coalesce(received_at,now()),
+                               evidence_uri=coalesce(%s,evidence_uri),destination_account_type=coalesce(destination_account_type,'SPPG')
+                           where id=%s""",
+                        (maker["amount"], uploaded["driveUri"], receipt["id"]),
+                    )
+                else:
+                    cur.execute(
+                        """insert into bgn_receipts(bgn_maker_id,destination_account_type,amount,received_at,evidence_uri)
+                           values (%s,'SPPG',%s,now(),%s)""",
+                        (maker_id, maker["amount"], uploaded["driveUri"]),
+                    )
                 cur.execute(
                     """insert into approval_evidence_matches(document_id,bgn_maker_id,approval_id,reference_number,amount,match_method,match_confidence)
                        values (%s,%s,%s,%s,%s,%s,%s) on conflict (document_id,bgn_maker_id) do nothing""",
@@ -665,5 +682,6 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
     return {
         "committed": True, "documentId": document_id, "evidenceUri": uploaded["driveUri"],
         "drivePath": uploaded.get("drivePath"), "approvedMakerIds": [x["matchedMakerId"] for x in approved],
-        "approvedCount": len(approved), "transactions": matches,
+        "paidMakerIds": [x["matchedMakerId"] for x in approved],
+        "approvedCount": len(approved), "paidCount": len(approved), "transactions": matches,
     }

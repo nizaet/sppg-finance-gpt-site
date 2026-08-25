@@ -86,11 +86,21 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
 
             cur.execute(
                 """update bgn_makers
-                   set status=case when upper(status)='PAID' then status else 'APPROVED' end
+                   set status='PAID'
                    where id=%s returning status""",
                 (maker_id,),
             )
             maker_status = cur.fetchone()["status"]
+            cur.execute("select id,received_at,evidence_uri from bgn_receipts where bgn_maker_id=%s order by created_at desc,id desc limit 1", (maker_id,))
+            receipt = cur.fetchone()
+            if not receipt:
+                cur.execute(
+                    """insert into bgn_receipts(bgn_maker_id,destination_account_type,amount,received_at,evidence_uri)
+                       values (%s,'SPPG',%s,coalesce(%s,now()),null)
+                       returning id,received_at,evidence_uri""",
+                    (maker_id, maker["amount"], approval["approved_at"]),
+                )
+                receipt = cur.fetchone()
             conn.commit()
 
     return {
@@ -100,6 +110,8 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
         "approverCode": approval["approver_code"],
         "approvalStatus": approval["status"],
         "approvedAt": approval["approved_at"],
+        "receiptId": receipt["id"],
+        "paidAt": receipt["received_at"],
         "evidenceRequired": False,
     }
 
@@ -157,4 +169,44 @@ def cancel_bgn_maker_approval(maker_id: int) -> dict[str, Any]:
         "approvalStatus": approval["status"],
         "approvedAt": approval["approved_at"],
         "cancelled": True,
+    }
+
+
+@router.post("/bgn-makers/{maker_id}/cancel-maker")
+def cancel_bgn_maker(maker_id: int) -> dict[str, Any]:
+    """Remove an accidental Maker while its approval is still pending.
+
+    The source invoice and Excel submission remain intact, so the operator can
+    correct the document and create a new Maker. Paid or approved Makers are
+    intentionally protected from deletion.
+    """
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select m.id,m.accountant_invoice_id,m.status,
+                          exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as has_receipt,
+                          coalesce((select upper(a.status) from bgn_approvals a
+                                    where a.bgn_maker_id=m.id
+                                    order by a.created_at desc,a.id desc limit 1),'PENDING') as approval_status
+                   from bgn_makers m where m.id=%s""",
+                (maker_id,),
+            )
+            maker = cur.fetchone()
+            if not maker:
+                raise HTTPException(404, "maker BGN tidak ditemukan")
+            if bool(maker.get("has_receipt")) or str(maker.get("status") or "").upper() == "PAID":
+                raise HTTPException(409, "Maker tidak dapat dibatalkan karena sudah PAID / memiliki penerimaan dana")
+            if str(maker.get("approval_status") or "").upper() == "APPROVED":
+                raise HTTPException(409, "Maker sudah APPROVED. Batalkan approval terlebih dahulu sebelum membatalkan Maker.")
+
+            cur.execute("delete from bgn_approvals where bgn_maker_id=%s", (maker_id,))
+            cur.execute("delete from bgn_makers where id=%s", (maker_id,))
+            conn.commit()
+
+    return {
+        "makerId": maker_id,
+        "accountantInvoiceId": maker.get("accountant_invoice_id"),
+        "cancelled": True,
+        "note": "Maker dan approval pending dihapus. Invoice serta Excel Akuntan tetap tersimpan.",
     }
