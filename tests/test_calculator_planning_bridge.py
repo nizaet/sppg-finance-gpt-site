@@ -41,6 +41,8 @@ class _FakeFirestoreQuery:
     def stream(self):
         if self.client.failure:
             raise self.client.failure
+        if self.where_args and self.client.where_failure:
+            raise self.client.where_failure
         documents = self.client.group_documents if self.group else self.client.documents
         if not self.where_args:
             return documents
@@ -50,10 +52,11 @@ class _FakeFirestoreQuery:
 
 
 class _FakeFirestoreNode:
-    def __init__(self, *, documents=None, group_documents=None, failure=None, project="sppg-finance-gpt"):
+    def __init__(self, *, documents=None, group_documents=None, failure=None, where_failure=None, project="sppg-finance-gpt"):
         self.documents = documents or []
         self.group_documents = group_documents or []
         self.failure = failure
+        self.where_failure = where_failure
         self.project = project
         self.document_ids = []
         self.where_args = None
@@ -116,6 +119,30 @@ def test_legacy_date_format_on_canonical_root_is_still_read(monkeypatch):
     assert data["tanggal"] == "25/08/2026"
     assert candidates[0]["normalized_date"] == "2026-08-25"
     assert firestore.collection_group_calls == 0
+
+
+def test_invalid_indexed_query_falls_back_to_canonical_scan(monkeypatch):
+    plan = {
+        "date": "2026-08-26",
+        "planName": "MAJA 26 Agustus",
+        "shoppingListJSON": {"shoppingList": [{"item": "Beras", "jumlah": 100}]},
+    }
+    document = _snapshot("maja-20260826", plan)
+    firestore = _FakeFirestoreNode(documents=[document], where_failure=ValueError("InvalidArgument"))
+    monkeypatch.setattr("backend.calculator_planning_bridge_api.firestore_client", lambda _database: firestore)
+
+    app_id, selected, data, candidates = _daily_plan_matches("MAJA", date(2026, 8, 26))
+
+    assert app_id == "sppg-maja-gpt-site"
+    assert selected.id == "maja-20260826"
+    assert data["planName"] == "MAJA 26 Agustus"
+    assert len(candidates) == 1
+    assert firestore.collection_group_calls == 0
+
+
+def test_accountant_table_prefers_maker_returned_by_accountant_flow():
+    source = Path("src/operations/OperationsAccountantBgn.jsx").read_text(encoding="utf-8")
+    assert "const existingMaker = x.maker_id" in source
 
 
 def test_unique_legacy_app_root_is_discovered_without_crossing_sites(monkeypatch):

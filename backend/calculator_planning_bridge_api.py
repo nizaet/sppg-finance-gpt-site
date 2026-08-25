@@ -172,20 +172,16 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
     source_detail = _source_detail(client, site, target_date, configured)
 
     candidates: list[dict[str, Any]] = []
+    primary_query_error: Exception | None = None
     try:
         query = daily_plans.where("date", "==", target_date).limit(20)
         docs = list(query.stream())
     except Exception as exc:
-        # Never translate Firestore permission, network, or configuration
-        # failures into a misleading "plan not found" response.
-        raise HTTPException(
-            502,
-            detail={
-                "message": "gagal membaca rencana Kalkulator dari Firestore",
-                **source_detail,
-                "errorType": type(exc).__name__,
-            },
-        ) from exc
+        # Some Firestore databases reject the indexed equality query with
+        # InvalidArgument even though a plain collection scan is available.
+        # Keep the error and fall back to the bounded canonical scan below.
+        primary_query_error = exc
+        docs = []
 
     for snap in docs:
         candidates.append(_candidate(configured, snap))
@@ -194,14 +190,16 @@ def _daily_plan_matches(site: str, distribution_date: date) -> tuple[str, Any, d
         try:
             canonical_docs = list(daily_plans.limit(CANONICAL_SCAN_LIMIT).stream())
         except Exception as exc:
+            root_error = primary_query_error or exc
             raise HTTPException(
                 502,
                 detail={
-                    "message": "gagal memeriksa format tanggal lama pada rencana Kalkulator",
+                    "message": "gagal membaca rencana Kalkulator dari Firestore" if primary_query_error else "gagal memeriksa format tanggal lama pada rencana Kalkulator",
                     **source_detail,
-                    "errorType": type(exc).__name__,
+                    "errorType": type(root_error).__name__,
+                    "canonicalScanErrorType": type(exc).__name__,
                 },
-            ) from exc
+            ) from root_error
 
         for snap in canonical_docs:
             candidate = _candidate(configured, snap)
