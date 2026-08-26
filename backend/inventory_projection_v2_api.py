@@ -147,9 +147,11 @@ def inventory_balances_v2(
                         """
                         select psi.item_name,psi.planned_qty,psi.unit,ps.distribution_date
                         from (
+                          -- Do not restore stock simply because a completed
+                          -- daily plan was later superseded by a newer snapshot.
                           select distinct on (site,distribution_date) id,site,distribution_date
                           from planning_snapshots
-                          where upper(site)=%s and status='ACTIVE'
+                          where upper(site)=%s and status <> 'REJECTED'
                             and distribution_date > %s and distribution_date < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps

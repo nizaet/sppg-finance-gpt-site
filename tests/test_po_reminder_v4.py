@@ -102,10 +102,15 @@ class TempeProcurementRegressionTests(unittest.TestCase):
         self.assertEqual(vendor_for_item("Tempe", "TEMPE_TAHU", "MAJA"), "KOPERASI")
         self.assertEqual(vendor_for_item("Tempe", "TEMPE_TAHU", "CEMPLANG"), "KOPERASI")
 
-    def test_maja_tempe_is_h4_and_separate_bucket(self):
-        vendor, rule, bucket = _resolve_procurement_rule([], {"KOPERASI": "Koperasi"}, self._plan("MAJA"))
+    def test_maja_tempe_uses_its_dedicated_rule_and_separate_bucket(self):
+        rules = [{
+            "id": 1, "vendor_code": "KOPERASI", "site_code": "MAJA",
+            "category_code": "TEMPE", "lead_time_days_before_cooking": 2,
+            "effective_from": date(2026, 8, 16), "effective_to": None,
+        }]
+        vendor, rule, bucket = _resolve_procurement_rule(rules, {"KOPERASI": "Koperasi"}, self._plan("MAJA"))
         self.assertEqual(vendor, "KOPERASI")
-        self.assertEqual(rule["lead_time_days_before_cooking"], 4)
+        self.assertEqual(rule["lead_time_days_before_cooking"], 2)
         self.assertEqual(rule["category_code"], "TEMPE")
         self.assertEqual(bucket, "TEMPE")
 
