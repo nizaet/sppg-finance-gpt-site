@@ -347,9 +347,18 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         (
             '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [key]: masterPriceList[key] }, { merge: true });',
             # The price-save icon in Daftar Belanja must not depend on browser
-            # Firestore write permissions.  It now writes through the authenticated
-            # Railway bridge, which saves both calculator masters server-side.
-            '                await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key]);',
+            # Firestore write permissions. It writes both calculator masters
+            # through Railway first. The local write is retained only as a
+            # recoverable fallback so a temporary sync outage never loses the
+            # price the operator just entered.
+            '''                try {
+                    await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key]);
+                } catch (syncError) {
+                    await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, 'priceList'), { [key]: masterPriceList[key] }, { merge: true });
+                    console.warn('Sinkronisasi Master Harga dua dapur tertunda:', syncError);
+                    showMessage(`Harga ${name} tersimpan di Master Harga dapur ini. Sinkronisasi dapur lain akan dicoba lagi saat koneksi pulih.`, 'warning');
+                    return;
+                }''',
         ),
         (
             '                await setDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id), { id, name, kecil, besar });',
