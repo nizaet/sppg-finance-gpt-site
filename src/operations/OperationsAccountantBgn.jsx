@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardCopy, Download, ExternalLink, FileCheck2, FileSpreadsheet, MessageCircle, RefreshCw, Send, Stamp, Trash2, Upload, CheckCircle2 } from "lucide-react";
 import { operationsApi } from "./apiClient";
 import { accountantApi } from "./accountantApi.js";
@@ -77,6 +77,7 @@ export default function OperationsAccountantBgn(){
   const [invoiceFiles,setInvoiceFiles]=useState({});
   const [customFilename,setCustomFilename]=useState("");
   const [calendarRefresh,setCalendarRefresh]=useState(0);
+  const pendingExcelRef=useRef(null);
 
   const load=async()=>{
     setLoading(true); setError("");
@@ -131,8 +132,9 @@ export default function OperationsAccountantBgn(){
     try {
       const data = await accountantApi.generateSelectedPlanExcel(excelArgs(), true);
       setExcelPreview(data);
-      setMessage(data.replacedPreviousExcel ? "Excel lama diganti dengan Excel baru dari perencanaan terbaru." : "Excel dibuat dari perencanaan terbaru dan masuk Drive. Status READY sampai benar-benar dikirim.");
+      setMessage(data.replacedPreviousExcel ? "Excel lama diganti dengan Excel baru dari perencanaan terbaru." : "Excel dibuat dan masuk Drive. Excel sekarang muncul di daftar Menunggu Invoice.");
       await load();
+      window.setTimeout(() => pendingExcelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     } catch (e) { setError(e.message || "Gagal membuat Excel akuntan"); }
     finally { setExcelBusy(false); }
   };
@@ -279,8 +281,8 @@ export default function OperationsAccountantBgn(){
       </div>}
     </section>
 
-    <details className="ops-module">
-      <summary className="ops-module-header" style={{cursor:"pointer"}}><div><span className="ops-kicker">EXCEL BELUM BERBALAS</span><h3>Pengiriman Akuntan yang Masih Perlu Invoice</h3><p>Daftar invoice, Maker, Approval dan Paid ada di modul Kalender / List di atas. Buka bagian ini hanya untuk Excel yang belum dibalas invoice.</p></div></summary>
+    <section className="ops-module" ref={pendingExcelRef}>
+      <div className="ops-module-header"><div><span className="ops-kicker">EXCEL MENUNGGU INVOICE</span><h3>Excel yang Belum Dibalas Akuntan</h3><p>Excel yang berhasil diarsipkan langsung tampil di sini bersama link Drive. Upload invoice dari baris yang sama; tombol Maker baru aktif setelah invoice tersimpan.</p></div></div>
       {error&&<div className="ops-error">{error}</div>}{message&&<div className="ops-success">{message}</div>}
       <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Perencanaan</th><th>Akuntan</th><th>Excel</th><th>Status</th><th>Invoice</th><th>File Invoice</th><th>Maker</th><th>Aksi</th></tr></thead><tbody>{accountant.filter((x)=>!x.invoice_id).map(x=>{
         const linkedMaker = x.invoice_id != null ? makerByInvoice.get(String(x.invoice_id)) : null;
@@ -288,20 +290,21 @@ export default function OperationsAccountantBgn(){
           ? { ...linkedMaker, maker_id: x.maker_id, maker_status: x.maker_status || linkedMaker?.maker_status }
           : linkedMaker;
         const sent = String(x.submission_status||"").toUpperCase()==="SENT";
+        const excelReady = Boolean(x.excel_evidence_uri) && String(x.drive_upload_status||"").toUpperCase() !== "FAILED";
         const makerState = existingMaker ? (String(existingMaker.receipt_id || existingMaker.maker_status || "").toUpperCase()==="PAID" ? "paid" : String(existingMaker.approval_status || "").toUpperCase()==="APPROVED" || String(existingMaker.maker_status || "").toUpperCase()==="APPROVED" ? "approved" : "pending") : "";
         const makerLabel = makerState === "paid" ? "PAID" : makerState === "approved" ? "APPROVED" : "PENDING";
-        return <tr className={makerState ? `ops-accountant-row-${makerState}` : ""} key={`${x.submission_id}-${x.invoice_id||0}`}><td>{x.site}</td><td><strong>{planningLabel(x)}</strong><div className="ops-muted">{x.source_distribution_date||"-"}{x.source_calculator_document_id?` · ${x.source_calculator_document_id}`:""}</div></td><td>{x.accountant_code}</td><td>{x.excel_evidence_uri?<button type="button" onClick={()=>window.open(x.excel_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Excel</button>:<span className="ops-muted">{x.generated_filename||"Belum ada file"}<br/>{x.drive_upload_status||""}</span>}</td><td>{x.submission_status}<div className="ops-muted">{x.sent_at||"-"}</div></td><td>{x.invoice_id?<><strong>{x.invoice_number||`#${x.invoice_id}`}</strong><div>{money(x.invoice_amount)}</div></>:"-"}</td><td>{x.invoice_evidence_uri?<button type="button" onClick={()=>window.open(x.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Invoice</button>:sent?<div><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>setInvoiceFiles(current=>({...current,[x.submission_id]:e.target.files?.[0]||null}))}/></div>:<span className="ops-muted">Tandai SENT dulu</span>}</td><td>{existingMaker?<span className={`ops-maker-chip ${makerState}`}>✓ Maker #{existingMaker.maker_id}<small>{makerLabel}</small></span>:"-"}</td><td><div className="ops-row-actions">
+        return <tr className={makerState ? `ops-accountant-row-${makerState}` : ""} key={`${x.submission_id}-${x.invoice_id||0}`}><td>{x.site}</td><td><strong>{planningLabel(x)}</strong><div className="ops-muted">{x.source_distribution_date||"-"}{x.source_calculator_document_id?` · ${x.source_calculator_document_id}`:""}</div></td><td>{x.accountant_code}</td><td>{x.excel_evidence_uri?<button type="button" onClick={()=>window.open(x.excel_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Excel</button>:<span className="ops-muted">{x.generated_filename||"Belum ada file"}<br/>{x.drive_upload_status||""}</span>}</td><td><strong>{sent ? "SENT" : excelReady ? "READY" : (x.submission_status||"-")}</strong><div className="ops-muted">{sent ? (x.sent_at||"-") : excelReady ? "Siap upload invoice" : (x.drive_upload_status||"Belum ada file")}</div></td><td>{x.invoice_id?<><strong>{x.invoice_number||`#${x.invoice_id}`}</strong><div>{money(x.invoice_amount)}</div></>:"-"}</td><td>{x.invoice_evidence_uri?<button type="button" onClick={()=>window.open(x.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Invoice</button>:excelReady?<div><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>setInvoiceFiles(current=>({...current,[x.submission_id]:e.target.files?.[0]||null}))}/></div>:<span className="ops-muted">Excel belum berhasil diarsipkan</span>}</td><td>{existingMaker?<span className={`ops-maker-chip ${makerState}`}>✓ Maker #{existingMaker.maker_id}<small>{makerLabel}</small></span>:"-"}</td><td><div className="ops-row-actions">
           <button type="button" onClick={async()=>{await copyText(accountantMessage(x));setMessage("Pesan akuntan sudah disalin.");}}><ClipboardCopy size={14}/> Copy</button>
           <button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(accountantMessage(x))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp</button>
           {!sent&&(x.excel_evidence_uri||x.generated_filename)&&<button type="button" onClick={()=>markSent(x)} disabled={saving===`sent-${x.submission_id}`}><Send size={14}/> Tandai Terkirim</button>}
-          {sent&&!x.invoice_id&&<button type="button" onClick={()=>recordInvoice(x)} disabled={saving===`invoice-${x.submission_id}`}><FileCheck2 size={14}/> Catat Invoice</button>}
-          {sent&&!x.invoice_evidence_uri&&<button type="button" onClick={()=>uploadInvoice(x)} disabled={saving===`upload-invoice-${x.submission_id}`||!invoiceFiles[x.submission_id]}><Upload size={14}/> Upload Invoice</button>}
+          {excelReady&&!x.invoice_id&&<button type="button" onClick={()=>recordInvoice(x)} disabled={saving===`invoice-${x.submission_id}`}><FileCheck2 size={14}/> Catat Invoice</button>}
+          {excelReady&&!x.invoice_evidence_uri&&<button type="button" onClick={()=>uploadInvoice(x)} disabled={saving===`upload-invoice-${x.submission_id}`||!invoiceFiles[x.submission_id]}><Upload size={14}/> Upload Invoice</button>}
           {x.invoice_id&&Number(x.invoice_amount||0)>0&&<button type="button" className={existingMaker ? "ops-maker-created-button" : ""} onClick={()=>!existingMaker&&createMakerAndApproval(x)} disabled={Boolean(existingMaker)||saving===`maker-${x.invoice_id}`}><Stamp size={14}/> {existingMaker ? `Maker #${existingMaker.maker_id} dibuat` : "Buat Maker"}</button>}
           {existingMaker&&makerState==="pending"&&<button type="button" className="danger" onClick={()=>cancelMaker({ ...x, ...existingMaker })} disabled={saving===`cancel-maker-${existingMaker.maker_id}`}><Trash2 size={14}/> Batalkan Maker</button>}
           <button type="button" className="danger" onClick={()=>deleteFlow(x)} disabled={saving===`delete-${x.submission_id}`} title="Hapus alur yang salah"><Trash2 size={14}/> Hapus Alur</button>
         </div></td></tr>;
       })}{!loading&&!accountant.some((x)=>!x.invoice_id)&&<tr><td colSpan="9" className="ops-empty-cell">Semua submission pada filter ini sudah memiliki invoice atau belum ada submission.</td></tr>}</tbody></table></div>
-    </details>
+    </section>
 
     <details className="ops-module">
       <summary className="ops-module-header" style={{cursor:"pointer"}}><div><span className="ops-kicker">BGN</span><h3>Riwayat Maker / Approval / Paid</h3><p>Pengelolaan harian dilakukan pada Kalender / List agar semua kategori ada dalam satu tempat.</p></div></summary><div className="ops-row-actions" style={{margin:"0 0 12px"}}><button type="button" onClick={async()=>{await copyText(pendingApprovalMessage(bgn));setMessage("Rekap pending approval sudah disalin.");}}><ClipboardCopy size={14}/> Copy Pending ({pendingBgn.length})</button><button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(pendingApprovalMessage(bgn))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp Pending</button></div>
