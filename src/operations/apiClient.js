@@ -130,7 +130,7 @@ export const operationsApi = {
   saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
   generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   markAccountantSubmissionSent: (id) => request(`/v1/accountant-submissions/${encodeURIComponent(id)}/mark-sent`, { method: "POST", body: "{}" }),
-  getAccountantFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/accountant-flow${q.toString() ? `?${q}` : ""}`); },
+  getAccountantFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/accountant-flow-v2${q.toString() ? `?${q}` : ""}`); },
   createAccountantSubmission: (payload) => request("/v1/accountant-submissions", { method: "POST", body: JSON.stringify(payload) }),
   createAccountantInvoice: (payload) => request("/v1/accountant-invoices", { method: "POST", body: JSON.stringify(payload) }),
   getBgnFlow: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/bgn-flow${q.toString() ? `?${q}` : ""}`); },
