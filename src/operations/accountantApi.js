@@ -66,7 +66,10 @@ export const accountantApi = {
     return request(`/v1/accountant-excel/planning-options?${q}`);
   },
   generateSelectedPlanExcel: ({ site, distributionDate, calculatorDocumentId, customFilename = "" }, commit = false) => request(
-    "/v1/accountant-excel/from-selected-plan-fresh",
+    // The selected-plan endpoint is patched at startup to always re-read the
+    // exact current Calculator document.  Unlike the experimental "fresh"
+    // route it does not require optional audit columns just to preview Excel.
+    "/v1/accountant-excel/from-selected-plan",
     { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate, calculator_document_id: calculatorDocumentId, custom_filename: customFilename || null, commit }) },
   ),
   downloadSelectedPlanExcel: ({ downloadUrl, filename }) => download(downloadUrl, filename),
