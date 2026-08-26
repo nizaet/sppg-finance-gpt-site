@@ -172,6 +172,91 @@ def accountant_flow(site: str = "") -> dict[str, Any]:
     return {"items": rows, "count": len(rows), "legacyMakerLinksRepaired": repaired}
 
 
+@router.get("/accountant-flow-v2")
+def accountant_flow_v2(site: str = "") -> dict[str, Any]:
+    """Read the Excel queue independently from the Maker/BGN schema.
+
+    Older production databases can have partially migrated invoice and maker
+    tables.  The Excel queue must remain usable because it is the entry point
+    for uploading the accountant response.  Submissions and invoices are read
+    separately here, then joined in Python using only columns that exist.
+    """
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            if not _table_exists(cur, "accountant_submissions"):
+                return {
+                    "items": [],
+                    "count": 0,
+                    "schemaWarning": "accountant_submissions table is not available",
+                }
+
+            sub_cols = _columns(cur, "accountant_submissions")
+            submission_select = ",".join([
+                _col("s", sub_cols, "id", as_name="submission_id"),
+                _col("s", sub_cols, "production_cycle_id"),
+                _col("s", sub_cols, "site"),
+                _col("s", sub_cols, "accountant_code"),
+                _col("s", sub_cols, "excel_evidence_uri"),
+                _col("s", sub_cols, "sent_at"),
+                _col("s", sub_cols, "status", as_name="submission_status"),
+                _col("s", sub_cols, "source_planning_snapshot_id"),
+                _col("s", sub_cols, "source_calculator_document_id"),
+                _col("s", sub_cols, "source_plan_name"),
+                _col("s", sub_cols, "source_distribution_date"),
+                _col("s", sub_cols, "generated_filename"),
+                _col("s", sub_cols, "drive_upload_status"),
+                _col("s", sub_cols, "drive_upload_error"),
+                _col("s", sub_cols, "updated_at", as_name="submission_updated_at"),
+            ])
+            sql = f"select {submission_select} from accountant_submissions s where true"
+            params: list[Any] = []
+            if site and "site" in sub_cols:
+                sql += " and upper(cast(s.site as text))=upper(%s)"
+                params.append(site)
+            sql += f" order by {_order('s', sub_cols)} limit 250"
+            cur.execute(sql, params)
+            rows = [dict(row) for row in cur.fetchall()]
+
+            invoice_by_submission: dict[Any, dict[str, Any]] = {}
+            submission_ids = [row.get("submission_id") for row in rows if row.get("submission_id") is not None]
+            if submission_ids and _table_exists(cur, "accountant_invoices"):
+                inv_cols = _columns(cur, "accountant_invoices")
+                if "accountant_submission_id" in inv_cols:
+                    invoice_select = ",".join([
+                        _col("i", inv_cols, "accountant_submission_id"),
+                        _col("i", inv_cols, "id", as_name="invoice_id"),
+                        _col("i", inv_cols, "invoice_number"),
+                        _col("i", inv_cols, "invoice_amount"),
+                        _col("i", inv_cols, "invoice_evidence_uri"),
+                        _col("i", inv_cols, "received_at"),
+                    ])
+                    cur.execute(
+                        f"""select {invoice_select}
+                            from accountant_invoices i
+                            where i.accountant_submission_id = any(%s)
+                            order by {_order('i', inv_cols)}""",
+                        (submission_ids,),
+                    )
+                    for invoice in cur.fetchall():
+                        key = invoice.get("accountant_submission_id")
+                        if key is not None and key not in invoice_by_submission:
+                            invoice_by_submission[key] = dict(invoice)
+
+    for row in rows:
+        invoice = invoice_by_submission.get(row.get("submission_id"), {})
+        row.update({
+            "invoice_id": invoice.get("invoice_id"),
+            "invoice_number": invoice.get("invoice_number"),
+            "invoice_amount": invoice.get("invoice_amount"),
+            "invoice_evidence_uri": invoice.get("invoice_evidence_uri"),
+            "received_at": invoice.get("received_at"),
+            "maker_id": None,
+            "maker_status": None,
+        })
+    return {"items": rows, "count": len(rows), "mode": "SCHEMA_TOLERANT_SEPARATE_READS"}
+
+
 @router.get("/bgn-flow")
 def bgn_flow(site: str = "") -> dict[str, Any]:
     require_db()

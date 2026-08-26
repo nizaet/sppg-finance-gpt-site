@@ -406,6 +406,7 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
     if not payload.commit:
         return preview
     production_cycle_id = None
+    excel_automatically_marked_sent = False
     with connection() as conn:
         with conn.cursor() as cur:
             if payload.accountant_submission_id is not None:
@@ -418,18 +419,44 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                     raise HTTPException(404, "accountant submission tidak ditemukan")
                 if str(submission.get("site") or "").upper() != payload.site:
                     raise HTTPException(409, "site invoice berbeda dengan site submission Excel")
-                if str(submission.get("status") or "").upper() != "SENT":
-                    raise HTTPException(409, "tandai Excel sebagai SENT sebelum upload invoice bahan baku")
+                submission_status = str(submission.get("status") or "").upper()
+                if submission_status not in {"READY", "SENT"}:
+                    raise HTTPException(
+                        409,
+                        "Excel belum READY/tersimpan di Drive sehingga invoice belum dapat ditautkan",
+                    )
+                # An invoice response is sufficient operational evidence that
+                # the Excel was sent.  Requiring a separate manual click here
+                # created an unnecessary dead end in the same-row upload flow.
+                excel_automatically_marked_sent = submission_status == "READY"
                 production_cycle_id = submission.get("production_cycle_id")
             cur.execute(
-                """select id,invoice_evidence_uri from accountant_invoices
+                """select id,invoice_evidence_uri,accountant_submission_id from accountant_invoices
                    where upper(coalesce(site,''))=%s and lower(trim(coalesce(invoice_number,'')))=lower(trim(%s))
                    order by id desc limit 1""",
                 (payload.site, payload.invoice_number),
             )
             duplicate = cur.fetchone()
             if duplicate:
-                return {**preview, "committed": True, "duplicate": True, "accountantInvoiceId": duplicate["id"], "invoiceEvidenceUri": duplicate["invoice_evidence_uri"]}
+                duplicate_submission_id = duplicate.get("accountant_submission_id")
+                if payload.accountant_submission_id is not None and duplicate_submission_id != payload.accountant_submission_id:
+                    raise HTTPException(409, "nomor invoice sudah tersimpan pada alur Excel/invoice lain")
+                if excel_automatically_marked_sent:
+                    cur.execute(
+                        """update accountant_submissions
+                           set status='SENT',sent_at=coalesce(sent_at,now()),updated_at=now()
+                           where id=%s""",
+                        (payload.accountant_submission_id,),
+                    )
+                    conn.commit()
+                return {
+                    **preview,
+                    "committed": True,
+                    "duplicate": True,
+                    "accountantInvoiceId": duplicate["id"],
+                    "invoiceEvidenceUri": duplicate["invoice_evidence_uri"],
+                    "excelAutomaticallyMarkedSent": excel_automatically_marked_sent,
+                }
     safe = _safe_filename(payload.file_name)
     filename = f"invoice_{payload.site.lower()}_{payload.category.lower()}_{payload.invoice_date.isoformat()}_{safe}"
     try:
@@ -461,11 +488,19 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                        values (%s,%s,%s,%s,%s,%s)""",
                     (invoice_id, line.item_name, line.quantity, line.unit, line.unit_price, line.line_total),
                 )
+            if payload.accountant_submission_id is not None:
+                cur.execute(
+                    """update accountant_submissions
+                       set status='SENT',sent_at=coalesce(sent_at,now()),updated_at=now()
+                       where id=%s""",
+                    (payload.accountant_submission_id,),
+                )
             conn.commit()
     return {
         **preview, "committed": True, "duplicate": False, "accountantInvoiceId": invoice_id,
         "invoiceEvidenceUri": uploaded["driveUri"], "drivePath": uploaded.get("drivePath"),
         "makerCreated": False,
+        "excelAutomaticallyMarkedSent": excel_automatically_marked_sent,
     }
 
 
