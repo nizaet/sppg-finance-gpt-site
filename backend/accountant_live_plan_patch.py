@@ -2,55 +2,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import HTTPException
-
 from backend import accountant_selected_plan_api as selected
 from backend import calculator_planning_bridge_api as bridge
-from backend.google_services import SITE_TARGETS, firestore_client
 
 _INSTALLED = False
 _ORIGINAL_SELECT = selected._select_candidate
 
 
 def _select_candidate_live(site: str, distribution_date, document_id: str) -> dict[str, Any]:
-    """Resolve the selected planning row, then re-read that exact Firestore document.
+    """Read the selected plan through the same resilient bridge used by discovery.
 
-    The planning-options query is only discovery. Excel generation must never
-    trust the snapshot object returned by that query because the operator may
-    have edited the same daily-plan document immediately before pressing
-    Preview/Tarik Ulang. Re-reading the exact document makes the Excel source
-    the current persisted calculator document rather than an earlier query
-    snapshot held in memory.
+    ``_ORIGINAL_SELECT`` re-runs planning discovery for every Preview/Tarik Ulang
+    request and reads Calculator dailyPlans through ``bridge._daily_plan_matches``.
+    That bridge already provides the canonical scan and Firestore REST fallback
+    needed by MAJA when the Firestore SDK path fails. Reusing the freshly selected
+    bridge candidate keeps MAJA and CEMPLANG on the same source path instead of
+    doing a second SDK-only document read for MAJA.
     """
     discovered = _ORIGINAL_SELECT(site, distribution_date, document_id)
-    app_id = discovered.get("app_id")
-    if not app_id:
-        return discovered
-
-    client = firestore_client(SITE_TARGETS[site]["database_id"])
-    doc_ref = (
-        client.collection("artifacts")
-        .document(str(app_id))
-        .collection("public")
-        .document("data")
-        .collection("dailyPlans")
-        .document(document_id.strip())
-    )
-    snap = doc_ref.get()
-    if not snap.exists:
-        raise HTTPException(404, "perencanaan Kalkulator yang dipilih sudah tidak ditemukan")
-    data = snap.to_dict() or {}
-    if str(data.get("date") or "") != distribution_date.isoformat():
-        raise HTTPException(409, "tanggal dokumen perencanaan berubah; tarik ulang daftar perencanaan")
+    data = discovered.get("data") or {}
 
     shopping = ((data.get("shoppingListJSON") or {}).get("shoppingList") or [])
     return {
         **discovered,
-        "doc": snap,
         "data": data,
         "updated_at": bridge._plan_updated_at(data),
         "item_count": len(shopping) if isinstance(shopping, list) else 0,
         "live_refetched": True,
+        "live_refetch_mode": "BRIDGE_CANONICAL_WITH_REST_FALLBACK",
     }
 
 
