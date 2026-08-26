@@ -1,0 +1,3 @@
+Force Railway redeploy for MAJA accountant preview bridge fix.
+Commit target includes accountant_live_plan_patch bridge fallback parity with CEMPLANG.
+Timestamp: 2026-08-26T13:47+07:00
