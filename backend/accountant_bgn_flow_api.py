@@ -47,15 +47,41 @@ def _backfill_legacy_maker_links(cur: Any) -> int:
     if not (_table_exists(cur, "bgn_makers") and _table_exists(cur, "accountant_invoices") and _table_exists(cur, "accountant_submissions")):
         return 0
     maker_cols = _columns(cur, "bgn_makers")
-    if "accountant_invoice_id" not in maker_cols:
+    invoice_cols = _columns(cur, "accountant_invoices")
+    submission_cols = _columns(cur, "accountant_submissions")
+
+    # Installations that were running before the unified Accountant/BGN flow
+    # do not necessarily have every newer column.  This is a convenience
+    # repair for old maker links, never a prerequisite for opening the Excel
+    # queue.  Do not run a query that can take the whole Accountant page down
+    # when a legacy schema is still being migrated.
+    required_maker = {"id", "accountant_invoice_id", "amount", "site"}
+    required_invoice = {"id", "accountant_submission_id", "invoice_amount"}
+    required_submission = {"id", "site"}
+    if not (
+        required_maker.issubset(maker_cols)
+        and required_invoice.issubset(invoice_cols)
+        and required_submission.issubset(submission_cols)
+    ):
         return 0
+
+    maker_reference = (
+        "lower(trim(coalesce(m.reference_number,'')))"
+        if "reference_number" in maker_cols
+        else "''"
+    )
+    invoice_reference = (
+        "lower(trim(coalesce(i.invoice_number,'')))"
+        if "invoice_number" in invoice_cols
+        else "''"
+    )
     cur.execute(
-        """
+        f"""
         with raw_candidates as (
           select m.id as maker_id,i.id as invoice_id,
                  case
-                   when lower(trim(coalesce(m.reference_number,'')))=lower(trim(coalesce(i.invoice_number,''))) then 2
-                   when lower(trim(coalesce(m.reference_number,'')))=lower('AKUNTAN-INV-' || i.id::text) then 2
+                   when {maker_reference}<>'' and {maker_reference}={invoice_reference} then 2
+                   when {maker_reference}=lower('AKUNTAN-INV-' || i.id::text) then 2
                    else 1
                  end as ref_score
           from bgn_makers m
@@ -82,12 +108,30 @@ def _backfill_legacy_maker_links(cur: Any) -> int:
     return max(int(cur.rowcount or 0), 0)
 
 
+def _try_backfill_legacy_maker_links(cur: Any) -> int:
+    """Run the optional legacy repair without breaking the Accountant queue.
+
+    A failed statement leaves PostgreSQL's transaction aborted.  A savepoint is
+    therefore required here: otherwise an old schema can make even the simple
+    read of `accountant_submissions` fail afterwards.
+    """
+    cur.execute("savepoint accountant_legacy_link_repair")
+    try:
+        repaired = _backfill_legacy_maker_links(cur)
+    except Exception:
+        cur.execute("rollback to savepoint accountant_legacy_link_repair")
+        repaired = 0
+    finally:
+        cur.execute("release savepoint accountant_legacy_link_repair")
+    return repaired
+
+
 @router.get("/accountant-flow")
 def accountant_flow(site: str = "") -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
-            repaired = _backfill_legacy_maker_links(cur)
+            repaired = _try_backfill_legacy_maker_links(cur)
             if repaired:
                 conn.commit()
             if not _table_exists(cur, "accountant_submissions"):
@@ -133,7 +177,7 @@ def bgn_flow(site: str = "") -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
-            repaired = _backfill_legacy_maker_links(cur)
+            repaired = _try_backfill_legacy_maker_links(cur)
             if repaired:
                 conn.commit()
             if not _table_exists(cur, "bgn_makers"):
