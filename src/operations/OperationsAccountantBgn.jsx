@@ -8,6 +8,11 @@ import AccountantUnifiedCalendar from "./AccountantUnifiedCalendar.jsx";
 const ACCOUNTANT_UNIFIED_CALENDAR_NATIVE = true;
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
+const excelFilenameForDate = (value) => {
+  const date = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  return `${date.slice(8, 10)}-${date.slice(5, 7)}-${date.slice(0, 4)}.xlsx`;
+};
 
 async function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -75,7 +80,7 @@ export default function OperationsAccountantBgn(){
   const [excelPreview,setExcelPreview]=useState(null);
   const [excelBusy,setExcelBusy]=useState(false);
   const [invoiceFiles,setInvoiceFiles]=useState({});
-  const [customFilename,setCustomFilename]=useState("");
+  const [customFilename,setCustomFilename]=useState(()=>excelFilenameForDate(new Date().toISOString().slice(0,10)));
   const [calendarRefresh,setCalendarRefresh]=useState(0);
   const pendingExcelRef=useRef(null);
 
@@ -108,6 +113,7 @@ export default function OperationsAccountantBgn(){
     finally { setPlanBusy(false); }
   };
   useEffect(()=>{ loadPlanningOptions(); },[excelSite,excelDate]);
+  useEffect(()=>{ setCustomFilename(excelFilenameForDate(excelDate)); },[excelDate]);
 
   const pendingBgn = useMemo(() => bgn.filter((x) => String(x.approval_status || "PENDING").toUpperCase() !== "APPROVED"), [bgn]);
   const makerByInvoice = useMemo(() => {
@@ -261,7 +267,7 @@ export default function OperationsAccountantBgn(){
         <label>Site<select value={excelSite} onChange={e=>{setExcelSite(e.target.value);setExcelPreview(null);setSelectedPlanId("");}}><option value="MAJA">Maja → Tiara</option><option value="CEMPLANG">Cemplang → Uya</option></select></label>
         <label>Tanggal Distribusi<input type="date" value={excelDate} onChange={e=>{setExcelDate(e.target.value);setExcelPreview(null);setSelectedPlanId("");}}/></label>
         <label>Perencanaan<select value={selectedPlanId} onChange={e=>{setSelectedPlanId(e.target.value);setExcelPreview(null);}} disabled={planBusy||!planOptions.length}><option value="">{planBusy?"Menarik perencanaan…":planOptions.length>1?`Pilih 1 dari ${planOptions.length} perencanaan`:"Pilih perencanaan"}</option>{planOptions.map(row=><option key={row.documentId} value={row.documentId}>{row.planName} · {row.itemCount} item · {row.updatedAt ? String(row.updatedAt).replace("T"," ").slice(0,16) : "-"}</option>)}</select></label>
-        <label>Nama file Excel<input value={customFilename} onChange={e=>{setCustomFilename(e.target.value);setExcelPreview(null);}} placeholder="Opsional, tanpa .xlsx juga boleh"/></label>
+        <label>Nama file Excel<input value={customFilename} onChange={e=>{setCustomFilename(e.target.value);setExcelPreview(null);}} placeholder="dd-mm-yyyy.xlsx"/><span className="ops-muted">Otomatis dari tanggal distribusi; boleh dikoreksi bila diperlukan.</span></label>
         <label>Aksi<div className="ops-row-actions"><button type="button" onClick={loadPlanningOptions} disabled={planBusy}><RefreshCw size={14}/> {planBusy?"Menarik…":"Tarik Ulang Perencanaan"}</button><button type="button" onClick={previewExcel} disabled={excelBusy||!selectedPlanId}><FileSpreadsheet size={14}/> {excelBusy?"Memproses...":"Preview Terbaru"}</button></div></label>
       </div>
       {planOptions.length>1&&<div className="ops-notice"><strong>{planOptions.length} perencanaan pada {excelDate}.</strong> Pilih satu. Data tidak digabung.</div>}

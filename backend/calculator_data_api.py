@@ -388,8 +388,14 @@ def _shared_master_target(root: Any, data_type: str, record_key: str | None):
 
 @router.post("/calculator-data/shared-master-sync")
 def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request) -> dict[str, Any]:
-    """Mirror calculator master writes to Maja and Cemplang; never touch daily plans."""
-    _require_services()
+    """Mirror calculator master writes to Maja and Cemplang; never touch daily plans.
+
+    Calculator master data lives in Firestore.  The Postgres catalog and audit
+    trail are useful indexes, but they must not turn a successful price save in
+    the calculator into a visible failure when the database is briefly
+    unavailable.  In particular, the small save icon in the planning table
+    must keep working independently of the operational/audit database.
+    """
     role = str(getattr(request.state, "sppg_role", "") or "").upper()
     if role and role not in {"OWNER", payload.source_site}:
         raise HTTPException(403, "akun hanya boleh menyinkronkan master dari kalkulator sendiri")
@@ -406,51 +412,43 @@ def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request)
 
     source_ref = f"calculator-live:{payload.source_site}:{payload.data_type.lower()}"
     writes: list[dict[str, Any]] = []
+    audit_warnings: list[dict[str, str]] = []
     source_type = {"PRICES": "PRICE", "GRAMASI": "GRAMASI", "RECIPES": "RECIPE", "BUMBU": "BUMBU"}[payload.data_type]
     for target_site in ("MAJA", "CEMPLANG"):
-        _, _, root = _data_root(target_site)
-        target = _shared_master_target(root, payload.data_type, payload.record_key)
-        snap = target.get()
-        previous = snap.to_dict() if snap.exists else None
         record_key = str(payload.record_key or "all")
         imported = payload.payload if payload.operation != "DELETE" else {"deleted": True, "recordKey": record_key}
-        event_id = _audit_begin(
-            site=target_site, data_type=payload.data_type, record_key=record_key, record_date=None,
-            source_ref=source_ref, source_hash=_stable_hash(imported), target_path=target.path,
-            previous=previous, imported=imported, actor=payload.actor,
-        )
+        event_id: int | None = None
         try:
+            # Firestore is the source of truth for calculator masters.  Do this
+            # first and do not require PostgreSQL to be healthy just to save one
+            # planned-item price.
+            _, _, root = _data_root(target_site)
+            target = _shared_master_target(root, payload.data_type, payload.record_key)
+            snap = target.get()
+            previous = snap.to_dict() if snap.exists else None
+
+            if database_ready():
+                try:
+                    event_id = _audit_begin(
+                        site=target_site, data_type=payload.data_type, record_key=record_key, record_date=None,
+                        source_ref=source_ref, source_hash=_stable_hash(imported), target_path=target.path,
+                        previous=previous, imported=imported, actor=payload.actor,
+                    )
+                except Exception as exc:  # Audit must never block calculator masters.
+                    audit_warnings.append({"site": target_site, "stage": "audit_begin", "message": str(exc)[:300]})
+            else:
+                audit_warnings.append({"site": target_site, "stage": "audit_begin", "message": "database audit sedang tidak tersedia"})
+
             if payload.operation == "DELETE":
                 target.delete()
-                _deactivate_catalog(target_site, source_type, record_key)
-                if payload.data_type == "RECIPES":
-                    with connection() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                "update calculator_master_catalog set active=false,updated_at=now() where site=%s and source_type='RECIPE_INGREDIENT' and source_document_key=%s",
-                                (target_site, record_key),
-                            )
-                        conn.commit()
             elif payload.data_type == "PRICES":
                 incoming = _firestore_value(payload.payload)
                 if payload.operation == "UPSERT":
                     target.set({record_key: incoming}, merge=True)
-                    catalog_payload = {"name": record_key, **payload.payload}
-                    _catalog_for_master(target_site, "PRICES", record_key, catalog_payload)
                 else:
                     target.set(incoming)
-                    _deactivate_catalog(target_site, "PRICE")
-                    for name, value in payload.payload.items():
-                        if isinstance(value, dict):
-                            _catalog_for_master(target_site, "PRICES", normalize_name(str(name)), {"name": str(name), **value})
             elif payload.data_type == "BUMBU":
                 target.set(_firestore_value(payload.payload))
-                _deactivate_catalog(target_site, "BUMBU")
-                rules = payload.payload.get("rules") or {}
-                for name in payload.payload.get("list") or []:
-                    normalized = normalize_name(str(name))
-                    if normalized:
-                        _catalog_for_master(target_site, "BUMBU", normalized, {"name": str(name), **(rules.get(name) or {})})
             else:
                 incoming = _restore_iso_timestamps(payload.payload)
                 if payload.data_type == "GRAMASI":
@@ -458,11 +456,54 @@ def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request)
                 elif payload.data_type == "RECIPES":
                     incoming.pop("id", None)
                 target.set(_firestore_value(incoming), merge=True)
-                _catalog_for_master(target_site, payload.data_type, record_key, {**payload.payload, "id": record_key})
-            _audit_finish(event_id, "COMMITTED")
+
+            # Keep the searchable Postgres catalog in sync when it is available,
+            # but a catalog/audit outage must not roll back or misreport the
+            # Firestore save above.
+            if database_ready():
+                try:
+                    if payload.operation == "DELETE":
+                        _deactivate_catalog(target_site, source_type, record_key)
+                        if payload.data_type == "RECIPES":
+                            with connection() as conn:
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        "update calculator_master_catalog set active=false,updated_at=now() where site=%s and source_type='RECIPE_INGREDIENT' and source_document_key=%s",
+                                        (target_site, record_key),
+                                    )
+                                conn.commit()
+                    elif payload.data_type == "PRICES":
+                        if payload.operation == "UPSERT":
+                            _catalog_for_master(target_site, "PRICES", record_key, {"name": record_key, **payload.payload})
+                        else:
+                            _deactivate_catalog(target_site, "PRICE")
+                            for name, value in payload.payload.items():
+                                if isinstance(value, dict):
+                                    _catalog_for_master(target_site, "PRICES", normalize_name(str(name)), {"name": str(name), **value})
+                    elif payload.data_type == "BUMBU":
+                        _deactivate_catalog(target_site, "BUMBU")
+                        rules = payload.payload.get("rules") or {}
+                        for name in payload.payload.get("list") or []:
+                            normalized = normalize_name(str(name))
+                            if normalized:
+                                _catalog_for_master(target_site, "BUMBU", normalized, {"name": str(name), **(rules.get(name) or {})})
+                    else:
+                        _catalog_for_master(target_site, payload.data_type, record_key, {**payload.payload, "id": record_key})
+                except Exception as exc:
+                    audit_warnings.append({"site": target_site, "stage": "catalog", "message": str(exc)[:300]})
+
+            if event_id is not None:
+                try:
+                    _audit_finish(event_id, "COMMITTED")
+                except Exception as exc:
+                    audit_warnings.append({"site": target_site, "stage": "audit_finish", "message": str(exc)[:300]})
             writes.append({"site": target_site, "path": target.path, "eventId": event_id})
         except Exception as exc:
-            _audit_finish(event_id, "FAILED", str(exc)[:1000])
+            if event_id is not None:
+                try:
+                    _audit_finish(event_id, "FAILED", str(exc)[:1000])
+                except Exception:
+                    pass
             raise HTTPException(502, f"sinkronisasi master {target_site} gagal: {exc}") from exc
     return {
         "committed": True,
@@ -472,6 +513,7 @@ def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request)
         "targetSites": ["MAJA", "CEMPLANG"],
         "writes": writes,
         "dailyPlansChanged": False,
+        "auditWarnings": audit_warnings,
     }
 
 
