@@ -34,6 +34,49 @@ def _clean_nullable(value: str | None) -> str | None:
     return value or None
 
 
+def _update_active_lead_time(
+    vendor: str,
+    site: str | None,
+    category: str | None,
+    effective_from: date,
+    lead_time: int,
+    note: str,
+) -> dict[str, Any] | None:
+    """Last-resort write for legacy rows that cannot be split into a revision.
+
+    Some historical database rows predate the effective-dated editor and reject
+    a close+insert revision.  Updating that one active row is safe: its vendor,
+    site, category, payment settings and references stay unchanged.
+    """
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                with active_rule as (
+                  select id
+                  from vendor_rules
+                  where vendor_code=%s
+                    and site_code is not distinct from %s
+                    and category_code is not distinct from %s
+                    and effective_from <= %s
+                    and (effective_to is null or effective_to >= %s)
+                  order by effective_from desc, id desc
+                  limit 1
+                )
+                update vendor_rules vr
+                set lead_time_days_before_cooking=%s,
+                    notes=concat_ws(' | ', nullif(vr.notes,''), %s)
+                from active_rule
+                where vr.id=active_rule.id
+                returning vr.id,vr.effective_from
+                """,
+                (vendor, site, category, effective_from, effective_from, lead_time, note),
+            )
+            updated = cur.fetchone()
+            conn.commit()
+            return updated
+
+
 @router.post("/reference/vendor-rules/lead-time")
 def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
     """Create an effective-dated lead-time revision without rewriting history."""
@@ -142,6 +185,25 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
     except HTTPException:
         raise
     except psycopg.Error as exc:
-        # Keep an expected database conflict actionable in the browser instead
-        # of exposing a generic Internal Server Error.
-        raise HTTPException(409, "Lead time belum tersimpan karena rule vendor berubah bersamaan. Refresh lalu simpan ulang.") from exc
+        # A few legacy rows were created before the effective-dated editor. If
+        # their close+insert revision fails, retain every field and update the
+        # active rule itself rather than blocking the operational lead-time edit.
+        try:
+            updated = _update_active_lead_time(
+                vendor, site, category, effective_from,
+                payload.lead_time_days_before_cooking, payload.note,
+            )
+        except psycopg.Error as fallback_exc:
+            raise HTTPException(409, "Lead time belum tersimpan. Refresh halaman lalu coba sekali lagi.") from fallback_exc
+        if not updated:
+            raise HTTPException(404, "rule vendor aktif untuk kombinasi site/kategori ini tidak ditemukan") from exc
+        return {
+            "changed": True,
+            "mode": "active_rule_update",
+            "ruleId": updated["id"],
+            "vendorCode": vendor,
+            "siteCode": site,
+            "categoryCode": category,
+            "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
+            "effectiveFrom": updated["effective_from"],
+        }
