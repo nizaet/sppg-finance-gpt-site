@@ -4,6 +4,7 @@ import json
 from datetime import date, timedelta
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -39,93 +40,108 @@ def update_vendor_lead_time(payload: VendorLeadTimeUpdateIn) -> dict[str, Any]:
     require_db()
     vendor = payload.vendor_code.upper().strip()
     site = _clean_nullable(payload.site_code.upper() if payload.site_code else None)
-    category = _clean_nullable(payload.category_code)
+    category = _clean_nullable(payload.category_code.upper() if payload.category_code else None)
     effective_from = payload.effective_from or date.today()
 
-    with connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("select code,name from entities where code=%s and active=true", (vendor,))
-            if not cur.fetchone():
-                raise HTTPException(404, "vendor tidak ditemukan")
+    try:
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("select code,name from entities where code=%s and active=true", (vendor,))
+                if not cur.fetchone():
+                    raise HTTPException(404, "vendor tidak ditemukan")
 
-            cur.execute(
-                """
-                select * from vendor_rules
-                where vendor_code=%s
-                  and site_code is not distinct from %s
-                  and category_code is not distinct from %s
-                  and effective_from <= %s
-                  and (effective_to is null or effective_to >= %s)
-                order by effective_from desc, id desc
-                limit 1
-                """,
-                (vendor, site, category, effective_from, effective_from),
-            )
-            current = cur.fetchone()
-            if not current:
-                raise HTTPException(404, "rule vendor aktif untuk kombinasi site/kategori ini tidak ditemukan")
-
-            current_lead = current.get("lead_time_days_before_cooking")
-            if current_lead is not None and int(current_lead) == payload.lead_time_days_before_cooking:
-                return {
-                    "changed": False,
-                    "ruleId": current["id"],
-                    "vendorCode": vendor,
-                    "siteCode": site,
-                    "categoryCode": category,
-                    "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
-                    "effectiveFrom": current["effective_from"],
-                }
-
-            if current["effective_from"] == effective_from:
+                # Lock the active revision.  Double-clicks or two operators editing
+                # the same rule used to race between the close and insert queries,
+                # causing PostgreSQL's unique rule to bubble up as a 500.
                 cur.execute(
-                    """update vendor_rules
-                       set lead_time_days_before_cooking=%s,
-                           notes=concat_ws(' | ', nullif(notes,''), %s)
-                       where id=%s
-                       returning id,effective_from""",
-                    (payload.lead_time_days_before_cooking, payload.note, current["id"]),
+                    """
+                    select * from vendor_rules
+                    where vendor_code=%s
+                      and site_code is not distinct from %s
+                      and category_code is not distinct from %s
+                      and effective_from <= %s
+                      and (effective_to is null or effective_to >= %s)
+                    order by effective_from desc, id desc
+                    limit 1
+                    for update
+                    """,
+                    (vendor, site, category, effective_from, effective_from),
                 )
-                updated = cur.fetchone()
+                current = cur.fetchone()
+                if not current:
+                    raise HTTPException(404, "rule vendor aktif untuk kombinasi site/kategori ini tidak ditemukan")
+
+                current_lead = current.get("lead_time_days_before_cooking")
+                if current_lead is not None and int(current_lead) == payload.lead_time_days_before_cooking:
+                    return {
+                        "changed": False,
+                        "ruleId": current["id"],
+                        "vendorCode": vendor,
+                        "siteCode": site,
+                        "categoryCode": category,
+                        "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
+                        "effectiveFrom": current["effective_from"],
+                    }
+
+                if current["effective_from"] == effective_from:
+                    cur.execute(
+                        """update vendor_rules
+                           set lead_time_days_before_cooking=%s,
+                               notes=concat_ws(' | ', nullif(notes,''), %s)
+                           where id=%s
+                           returning id,effective_from""",
+                        (payload.lead_time_days_before_cooking, payload.note, current["id"]),
+                    )
+                    updated = cur.fetchone()
+                    conn.commit()
+                    return {
+                        "changed": True,
+                        "mode": "same_day_update",
+                        "ruleId": updated["id"],
+                        "vendorCode": vendor,
+                        "siteCode": site,
+                        "categoryCode": category,
+                        "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
+                        "effectiveFrom": updated["effective_from"],
+                    }
+
+                cur.execute("update vendor_rules set effective_to=%s where id=%s", (effective_from - timedelta(days=1), current["id"]))
+                cur.execute(
+                    """
+                    insert into vendor_rules(
+                      vendor_code,site_code,category_code,lead_time_days_before_cooking,
+                      payment_term_code,payment_term_payload,internal_reimbursement,
+                      intermediary_code,effective_from,effective_to,evidence_ref,notes
+                    ) values (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,null,%s,%s)
+                    on conflict(vendor_code,site_code,category_code,effective_from)
+                    do update set lead_time_days_before_cooking=excluded.lead_time_days_before_cooking,
+                                  notes=concat_ws(' | ', nullif(vendor_rules.notes,''), excluded.notes),
+                                  effective_to=null
+                    returning id,effective_from
+                    """,
+                    (
+                        vendor, site, category, payload.lead_time_days_before_cooking,
+                        current.get("payment_term_code"), json.dumps(current.get("payment_term_payload") or {}),
+                        bool(current.get("internal_reimbursement")), current.get("intermediary_code"),
+                        effective_from, current.get("evidence_ref"), payload.note,
+                    ),
+                )
+                created = cur.fetchone()
                 conn.commit()
                 return {
                     "changed": True,
-                    "mode": "same_day_update",
-                    "ruleId": updated["id"],
+                    "mode": "effective_dated_revision",
+                    "ruleId": created["id"],
                     "vendorCode": vendor,
                     "siteCode": site,
                     "categoryCode": category,
                     "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
-                    "effectiveFrom": updated["effective_from"],
+                    "effectiveFrom": created["effective_from"],
+                    "previousRuleId": current["id"],
                 }
-
-            cur.execute("update vendor_rules set effective_to=%s where id=%s", (effective_from - timedelta(days=1), current["id"]))
-            cur.execute(
-                """
-                insert into vendor_rules(
-                  vendor_code,site_code,category_code,lead_time_days_before_cooking,
-                  payment_term_code,payment_term_payload,internal_reimbursement,
-                  intermediary_code,effective_from,effective_to,evidence_ref,notes
-                ) values (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,null,%s,%s)
-                returning id,effective_from
-                """,
-                (
-                    vendor, site, category, payload.lead_time_days_before_cooking,
-                    current.get("payment_term_code"), json.dumps(current.get("payment_term_payload") or {}),
-                    bool(current.get("internal_reimbursement")), current.get("intermediary_code"),
-                    effective_from, current.get("evidence_ref"), payload.note,
-                ),
-            )
-            created = cur.fetchone()
-            conn.commit()
-            return {
-                "changed": True,
-                "mode": "effective_dated_revision",
-                "ruleId": created["id"],
-                "vendorCode": vendor,
-                "siteCode": site,
-                "categoryCode": category,
-                "leadTimeDaysBeforeCooking": payload.lead_time_days_before_cooking,
-                "effectiveFrom": created["effective_from"],
-                "previousRuleId": current["id"],
-            }
+    except HTTPException:
+        raise
+    except psycopg.Error as exc:
+        # Keep an expected database conflict actionable in the browser instead
+        # of exposing a generic Internal Server Error.
+        raise HTTPException(409, "Lead time belum tersimpan karena rule vendor berubah bersamaan. Refresh lalu simpan ulang.") from exc
