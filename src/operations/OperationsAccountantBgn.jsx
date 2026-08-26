@@ -87,9 +87,15 @@ export default function OperationsAccountantBgn(){
   const load=async()=>{
     setLoading(true); setError("");
     try{
-      const [a,b]=await Promise.all([operationsApi.getAccountantFlow(site),operationsApi.getBgnFlow(site)]);
-      setAccountant(a?.items||[]); setBgn(b?.items||[]); setCalendarRefresh((value)=>value+1);
-    }catch(e){setError(e.message||"Gagal mengambil alur akuntan/BGN");}
+      // Excel/Invoice and BGN are separate lanes. A temporary BGN failure must
+      // not make the ready Excel list look unavailable or block a new Excel.
+      const [accountantResult,bgnResult]=await Promise.allSettled([operationsApi.getAccountantFlow(site),operationsApi.getBgnFlow(site)]);
+      if(accountantResult.status==="fulfilled") setAccountant(accountantResult.value?.items||[]);
+      if(bgnResult.status==="fulfilled") setBgn(bgnResult.value?.items||[]);
+      if(accountantResult.status==="rejected") throw accountantResult.reason;
+      if(bgnResult.status==="rejected") setMessage("Daftar Excel tetap dimuat. Riwayat Maker/BGN sedang tidak tersedia; silakan refresh lagi nanti.");
+      setCalendarRefresh((value)=>value+1);
+    }catch(e){setError(e.message||"Gagal mengambil daftar Excel akuntan");}
     finally{setLoading(false);}
   };
   useEffect(()=>{load();},[site]);
