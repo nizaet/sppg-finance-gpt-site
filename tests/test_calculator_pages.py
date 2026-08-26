@@ -43,6 +43,10 @@ def test_calculator_pages_use_existing_firestore_targets(monkeypatch):
     assert "Tema Terang" in maja
     assert 'html[data-app-theme="dark"] body' in cemplang
 
+    shopping_price_handler = maja.split("async function handleSaveShoppingItemPrice(e)", 1)[1].split("async function", 1)[0]
+    assert 'window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key])' in shopping_price_handler
+    assert "await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, 'priceList'), { [key]: masterPriceList[key] }, { merge: true });" not in shopping_price_handler
+
 
 def test_auth_config_defaults_to_internal_calculator_routes(monkeypatch):
     monkeypatch.setenv("SPPG_AUTH_SECRET", "test-secret")

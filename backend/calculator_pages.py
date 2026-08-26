@@ -346,7 +346,10 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         ),
         (
             '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [key]: masterPriceList[key] }, { merge: true });',
-            '                await setDoc(doc(db, `artifacts/${appId}/public/data/masterData`, \'priceList\'), { [key]: masterPriceList[key] }, { merge: true });\n                await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key]);',
+            # The price-save icon in Daftar Belanja must not depend on browser
+            # Firestore write permissions.  It now writes through the authenticated
+            # Railway bridge, which saves both calculator masters server-side.
+            '                await window.__syncSharedCalculatorMaster("PRICES", "UPSERT", key, masterPriceList[key]);',
         ),
         (
             '                await setDoc(doc(db, `artifacts/${appId}/public/data/customGramasi`, id), { id, name, kecil, besar });',

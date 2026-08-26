@@ -6,7 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from backend.accountant_bgn_flow_api import accountant_flow, bgn_flow
 from backend.db import connection, database_ready
+from backend.google_services import SITE_TARGETS, firestore_client
 from backend.po_reminder_v3_api import po_reminders_v3
 
 router = APIRouter(tags=["control-tower"])
@@ -184,6 +186,116 @@ def _build_info() -> dict[str, Any]:
     }
 
 
+def _flow_rows(loader: Any) -> list[dict[str, Any]]:
+    """Use the schema-tolerant Accountant/BGN readers as a Control Tower fallback.
+
+    These readers already support the older database variants used by the live
+    application.  Control Tower previously queried newer columns directly,
+    which left its Accountant and Maker lanes empty even while the same records
+    were visible on their own pages.
+    """
+    try:
+        result = loader()
+        return list(result.get("items") or []) if isinstance(result, dict) else []
+    except Exception:
+        return []
+
+
+def _append_accountant_flow_fallback(out: dict[str, Any], rows: list[dict[str, Any]], site: str) -> None:
+    if out["lanes"]["accountant"]:
+        return
+    for row in rows:
+        if str(row.get("site") or "").upper() != site:
+            continue
+        invoice_id = row.get("invoice_id")
+        maker_id = row.get("maker_id")
+        maker_status = str(row.get("maker_status") or "").upper()
+        if invoice_id:
+            paid = maker_status == "PAID"
+            status = "PAID" if paid else "PENDING APPROVAL" if maker_id else "BELUM MAKER"
+            severity = "success" if paid else "warning" if maker_id else "info"
+            title = row.get("invoice_number") or f"Invoice #{invoice_id}"
+            subtitle = f"BAHAN_BAKU · {_money(row.get('invoice_amount'))} · {row.get('received_at') or '-'}"
+        else:
+            title = f"{row.get('accountant_code') or 'Akuntan'} · {row.get('source_distribution_date') or '-'}"
+            subtitle = f"Excel {row.get('submission_status') or row.get('status') or 'READY'} · invoice belum diterima"
+            status, severity = "MENUNGGU INVOICE", "info"
+        out["lanes"]["accountant"].append({
+            "id": f"accountant-{row.get('submission_id') or invoice_id}", "title": title,
+            "subtitle": subtitle, "status": status, "severity": severity,
+        })
+        if len(out["lanes"]["accountant"]) >= 8:
+            break
+
+
+def _append_bgn_flow_fallback(out: dict[str, Any], rows: list[dict[str, Any]], site: str) -> None:
+    if out["lanes"]["bgn"]:
+        return
+    for row in rows:
+        if str(row.get("site") or "").upper() != site:
+            continue
+        approval = str(row.get("approval_status") or "PENDING").upper()
+        paid = bool(row.get("receipt_id")) or str(row.get("maker_status") or "").upper() == "PAID"
+        if paid:
+            status, severity = "PAID", "success"
+        elif approval == "APPROVED":
+            status, severity = "MENUNGGU DANA", "info"
+        elif approval == "REJECTED":
+            status, severity = "DITOLAK", "warning"
+        else:
+            status, severity = "PENDING APPROVAL", "warning"
+        out["lanes"]["bgn"].append({
+            "id": f"maker-{row.get('maker_id')}",
+            "title": row.get("reference_number") or f"Maker #{row.get('maker_id')}",
+            "subtitle": f"{_money(row.get('maker_amount'))} · approver {row.get('approver_code') or '-'} · {approval}",
+            "status": status, "severity": severity,
+        })
+        if len(out["lanes"]["bgn"]) >= 8:
+            break
+
+
+def _append_firestore_finance_fallback(out: dict[str, Any], site: str) -> None:
+    """Read the existing Finance ledger when it has not yet been backfilled.
+
+    The original Finance pages read these Firestore records directly.  Showing
+    an empty payment lane until a separate migration is run is misleading, so
+    Control Tower reads them as a non-blocking fallback.
+    """
+    if out["lanes"]["payments"]:
+        return
+    try:
+        target = SITE_TARGETS[site]
+        collection = (
+            firestore_client(target["database_id"])
+            .collection("gpt_sites").document(target["site_id"])
+            .collection("ledger").document("meta").collection("transactions")
+        )
+        rows = []
+        for snapshot in collection.stream():
+            item = snapshot.to_dict() or {}
+            item["_id"] = snapshot.id
+            rows.append(item)
+        rows.sort(key=lambda row: str(row.get("date") or row.get("transaction_date") or ""), reverse=True)
+        for row in rows[:8]:
+            transaction_type = str(row.get("type") or row.get("transaction_type") or "").lower()
+            status = str(row.get("paymentStatus") or row.get("payment_status") or "paid").upper()
+            amount = row.get("amount") or 0
+            title = str(row.get("desc") or row.get("description") or "Transaksi Finance")
+            category = str(row.get("category") or "-")
+            tx_date = str(row.get("date") or row.get("transaction_date") or "-")
+            out["lanes"]["payments"].append({
+                "id": f"firestore-finance-{row['_id']}",
+                "title": title,
+                "subtitle": f"{category} · {_money(amount)} · {tx_date}",
+                "status": "MASUK" if transaction_type in {"income", "masuk", "pemasukan"} else status,
+                "severity": "success" if transaction_type in {"income", "masuk", "pemasukan"} or status == "PAID" else "warning",
+            })
+    except Exception:
+        # The database/PO/receipt lanes remain usable even when Firestore is
+        # temporarily unavailable.
+        return
+
+
 @router.get("/control-tower-v2")
 def control_tower_v2(
     target_date: date = Query(alias="date"),
@@ -205,6 +317,9 @@ def control_tower_v2(
             "buildInfo": build_info,
             "sites": sites,
         }
+
+    accountant_rows = _flow_rows(accountant_flow)
+    bgn_rows = _flow_rows(bgn_flow)
 
     # Resolve procurement before the broad dashboard query so it uses exactly
     # the same v3 compatibility/override semantics as the PO reminder screen.
@@ -380,6 +495,7 @@ def control_tower_v2(
                                 "subtitle": f"{row['category']} · {_money(row['amount'])} · {row['transaction_date']}",
                                 "status": status, "severity": "success" if status == "PAID" else "warning",
                             })
+                    _append_firestore_finance_fallback(out, db_site)
 
                     cur.execute(
                         """select i.id,i.invoice_number,i.invoice_amount,i.invoice_category,i.invoice_date,
@@ -445,6 +561,9 @@ def control_tower_v2(
                             "status": badge,
                             "severity": severity,
                         })
+
+                    _append_accountant_flow_fallback(out, accountant_rows, db_site)
+                    _append_bgn_flow_fallback(out, bgn_rows, db_site)
 
         return {
             "date": target_date.isoformat(),
