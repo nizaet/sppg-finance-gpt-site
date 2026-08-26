@@ -158,6 +158,13 @@ body {
   align-items: center;
   flex-wrap: wrap;
 }
+.ops-toggle-active {
+  background: #2563eb !important;
+  color: #fff !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.28);
+}
+details.ops-module > summary { list-style: none; }
+details.ops-module > summary::-webkit-details-marker { display: none; }
 .ops-inline-controls select,
 .ops-inline-controls input,
 .ops-form-grid select,
@@ -175,6 +182,16 @@ body {
 .ops-form-grid select:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+@media (max-width: 720px) {
+  .ops-module { padding: 13px; }
+  .ops-module-header { display: grid; gap: 10px; }
+  .ops-module-header h3 { font-size: 19px; }
+  .ops-inline-controls { width: 100%; }
+  .ops-inline-controls select { flex: 1 1 145px; width: auto; }
+  .ops-inline-controls button { flex: 1 1 auto; justify-content: center; }
+  .ops-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ops-table { min-width: 860px; }
 }
 .ops-form-grid {
   display: grid;
