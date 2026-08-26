@@ -1,12 +1,16 @@
+from types import SimpleNamespace
+
 from backend.calculator_data_api import (
     CalculatorImportIn,
     CalculatorImportItem,
     PlanPreviewItem,
+    SharedMasterSyncIn,
     _plan_preview_rows,
     _record_key,
     _same_content,
     preview_or_commit_calculator_data,
     router,
+    sync_shared_calculator_master,
 )
 
 
@@ -86,3 +90,60 @@ def test_master_import_preview_and_commit_always_target_both_calculators(monkeyp
     assert seen == ["MAJA", "CEMPLANG"]
     assert committed["targetSites"] == ["MAJA", "CEMPLANG"]
     assert committed["dailyPlansChanged"] is False
+
+
+class _MasterDocument:
+    def __init__(self, path):
+        self.path = path
+        self.saved = []
+
+    def get(self):
+        return SimpleNamespace(exists=False, to_dict=lambda: None)
+
+    def set(self, value, merge=False):
+        self.saved.append((value, merge))
+
+
+class _MasterCollection:
+    def __init__(self, path):
+        self.path = path
+        self.documents = {}
+
+    def document(self, name):
+        return self.documents.setdefault(name, _MasterDocument(f"{self.path}/{name}"))
+
+
+class _MasterRoot:
+    def __init__(self, site):
+        self.site = site
+        self.collections = {}
+
+    def collection(self, name):
+        return self.collections.setdefault(name, _MasterCollection(f"{self.site}/{name}"))
+
+
+def test_live_price_save_uses_firestore_even_when_audit_database_is_unavailable(monkeypatch):
+    roots = {site: _MasterRoot(site) for site in ("MAJA", "CEMPLANG")}
+    monkeypatch.setattr("backend.calculator_data_api.database_ready", lambda: False)
+    monkeypatch.setattr(
+        "backend.calculator_data_api._data_root",
+        lambda site: (None, None, roots[site]),
+    )
+
+    result = sync_shared_calculator_master(
+        SharedMasterSyncIn(
+            source_site="MAJA",
+            data_type="PRICES",
+            operation="UPSERT",
+            record_key="tempe",
+            payload={"price": 6000, "unit": "papan"},
+        ),
+        SimpleNamespace(state=SimpleNamespace(sppg_role="MAJA")),
+    )
+
+    assert result["committed"] is True
+    assert [row["site"] for row in result["writes"]] == ["MAJA", "CEMPLANG"]
+    assert len(result["auditWarnings"]) == 2
+    for root in roots.values():
+        price_list = root.collection("masterData").document("priceList")
+        assert price_list.saved == [({"tempe": {"price": 6000, "unit": "papan"}}, True)]

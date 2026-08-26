@@ -1,24 +1,10 @@
 import { readSessionToken } from "./auth/session.js";
 
 const BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
-const FILENAME_KEY = "sppg.accountant.excelFilename";
 const poStateByCode = new Map();
 const poStateById = new Map();
-let desiredFilename = "";
 let decorateQueued = false;
 let installed = false;
-
-function loadFilename() {
-  try { desiredFilename = sessionStorage.getItem(FILENAME_KEY) || ""; } catch { desiredFilename = ""; }
-}
-
-function saveFilename(value) {
-  desiredFilename = String(value || "").trim();
-  try {
-    if (desiredFilename) sessionStorage.setItem(FILENAME_KEY, desiredFilename);
-    else sessionStorage.removeItem(FILENAME_KEY);
-  } catch {}
-}
 
 function apiPath(value) {
   try {
@@ -125,60 +111,10 @@ function decorateCalendar() {
   });
 }
 
-function accountantSection() {
-  return Array.from(document.querySelectorAll("section.ops-module")).find((section) => {
-    const heading = section.querySelector("h3");
-    return String(heading?.textContent || "").includes("Excel Belanja per Perencanaan");
-  }) || null;
-}
-
-function syncFilenameInput() {
-  const input = document.querySelector("input[data-runtime-excel-filename]");
-  if (input && input.value !== desiredFilename) input.value = desiredFilename;
-}
-
-function ensureFilenameControl() {
-  const section = accountantSection();
-  if (!section) return;
-  const form = section.querySelector(".ops-form-grid");
-  if (!form || form.querySelector("[data-runtime-excel-filename-wrap]")) {
-    syncFilenameInput();
-    return;
-  }
-
-  const label = document.createElement("label");
-  label.dataset.runtimeExcelFilenameWrap = "v1";
-  label.append(document.createTextNode("Nama file Excel"));
-  const input = document.createElement("input");
-  input.dataset.runtimeExcelFilename = "v1";
-  input.placeholder = "contoh: Belanja Maja 19 Agustus 2026.xlsx";
-  input.value = desiredFilename;
-  input.addEventListener("input", () => saveFilename(input.value));
-  label.appendChild(input);
-  const note = document.createElement("span");
-  note.className = "ops-muted";
-  note.textContent = "Boleh tanpa .xlsx. Nama ini dipakai saat Preview, Download, dan arsip Drive.";
-  label.appendChild(note);
-
-  const actionLabel = Array.from(form.children).find((node) => String(node.textContent || "").trim().startsWith("Aksi"));
-  if (actionLabel) form.insertBefore(label, actionLabel);
-  else form.appendChild(label);
-
-  section.addEventListener("change", (event) => {
-    const target = event.target;
-    if (target === input) return;
-    if (target?.matches?.("select,input[type='date']")) {
-      saveFilename("");
-      input.value = "";
-    }
-  }, { capture: true });
-}
-
 function decorate() {
   decorateQueued = false;
   decoratePurchaseOrderList();
   decorateCalendar();
-  ensureFilenameControl();
 }
 
 function queueDecorate() {
@@ -192,21 +128,6 @@ function modifiedRequest(input, init = {}) {
   let nextInit = init;
   const path = apiPath(input);
 
-  if (path === "/v1/accountant-excel/from-selected-plan" && String(init?.method || "GET").toUpperCase() === "POST" && desiredFilename) {
-    try {
-      const body = JSON.parse(String(init.body || "{}"));
-      body.custom_filename = desiredFilename;
-      nextInit = { ...init, body: JSON.stringify(body) };
-    } catch {}
-  }
-
-  if (path === "/v1/accountant-excel/download-selected-plan" && desiredFilename && (typeof input === "string" || input instanceof URL)) {
-    try {
-      const url = new URL(String(input), window.location.origin);
-      url.searchParams.set("customFilename", desiredFilename);
-      nextInput = url.toString();
-    } catch {}
-  }
   return [nextInput, nextInit, path];
 }
 
@@ -226,7 +147,6 @@ async function refreshPoState(site = "") {
 export function installRuntimeUiPolish() {
   if (installed || typeof window === "undefined") return;
   installed = true;
-  loadFilename();
 
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {
@@ -237,14 +157,6 @@ export function installRuntimeUiPolish() {
       response.clone().json().then(rememberPoPayload).catch(() => {});
     }
 
-    if (path === "/v1/accountant-excel/from-selected-plan" && response.ok) {
-      response.clone().json().then((data) => {
-        if (!desiredFilename && data?.filename) {
-          saveFilename(data.filename);
-          syncFilenameInput();
-        }
-      }).catch(() => {});
-    }
     return response;
   };
 
