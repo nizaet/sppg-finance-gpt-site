@@ -100,13 +100,12 @@ def _is_tofu_tempe_line(value: Any) -> bool:
     return family in {"TOFU", "TEMPE"} or any(token in text.lower() for token in ("tahu", "tempe"))
 
 
-def _fix_maja_koperasi_tofu_tempe_h1(payload: dict[str, Any], target: date) -> dict[str, Any]:
-    """Keep MAJA KOPERASI tofu/tempe reminders at H-1 from cooking.
+def _fix_maja_koperasi_tofu_h1(payload: dict[str, Any], target: date) -> dict[str, Any]:
+    """Keep MAJA KOPERASI tofu reminders at H-1 from cooking.
 
-    MAJA tahu/tempe via KOPERASI/Mungki is an H-1 operational order. A broader
-    KOPERASI/dry-goods vendor rule can otherwise pull Tahu Putih into the red
-    overdue bucket several days early. This compatibility pass changes only the
-    reminder row timing; it does not mutate vendor rules, planning, PO, or stock.
+    Tempe has a dedicated effective-dated rule and must not be overwritten here.
+    This compatibility pass only prevents a broad Koperasi/dry-goods rule from
+    pulling Tahu Putih into the queue too early.
     """
     items = payload.get("items") or []
     if not items:
@@ -121,7 +120,7 @@ def _fix_maja_koperasi_tofu_tempe_h1(payload: dict[str, Any], target: date) -> d
         names = [*(item.get("item_names") or [])]
         for detail in item.get("requirement_details") or []:
             names.extend(detail.get("item_names") or [])
-        if site == "MAJA" and vendor == "KOPERASI" and any(_is_tofu_tempe_line(name) for name in names):
+        if site == "MAJA" and vendor == "KOPERASI" and any(item_family(name) == "TOFU" for name in names):
             cook = _as_date(item.get("cooking_date"))
             if cook is None:
                 cooks = [_as_date(value) for value in (item.get("cooking_dates") or [])]
@@ -132,7 +131,7 @@ def _fix_maja_koperasi_tofu_tempe_h1(payload: dict[str, Any], target: date) -> d
                 if old_po_date != correct_po_date:
                     item["po_date"] = correct_po_date
                     item["lead_time_days_before_cooking"] = 1
-                    item["reminder_timing_override"] = "MAJA_KOPERASI_TAHU_TEMPE_H1"
+                    item["reminder_timing_override"] = "MAJA_KOPERASI_TAHU_H1"
                     if correct_po_date < target:
                         item["reminder_status"] = "OVERDUE"
                     elif correct_po_date == target:
@@ -242,9 +241,9 @@ def po_reminders_v3(
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
-    # Apply the MAJA KOPERASI tahu/tempe H-1 timing last so no compatibility
-    # reconciliation step can overwrite it back to a broader vendor lead time.
-    payload = _fix_maja_koperasi_tofu_tempe_h1(payload, target)
+    # Apply the MAJA KOPERASI tahu H-1 timing last. Tempe keeps its own
+    # effective-dated rule from vendor_rules.
+    payload = _fix_maja_koperasi_tofu_h1(payload, target)
 
     payload["requestedHorizonDays"] = horizon_days
     payload["effectiveHorizonDays"] = effective_horizon_days

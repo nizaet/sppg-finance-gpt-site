@@ -36,6 +36,7 @@ MIGRATIONS = [
     ROOT / "schema" / "accountant_direct_invoice_v034.sql",
     ROOT / "schema" / "accountant_invoice_calendar_v035.sql",
     ROOT / "schema" / "maker_approval_is_paid_v036.sql",
+    ROOT / "schema" / "po_reminder_tempe_maja_h2_v037.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
 ]
 

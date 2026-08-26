@@ -22,10 +22,6 @@ MAX_LEAD_DAYS = 30
 PROJECTION_WORKERS = 4
 EPSILON = 0.0001
 
-# Operator-confirmed procurement rule. This is intentionally item-specific and
-# must not be inherited by Tahu even though both are fulfilled via Koperasi.
-MAJA_TEMPE_LEAD_DAYS = 4
-
 
 def _stock_key(name: Any, unit: Any) -> tuple[str, str]:
     typed = stock_type(name)
@@ -130,14 +126,13 @@ def _resolve_procurement_rule(
 
     if family == "TEMPE" and site == "MAJA":
         vendor = "KOPERASI"
-        return vendor, {
-            "vendor_code": vendor,
-            "vendor_name": vendor_names.get(vendor, "Koperasi / Mungki"),
-            "site_code": "MAJA",
-            "category_code": "TEMPE",
-            "lead_time_days_before_cooking": MAJA_TEMPE_LEAD_DAYS,
-            "rule_source": "OPERATOR_CONFIRMED_ITEM_OVERRIDE",
-        }, "TEMPE"
+        # Tempe has its own effective-dated rule.  It must never inherit Tahu,
+        # dry-goods, or a hidden hard-coded lead time.
+        rule = _rule_for_item(rules, vendor, site, "TEMPE", row.get("item_name"), cook)
+        if rule:
+            rule = dict(rule)
+            rule["vendor_name"] = rule.get("vendor_name") or vendor_names.get(vendor, "Koperasi / Mungki")
+        return vendor, rule, "TEMPE"
 
     if family == "TEMPE" and site == "CEMPLANG":
         vendor = "KOPERASI"
