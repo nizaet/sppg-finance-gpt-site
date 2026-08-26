@@ -50,18 +50,18 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     setProofBusy(true); reportError(""); setProofPreview(null);
     try {
       const data = await accountantApi.previewApprovalEvidence({ file: proofFile, site: proofSite });
-      setProofPreview(data); reportMessage(`${data.transactionCount} transaksi terbaca; ${data.willApproveCount} Maker cocok dan siap ditandai APPROVED.`);
+      setProofPreview(data); reportMessage(`${data.transactionCount} transaksi terbaca; ${data.willApproveCount} Maker cocok dan siap ditandai PAID.`);
     } catch (e) { reportError(e.message || "Gagal membaca bukti approval"); }
     finally { setProofBusy(false); }
   };
 
   const saveProof = async () => {
     if (!proofPreview?.willApproveCount) return reportError("Tidak ada transaksi SUCCESS yang cocok secara aman.");
-    if (!window.confirm(`Tandai ${proofPreview.willApproveCount} Maker sebagai APPROVED dan tautkan satu file bukti yang sama?`)) return;
+    if (!window.confirm(`Tandai ${proofPreview.willApproveCount} Maker sebagai PAID dan tautkan satu file bukti yang sama?`)) return;
     setProofBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: proofSite, parsedPayload: proofPreview.raw });
-      reportMessage(`${result.approvedCount} Maker ditandai APPROVED. File bukti hanya diupload sekali dan linknya dipakai bersama.`);
+      reportMessage(`${result.paidCount || result.approvedCount} Maker ditandai PAID. File bukti hanya diupload sekali dan linknya dipakai bersama.`);
       setProofFile(null); setProofPreview(null); await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyimpan bukti approval"); }
     finally { setProofBusy(false); }
@@ -102,9 +102,9 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
         <label>Aksi<button type="button" onClick={readProof} disabled={proofBusy||!proofFile}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button></label>
       </div>
       {proofPreview&&<div className="ops-parse-result">
-        <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan diapprove</strong></div>
+        <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
-        <div className="ops-row-actions"><button type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Approve {proofPreview.willApproveCount} Maker</button></div>
+        <div className="ops-row-actions"><button type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Tandai PAID {proofPreview.willApproveCount} Maker</button></div>
       </div>}
     </section>
   </>;

@@ -305,6 +305,31 @@ def control_tower_v2(
                             "matchConfidence": row["match_confidence"],
                         })
 
+                    # The reminder engine is deliberately strict and can be empty
+                    # when there is no active Kalkulator plan.  The tower still
+                    # needs to show committed PO work already in the application.
+                    if not out["lanes"]["procurement"]:
+                        cur.execute(
+                            """select po.id,po.po_code,po.vendor_code,po.status,po.sent_at,
+                                      pc.distribution_date,count(poi.id) as item_count
+                               from purchase_orders po
+                               left join production_cycles pc on pc.id=po.production_cycle_id
+                               left join purchase_order_items poi on poi.purchase_order_id=po.id
+                               where upper(coalesce(po.site,''))=%s
+                               group by po.id,pc.distribution_date
+                               order by coalesce(pc.distribution_date,po.created_at::date) desc,po.id desc
+                               limit 8""",
+                            (db_site,),
+                        )
+                        for row in cur.fetchall():
+                            status = str(row["status"] or "DRAFT").upper()
+                            done = status in {"SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED"}
+                            out["lanes"]["procurement"].append({
+                                "id": row["id"], "title": f"{row['vendor_code']} · {row['po_code']}",
+                                "subtitle": f"{row['item_count']} item · distribusi {row['distribution_date'] or '-'}",
+                                "status": status, "severity": "success" if done else "info",
+                            })
+
                     cur.execute(
                         """select count(*) as n from vendor_invoices vi
                            where upper(coalesce(vi.site,''))=%s
@@ -337,26 +362,56 @@ def control_tower_v2(
                             "severity": "warning" if is_due else "info",
                         })
 
+                    # Many existing payments were entered through the Finance
+                    # screen/GPTS before a vendor payable existed. Show them here
+                    # as a fallback instead of presenting a misleading empty lane.
+                    if not out["lanes"]["payments"]:
+                        cur.execute(
+                            """select id,description,category,amount,payment_status,transaction_date
+                               from finance_transactions
+                               where upper(coalesce(site,''))=%s and transaction_type='expense'
+                               order by transaction_date desc,id desc limit 8""",
+                            (db_site,),
+                        )
+                        for row in cur.fetchall():
+                            status = str(row["payment_status"] or "unpaid").upper()
+                            out["lanes"]["payments"].append({
+                                "id": f"finance-{row['id']}", "title": row["description"],
+                                "subtitle": f"{row['category']} · {_money(row['amount'])} · {row['transaction_date']}",
+                                "status": status, "severity": "success" if status == "PAID" else "warning",
+                            })
+
                     cur.execute(
-                        """select s.id,s.accountant_code,s.sent_at,s.status,pc.distribution_date
-                           from accountant_submissions s
-                           left join production_cycles pc on pc.id=s.production_cycle_id
-                           where upper(coalesce(s.site,''))=%s
-                             and not exists (
-                               select 1 from accountant_invoices i where i.accountant_submission_id=s.id
-                             )
-                           order by s.created_at desc limit 8""",
+                        """select i.id,i.invoice_number,i.invoice_amount,i.invoice_category,i.invoice_date,
+                                  s.accountant_code,m.id as maker_id,m.status as maker_status,
+                                  a.status as approval_status,
+                                  exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as has_receipt
+                           from accountant_invoices i
+                           left join accountant_submissions s on s.id=i.accountant_submission_id
+                           left join lateral (select x.* from bgn_makers x where x.accountant_invoice_id=i.id order by x.id desc limit 1) m on true
+                           left join lateral (select x.* from bgn_approvals x where x.bgn_maker_id=m.id order by x.id desc limit 1) a on true
+                           where upper(coalesce(i.site,s.site,''))=%s
+                           order by i.invoice_date desc nulls last,i.id desc limit 8""",
                         (db_site,),
                     )
                     for row in cur.fetchall():
-                        cycle = row["distribution_date"].isoformat() if row["distribution_date"] else "tanpa cycle"
+                        maker_status = str(row["maker_status"] or "").upper()
+                        paid = bool(row["has_receipt"]) or maker_status == "PAID"
+                        badge = "PAID" if paid else "PENDING APPROVAL" if row["maker_id"] else "BELUM MAKER"
                         out["lanes"]["accountant"].append({
-                            "id": row["id"],
-                            "title": f"{row['accountant_code']} · {cycle}",
-                            "subtitle": f"Excel/submission {row['status']} · invoice belum diterima",
-                            "status": "MENUNGGU INVOICE",
-                            "severity": "info",
+                            "id": row["id"], "title": row["invoice_number"] or f"Invoice #{row['id']}",
+                            "subtitle": f"{row['invoice_category'] or 'OPERASIONAL_LAIN'} · {_money(row['invoice_amount'])} · {row['invoice_date'] or '-'}",
+                            "status": badge, "severity": "success" if paid else "warning" if row["maker_id"] else "info",
                         })
+
+                    if not out["lanes"]["accountant"]:
+                        cur.execute(
+                            """select s.id,s.accountant_code,s.sent_at,s.status,pc.distribution_date
+                               from accountant_submissions s left join production_cycles pc on pc.id=s.production_cycle_id
+                               where upper(coalesce(s.site,''))=%s and not exists (select 1 from accountant_invoices i where i.accountant_submission_id=s.id)
+                               order by s.created_at desc limit 8""", (db_site,))
+                        for row in cur.fetchall():
+                            out["lanes"]["accountant"].append({"id": row["id"], "title": f"{row['accountant_code']} · {row['distribution_date'] or '-'}", "subtitle": f"Excel/submission {row['status']} · invoice belum diterima", "status":"MENUNGGU INVOICE", "severity":"info"})
 
                     cur.execute(
                         """select m.id,m.reference_number,m.amount,m.status as maker_status,
@@ -368,15 +423,16 @@ def control_tower_v2(
                              where x.bgn_maker_id=m.id order by x.created_at desc limit 1
                            ) a on true
                            where upper(coalesce(m.site,''))=%s
-                             and (coalesce(upper(a.status),'PENDING') <> 'APPROVED'
-                                  or not exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id))
                            order by m.created_at desc limit 8""",
                         (db_site,),
                     )
                     for row in cur.fetchall():
                         approval = str(row["approval_status"] or "BELUM DIMINTA")
                         has_receipt = bool(row["has_receipt"])
-                        if approval == "APPROVED" and not has_receipt:
+                        is_paid = has_receipt or str(row["maker_status"] or "").upper() == "PAID"
+                        if is_paid:
+                            badge, severity = "PAID", "success"
+                        elif approval == "APPROVED":
                             badge, severity = "MENUNGGU DANA", "info"
                         elif approval == "REJECTED":
                             badge, severity = "DITOLAK", "warning"

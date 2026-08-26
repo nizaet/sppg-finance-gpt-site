@@ -279,10 +279,10 @@ export default function OperationsAccountantBgn(){
       </div>}
     </section>
 
-    <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">ACCOUNTANT</span><h3>Excel → Invoice Akuntan → Maker</h3><p>Jika ada kesalahan sebelum approval final/penerimaan dana, gunakan Hapus Alur. Penghapusan dilakukan berantai Maker → Approval pending → Invoice → Excel submission.</p></div><div className="ops-inline-controls"><select value={site} onChange={e=>setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div></div>
+    <details className="ops-module">
+      <summary className="ops-module-header" style={{cursor:"pointer"}}><div><span className="ops-kicker">EXCEL BELUM BERBALAS</span><h3>Pengiriman Akuntan yang Masih Perlu Invoice</h3><p>Daftar invoice, Maker, Approval dan Paid ada di modul Kalender / List di atas. Buka bagian ini hanya untuk Excel yang belum dibalas invoice.</p></div></summary>
       {error&&<div className="ops-error">{error}</div>}{message&&<div className="ops-success">{message}</div>}
-      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Perencanaan</th><th>Akuntan</th><th>Excel</th><th>Status</th><th>Invoice</th><th>File Invoice</th><th>Maker</th><th>Aksi</th></tr></thead><tbody>{accountant.map(x=>{
+      <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Perencanaan</th><th>Akuntan</th><th>Excel</th><th>Status</th><th>Invoice</th><th>File Invoice</th><th>Maker</th><th>Aksi</th></tr></thead><tbody>{accountant.filter((x)=>!x.invoice_id).map(x=>{
         const linkedMaker = x.invoice_id != null ? makerByInvoice.get(String(x.invoice_id)) : null;
         const existingMaker = x.maker_id
           ? { ...linkedMaker, maker_id: x.maker_id, maker_status: x.maker_status || linkedMaker?.maker_status }
@@ -300,11 +300,11 @@ export default function OperationsAccountantBgn(){
           {existingMaker&&makerState==="pending"&&<button type="button" className="danger" onClick={()=>cancelMaker({ ...x, ...existingMaker })} disabled={saving===`cancel-maker-${existingMaker.maker_id}`}><Trash2 size={14}/> Batalkan Maker</button>}
           <button type="button" className="danger" onClick={()=>deleteFlow(x)} disabled={saving===`delete-${x.submission_id}`} title="Hapus alur yang salah"><Trash2 size={14}/> Hapus Alur</button>
         </div></td></tr>;
-      })}{!loading&&accountant.length===0&&<tr><td colSpan="9" className="ops-empty-cell">Belum ada submission akuntan.</td></tr>}</tbody></table></div>
-    </section>
+      })}{!loading&&!accountant.some((x)=>!x.invoice_id)&&<tr><td colSpan="9" className="ops-empty-cell">Semua submission pada filter ini sudah memiliki invoice atau belum ada submission.</td></tr>}</tbody></table></div>
+    </details>
 
-    <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">BGN</span><h3>Maker → Approval / Paid</h3><p>Di alur BGN, klik Sudah Approve berarti transaksi sudah PAID. Bukti approval bersifat opsional dan dapat diunggah dari kalender invoice; satu file dapat ditautkan ke beberapa Maker yang cocok.</p></div><div className="ops-row-actions"><button type="button" onClick={async()=>{await copyText(pendingApprovalMessage(bgn));setMessage("Rekap pending approval sudah disalin.");}}><ClipboardCopy size={14}/> Copy Pending ({pendingBgn.length})</button><button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(pendingApprovalMessage(bgn))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp Pending</button></div></div>
+    <details className="ops-module">
+      <summary className="ops-module-header" style={{cursor:"pointer"}}><div><span className="ops-kicker">BGN</span><h3>Riwayat Maker / Approval / Paid</h3><p>Pengelolaan harian dilakukan pada Kalender / List agar semua kategori ada dalam satu tempat.</p></div></summary><div className="ops-row-actions" style={{margin:"0 0 12px"}}><button type="button" onClick={async()=>{await copyText(pendingApprovalMessage(bgn));setMessage("Rekap pending approval sudah disalin.");}}><ClipboardCopy size={14}/> Copy Pending ({pendingBgn.length})</button><button type="button" onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(pendingApprovalMessage(bgn))}`,"_blank","noopener,noreferrer")}><MessageCircle size={14}/> WhatsApp Pending</button></div>
       <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Site</th><th>Maker</th><th>Invoice</th><th>Referensi</th><th>Nilai</th><th>Maker Status</th><th>Approver</th><th>Approval</th><th>Approved</th><th>Pembayaran</th><th>Bukti</th><th>Aksi</th></tr></thead><tbody>{bgn.map(x=>{
         const approved=String(x.approval_status||"").toUpperCase()==="APPROVED";
         const paid=Boolean(x.receipt_id)||String(x.maker_status||"").toUpperCase()==="PAID";
@@ -314,6 +314,6 @@ export default function OperationsAccountantBgn(){
           {paid&&<span className="ops-success" style={{padding:"4px 8px"}}>✓ Selesai</span>}
         </div></td></tr>;
       })}{!loading&&bgn.length===0&&<tr><td colSpan="12" className="ops-empty-cell">Belum ada maker BGN.</td></tr>}</tbody></table></div>
-    </section>
+    </details>
   </div>;
 }
