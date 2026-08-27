@@ -136,11 +136,14 @@ def build_backup() -> tuple[bytes, dict[str, Any], str]:
     local_stamp = created_at.astimezone(JAKARTA)
     batch = local_stamp.strftime("%Y-%m-%d_%H%M%S-WIB")
 
-    files: dict[str, bytes] = {
-        "calculator/maja.json": _json_bytes(export_calculator_site("MAJA")),
-        "calculator/cemplang.json": _json_bytes(export_calculator_site("CEMPLANG")),
-        "postgres/public.json": _json_bytes(export_postgres()),
-    }
+    files: dict[str, bytes] = {}
+    print(json.dumps({"status": "running", "stage": "firestore_maja"}), flush=True)
+    files["calculator/maja.json"] = _json_bytes(export_calculator_site("MAJA"))
+    print(json.dumps({"status": "running", "stage": "firestore_cemplang"}), flush=True)
+    files["calculator/cemplang.json"] = _json_bytes(export_calculator_site("CEMPLANG"))
+    print(json.dumps({"status": "running", "stage": "postgres"}), flush=True)
+    files["postgres/public.json"] = _json_bytes(export_postgres())
+    print(json.dumps({"status": "running", "stage": "archive"}), flush=True)
     manifest = {
         "formatVersion": BACKUP_FORMAT_VERSION,
         "createdAt": created_at.isoformat(),
@@ -181,6 +184,16 @@ def run() -> dict[str, Any]:
     if not folder_id:
         raise RuntimeError("SPPG_DRIVE_BACKUP_FOLDER_ID is not configured")
 
+    print(
+        json.dumps(
+            {
+                "status": "started",
+                "driveFolderConfigured": True,
+                "databaseConfigured": bool(os.getenv("DATABASE_URL", "").strip()),
+            }
+        ),
+        flush=True,
+    )
     archive, manifest, batch = build_backup()
     archive_name = f"SPPG_FULL_BACKUP_{batch}.zip"
     manifest_name = f"SPPG_FULL_BACKUP_{batch}.manifest.json"
