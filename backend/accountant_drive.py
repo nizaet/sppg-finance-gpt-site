@@ -29,6 +29,15 @@ def _candidate_folder_ids(env_name: str, fallback_id: str) -> list[str]:
 def _friendly_drive_error(exc: Exception) -> tuple[str, bool]:
     raw = str(exc)
     lowered = raw.lower()
+    if "invalid_grant" in lowered or "token has been expired or revoked" in lowered or "refreshtoken" in lowered and "expired" in lowered:
+        return (
+            "Login OAuth Google Drive backend sudah kedaluwarsa atau dicabut. "
+            "Jika OAuth consent screen masih berstatus Testing, refresh token Google dapat kedaluwarsa setelah 7 hari. "
+            "Ubah OAuth consent screen ke In production, buat refresh token baru, lalu perbarui "
+            "SPPG_GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN di Railway. "
+            f"Mode Drive backend saat ini: {drive_auth_mode()}.",
+            True,
+        )
     if "service accounts do not have storage quota" in lowered or "storagequotaexceeded" in lowered:
         return (
             "Folder tujuan berada di My Drive pribadi, tetapi backend masih mengunggah sebagai Service Account. "
@@ -140,8 +149,8 @@ def upload_accountant_artifact(
                 "errorType": type(exc).__name__,
                 "error": friendly,
             })
-            # Disabled API and service-account storage quota are global for the
-            # credential; trying a second personal folder cannot fix them.
+            # Disabled API, expired OAuth, and service-account storage quota are
+            # global for the credential; trying a second personal folder cannot fix them.
             if global_configuration_error:
                 raise AccountantDriveUploadError(friendly, attempts) from exc
 
