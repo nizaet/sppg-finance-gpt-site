@@ -88,6 +88,7 @@ def upload_accountant_artifact(
         try:
             target_folder_id = folder_id
             drive_path = None
+            folder_structure_fallback = False
             site_key = str(site or "").strip().upper()
             if site_key in {"MAJA", "CEMPLANG"}:
                 artifact_bucket = str(bucket or normalized).strip().upper().replace(" ", "_")
@@ -97,9 +98,29 @@ def upload_accountant_artifact(
                     "APPROVAL": "BUKTI_APPROVAL",
                     "PAID": "BUKTI_PAID",
                 }.get(artifact_bucket, artifact_bucket)
-                site_folder_id = ensure_drive_folder(folder_id, site_key)
-                target_folder_id = ensure_drive_folder(site_folder_id, artifact_bucket)
-                drive_path = f"{site_key}/{artifact_bucket}"
+
+                # Prefer the organized SITE/BUCKET structure. Some existing
+                # production folders allow uploading files but do not allow the
+                # backend identity to list/create child folders. In that case,
+                # preserve the old working behavior and upload directly to the
+                # already-shared root instead of failing the whole Excel flow.
+                try:
+                    site_folder_id = ensure_drive_folder(folder_id, site_key)
+                    target_folder_id = ensure_drive_folder(site_folder_id, artifact_bucket)
+                    drive_path = f"{site_key}/{artifact_bucket}"
+                except Exception as folder_exc:
+                    friendly_folder_error, _ = _friendly_drive_error(folder_exc)
+                    attempts.append({
+                        "folderId": folder_id,
+                        "stage": "ensure_folder_structure",
+                        "errorType": type(folder_exc).__name__,
+                        "error": friendly_folder_error,
+                        "fallback": "direct_root_upload",
+                    })
+                    target_folder_id = folder_id
+                    drive_path = None
+                    folder_structure_fallback = True
+
             uri = upload_bytes_to_drive(target_folder_id, filename, data, mime_type)
             return {
                 "driveUri": uri,
@@ -107,6 +128,7 @@ def upload_accountant_artifact(
                 "rootFolderId": folder_id,
                 "drivePath": drive_path,
                 "driveAuthMode": drive_auth_mode(),
+                "folderStructureFallback": folder_structure_fallback,
                 "usedFallbackFolder": folder_id == fallback_id and os.getenv(env_name, "").strip() not in {"", fallback_id},
                 "attempts": attempts,
             }
@@ -114,6 +136,7 @@ def upload_accountant_artifact(
             friendly, global_configuration_error = _friendly_drive_error(exc)
             attempts.append({
                 "folderId": folder_id,
+                "stage": "upload",
                 "errorType": type(exc).__name__,
                 "error": friendly,
             })
