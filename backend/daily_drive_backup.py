@@ -11,7 +11,7 @@ manifest into SPPG_DRIVE_BACKUP_FOLDER_ID.
 from __future__ import annotations
 
 import hashlib
-import io
+import tempfile
 import json
 import os
 import sys
@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from psycopg import sql
 
 from backend.db import connection
-from backend.google_services import SITE_TARGETS, upload_bytes_to_drive
+from backend.google_services import SITE_TARGETS, upload_bytes_to_drive, upload_file_to_drive
 
 JAKARTA = ZoneInfo("Asia/Jakarta")
 BACKUP_FORMAT_VERSION = 1
@@ -155,9 +155,8 @@ def export_calculator_site(site: str) -> dict[str, Any]:
     return split_files
 
 
-def export_postgres() -> dict[str, Any]:
-    """Return one restore-ready JSON payload per PostgreSQL table."""
-    files: dict[str, Any] = {}
+def iter_postgres_exports():
+    """Yield one JSON payload per table to keep Railway memory bounded."""
     table_index: list[dict[str, Any]] = []
     with connection() as conn:
         with conn.cursor() as cur:
@@ -171,8 +170,7 @@ def export_postgres() -> dict[str, Any]:
                 order by table_schema, table_name
                 """
             )
-            tables = cur.fetchall()
-            for table in tables:
+            for table in cur.fetchall():
                 schema_name = str(table["table_schema"])
                 table_name = str(table["table_name"])
                 statement = sql.SQL("select to_jsonb(record) as row from {}.{} as record").format(
@@ -181,79 +179,75 @@ def export_postgres() -> dict[str, Any]:
                 )
                 cur.execute(statement)
                 rows = [_json_safe(item["row"]) for item in cur.fetchall()]
-                payload = {
+                file_path = f"{schema_name}/{table_name}.json"
+                table_index.append(
+                    {
+                        "schema": schema_name,
+                        "table": table_name,
+                        "rowCount": len(rows),
+                        "path": file_path,
+                    }
+                )
+                yield file_path, {
                     "format": "sppg-postgres-table-v1",
                     "schema": schema_name,
                     "table": table_name,
                     "rowCount": len(rows),
                     "rows": rows,
                 }
-                files[f"{schema_name}/{table_name}.json"] = payload
-                table_index.append(
-                    {
-                        "schema": schema_name,
-                        "table": table_name,
-                        "rowCount": len(rows),
-                        "path": f"{schema_name}/{table_name}.json",
-                    }
-                )
             conn.rollback()
-    files["table-index.json"] = {
+    yield "table-index.json", {
         "format": "sppg-postgres-table-index-v1",
         "tables": table_index,
     }
-    return files
 
-def build_backup() -> tuple[bytes, dict[str, Any], str]:
+def build_backup(work_directory: str) -> tuple[str, dict[str, Any], str]:
     created_at = datetime.now(timezone.utc)
     local_stamp = created_at.astimezone(JAKARTA)
     batch = local_stamp.strftime("%Y-%m-%d_%H%M%S-WIB")
+    archive_path = os.path.join(work_directory, f"SPPG_FULL_BACKUP_{batch}.zip")
+    file_records: list[dict[str, Any]] = []
 
-    files: dict[str, bytes] = {}
-    print(json.dumps({"status": "running", "stage": "firestore_maja"}), flush=True)
-    for filename, payload in export_calculator_site("MAJA").items():
-        files[f"calculator/maja/{filename}"] = _json_bytes(payload)
-    print(json.dumps({"status": "running", "stage": "firestore_cemplang"}), flush=True)
-    for filename, payload in export_calculator_site("CEMPLANG").items():
-        files[f"calculator/cemplang/{filename}"] = _json_bytes(payload)
-    print(json.dumps({"status": "running", "stage": "postgres"}), flush=True)
-    for filename, payload in export_postgres().items():
-        files[f"postgres/{filename}"] = _json_bytes(payload)
-    print(json.dumps({"status": "running", "stage": "archive"}), flush=True)
-    manifest = {
-        "formatVersion": BACKUP_FORMAT_VERSION,
-        "createdAt": created_at.isoformat(),
-        "timezone": "Asia/Jakarta",
-        "backupBatch": batch,
-        "scope": {
-            "calculator": [
-                "MAJA: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
-                "CEMPLANG: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
-            ],
-            "postgres": "all non-system tables, one JSON file per table",
-        },
-        "files": [
-            {
-                "path": path,
-                "bytes": len(data),
-                "sha256": _sha256(data),
-            }
-            for path, data in sorted(files.items())
-        ],
-        "restoreNote": (
-            "This is a read-only recovery snapshot. Restore only through a reviewed "
-            "recovery procedure; never overwrite live data directly from this file."
-        ),
-    }
-    files["manifest.json"] = _json_bytes(manifest)
+    def write_json(bundle: zipfile.ZipFile, path: str, payload: Any) -> None:
+        data = _json_bytes(payload)
+        bundle.writestr(path, data)
+        file_records.append({"path": path, "bytes": len(data), "sha256": _sha256(data)})
 
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-        for path, data in files.items():
-            bundle.writestr(path, data)
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+        print(json.dumps({"status": "running", "stage": "firestore_maja"}), flush=True)
+        for filename, payload in export_calculator_site("MAJA").items():
+            write_json(bundle, f"calculator/maja/{filename}", payload)
 
-    return archive.getvalue(), manifest, batch
+        print(json.dumps({"status": "running", "stage": "firestore_cemplang"}), flush=True)
+        for filename, payload in export_calculator_site("CEMPLANG").items():
+            write_json(bundle, f"calculator/cemplang/{filename}", payload)
 
+        print(json.dumps({"status": "running", "stage": "postgres"}), flush=True)
+        for filename, payload in iter_postgres_exports():
+            write_json(bundle, f"postgres/{filename}", payload)
+
+        manifest = {
+            "formatVersion": BACKUP_FORMAT_VERSION,
+            "createdAt": created_at.isoformat(),
+            "timezone": "Asia/Jakarta",
+            "backupBatch": batch,
+            "scope": {
+                "calculator": [
+                    "MAJA: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
+                    "CEMPLANG: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
+                ],
+                "postgres": "all non-system tables, one JSON file per table",
+            },
+            "files": sorted(file_records, key=lambda item: item["path"]),
+            "restoreNote": (
+                "This is a read-only recovery snapshot. Restore only through a reviewed "
+                "recovery procedure; never overwrite live data directly from this file."
+            ),
+        }
+        print(json.dumps({"status": "running", "stage": "archive"}), flush=True)
+        bundle.writestr("manifest.json", _json_bytes(manifest))
+
+    return archive_path, manifest, batch
 
 def run() -> dict[str, Any]:
     folder_id = os.getenv("SPPG_DRIVE_BACKUP_FOLDER_ID", "").strip()
@@ -270,21 +264,24 @@ def run() -> dict[str, Any]:
         ),
         flush=True,
     )
-    archive, manifest, batch = build_backup()
-    archive_name = f"SPPG_FULL_BACKUP_{batch}.zip"
-    manifest_name = f"SPPG_FULL_BACKUP_{batch}.manifest.json"
+    with tempfile.TemporaryDirectory(prefix="sppg-backup-") as work_directory:
+        archive_path, manifest, batch = build_backup(work_directory)
+        archive_name = f"SPPG_FULL_BACKUP_{batch}.zip"
+        manifest_name = f"SPPG_FULL_BACKUP_{batch}.manifest.json"
+        archive_size = os.path.getsize(archive_path)
 
-    archive_url = upload_bytes_to_drive(folder_id, archive_name, archive, "application/zip")
-    manifest_url = upload_bytes_to_drive(
-        folder_id,
-        manifest_name,
-        _json_bytes(manifest),
-        "application/json; charset=utf-8",
-    )
+        print(json.dumps({"status": "running", "stage": "drive_upload"}), flush=True)
+        archive_url = upload_file_to_drive(folder_id, archive_name, archive_path, "application/zip")
+        manifest_url = upload_bytes_to_drive(
+            folder_id,
+            manifest_name,
+            _json_bytes(manifest),
+            "application/json; charset=utf-8",
+        )
     result = {
         "status": "ok",
         "batch": batch,
-        "archive": {"name": archive_name, "url": archive_url, "bytes": len(archive)},
+        "archive": {"name": archive_name, "url": archive_url, "bytes": archive_size},
         "manifest": {"name": manifest_name, "url": manifest_url},
     }
     print(json.dumps(result, ensure_ascii=False))
