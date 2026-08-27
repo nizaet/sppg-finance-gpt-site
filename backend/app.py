@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
@@ -451,3 +451,35 @@ def review_decision(event_id: int, payload: ReviewDecision) -> dict[str, Any]:
             )
             conn.commit()
     return {"eventId": row["id"], "decision": decision, "status": row["status"]}
+
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def public_home_page() -> str:
+    return """<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPPG Finance & Operasional</title></head>
+<body><main>
+<h1>SPPG Finance &amp; Operasional</h1>
+<p>Aplikasi internal untuk perencanaan dapur, pembelian, penerimaan barang, akuntansi, dan pengarsipan dokumen operasional SPPG.</p>
+<p>Akses Google Drive digunakan hanya untuk membuat serta mengarsipkan Excel dan dokumen yang dihasilkan melalui aplikasi ke folder Drive milik organisasi.</p>
+<p><a href="/privacy">Kebijakan Privasi</a></p>
+</main></body></html>"""
+
+
+@app.get("/privacy", include_in_schema=False, response_class=HTMLResponse)
+def public_privacy_page() -> str:
+    return """<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kebijakan Privasi — SPPG Finance & Operasional</title></head>
+<body><main>
+<h1>Kebijakan Privasi</h1>
+<p>SPPG Finance &amp; Operasional digunakan secara internal untuk operasional SPPG.</p>
+<h2>Data Google Drive</h2>
+<p>Aplikasi meminta akses Google Drive hanya untuk membuat, membaca, dan mengarsipkan file Excel serta dokumen operasional ke folder yang dipilih organisasi. Data tidak dijual, digunakan untuk iklan, atau dibagikan kepada pihak lain di luar kebutuhan operasional dan layanan infrastruktur yang menjalankan aplikasi.</p>
+<h2>Penyimpanan dan penghapusan</h2>
+<p>File tersimpan pada Google Drive organisasi. Akses aplikasi dapat dicabut kapan saja melalui pengaturan Akun Google. Permintaan penghapusan data dapat diajukan melalui alamat dukungan yang tercantum pada layar persetujuan Google.</p>
+<h2>Kontak</h2>
+<p>Untuk pertanyaan privasi atau akses data, hubungi alamat dukungan yang tercantum pada layar persetujuan Google.</p>
+<p><a href="/">Kembali ke beranda</a></p>
+</main></body></html>"""
