@@ -10,7 +10,7 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials as firebase_credentials
@@ -218,6 +218,25 @@ def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type:
         # Railway is waiting for the response. The client retries SSL/socket
         # transport failures and retryable HTTP responses when num_retries is
         # set; without it a brief EOF becomes a user-facing 503 immediately.
+        .execute(num_retries=3)
+    )
+    return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
+
+
+def upload_file_to_drive(folder_id: str, filename: str, file_path: str, mime_type: str) -> str:
+    """Upload a local file without loading the whole file into process memory."""
+    if not folder_id:
+        raise GoogleServicesNotConfigured("Drive folder id is not configured")
+    media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+    created = (
+        drive_service()
+        .files()
+        .create(
+            body={"name": filename, "parents": [folder_id]},
+            media_body=media,
+            fields="id,webViewLink",
+            supportsAllDrives=True,
+        )
         .execute(num_retries=3)
     )
     return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
