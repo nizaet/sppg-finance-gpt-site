@@ -454,19 +454,6 @@ def review_decision(event_id: int, payload: ReviewDecision) -> dict[str, Any]:
 
 
 
-@app.get("/", include_in_schema=False, response_class=HTMLResponse)
-def public_home_page() -> str:
-    return """<!doctype html>
-<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SPPG Finance & Operasional</title></head>
-<body><main>
-<h1>SPPG Finance &amp; Operasional</h1>
-<p>Aplikasi internal untuk perencanaan dapur, pembelian, penerimaan barang, akuntansi, dan pengarsipan dokumen operasional SPPG.</p>
-<p>Akses Google Drive digunakan hanya untuk membuat serta mengarsipkan Excel dan dokumen yang dihasilkan melalui aplikasi ke folder Drive milik organisasi.</p>
-<p><a href="/privacy">Kebijakan Privasi</a></p>
-</main></body></html>"""
-
-
 @app.get("/privacy", include_in_schema=False, response_class=HTMLResponse)
 def public_privacy_page() -> str:
     return """<!doctype html>
