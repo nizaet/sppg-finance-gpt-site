@@ -65,13 +65,22 @@ export const accountantApi = {
     const q = new URLSearchParams({ site, distributionDate });
     return request(`/v1/accountant-excel/planning-options?${q}`);
   },
-  generateSelectedPlanExcel: ({ site, distributionDate, calculatorDocumentId, customFilename = "" }, commit = false) => request(
+  generateSelectedPlanExcel: async ({ site, distributionDate, calculatorDocumentId, customFilename = "" }, commit = false) => {
     // The selected-plan endpoint is patched at startup to always re-read the
-    // exact current Calculator document.  Unlike the experimental "fresh"
+    // exact current Calculator document. Unlike the experimental "fresh"
     // route it does not require optional audit columns just to preview Excel.
-    "/v1/accountant-excel/from-selected-plan",
-    { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate, calculator_document_id: calculatorDocumentId, custom_filename: customFilename || null, commit }) },
-  ),
+    const data = await request(
+      "/v1/accountant-excel/from-selected-plan",
+      { method: "POST", body: JSON.stringify({ site, distribution_date: distributionDate, calculator_document_id: calculatorDocumentId, custom_filename: customFilename || null, commit }) },
+    );
+    // The backend intentionally keeps HTTP 200 when the workbook was generated
+    // but Drive archiving failed, so the failed submission can be retried. Do
+    // not let the UI turn that partial result into a green "masuk Drive" notice.
+    if (commit && (String(data?.driveUploadStatus || "").toUpperCase() === "FAILED" || !data?.driveUri)) {
+      throw new Error(data?.driveUploadError || "Excel berhasil dibuat, tetapi upload Google Drive gagal. Coba upload Drive lagi.");
+    }
+    return data;
+  },
   downloadSelectedPlanExcel: ({ downloadUrl, filename }) => download(downloadUrl, filename),
   uploadInvoice: async ({ submissionId, file, invoiceNumber, invoiceAmount }) => {
     const contentBase64 = await fileToBase64(file);
