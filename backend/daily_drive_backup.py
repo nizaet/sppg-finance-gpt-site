@@ -135,11 +135,30 @@ def export_calculator_site(site: str) -> dict[str, Any]:
             "documents": public_documents,
         },
     }
+    # Finance ledger is separate from Calculator data; retain it for recovery
+    # of invoice and accounting-side records stored in Firestore.
+    ledger_root = client.collection("gpt_sites").document(target["site_id"])
+    ledger_snapshot = ledger_root.get()
+    split_files["operasional-finance-ledger.json"] = {
+        "format": "sppg-firestore-site-ledger-v1",
+        "site": site,
+        "document": {
+            "path": ledger_snapshot.reference.path,
+            "id": ledger_snapshot.id,
+            "data": _json_safe(ledger_snapshot.to_dict() or {}),
+        },
+        "subcollections": {
+            child.id: _export_collection(child)
+            for child in ledger_root.collections()
+        },
+    }
     return split_files
 
 
 def export_postgres() -> dict[str, Any]:
-    exported_tables: list[dict[str, Any]] = []
+    """Return one restore-ready JSON payload per PostgreSQL table."""
+    files: dict[str, Any] = {}
+    table_index: list[dict[str, Any]] = []
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -162,20 +181,28 @@ def export_postgres() -> dict[str, Any]:
                 )
                 cur.execute(statement)
                 rows = [_json_safe(item["row"]) for item in cur.fetchall()]
-                exported_tables.append(
+                payload = {
+                    "format": "sppg-postgres-table-v1",
+                    "schema": schema_name,
+                    "table": table_name,
+                    "rowCount": len(rows),
+                    "rows": rows,
+                }
+                files[f"{schema_name}/{table_name}.json"] = payload
+                table_index.append(
                     {
                         "schema": schema_name,
                         "table": table_name,
                         "rowCount": len(rows),
-                        "rows": rows,
+                        "path": f"{schema_name}/{table_name}.json",
                     }
                 )
             conn.rollback()
-    return {
-        "format": "postgres-json-snapshot-v1",
-        "tables": exported_tables,
+    files["table-index.json"] = {
+        "format": "sppg-postgres-table-index-v1",
+        "tables": table_index,
     }
-
+    return files
 
 def build_backup() -> tuple[bytes, dict[str, Any], str]:
     created_at = datetime.now(timezone.utc)
@@ -190,7 +217,8 @@ def build_backup() -> tuple[bytes, dict[str, Any], str]:
     for filename, payload in export_calculator_site("CEMPLANG").items():
         files[f"calculator/cemplang/{filename}"] = _json_bytes(payload)
     print(json.dumps({"status": "running", "stage": "postgres"}), flush=True)
-    files["postgres/public.json"] = _json_bytes(export_postgres())
+    for filename, payload in export_postgres().items():
+        files[f"postgres/{filename}"] = _json_bytes(payload)
     print(json.dumps({"status": "running", "stage": "archive"}), flush=True)
     manifest = {
         "formatVersion": BACKUP_FORMAT_VERSION,
@@ -202,7 +230,7 @@ def build_backup() -> tuple[bytes, dict[str, Any], str]:
                 "MAJA: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
                 "CEMPLANG: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
             ],
-            "postgres": "all non-system tables",
+            "postgres": "all non-system tables, one JSON file per table",
         },
         "files": [
             {
