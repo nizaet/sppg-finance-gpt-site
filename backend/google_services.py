@@ -189,8 +189,14 @@ def drive_auth_mode() -> str:
     return "USER_OAUTH" if drive_user_credentials() is not None else "SERVICE_ACCOUNT"
 
 
-@lru_cache(maxsize=1)
 def drive_service():
+    """Build a fresh Drive API transport for every operation.
+
+    Railway processes are long lived. Reusing one cached httplib2 transport can
+    leave Google Drive calls attached to a stale TLS connection after an idle
+    period. Credentials stay cached, but the HTTP transport is deliberately
+    rebuilt so an upload today cannot inherit yesterday's dead socket.
+    """
     credentials = drive_user_credentials() or google_credentials()
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
