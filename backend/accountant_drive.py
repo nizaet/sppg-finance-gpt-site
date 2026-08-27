@@ -10,6 +10,8 @@ from backend.google_services import drive_auth_mode, ensure_drive_folder, upload
 DEFAULT_ACCOUNTANT_EXCEL_FOLDER_ID = "1DDVtg6U7_2SI_iJVW5vk4UYPRIyiEvn6"  # 04 EXCEL AKUNTAN
 DEFAULT_ACCOUNTANT_INVOICE_FOLDER_ID = "19EcARPcCBzvwQpcxSbxXGXifO7a-DfCX"  # 03_INVOICE_AKUNTAN
 
+_SUPPORTED_SITES = {"MAJA", "CEMPLANG"}
+
 
 class AccountantDriveUploadError(RuntimeError):
     def __init__(self, message: str, attempts: list[dict[str, Any]] | None = None):
@@ -24,6 +26,16 @@ def _candidate_folder_ids(env_name: str, fallback_id: str) -> list[str]:
         if value and value not in values:
             values.append(value)
     return values
+
+
+def _site_excel_folder_id(site: str | None) -> tuple[str | None, str | None]:
+    """Return the final Excel folder explicitly assigned to one kitchen."""
+    site_key = str(site or "").strip().upper()
+    if site_key not in _SUPPORTED_SITES:
+        return None, None
+    env_name = f"SPPG_DRIVE_ACCOUNTANT_EXCEL_{site_key}_FOLDER_ID"
+    folder_id = os.getenv(env_name, "").strip()
+    return (folder_id or None), env_name
 
 
 def _friendly_drive_error(exc: Exception) -> tuple[str, bool]:
@@ -93,13 +105,44 @@ def upload_accountant_artifact(
         raise ValueError(f"unsupported accountant artifact kind: {kind}")
 
     attempts: list[dict[str, Any]] = []
+    site_key = str(site or "").strip().upper()
+    dedicated_excel_folder_id, dedicated_excel_folder_env = (
+        _site_excel_folder_id(site_key) if normalized == "excel" else (None, None)
+    )
+    if dedicated_excel_folder_id:
+        try:
+            uri = upload_bytes_to_drive(dedicated_excel_folder_id, filename, data, mime_type)
+            return {
+                "driveUri": uri,
+                "folderId": dedicated_excel_folder_id,
+                "rootFolderId": dedicated_excel_folder_id,
+                "drivePath": f"{site_key}/EXCEL",
+                "driveAuthMode": drive_auth_mode(),
+                "folderStructureFallback": False,
+                "configuredSiteFolder": True,
+                "configuredSiteFolderEnv": dedicated_excel_folder_env,
+                "usedFallbackFolder": False,
+                "attempts": attempts,
+            }
+        except Exception as exc:
+            friendly, _ = _friendly_drive_error(exc)
+            attempts.append({
+                "folderId": dedicated_excel_folder_id,
+                "stage": "dedicated_site_excel_upload",
+                "errorType": type(exc).__name__,
+                "error": friendly,
+            })
+            # A configured kitchen destination must not silently fall back to
+            # another archive root: returning an error is safer than mixing sites.
+            raise AccountantDriveUploadError(friendly, attempts) from exc
+
     for folder_id in _candidate_folder_ids(env_name, fallback_id):
         try:
             target_folder_id = folder_id
             drive_path = None
             folder_structure_fallback = False
             site_key = str(site or "").strip().upper()
-            if site_key in {"MAJA", "CEMPLANG"}:
+            if site_key in _SUPPORTED_SITES:
                 artifact_bucket = str(bucket or normalized).strip().upper().replace(" ", "_")
                 artifact_bucket = {
                     "EXCEL": "EXCEL",
@@ -138,6 +181,8 @@ def upload_accountant_artifact(
                 "drivePath": drive_path,
                 "driveAuthMode": drive_auth_mode(),
                 "folderStructureFallback": folder_structure_fallback,
+                "configuredSiteFolder": False,
+                "configuredSiteFolderEnv": None,
                 "usedFallbackFolder": folder_id == fallback_id and os.getenv(env_name, "").strip() not in {"", fallback_id},
                 "attempts": attempts,
             }
