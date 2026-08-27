@@ -74,73 +74,65 @@ def _export_collection(collection_ref) -> list[dict[str, Any]]:
     return documents
 
 
+def _export_collection_shallow(collection_ref) -> list[dict[str, Any]]:
+    """Export direct documents only; Calculator data has known flat subcollections."""
+    return [
+        {
+            "path": snapshot.reference.path,
+            "id": snapshot.id,
+            "data": _json_safe(snapshot.to_dict() or {}),
+        }
+        for snapshot in collection_ref.stream()
+    ]
+
+
 def export_calculator_site(site: str) -> dict[str, Any]:
-    """Export only the canonical Calculator document, without recursive scans."""
+    """Export the Calculator's known direct Firestore collections."""
     target = SITE_TARGETS[site]
     from backend.google_services import firestore_client
 
     client = firestore_client(target["database_id"])
-    public_collection = client.collection("artifacts").document(target["site_id"]).collection("public")
-    # The Calculator app reads its complete editable state from this one
-    # document. Avoid scanning every historic child collection in Firestore.
-    primary_snapshot = public_collection.document("data").get()
-    primary_payload = dict(primary_snapshot.to_dict() or {})
-    master_data = primary_payload.get("masterData") or {}
+    calculator_root = (
+        client.collection("artifacts")
+        .document(target["site_id"])
+        .collection("public")
+        .document("data")
+    )
+    root_snapshot = calculator_root.get()
+    # The document itself is intentionally empty; its direct child collections
+    # contain price lists, gramasi, recipes, bumbu, and daily plans.
+    collections = {
+        collection.id: _export_collection_shallow(collection)
+        for collection in calculator_root.collections()
+    }
 
+    def section(name: str) -> dict[str, Any]:
+        return {
+            "format": "sppg-calculator-section-v2",
+            "site": site,
+            "collection": name,
+            "documents": collections.get(name, []),
+        }
+
+    restore_payload = {
+        "format": "sppg-calculator-firestore-restore-v2",
+        "site": site,
+        "rootPath": calculator_root.path,
+        "rootData": _json_safe(root_snapshot.to_dict() or {}),
+        "collections": collections,
+    }
     split_files = {
-        "master-harga.json": {
-            "format": "sppg-calculator-section-v1",
-            "site": site,
-            "section": "masterHarga",
-            "data": {
-                "masterData": master_data,
-                "priceList": master_data.get("priceList", primary_payload.get("priceList", [])),
-            },
-        },
-        "gramasi.json": {
-            "format": "sppg-calculator-section-v1",
-            "site": site,
-            "section": "gramasi",
-            "data": primary_payload.get("customGramasi", {}),
-        },
-        "resep.json": {
-            "format": "sppg-calculator-section-v1",
-            "site": site,
-            "section": "resep",
-            "data": primary_payload.get("recipes", {}),
-        },
-        "bumbu.json": {
-            "format": "sppg-calculator-section-v1",
-            "site": site,
-            "section": "bumbu",
-            "data": primary_payload.get("bumbuList", {}),
-        },
-        "rencana-harian.json": {
-            "format": "sppg-calculator-section-v1",
-            "site": site,
-            "section": "rencanaHarian",
-            "data": primary_payload.get("dailyPlans", {}),
-        },
-        # This retains the exact shape expected by Calculator local restore.
-        "kalkulator-restore.json": primary_payload,
-        "firestore-snapshot.json": {
-            "site": site,
-            "firestoreProject": client.project,
-            "databaseId": target["database_id"],
-            "calculatorRoot": primary_snapshot.reference.path,
-            "documents": [
-                {
-                    "path": primary_snapshot.reference.path,
-                    "id": primary_snapshot.id,
-                    "data": _json_safe(primary_payload),
-                }
-            ],
-        },
+        "master-harga.json": section("masterData"),
+        "gramasi.json": section("customGramasi"),
+        "resep.json": section("recipes"),
+        "bumbu.json": section("bumbuList"),
+        "rencana-harian.json": section("dailyPlans"),
+        # Keeps all direct Calculator collections, including future additions.
+        "kalkulator-restore.json": restore_payload,
+        "firestore-snapshot.json": restore_payload,
     }
 
     # Finance accounting records live separately in gpt_sites/.../ledger.
-    # Export the known transaction collection directly, without generic
-    # recursive traversal of every Firestore child collection.
     ledger_meta = (
         client.collection("gpt_sites")
         .document(target["site_id"])
@@ -148,14 +140,7 @@ def export_calculator_site(site: str) -> dict[str, Any]:
         .document("meta")
     )
     ledger_snapshot = ledger_meta.get()
-    transactions = [
-        {
-            "path": snapshot.reference.path,
-            "id": snapshot.id,
-            "data": _json_safe(snapshot.to_dict() or {}),
-        }
-        for snapshot in ledger_meta.collection("transactions").stream()
-    ]
+    transactions = _export_collection_shallow(ledger_meta.collection("transactions"))
     split_files["operasional-finance-ledger.json"] = {
         "format": "sppg-firestore-site-ledger-v1",
         "site": site,
