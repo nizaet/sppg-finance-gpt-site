@@ -79,17 +79,63 @@ def export_calculator_site(site: str) -> dict[str, Any]:
     from backend.google_services import firestore_client
 
     client = firestore_client(target["database_id"])
-    # This exact root contains priceList, customGramasi, recipes, bumbuList,
-    # and dailyPlans used by the calculator.
     public_collection = client.collection("artifacts").document(target["site_id"]).collection("public")
     public_documents = _export_collection(public_collection)
-    return {
-        "site": site,
-        "firestoreProject": client.project,
-        "databaseId": target["database_id"],
-        "calculatorRoot": f"artifacts/{target['site_id']}/public",
-        "documents": public_documents,
+    documents_by_id = {str(document["id"]): document for document in public_documents}
+    # The calculator's normal local backup is rooted at the public/data document.
+    # Keep its data shape intact so local recovery can use one combined payload.
+    primary_document = documents_by_id.get("data")
+    primary_payload = dict((primary_document or {}).get("data") or {})
+    if not primary_payload and len(public_documents) == 1:
+        primary_payload = dict(public_documents[0].get("data") or {})
+
+    master_data = primary_payload.get("masterData") or {}
+    split_files = {
+        "master-harga.json": {
+            "format": "sppg-calculator-section-v1",
+            "site": site,
+            "section": "masterHarga",
+            "data": {
+                "masterData": master_data,
+                "priceList": master_data.get("priceList", primary_payload.get("priceList", [])),
+            },
+        },
+        "gramasi.json": {
+            "format": "sppg-calculator-section-v1",
+            "site": site,
+            "section": "gramasi",
+            "data": primary_payload.get("customGramasi", {}),
+        },
+        "resep.json": {
+            "format": "sppg-calculator-section-v1",
+            "site": site,
+            "section": "resep",
+            "data": primary_payload.get("recipes", {}),
+        },
+        "bumbu.json": {
+            "format": "sppg-calculator-section-v1",
+            "site": site,
+            "section": "bumbu",
+            "data": primary_payload.get("bumbuList", {}),
+        },
+        "rencana-harian.json": {
+            "format": "sppg-calculator-section-v1",
+            "site": site,
+            "section": "rencanaHarian",
+            "data": primary_payload.get("dailyPlans", {}),
+        },
+        "kalkulator-restore.json": primary_payload,
+        # Keep every document/subcollection too; this is the forensic fallback
+        # and protects data added by a future Calculator version.
+        "firestore-snapshot.json": {
+            "site": site,
+            "firestoreProject": client.project,
+            "databaseId": target["database_id"],
+            "calculatorRoot": f"artifacts/{target['site_id']}/public",
+            "documents": public_documents,
+        },
     }
+    return split_files
 
 
 def export_postgres() -> dict[str, Any]:
@@ -138,9 +184,11 @@ def build_backup() -> tuple[bytes, dict[str, Any], str]:
 
     files: dict[str, bytes] = {}
     print(json.dumps({"status": "running", "stage": "firestore_maja"}), flush=True)
-    files["calculator/maja.json"] = _json_bytes(export_calculator_site("MAJA"))
+    for filename, payload in export_calculator_site("MAJA").items():
+        files[f"calculator/maja/{filename}"] = _json_bytes(payload)
     print(json.dumps({"status": "running", "stage": "firestore_cemplang"}), flush=True)
-    files["calculator/cemplang.json"] = _json_bytes(export_calculator_site("CEMPLANG"))
+    for filename, payload in export_calculator_site("CEMPLANG").items():
+        files[f"calculator/cemplang/{filename}"] = _json_bytes(payload)
     print(json.dumps({"status": "running", "stage": "postgres"}), flush=True)
     files["postgres/public.json"] = _json_bytes(export_postgres())
     print(json.dumps({"status": "running", "stage": "archive"}), flush=True)
@@ -151,8 +199,8 @@ def build_backup() -> tuple[bytes, dict[str, Any], str]:
         "backupBatch": batch,
         "scope": {
             "calculator": [
-                "MAJA: prices, gramasi, recipes, bumbu, all daily plans",
-                "CEMPLANG: prices, gramasi, recipes, bumbu, all daily plans",
+                "MAJA: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
+                "CEMPLANG: separate master-harga, gramasi, resep, bumbu, rencana-harian, and restore JSON",
             ],
             "postgres": "all non-system tables",
         },
