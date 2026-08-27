@@ -75,21 +75,18 @@ def _export_collection(collection_ref) -> list[dict[str, Any]]:
 
 
 def export_calculator_site(site: str) -> dict[str, Any]:
+    """Export only the canonical Calculator document, without recursive scans."""
     target = SITE_TARGETS[site]
     from backend.google_services import firestore_client
 
     client = firestore_client(target["database_id"])
     public_collection = client.collection("artifacts").document(target["site_id"]).collection("public")
-    public_documents = _export_collection(public_collection)
-    documents_by_id = {str(document["id"]): document for document in public_documents}
-    # The calculator's normal local backup is rooted at the public/data document.
-    # Keep its data shape intact so local recovery can use one combined payload.
-    primary_document = documents_by_id.get("data")
-    primary_payload = dict((primary_document or {}).get("data") or {})
-    if not primary_payload and len(public_documents) == 1:
-        primary_payload = dict(public_documents[0].get("data") or {})
-
+    # The Calculator app reads its complete editable state from this one
+    # document. Avoid scanning every historic child collection in Firestore.
+    primary_snapshot = public_collection.document("data").get()
+    primary_payload = dict(primary_snapshot.to_dict() or {})
     master_data = primary_payload.get("masterData") or {}
+
     split_files = {
         "master-harga.json": {
             "format": "sppg-calculator-section-v1",
@@ -124,21 +121,41 @@ def export_calculator_site(site: str) -> dict[str, Any]:
             "section": "rencanaHarian",
             "data": primary_payload.get("dailyPlans", {}),
         },
+        # This retains the exact shape expected by Calculator local restore.
         "kalkulator-restore.json": primary_payload,
-        # Keep every document/subcollection too; this is the forensic fallback
-        # and protects data added by a future Calculator version.
         "firestore-snapshot.json": {
             "site": site,
             "firestoreProject": client.project,
             "databaseId": target["database_id"],
-            "calculatorRoot": f"artifacts/{target['site_id']}/public",
-            "documents": public_documents,
+            "calculatorRoot": primary_snapshot.reference.path,
+            "documents": [
+                {
+                    "path": primary_snapshot.reference.path,
+                    "id": primary_snapshot.id,
+                    "data": _json_safe(primary_payload),
+                }
+            ],
         },
     }
-    # Finance ledger is separate from Calculator data; retain it for recovery
-    # of invoice and accounting-side records stored in Firestore.
-    ledger_root = client.collection("gpt_sites").document(target["site_id"])
-    ledger_snapshot = ledger_root.get()
+
+    # Finance accounting records live separately in gpt_sites/.../ledger.
+    # Export the known transaction collection directly, without generic
+    # recursive traversal of every Firestore child collection.
+    ledger_meta = (
+        client.collection("gpt_sites")
+        .document(target["site_id"])
+        .collection("ledger")
+        .document("meta")
+    )
+    ledger_snapshot = ledger_meta.get()
+    transactions = [
+        {
+            "path": snapshot.reference.path,
+            "id": snapshot.id,
+            "data": _json_safe(snapshot.to_dict() or {}),
+        }
+        for snapshot in ledger_meta.collection("transactions").stream()
+    ]
     split_files["operasional-finance-ledger.json"] = {
         "format": "sppg-firestore-site-ledger-v1",
         "site": site,
@@ -147,13 +164,9 @@ def export_calculator_site(site: str) -> dict[str, Any]:
             "id": ledger_snapshot.id,
             "data": _json_safe(ledger_snapshot.to_dict() or {}),
         },
-        "subcollections": {
-            child.id: _export_collection(child)
-            for child in ledger_root.collections()
-        },
+        "transactions": transactions,
     }
     return split_files
-
 
 def iter_postgres_exports():
     """Yield one JSON payload per table to keep Railway memory bounded."""
