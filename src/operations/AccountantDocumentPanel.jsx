@@ -15,20 +15,34 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [invoiceProgress, setInvoiceProgress] = useState(null);
   const [proofSite, setProofSite] = useState("MAJA");
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
   const [proofBusy, setProofBusy] = useState(false);
+  const [proofProgress, setProofProgress] = useState(null);
 
   const readInvoice = async () => {
     if (!file) return reportError("Pilih file invoice PDF/JPG/PNG terlebih dahulu.");
+    const progressTimer = startReadProgress(setInvoiceProgress);
     setBusy(true); reportError(""); setPreview(null);
     try {
-      const data = await accountantApi.previewInvoiceDocument({ file, site, category });
+      const data = await accountantApi.previewInvoiceDocument({
+        file, site, category,
+        onReadProgress: ({ loaded, total }) => total && setInvoiceProgress({
+          percent: Math.max(8, Math.min(35, Math.round((loaded / total) * 35))),
+          label: "Membaca file dari perangkat…",
+        }),
+      });
       setPreview(data);
       reportMessage("Dokumen terbaca. Periksa dan koreksi nomor, tanggal, kategori, serta nilai sebelum simpan.");
     } catch (e) { reportError(e.message || "Gagal membaca invoice"); }
-    finally { setBusy(false); }
+    finally {
+      window.clearInterval(progressTimer);
+      setInvoiceProgress({ percent: 100, label: "Pembacaan selesai." });
+      window.setTimeout(() => setInvoiceProgress(null), 900);
+      setBusy(false);
+    }
   };
 
   const saveInvoice = async () => {
@@ -47,12 +61,24 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
 
   const readProof = async () => {
     if (!proofFile) return reportError("Pilih file bukti approval terlebih dahulu.");
+    const progressTimer = startReadProgress(setProofProgress);
     setProofBusy(true); reportError(""); setProofPreview(null);
     try {
-      const data = await accountantApi.previewApprovalEvidence({ file: proofFile, site: proofSite });
+      const data = await accountantApi.previewApprovalEvidence({
+        file: proofFile, site: proofSite,
+        onReadProgress: ({ loaded, total }) => total && setProofProgress({
+          percent: Math.max(8, Math.min(35, Math.round((loaded / total) * 35))),
+          label: "Membaca file dari perangkat…",
+        }),
+      });
       setProofPreview(data); reportMessage(`${data.transactionCount} transaksi terbaca; ${data.willApproveCount} Maker cocok dan siap ditandai PAID.`);
     } catch (e) { reportError(e.message || "Gagal membaca bukti approval"); }
-    finally { setProofBusy(false); }
+    finally {
+      window.clearInterval(progressTimer);
+      setProofProgress({ percent: 100, label: "Pembacaan selesai." });
+      window.setTimeout(() => setProofProgress(null), 900);
+      setProofBusy(false);
+    }
   };
 
   const saveProof = async () => {
@@ -76,6 +102,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
         <label>File invoice<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{setFile(e.target.files?.[0]||null);setPreview(null);}}/></label>
         <label>Aksi<button type="button" onClick={readInvoice} disabled={busy||!file}><FileSearch size={14}/> {busy?"Membaca…":"Baca Invoice"}</button></label>
       </div>
+      {invoiceProgress&&<ReadProgress progress={invoiceProgress}/>}
       {preview&&<div className="ops-parse-result">
         <div><FileSearch size={16}/><strong>Hasil Pembacaan — belum disimpan</strong></div>
         {!!preview.warnings?.length&&<div className="ops-notice">{preview.warnings.join(" ")}</div>}
@@ -101,6 +128,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
         <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{setProofFile(e.target.files?.[0]||null);setProofPreview(null);}}/></label>
         <label>Aksi<button type="button" onClick={readProof} disabled={proofBusy||!proofFile}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button></label>
       </div>
+      {proofProgress&&<ReadProgress progress={proofProgress}/>}
       {proofPreview&&<div className="ops-parse-result">
         <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
