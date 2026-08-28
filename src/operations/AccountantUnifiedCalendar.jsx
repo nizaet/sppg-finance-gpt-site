@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileSearch, List, RefreshCw, Stamp, Trash2, Upload, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Copy, ExternalLink, FileSearch, List, RefreshCw, Stamp, Trash2, Upload, X } from "lucide-react";
 import { accountantApi } from "./accountantApi.js";
 
 const money = (value) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value || 0));
@@ -53,6 +53,19 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   const [proofPreview, setProofPreview] = useState(null);
 
   const selected = items.find((row) => String(row.invoice_id) === String(selectedId)) || null;
+  const copyToClipboard = async (value, label) => {
+    const text = String(value ?? "");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      reportMessage(`${label} disalin: ${text}`);
+    } catch {
+      const node = document.createElement("textarea");
+      node.value = text; document.body.appendChild(node); node.select();
+      document.execCommand("copy"); node.remove();
+      reportMessage(`${label} disalin: ${text}`);
+    }
+  };
   const load = async () => {
     setBusy(true);
     try {
@@ -158,7 +171,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
 
     {selected&&<div role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)setSelectedId(null);}} style={{ position:"fixed", inset:0, background:"rgba(15,23,42,.48)", zIndex:1000, display:"grid", placeItems:"center", padding:18 }}><div role="dialog" aria-modal="true" style={{ width:"min(680px,96vw)", maxHeight:"90vh", overflowY:"auto", background:"#fff", borderRadius:16, boxShadow:"0 24px 70px rgba(15,23,42,.3)", padding:20 }}>
       <div className="ops-module-header"><div><span className="ops-kicker">DETAIL INVOICE</span><h3>{selected.invoice_number||`Invoice #${selected.invoice_id}`}</h3></div><button type="button" onClick={()=>setSelectedId(null)} aria-label="Tutup"><X size={18}/></button></div>
-      <div className="ops-summary-strip"><span>Site <strong>{selected.site}</strong></span><span>Tanggal invoice <strong>{dateKey(selected.invoice_date)||"-"}</strong></span><span>Kategori <strong>{String(selected.invoice_category||"-").replaceAll("_"," ")}</strong></span><span>Nilai <strong>{money(selected.invoice_amount)}</strong></span></div>
+      <div className="ops-summary-strip"><span>Site <strong>{selected.site}</strong></span><span>Tanggal invoice <strong>{dateKey(selected.invoice_date)||"-"}</strong></span><span>Kategori <strong>{String(selected.invoice_category||"-").replaceAll("_"," ")}</strong></span><span>Nomor <strong>{selected.invoice_number||`#${selected.invoice_id}`}</strong><button type="button" title="Salin nomor invoice" aria-label="Salin nomor invoice" onClick={()=>copyToClipboard(selected.invoice_number||`#${selected.invoice_id}`, "Nomor invoice")} style={{ marginLeft:6, padding:"2px 5px" }}><Copy size={13}/></button></span><span>Nilai <strong>{money(selected.invoice_amount)}</strong><button type="button" title="Salin nilai tanpa titik" aria-label="Salin nilai tanpa titik" onClick={()=>copyToClipboard(Math.round(Number(selected.invoice_amount||0)), "Nilai invoice")} style={{ marginLeft:6, padding:"2px 5px" }}><Copy size={13}/></button></span></div>
       {selected.invoice_number_conflict&&<div className="ops-notice"><strong>⚠ Nomor invoice sama.</strong> Dokumen ini tetap tersimpan terpisah; periksa kedua invoice sebelum membuat Maker.</div>}
       <div style={{ margin:"14px 0", padding:12, borderRadius:10, background:STATUS[stateOf(selected)].bg, border:`1px solid ${STATUS[stateOf(selected)].border}` }}><strong style={{ color:STATUS[stateOf(selected)].color }}>{STATUS[stateOf(selected)].label}</strong>{selected.maker_id&&<div>Maker #{selected.maker_id} · {selected.maker_status||"CREATED"}</div>}</div>
       <div className="ops-row-actions">
