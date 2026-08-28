@@ -1,4 +1,5 @@
 import baseConfig from "./vite.flowviews4.config.js";
+import financeUiPlacementPlugin from "./vite.finance-ui-placement.js";
 
 function poListIndependentPlugin() {
   return {
@@ -95,5 +96,5 @@ const inheritedPlugins = (baseConfig.plugins || []).map((plugin) => {
 
 export default {
   ...baseConfig,
-  plugins: [...inheritedPlugins, poListIndependentPlugin()],
+  plugins: [...inheritedPlugins, poListIndependentPlugin(), financeUiPlacementPlugin()],
 };
