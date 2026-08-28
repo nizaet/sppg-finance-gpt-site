@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from backend.db import connection, database_ready
+from backend.accountant_ledger_sync import sync_paid_makers_to_accountant_ledger
 
 router = APIRouter(tags=["accountant-status"])
 APPROVERS = {"MAJA": "EMBUN", "CEMPLANG": "MALIK"}
@@ -103,6 +104,10 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
                 receipt = cur.fetchone()
             conn.commit()
 
+    try:
+        ledger_sync = sync_paid_makers_to_accountant_ledger(str(maker.get("site") or ""))
+    except Exception as exc:
+        ledger_sync = {"attempted": 0, "synced": 0, "failed": 1, "errors": [f"{type(exc).__name__}: {exc}"[:500]]}
     return {
         "makerId": maker_id,
         "makerStatus": maker_status,
@@ -113,6 +118,7 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
         "receiptId": receipt["id"],
         "paidAt": receipt["received_at"],
         "evidenceRequired": False,
+        "accountantLedgerSync": ledger_sync,
     }
 
 
