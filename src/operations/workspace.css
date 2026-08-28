@@ -761,3 +761,33 @@ html[data-app-theme="light"] .weekly-menu-metrics em { color: #64748b; }
   .ops-po-site-tabs { display: grid; grid-template-columns: 1fr 1fr; }
   .ops-po-site-tabs button { min-width: 0; }
 }
+
+
+/* Fold and phone layout. Desktop keeps the sidebar layout above unchanged. */
+@media (max-width: 1100px) {
+  html, body, #root { width: 100%; max-width: 100%; min-width: 0; overflow-x: clip; }
+  .ops-workspace { display: block; width: 100%; max-width: 100%; min-height: 100dvh; overflow-x: clip; }
+  .ops-sidebar { position: sticky; top: 0; z-index: 800; width: 100%; height: auto; min-height: 0; padding: 9px 12px; border-right: 0; border-bottom: 1px solid var(--ops-border, rgba(148, 163, 184, .18)); box-shadow: 0 5px 18px rgba(15, 23, 42, .08); }
+  .ops-brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; }
+  .ops-brand > div { display: grid; gap: 2px; min-width: 0; }
+  .ops-brand strong { font-size: 16px; }
+  .ops-brand small { font-size: 10px; }
+  .ops-mobile-menu { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; min-height: 38px; border: 1px solid var(--ops-border, rgba(148, 163, 184, .24)); border-radius: 9px; padding: 7px 10px; background: var(--ops-input, #0c1829); color: inherit; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+  .ops-sidebar nav, .ops-sidebar .ops-theme-toggle { display: none; }
+  .ops-sidebar.mobile-open nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: calc(100dvh - 72px); margin-top: 10px; padding: 0 1px 2px; overflow-y: auto; overscroll-behavior: contain; }
+  .ops-sidebar.mobile-open nav button, .ops-sidebar.mobile-open nav a { min-height: 44px; padding: 9px; font-size: 12px; line-height: 1.2; }
+  .ops-sidebar.mobile-open .ops-theme-toggle { display: flex; margin-top: 9px; }
+  .ops-content { width: 100%; max-width: 100%; padding: 12px; padding-bottom: calc(86px + env(safe-area-inset-bottom)); overflow-x: clip; }
+  .ops-module, .ops-shell, .ops-site, .ops-table-wrap { max-width: 100%; }
+  .ops-module { padding: 14px; }
+  .ops-site-grid { grid-template-columns: 1fr !important; }
+}
+@media (max-width: 560px) {
+  .ops-sidebar.mobile-open nav { grid-template-columns: 1fr; }
+  .ops-brand strong { font-size: 15px; }
+  .ops-brand small { display: none; }
+  .ops-mobile-menu span { display: none; }
+  .ops-mobile-menu { width: 40px; padding: 0; }
+  .ops-content { padding-inline: 9px; }
+  .ops-module { border-radius: 12px; padding: 12px; }
+}
