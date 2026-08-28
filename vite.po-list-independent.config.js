@@ -70,7 +70,30 @@ function poListIndependentPlugin() {
   };
 }
 
+// The Cemplang accountant module can pass through the inherited transform more
+// than once while Vite resolves the query-suffixed App.jsx module. Once the
+// transform has already installed the fixed Cemplang runtime site, running the
+// brittle exact-string replacement a second time used to abort the entire MAJA
+// production build. Wrap that inherited plugin so the transform is idempotent.
+const inheritedPlugins = (baseConfig.plugins || []).map((plugin) => {
+  if (plugin?.name !== "sppg-cemplang-accountant-variant" || typeof plugin.transform !== "function") {
+    return plugin;
+  }
+  const originalTransform = plugin.transform;
+  return {
+    ...plugin,
+    transform(code, id, ...rest) {
+      const isCemplangAccountant = id.includes("/src/App.jsx?cemplang-accountant");
+      const alreadyTransformed =
+        code.includes('siteId: "sppg-cemplang2-gpt-site"') &&
+        !code.includes("const runtimeSite = RUNTIME_HOST_SITE_MAP[currentHostname] || null;");
+      if (isCemplangAccountant && alreadyTransformed) return null;
+      return originalTransform.call(this, code, id, ...rest);
+    },
+  };
+});
+
 export default {
   ...baseConfig,
-  plugins: [...(baseConfig.plugins || []), poListIndependentPlugin()],
+  plugins: [...inheritedPlugins, poListIndependentPlugin()],
 };
