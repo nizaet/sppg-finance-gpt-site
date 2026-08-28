@@ -407,6 +407,7 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
         return preview
     production_cycle_id = None
     excel_automatically_marked_sent = False
+    same_number_warning: dict[str, Any] | None = None
     with connection() as conn:
         with conn.cursor() as cur:
             if payload.accountant_submission_id is not None:
@@ -430,8 +431,9 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                 # created an unnecessary dead end in the same-row upload flow.
                 excel_automatically_marked_sent = submission_status == "READY"
                 production_cycle_id = submission.get("production_cycle_id")
-            # Identity is site + normalized invoice number. Never silently merge
-            # different accounting facts under the same number.
+            # Same invoice numbers are allowed: historical input can legitimately
+            # contain separate documents with the same reference. Exact re-upload
+            # is still idempotent; conflicting facts become a visible warning.
             cur.execute(
                 """select id,invoice_evidence_uri,accountant_submission_id,invoice_category,
                           invoice_date,invoice_amount
@@ -450,37 +452,29 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                     and duplicate.get("invoice_date") == payload.invoice_date
                     and abs(float(duplicate.get("invoice_amount") or 0) - float(payload.invoice_amount)) < 0.01
                 )
-                if not same_document:
-                    raise HTTPException(
-                        409,
-                        detail={
-                            "message": (
-                                f"Nomor invoice {payload.invoice_number} sudah dipakai oleh Invoice "
-                                f"#{duplicate['id']} pada {payload.site}, tetapi tanggal/kategori/nilainya berbeda. "
-                                "Data tidak digabung. Periksa nomor invoice; jika entri lama salah, hapus dari Kelola "
-                                "selama belum PAID, lalu simpan ulang."
-                            ),
-                            "existingInvoiceId": duplicate["id"],
-                            "existingInvoiceAmount": float(duplicate.get("invoice_amount") or 0),
-                            "existingInvoiceDate": str(duplicate.get("invoice_date") or ""),
-                            "existingCategory": duplicate.get("invoice_category"),
-                        },
-                    )
-                if excel_automatically_marked_sent:
-                    cur.execute(
-                        """update accountant_submissions
-                           set status='SENT',sent_at=coalesce(sent_at,now()),updated_at=now()
-                           where id=%s""",
-                        (payload.accountant_submission_id,),
-                    )
-                    conn.commit()
-                return {
-                    **preview,
-                    "committed": True,
-                    "duplicate": True,
-                    "accountantInvoiceId": duplicate["id"],
-                    "invoiceEvidenceUri": duplicate["invoice_evidence_uri"],
-                    "excelAutomaticallyMarkedSent": excel_automatically_marked_sent,
+                if same_document:
+                    if excel_automatically_marked_sent:
+                        cur.execute(
+                            """update accountant_submissions
+                               set status='SENT',sent_at=coalesce(sent_at,now()),updated_at=now()
+                               where id=%s""",
+                            (payload.accountant_submission_id,),
+                        )
+                        conn.commit()
+                    return {
+                        **preview,
+                        "committed": True,
+                        "duplicate": True,
+                        "accountantInvoiceId": duplicate["id"],
+                        "invoiceEvidenceUri": duplicate["invoice_evidence_uri"],
+                        "excelAutomaticallyMarkedSent": excel_automatically_marked_sent,
+                    }
+                same_number_warning = {
+                    "existingInvoiceId": duplicate["id"],
+                    "existingInvoiceAmount": float(duplicate.get("invoice_amount") or 0),
+                    "existingInvoiceDate": str(duplicate.get("invoice_date") or ""),
+                    "existingCategory": duplicate.get("invoice_category"),
+                    "message": "Nomor invoice sama dengan dokumen lain pada site ini; keduanya disimpan terpisah.",
                 }
     safe = _safe_filename(payload.file_name)
     filename = f"invoice_{payload.site.lower()}_{payload.category.lower()}_{payload.invoice_date.isoformat()}_{safe}"
@@ -525,6 +519,7 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
         **preview, "committed": True, "duplicate": False, "accountantInvoiceId": invoice_id,
         "invoiceEvidenceUri": uploaded["driveUri"], "drivePath": uploaded.get("drivePath"),
         "makerCreated": False,
+        "sameInvoiceNumberWarning": same_number_warning,
         "excelAutomaticallyMarkedSent": excel_automatically_marked_sent,
     }
 
@@ -560,6 +555,12 @@ def list_all_accountant_invoices(site: str = "") -> dict[str, Any]:
                 """select i.id as invoice_id,coalesce(i.site,s.site) as site,
                           coalesce(i.invoice_category,'BAHAN_BAKU') as invoice_category,
                           i.invoice_number,
+                          exists(
+                            select 1 from accountant_invoices i2
+                            where i2.id<>i.id
+                              and upper(coalesce(i2.site,''))=upper(coalesce(i.site,s.site,''))
+                              and lower(trim(coalesce(i2.invoice_number,'')))=lower(trim(coalesce(i.invoice_number,'')))
+                          ) as invoice_number_conflict,
                           coalesce(i.invoice_date,s.source_distribution_date,i.received_at::date,i.created_at::date) as invoice_date,
                           i.period_start,i.period_end,i.invoice_amount,i.invoice_evidence_uri,i.source_type,
                           i.accountant_submission_id,s.accountant_code,s.source_plan_name,s.source_distribution_date,
