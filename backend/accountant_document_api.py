@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
+from backend.accountant_ledger_sync import sync_paid_makers_to_accountant_ledger
 from backend.calculator_ai_api import _gemini_key, _gemini_model, _openai_key, _openai_model, _post_json
 from backend.db import connection, database_ready
 
@@ -858,9 +859,16 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
                     (document_id, maker_id, approval_id, row.get("referenceNumber"), row.get("amount"), row.get("matchMethod"), row.get("matchConfidence")),
                 )
             conn.commit()
+    try:
+        ledger_sync = sync_paid_makers_to_accountant_ledger(payload.site)
+    except Exception as exc:
+        # Payment evidence has already been committed. Do not undo a valid PAID
+        # state because an external ledger sync is temporarily unavailable.
+        ledger_sync = {"attempted": 0, "synced": 0, "failed": 1, "errors": [f"{type(exc).__name__}: {exc}"[:500]]}
     return {
         "committed": True, "documentId": document_id, "evidenceUri": uploaded["driveUri"],
         "drivePath": uploaded.get("drivePath"), "approvedMakerIds": [x["matchedMakerId"] for x in approved],
         "paidMakerIds": [x["matchedMakerId"] for x in approved],
         "approvedCount": len(approved), "paidCount": len(approved), "transactions": matches,
+        "accountantLedgerSync": ledger_sync,
     }
