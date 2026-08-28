@@ -71,6 +71,10 @@ class ApprovalEvidenceIn(DocumentFileIn):
     commit: bool = False
 
 
+class AccountantLedgerSyncIn(BaseModel):
+    site: Site | None = None
+
+
 def require_db() -> None:
     if not database_ready():
         raise HTTPException(503, "database unavailable")
@@ -582,6 +586,23 @@ def list_all_accountant_invoices(site: str = "") -> dict[str, Any]:
             )
             rows = cur.fetchall()
     return {"items": rows, "count": len(rows), "dateBasis": "INVOICE_DATE"}
+
+
+@router.post("/accountant-ledger/sync")
+def sync_accountant_ledger(payload: AccountantLedgerSyncIn) -> dict[str, Any]:
+    """Backfill/reconcile all approved-and-paid Makers into the site accountant ledger.
+
+    Re-running is safe: every ledger document uses the Maker id as its stable
+    Firestore id, so it updates rather than creating a duplicate transaction.
+    """
+    require_db()
+    try:
+        result = sync_paid_makers_to_accountant_ledger(payload.site)
+    except Exception as exc:
+        raise HTTPException(503, f"Sinkronisasi Akuntan gagal: {type(exc).__name__}: {exc}") from exc
+    if result.get("failed"):
+        raise HTTPException(503, {"message": "Sebagian pemasukan gagal disinkronkan", **result})
+    return result
 
 
 APPROVAL_PROMPT = """Baca bukti status transaksi bank/BGN ini. Satu file dapat berisi banyak transaksi.
