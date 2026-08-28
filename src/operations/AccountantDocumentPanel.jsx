@@ -87,7 +87,11 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     setProofBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: proofSite, parsedPayload: proofPreview.raw });
-      reportMessage(`${result.paidCount || result.approvedCount} Maker ditandai PAID. File bukti hanya diupload sekali dan linknya dipakai bersama.`);
+      const ledger = result.accountantLedgerSync;
+      const syncInfo = ledger
+        ? ` ${ledger.synced || 0} pemasukan disinkronkan ke Akuntan ${proofSite} sejak ${ledger.fromDate || "2026-08-24"}.`
+        : "";
+      reportMessage(`${result.paidCount || result.approvedCount} Maker ditandai PAID. File bukti hanya diupload sekali dan linknya dipakai bersama.${syncInfo}`);
       setProofFile(null); setProofPreview(null); await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyimpan bukti approval"); }
     finally { setProofBusy(false); }
