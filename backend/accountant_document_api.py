@@ -632,10 +632,9 @@ def _bank_status_transactions(text: str) -> list[dict[str, Any]]:
         amount = _number(amount_match.group(1)) if amount_match else None
         if amount is None:
             continue
-        reference_text = re.sub(r"\s+", "", block.upper())
         reference_match = re.search(
-            r"\d{1,3}/(?:BB|IM|OP)/[A-Z]{2,8}/VIII/(?:20(?:\d{0,2})?)?",
-            reference_text,
+            r"(?<!\d)\d{1,3}\s*/\s*(?:BB|IM|OP)\s*/\s*[A-Z]{2,8}\s*/\s*VIII\s*/\s*(?:20)?",
+            block.upper(),
         )
         date_match = re.match(
             r"([A-Za-z]{3})\s+(\d{1,2}),\s*(20\d{2})",
@@ -681,10 +680,9 @@ def _mandiri_status_transactions(text: str) -> list[dict[str, Any]]:
         amount = _number(amount_match.group(1)) if amount_match else None
         if amount is None:
             continue
-        reference_text = re.sub(r"\s+", "", block.upper())
         reference_match = re.search(
-            r"\d{1,3}/(?:BB|IM|OP|PC)/[A-Z]{2,8}/VIII/(?:20(?:\d{0,2})?)?",
-            reference_text,
+            r"(?<!\d)\d{1,3}\s*/\s*(?:BB|IM|OP|PC)\s*/\s*[A-Z]{2,8}\s*/\s*VIII\s*/\s*(?:20)?",
+            block.upper(),
         )
         month = ENGLISH_MONTHS.get(head.group(2).lower())
         transaction_date = date(int(head.group(3)), month, int(head.group(1))).isoformat() if month else None
