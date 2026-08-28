@@ -71,7 +71,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     try {
       const result = await accountantApi.commitInvoiceDocument({ file, preview: readyPreview, site, category });
       reportMessage(result.duplicate ? `Invoice ${preview.invoiceNumber} sudah pernah tercatat.` : `Invoice #${result.accountantInvoiceId} tersimpan. Maker belum dibuat; buka invoice pada kalender lalu klik Buat Maker.`);
-      setFile(null); setPreview(null); await onChanged?.();
+      setFile(null); setPreview(null); await onChanged?.({ site, invoiceDate: effectiveInvoiceDate, source: "direct-invoice" });
     } catch (e) { reportError(e.message || "Gagal menyimpan invoice"); }
     finally { setBusy(false); }
   };
