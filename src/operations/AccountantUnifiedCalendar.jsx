@@ -52,6 +52,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
   const [ledgerSyncBusy, setLedgerSyncBusy] = useState(false);
+  const [itemizeBusy, setItemizeBusy] = useState(false);
 
   const selected = items.find((row) => String(row.invoice_id) === String(selectedId)) || null;
   const refreshVersion = typeof refreshToken === "object" ? refreshToken.version : refreshToken;
@@ -113,6 +114,15 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
       await load();
     } catch (error) { reportError(error.message || "Gagal menyinkronkan pemasukan Akuntan"); }
     finally { setLedgerSyncBusy(false); }
+  };
+  const itemizeVendorPayments = async () => {
+    if (!window.confirm(`Rincikan seluruh pembayaran vendor ${site || "MAJA dan CEMPLANG"} menjadi baris per item invoice? Total pembayaran tidak berubah.`)) return;
+    setItemizeBusy(true); reportError("");
+    try {
+      const result = await accountantApi.itemizeVendorPaymentFinance(site || "");
+      reportMessage(`Rincian pembayaran vendor selesai: ${result.financeRows || 0} baris item dari ${result.paymentsProcessed || 0} pembayaran diproses.`);
+    } catch (error) { reportError(error.message || "Gagal merinci pembayaran vendor"); }
+    finally { setItemizeBusy(false); }
   };
   const createMaker = async () => {
     if (!selected || !window.confirm(`Buat Maker dari invoice ${selected.invoice_number} sebesar ${money(selected.invoice_amount)}?`)) return;
@@ -183,7 +193,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   return <section className="ops-module">
     <div className="ops-module-header">
       <div><span className="ops-kicker">KALENDER INVOICE & BGN TERPADU</span><h3>Invoice → Maker → Approval / Paid</h3><p>Semua invoice bahan baku dan operasional tampil pada tanggal invoice. Pada alur BGN, approval berarti transaksi PAID.</p></div>
-      <div className="ops-inline-controls"><select aria-label="Filter site" value={site} onChange={(event)=>setSite(event.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select><select aria-label="Filter kategori" value={category} onChange={(event)=>setCategory(event.target.value)}><option value="">Semua kategori</option>{categories.map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select><button type="button" className={viewMode === "list" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("list")}><List size={14}/> List</button><button type="button" className={viewMode === "calendar" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("calendar")}><CalendarDays size={14}/> Kalender</button><button type="button" onClick={load} disabled={busy}><RefreshCw size={14}/> Refresh</button><button type="button" onClick={syncAccountantIncome} disabled={busy||ledgerSyncBusy}><RefreshCw size={14}/> {ledgerSyncBusy ? "Sinkron…" : "Sinkron Pemasukan"}</button></div>
+      <div className="ops-inline-controls"><select aria-label="Filter site" value={site} onChange={(event)=>setSite(event.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select><select aria-label="Filter kategori" value={category} onChange={(event)=>setCategory(event.target.value)}><option value="">Semua kategori</option>{categories.map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select><button type="button" className={viewMode === "list" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("list")}><List size={14}/> List</button><button type="button" className={viewMode === "calendar" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("calendar")}><CalendarDays size={14}/> Kalender</button><button type="button" onClick={load} disabled={busy}><RefreshCw size={14}/> Refresh</button><button type="button" onClick={itemizeVendorPayments} disabled={busy||itemizeBusy}><RefreshCw size={14}/> {itemizeBusy ? "Merinci…" : "Rincikan Pembayaran Vendor"}</button><button type="button" onClick={syncAccountantIncome} disabled={busy||ledgerSyncBusy}><RefreshCw size={14}/> {ledgerSyncBusy ? "Sinkron…" : "Sinkron Pemasukan"}</button></div>
     </div>
     <div className="ops-summary-strip" style={{ marginBottom: 12 }}>{Object.entries(STATUS).map(([key, meta])=><span key={key} style={{ background: meta.bg, border: `1px solid ${meta.border}` }}>{meta.label} <strong>{counts[key]}</strong></span>)}</div>
     {viewMode === "calendar" && <><div className="ops-row-actions" style={{ justifyContent: "space-between", marginBottom: 10 }}><button type="button" onClick={()=>setMonth(shiftMonth(month,-1))}><ChevronLeft size={15}/> Bulan lalu</button><strong style={{ fontSize: 18, textTransform: "capitalize" }}><CalendarDays size={17} style={{ verticalAlign: "-3px", marginRight: 6 }}/>{monthTitle(month)}</strong><button type="button" onClick={()=>setMonth(shiftMonth(month,1))}>Bulan berikut <ChevronRight size={15}/></button></div>
