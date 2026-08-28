@@ -661,11 +661,11 @@ def _mandiri_status_transactions(text: str) -> list[dict[str, Any]]:
     """Read Mandiri/Jasper Transaction Status PDF rows without relying on AI."""
     if "TRANSACTION STATUS" not in text.upper() or "Reference No." not in text:
         return []
-    row_start = r"(?=\b\d{2}-[A-Za-z]{3}-20\d{2}\s+20\d{12,})"
+    row_start = r"(?=\b\d{2}-[A-Za-z]{3}-20\d{2}\s+\d{2}:\d{2}:\d{2}\s+20\d{12,})"
     rows: list[dict[str, Any]] = []
     for block in re.split(row_start, text):
         compact = re.sub(r"\s+", " ", block).strip()
-        head = re.match(r"(\d{2})-([A-Za-z]{3})-(20\d{2})\s+(20\d{12,})", compact)
+        head = re.match(r"(\d{2})-([A-Za-z]{3})-(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+(20\d{12,})", compact)
         if not head:
             continue
         if re.search(r"\bBerhasil\b", compact, re.I):
