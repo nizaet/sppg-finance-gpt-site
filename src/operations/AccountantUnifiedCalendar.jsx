@@ -129,6 +129,18 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     finally { setBusy(false); }
   };
 
+
+  const deleteInvoice = async () => {
+    if (!selected || selected.accountant_submission_id != null) return;
+    if (!window.confirm(`Hapus invoice ${selected.invoice_number || `#${selected.invoice_id}`} yang salah? File Drive dan Maker yang masih PENDING ikut dihapus. Data PAID tidak dapat dihapus.`)) return;
+    setBusy(true); reportError("");
+    try {
+      const result = await accountantApi.deleteInvoice(selected.invoice_id);
+      await afterAction(`Invoice #${selected.invoice_id} dihapus${result.deletedMakerIds?.length ? `; ${result.deletedMakerIds.length} Maker pending ikut dihapus` : ""}.`);
+      setSelectedId(null);
+    } catch (error) { reportError(error.message || "Gagal menghapus invoice"); }
+    finally { setBusy(false); }
+  };
   return <section className="ops-module">
     <div className="ops-module-header">
       <div><span className="ops-kicker">KALENDER INVOICE & BGN TERPADU</span><h3>Invoice → Maker → Approval / Paid</h3><p>Semua invoice bahan baku dan operasional tampil pada tanggal invoice. Pada alur BGN, approval berarti transaksi PAID.</p></div>
@@ -148,7 +160,12 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
       <div className="ops-module-header"><div><span className="ops-kicker">DETAIL INVOICE</span><h3>{selected.invoice_number||`Invoice #${selected.invoice_id}`}</h3></div><button type="button" onClick={()=>setSelectedId(null)} aria-label="Tutup"><X size={18}/></button></div>
       <div className="ops-summary-strip"><span>Site <strong>{selected.site}</strong></span><span>Tanggal invoice <strong>{dateKey(selected.invoice_date)||"-"}</strong></span><span>Kategori <strong>{String(selected.invoice_category||"-").replaceAll("_"," ")}</strong></span><span>Nilai <strong>{money(selected.invoice_amount)}</strong></span></div>
       <div style={{ margin:"14px 0", padding:12, borderRadius:10, background:STATUS[stateOf(selected)].bg, border:`1px solid ${STATUS[stateOf(selected)].border}` }}><strong style={{ color:STATUS[stateOf(selected)].color }}>{STATUS[stateOf(selected)].label}</strong>{selected.maker_id&&<div>Maker #{selected.maker_id} · {selected.maker_status||"CREATED"}</div>}</div>
-      <div className="ops-row-actions">{selected.invoice_evidence_uri&&<button type="button" onClick={()=>window.open(selected.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Invoice</button>}{selected.approval_evidence_uri&&<button type="button" onClick={()=>window.open(selected.approval_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Bukti Approval</button>}</div>
+      <div className="ops-row-actions">
+        {selected.invoice_evidence_uri&&<button type="button" onClick={()=>window.open(selected.invoice_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Invoice</button>}
+        {selected.approval_evidence_uri&&<button type="button" onClick={()=>window.open(selected.approval_evidence_uri,"_blank","noopener,noreferrer")}><ExternalLink size={14}/> Buka Bukti Approval</button>}
+        {selected.accountant_submission_id == null && stateOf(selected)!=="PAID"&&<button type="button" className="danger" onClick={deleteInvoice} disabled={busy}><Trash2 size={14}/> Hapus Invoice</button>}
+      </div>
+      {selected.accountant_submission_id != null&&<p className="ops-muted">Invoice ini terhubung ke Excel Akuntan. Jika seluruh alurnya salah, hapus dari tombol <strong>Hapus Alur</strong> pada baris Excel.</p>}
       {!selected.maker_id&&<div style={{ marginTop:14 }}><p>Invoice sudah tersimpan, tetapi belum masuk daftar Maker.</p><button type="button" onClick={createMaker} disabled={busy}><Stamp size={14}/> Buat Maker</button></div>}
       {selected.maker_id&&stateOf(selected)==="PENDING"&&<div style={{ marginTop:14 }}><h4>Approval / Paid Maker</h4><div className="ops-row-actions"><button type="button" onClick={approveWithoutEvidence} disabled={busy}><CheckCircle2 size={14}/> Approve = PAID tanpa bukti</button><button type="button" className="danger" onClick={cancelMaker} disabled={busy}><Trash2 size={14}/> Batalkan Maker</button></div><div className="ops-form-grid" style={{ marginTop:10 }}><label>Bukti approval PDF / gambar<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event)=>{setProofFile(event.target.files?.[0]||null);setProofPreview(null);}}/></label><label>Aksi<button type="button" onClick={readProof} disabled={busy||!proofFile}><FileSearch size={14}/> Baca Bukti</button></label></div>{proofPreview&&<div className="ops-parse-result"><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong><p>Satu file dapat menandai beberapa Maker yang cocok sebagai APPROVED dan PAID; file hanya disimpan sekali dan setiap item memakai link yang sama.</p><button type="button" onClick={saveProof} disabled={busy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Tandai PAID</button></div>}</div>}
       {stateOf(selected)==="APPROVED"&&<div className="ops-row-actions" style={{ marginTop:14 }}><button type="button" className="danger" onClick={cancelApproval} disabled={busy}>Batal Approve</button></div>}
