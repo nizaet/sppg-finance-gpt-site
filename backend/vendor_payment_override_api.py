@@ -150,56 +150,101 @@ def _update_invoice_status(cur: Any, invoice_id: int) -> str:
     return status
 
 
-def _finance_row(cur: Any, payment_id: int, payload: VendorPaymentEvidenceIn, paid_at: datetime,
-                 invoice: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
-    site = payload.site
-    vendor = payload.vendor_code.upper().strip()
+def _invoice_payment_items(cur: Any, invoice: dict[str, Any] | None, payment_amount: float) -> list[dict[str, Any]]:
+    """Allocate a paid vendor invoice to its persisted invoice items.
+
+    Full payments keep the exact invoice qty/price. Partial payments are
+    proportional, preserving the original unit price instead of inventing one.
+    """
+    if not invoice:
+        return []
+    cur.execute("""
+        select id,item_code,item_name,coalesce(payable_qty,invoiced_qty,0) as payable_qty,
+               unit,coalesce(vendor_cost_price,0) as vendor_cost_price,coalesce(line_total,0) as line_total
+        from vendor_invoice_items where vendor_invoice_id=%s order by id
+    """, (invoice["id"],))
+    rows = [dict(row) for row in cur.fetchall()]
+    total = round(sum(float(row.get("line_total") or 0) for row in rows), 2)
+    if not rows or total <= 0:
+        return []
+    factor = min(1.0, round(float(payment_amount) / total, 10))
+    allocated: list[dict[str, Any]] = []
+    remaining = round(float(payment_amount), 2)
+    for index, row in enumerate(rows):
+        amount = round(float(row["line_total"]) * factor, 2) if index < len(rows) - 1 else remaining
+        amount = max(0.0, amount)
+        remaining = round(remaining - amount, 2)
+        allocated.append({**row, "allocated_amount": amount,
+                          "allocated_qty": round(float(row.get("payable_qty") or 0) * factor, 4)})
+    return [row for row in allocated if row["allocated_amount"] > 0]
+
+
+def _finance_rows(cur: Any, payment_id: int, payload: VendorPaymentEvidenceIn, paid_at: datetime,
+                  invoice: dict[str, Any] | None) -> tuple[list[dict[str, Any]], int]:
+    """Persist one finance row per vendor invoice item, for every vendor."""
+    site, vendor = payload.site, payload.vendor_code.upper().strip()
     amount = round(float(payload.amount), 2)
     label = VENDOR_LABELS.get(vendor, vendor)
     category = VENDOR_EXPENSE_CATEGORIES.get(vendor, "Bahan Baku")
-    source_ref = f"vendor-payment:{payment_id}"
-    idem_raw = json.dumps({"site": site, "payment_id": payment_id, "amount": amount, "paid_date": paid_at.date().isoformat()}, sort_keys=True)
-    idem = "fin:auto-vendor-payment:" + hashlib.sha256(idem_raw.encode("utf-8")).hexdigest()
-    tx_id = f"vendorpay_{site.lower()}_{payment_id}"
     status = "RECONCILED" if invoice else "PAID_UNRECONCILED"
-    parts = [f"Pembayaran {label}"]
-    if invoice and invoice.get("invoice_number"):
-        parts.append(str(invoice["invoice_number"]))
-    if invoice and invoice.get("po_code"):
-        parts.append(str(invoice["po_code"]))
-    description = " - ".join(parts)
-    note = " | ".join(filter(None, [
-        "Otomatis dari bukti pembayaran vendor", f"vendor={vendor}", f"vendor_payment_id={payment_id}",
-        f"reconciliation={status}", f"payment_source={payload.payment_source}" if payload.payment_source else "",
-        f"reference={payload.reference_number}" if payload.reference_number else "", payload.note.strip(),
-    ]))
-    raw_text = json.dumps({"vendorPaymentId": payment_id, "vendorInvoiceId": invoice["id"] if invoice else None,
-                           "vendorCode": vendor, "site": site, "amount": amount, "paidAt": paid_at.isoformat(),
-                           "reconciliationStatus": status, "sourceExternalId": payload.source_external_id}, ensure_ascii=False)
-    cur.execute("""
-        insert into finance_transactions(
-          transaction_id,idempotency_key,site,transaction_date,description,transaction_type,category,amount,qty,unit,
-          unit_price,order_by,is_debt,payment_status,paid_amount,paid_date,source,source_ref,raw_text,
-          classification_confidence,classification_reason,note,evidence_uri
-        ) values (%s,%s,%s,%s,%s,'expense',%s,%s,null,null,null,%s,false,'paid',%s,%s,
-                  'vendor_payment_auto',%s,%s,0.99,%s,%s,%s)
-        on conflict (idempotency_key) do nothing returning transaction_id
-    """, (tx_id, idem, site, paid_at.date(), description, category, amount, label, amount, paid_at.date(), source_ref,
-          raw_text, f"Pembayaran vendor {vendor} sudah terjadi; reconciliation={status}.", note, payload.evidence_uri))
-    inserted = cur.fetchone()
-    cur.execute("select * from finance_transactions where idempotency_key=%s", (idem,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(500, "finance transaction was not persisted for vendor payment evidence")
-    cur.execute("update vendor_payments set finance_transaction_id=%s,updated_at=now() where id=%s", (row["transaction_id"], payment_id))
-    cur.execute("""
-        insert into finance_bridge_audit_log(transaction_id,action,actor,details)
-        values (%s,%s,%s,%s::jsonb)
-    """, (row["transaction_id"], "AUTO_VENDOR_PAYMENT_EVIDENCE_CREATE" if inserted else "AUTO_VENDOR_PAYMENT_EVIDENCE_REPLAY",
-          payload.actor, json.dumps({"vendor_payment_id": payment_id, "vendor_invoice_id": invoice["id"] if invoice else None,
-                                     "vendor_code": vendor, "amount": amount, "reconciliation_status": status}, ensure_ascii=False)))
-    return row, bool(inserted)
+    item_rows = _invoice_payment_items(cur, invoice, amount)
+    if not item_rows:
+        # Payment without a resolved invoice remains one clearly marked row;
+        # it cannot be itemized safely until its invoice detail exists.
+        item_rows = [{"id": None, "item_code": None, "item_name": f"Pembayaran {label}",
+                      "allocated_qty": 1, "unit": "invoice", "vendor_cost_price": amount,
+                      "allocated_amount": amount}]
 
+    persisted: list[dict[str, Any]] = []
+    inserted_count = 0
+    for index, item in enumerate(item_rows):
+        item_id = item.get("id")
+        tx_id = f"vendorpay_{site.lower()}_{payment_id}" if index == 0 else f"vendorpay_{site.lower()}_{payment_id}_item_{item_id}"
+        idem_raw = json.dumps({"site": site, "payment_id": payment_id, "item_id": item_id or index,
+                               "amount": item["allocated_amount"], "paid_date": paid_at.date().isoformat()}, sort_keys=True)
+        idem = "fin:auto-vendor-payment-item:" + hashlib.sha256(idem_raw.encode("utf-8")).hexdigest()
+        item_name = str(item.get("item_name") or "Item invoice")
+        description = " - ".join(filter(None, [f"Pembayaran {label}", str(invoice.get("invoice_number")) if invoice and invoice.get("invoice_number") else "", item_name]))
+        note = " | ".join(filter(None, [
+            "Otomatis per item dari bukti pembayaran vendor", f"vendor={vendor}", f"vendor_payment_id={payment_id}",
+            f"vendor_invoice_item_id={item_id}" if item_id else "", f"reconciliation={status}",
+            f"payment_source={payload.payment_source}" if payload.payment_source else "",
+            f"reference={payload.reference_number}" if payload.reference_number else "", payload.note.strip(),
+        ]))
+        raw_text = json.dumps({"vendorPaymentId": payment_id, "vendorInvoiceId": invoice["id"] if invoice else None,
+                               "vendorInvoiceItemId": item_id, "vendorCode": vendor, "site": site,
+                               "amount": item["allocated_amount"], "qty": item["allocated_qty"],
+                               "unit": item.get("unit"), "unitPrice": item.get("vendor_cost_price"),
+                               "paidAt": paid_at.isoformat(), "reconciliationStatus": status}, ensure_ascii=False)
+        values = (idem, site, paid_at.date(), description, category, item["allocated_amount"], item["allocated_qty"],
+                  item.get("unit") or "item", item.get("vendor_cost_price") or 0, label,
+                  item["allocated_amount"], paid_at.date(), f"vendor-payment:{payment_id}:item:{item_id or index}",
+                  raw_text, f"Pembayaran item vendor {vendor}; reconciliation={status}.", note, payload.evidence_uri, tx_id)
+        cur.execute("select transaction_id from finance_transactions where transaction_id=%s", (tx_id,))
+        exists = cur.fetchone()
+        if exists:
+            cur.execute("""
+                update finance_transactions set idempotency_key=%s,site=%s,transaction_date=%s,description=%s,
+                    transaction_type='expense',category=%s,amount=%s,qty=%s,unit=%s,unit_price=%s,order_by=%s,
+                    is_debt=false,payment_status='paid',paid_amount=%s,paid_date=%s,source='vendor_payment_item_auto',
+                    source_ref=%s,raw_text=%s,classification_confidence=0.99,classification_reason=%s,note=%s,
+                    evidence_uri=%s,updated_at=now() where transaction_id=%s
+            """, values)
+        else:
+            cur.execute("""
+                insert into finance_transactions(
+                  transaction_id,idempotency_key,site,transaction_date,description,transaction_type,category,amount,qty,unit,
+                  unit_price,order_by,is_debt,payment_status,paid_amount,paid_date,source,source_ref,raw_text,
+                  classification_confidence,classification_reason,note,evidence_uri
+                ) values (%s,%s,%s,%s,%s,'expense',%s,%s,%s,%s,%s,%s,false,'paid',%s,%s,
+                          'vendor_payment_item_auto',%s,%s,0.99,%s,%s,%s)
+            """, (tx_id, *values[:-1]))
+            inserted_count += 1
+        cur.execute("select * from finance_transactions where transaction_id=%s", (tx_id,))
+        persisted.append(dict(cur.fetchone()))
+    cur.execute("update vendor_payments set finance_transaction_id=%s,updated_at=now() where id=%s",
+                (persisted[0]["transaction_id"], payment_id))
+    return persisted, inserted_count
 
 @router.post("/vendor-payments/record-evidence")
 def record_vendor_payment_evidence(payload: VendorPaymentEvidenceIn) -> dict[str, Any]:
@@ -254,17 +299,22 @@ def record_vendor_payment_evidence(payload: VendorPaymentEvidenceIn) -> dict[str
                 payment_id = int(cur.fetchone()["id"])
 
             payable_status = _update_invoice_status(cur, int(invoice["id"])) if invoice else None
-            finance_row, finance_inserted = _finance_row(cur, payment_id, payload, paid_at, invoice)
+            finance_rows, finance_inserted = _finance_rows(cur, payment_id, payload, paid_at, invoice)
             conn.commit()
 
-    sync_status, firestore_path, firestore_doc_id, sync_error = _sync_row(finance_row)
-    _update_sync_status(finance_row["transaction_id"], sync_status, firestore_doc_id, sync_error, payload.evidence_uri)
+    sync_results = []
+    for finance_row in finance_rows:
+        sync_status, firestore_path, firestore_doc_id, sync_error = _sync_row(finance_row)
+        _update_sync_status(finance_row["transaction_id"], sync_status, firestore_doc_id, sync_error, payload.evidence_uri)
+        sync_results.append({"transactionId": finance_row["transaction_id"], "status": sync_status,
+                             "document": firestore_path, "error": sync_error})
     result.update({"committed": True, "duplicate": duplicate, "vendorPaymentId": payment_id,
                    "vendorInvoiceId": invoice["id"] if invoice else None, "paymentStatus": "PAID",
                    "reconciliationStatus": "RECONCILED" if invoice else "PAID_UNRECONCILED", "payableStatusAfter": payable_status,
                    "financeTransactionCreated": True, "financeTransactionInserted": finance_inserted,
-                   "financeTransactionId": finance_row["transaction_id"], "firestoreSyncStatus": sync_status,
-                   "firestoreDocument": firestore_path, "syncError": sync_error})
+                   "financeTransactionId": finance_rows[0]["transaction_id"], "financeTransactionCount": len(finance_rows),
+                   "financeTransactions": sync_results,
+                   "firestoreSyncStatus": "SYNCED" if all(x["status"] == "SYNCED" for x in sync_results) else "PARTIAL"})
     return result
 
 
