@@ -82,8 +82,14 @@ const RUNTIME_HOST_SITE_MAP = Object.freeze({
 
 const currentHostname =
   typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
+const browserPathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "";
+const routeSite = browserPathname === "/accountant/cemplang" || browserPathname.startsWith("/accountant/cemplang/")
+  ? { siteId: "sppg-cemplang2-gpt-site", databaseId: "cemplang2", siteLabel: "SPPG CEMPLANG 2", siteShortLabel: "Cemplang 2" }
+  : browserPathname === "/accountant/maja" || browserPathname.startsWith("/accountant/maja/")
+    ? { siteId: "sppg-maja-gpt-site", databaseId: "(default)", siteLabel: "SPPG MAJA BARU", siteShortLabel: "Maja" }
+    : null;
 
-const runtimeSite = RUNTIME_HOST_SITE_MAP[currentHostname] || null;
+const runtimeSite = routeSite || RUNTIME_HOST_SITE_MAP[currentHostname] || null;
 
 const siteId =
   runtimeSite?.siteId ||
@@ -106,7 +112,6 @@ const siteShortLabel =
   "Maja";
 
 // BEGIN RUNTIME BROWSER BRAND V9.0
-const browserPathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "";
 const browserIsCemplangAccountant = browserPathname === "/accountant/cemplang" || browserPathname.startsWith("/accountant/cemplang/");
 const browserBrand = browserIsCemplangAccountant
   ? { title: "Akuntan Cemplang | SPPG", favicon: "/favicon-accountant-cemplang.svg?v=90" }
