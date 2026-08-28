@@ -138,6 +138,10 @@ export const accountantApi = {
     method: "POST",
     body: JSON.stringify({ site: site || null }),
   }),
+  itemizeVendorPaymentFinance: (site = "") => request(`/v1/vendor-payments/itemize-finance?site=${encodeURIComponent(site || "")}`, {
+    method: "POST",
+    body: "{}",
+  }),
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, { method: "POST", body: "{}" }),
   deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, { method: "DELETE" }),
   deleteInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}`, { method: "DELETE" }),
