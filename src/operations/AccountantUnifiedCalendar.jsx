@@ -53,6 +53,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   const [proofPreview, setProofPreview] = useState(null);
 
   const selected = items.find((row) => String(row.invoice_id) === String(selectedId)) || null;
+  const refreshVersion = typeof refreshToken === "object" ? refreshToken.version : refreshToken;
   const copyToClipboard = async (value, label) => {
     const text = String(value ?? "");
     if (!text) return;
@@ -74,7 +75,16 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     } catch (error) { reportError(error.message || "Gagal memuat kalender invoice"); }
     finally { setBusy(false); }
   };
-  useEffect(() => { load(); }, [site, refreshToken]);
+  useEffect(() => {
+    const focusedSite = typeof refreshToken === "object" ? refreshToken.site : "";
+    const focusedDate = typeof refreshToken === "object" ? refreshToken.invoiceDate : "";
+    if (focusedSite) setSite(focusedSite);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(focusedDate || ""))) {
+      setMonth(focusedDate.slice(0, 7));
+      setViewMode("list");
+    }
+  }, [refreshVersion]);
+  useEffect(() => { load(); }, [site, refreshVersion]);
 
   const categories = useMemo(() => [...new Set(items.map((row) => String(row.invoice_category || "OPERASIONAL_LAIN")).filter(Boolean))].sort(), [items]);
   const visibleItems = useMemo(() => items.filter((row) => !category || String(row.invoice_category || "OPERASIONAL_LAIN") === category), [items, category]);
