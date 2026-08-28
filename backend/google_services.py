@@ -90,12 +90,22 @@ def create_firebase_custom_token(uid: str, claims: dict[str, Any]) -> str:
 
 
 @lru_cache(maxsize=4)
-def firestore_client(database_id: str):
-    return firestore.Client(
-        project=google_project_id(),
-        credentials=google_credentials(),
-        database=database_id,
-    )
+def firestore_client(database_id: str | None = None):
+    """Create the correct Firestore client for default and named databases.
+
+    The Python Firestore client used in production rejects ``(default)`` when it
+    is supplied explicitly as a named database id. For MAJA we must omit the
+    ``database`` argument entirely so the SDK uses the project's default
+    database. CEMPLANG continues to use its named ``cemplang2`` database.
+    """
+    normalized = str(database_id or "").strip()
+    kwargs = {
+        "project": google_project_id(),
+        "credentials": google_credentials(),
+    }
+    if normalized and normalized not in {"(default)", "%28default%29"}:
+        kwargs["database"] = normalized
+    return firestore.Client(**kwargs)
 
 
 def firestore_transaction_doc(site: str, transaction_id: str):
