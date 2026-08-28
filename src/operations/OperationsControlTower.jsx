@@ -135,7 +135,7 @@ export default function OperationsControlTower({ date: initialDate }) {
       {!hasOperationsBackend && <div className="ops-notice">Mode struktur/mock aktif.</div>}
       {error && <div className="ops-error">{error}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(520px,1fr))", gap: 18 }}>
+      <div className="ops-site-grid">
         {sites.map((site) => <SitePanel key={site.siteId} site={site} date={date} />)}
       </div>
     </div>
