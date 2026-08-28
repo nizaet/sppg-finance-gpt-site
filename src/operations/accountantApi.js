@@ -134,6 +134,10 @@ export const accountantApi = {
       body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, site: site || null, parsed_payload: parsedPayload || null, commit: true }),
     });
   },
+  syncAccountantLedger: (site = null) => request("/v1/accountant-ledger/sync", {
+    method: "POST",
+    body: JSON.stringify({ site: site || null }),
+  }),
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, { method: "POST", body: "{}" }),
   deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, { method: "DELETE" }),
   deleteInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}`, { method: "DELETE" }),
