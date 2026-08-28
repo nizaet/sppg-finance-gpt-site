@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
 from backend.db import connection, database_ready
+from backend.accountant_ledger_sync import sync_paid_makers_to_accountant_ledger
 
 router = APIRouter(tags=["bgn-paid"])
 MAX_EVIDENCE_BYTES = 12 * 1024 * 1024
@@ -131,6 +132,10 @@ def confirm_bgn_approved(maker_id: int, payload: BgnApproveIn) -> dict[str, Any]
                 )
             receipt = cur.fetchone()
             conn.commit()
+    try:
+        ledger_sync = sync_paid_makers_to_accountant_ledger(str(row.get("site") or ""))
+    except Exception as exc:
+        ledger_sync = {"attempted": 0, "synced": 0, "failed": 1, "errors": [f"{type(exc).__name__}: {exc}"[:500]]}
     return {
         **preview,
         "committed": True,
@@ -142,6 +147,7 @@ def confirm_bgn_approved(maker_id: int, payload: BgnApproveIn) -> dict[str, Any]
         "paidAt": receipt["received_at"],
         "actor": payload.actor,
         "note": payload.note,
+        "accountantLedgerSync": ledger_sync,
     }
 
 
@@ -225,6 +231,10 @@ def confirm_bgn_paid(maker_id: int, payload: BgnPaidIn) -> dict[str, Any]:
             receipt = cur.fetchone()
             conn.commit()
 
+    try:
+        ledger_sync = sync_paid_makers_to_accountant_ledger(str(row.get("site") or ""))
+    except Exception as exc:
+        ledger_sync = {"attempted": 0, "synced": 0, "failed": 1, "errors": [f"{type(exc).__name__}: {exc}"[:500]]}
     return {
         **preview,
         "committed": True,
@@ -235,4 +245,5 @@ def confirm_bgn_paid(maker_id: int, payload: BgnPaidIn) -> dict[str, Any]:
         "evidenceUri": receipt.get("evidence_uri"),
         "actor": payload.actor,
         "note": payload.note,
+        "accountantLedgerSync": ledger_sync,
     }
