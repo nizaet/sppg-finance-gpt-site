@@ -13,3 +13,4 @@
 
 
 .ops-file-progress{margin-top:12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-size:13px}.ops-file-progress>div:first-child{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px}.ops-file-progress strong{font-variant-numeric:tabular-nums}.ops-file-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#dbeafe}.ops-file-progress-track span{display:block;height:100%;border-radius:inherit;background:#2563eb;transition:width .35s ease}
+.ops-file-ready{display:block;margin-top:5px;color:#166534;font-size:12px;font-weight:700}
