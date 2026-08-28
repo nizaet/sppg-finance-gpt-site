@@ -9,6 +9,8 @@ import {
   MessageSquareText,
   Sparkles,
   Moon,
+  Menu,
+  X,
   PackageCheck,
   Store,
   Sun,
@@ -70,6 +72,7 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const [tab, setTab] = useState("today");
   const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
   const [theme, setTheme] = useAppTheme();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     document.title = "Pusat Operasional | SPPG";
@@ -93,6 +96,7 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
 
   const openTab = (id) => {
     setTab(id);
+    setMobileMenuOpen(false);
     setVisitedTabs((current) => {
       if (current.has(id)) return current;
       const next = new Set(current);
@@ -103,14 +107,20 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
 
   return (
     <div className="ops-workspace">
-      <aside className="ops-sidebar">
+      <aside className={`ops-sidebar${mobileMenuOpen ? " mobile-open" : ""}`}>
         <div className="ops-brand">
-          <span>SPPG</span>
-          <strong>Pusat Operasional</strong>
-          <small>YAYASAN · MAJA + CEMPLANG</small>
+          <div>
+            <span>SPPG</span>
+            <strong>Pusat Operasional</strong>
+            <small>YAYASAN · MAJA + CEMPLANG</small>
+          </div>
+          <button className="ops-mobile-menu" type="button" aria-expanded={mobileMenuOpen} aria-controls="ops-primary-navigation" onClick={() => setMobileMenuOpen((open) => !open)}>
+            {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
+            <span>{mobileMenuOpen ? "Tutup" : "Menu"}</span>
+          </button>
         </div>
 
-        <nav>
+        <nav id="ops-primary-navigation">
           <a href="/dapur/maja"><Calculator size={17} /> Kalkulator Maja</a>
           <a href="/dapur/cemplang"><Calculator size={17} /> Kalkulator Cemplang</a>
           {tabs.map(([id, label, Icon]) => (
