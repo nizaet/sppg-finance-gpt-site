@@ -130,7 +130,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
       <div className="ops-form-grid">
         <label>Site<select value={proofSite} onChange={e=>{setProofSite(e.target.value);setProofPreview(null);}}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
         <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}} onInput={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}}/>{proofFile&&<small className="ops-file-ready">✓ File siap dibaca</small>}</label>
-        <label>Aksi<button type="button" onClick={readProof} disabled={proofBusy||!proofFile} aria-disabled={proofBusy||!proofFile}><FileSearch size={14}/> {proofBusy?"Membaca…":proofFile?"Baca Semua Transaksi":"Pilih file terlebih dahulu"}</button></label>
+        <div className="ops-action-field"><span>Aksi</span><button type="button" onClick={e=>{e.preventDefault();readProof();}} disabled={proofBusy} aria-disabled={proofBusy}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button>{!proofFile&&<small className="ops-file-hint">Pilih file terlebih dahulu.</small>}</div>
       </div>
       {proofProgress&&<ReadProgress progress={proofProgress}/>}
       {proofPreview&&<div className="ops-parse-result">
