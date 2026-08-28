@@ -91,11 +91,21 @@ def create_firebase_custom_token(uid: str, claims: dict[str, Any]) -> str:
 
 @lru_cache(maxsize=4)
 def firestore_client(database_id: str):
-    return firestore.Client(
-        project=google_project_id(),
-        credentials=google_credentials(),
-        database=database_id,
-    )
+    """Return the correct Firestore client for default or named databases.
+
+    google-cloud-firestore expects the default database to be selected by
+    omitting the database argument. Passing the literal ``(default)`` can be
+    percent-encoded to ``%28default%29`` and rejected by the API as an invalid
+    database id. Named databases such as ``cemplang2`` still use the explicit
+    database parameter.
+    """
+    kwargs = {
+        "project": google_project_id(),
+        "credentials": google_credentials(),
+    }
+    if database_id and database_id != "(default)":
+        kwargs["database"] = database_id
+    return firestore.Client(**kwargs)
 
 
 def firestore_transaction_doc(site: str, transaction_id: str):
