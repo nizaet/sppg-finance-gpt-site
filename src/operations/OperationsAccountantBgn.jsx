@@ -81,10 +81,10 @@ export default function OperationsAccountantBgn(){
   const [excelBusy,setExcelBusy]=useState(false);
   const [invoiceFiles,setInvoiceFiles]=useState({});
   const [customFilename,setCustomFilename]=useState(()=>excelFilenameForDate(new Date().toISOString().slice(0,10)));
-  const [calendarRefresh,setCalendarRefresh]=useState(0);
+  const [calendarRefresh,setCalendarRefresh]=useState({ version: 0, site: "", invoiceDate: "" });
   const pendingExcelRef=useRef(null);
 
-  const load=async()=>{
+  const load=async(focus = null)=>{
     setLoading(true); setError("");
     try{
       // Excel/Invoice and BGN are separate lanes. A temporary BGN failure must
@@ -94,7 +94,11 @@ export default function OperationsAccountantBgn(){
       if(bgnResult.status==="fulfilled") setBgn(bgnResult.value?.items||[]);
       if(accountantResult.status==="rejected") throw accountantResult.reason;
       if(bgnResult.status==="rejected") setMessage("Daftar Excel tetap dimuat. Riwayat Maker/BGN sedang tidak tersedia; silakan refresh lagi nanti.");
-      setCalendarRefresh((value)=>value+1);
+      setCalendarRefresh((value)=>({
+        version: value.version + 1,
+        site: focus?.site || "",
+        invoiceDate: focus?.invoiceDate || "",
+      }));
     }catch(e){setError(e.message||"Gagal mengambil daftar Excel akuntan");}
     finally{setLoading(false);}
   };
