@@ -132,6 +132,7 @@ export const accountantApi = {
   },
   createMakerFromInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}/create-maker`, { method: "POST", body: "{}" }),
   deleteSubmissionCascade: (submissionId) => request(`/v1/accountant-submissions/${encodeURIComponent(submissionId)}/cascade`, { method: "DELETE" }),
+  deleteInvoice: (invoiceId) => request(`/v1/accountant-invoices/${encodeURIComponent(invoiceId)}`, { method: "DELETE" }),
   confirmMakerApproved: (makerId) => request(`/v1/bgn-makers/${encodeURIComponent(makerId)}/approve-now`, {
     method: "POST",
     body: "{}",
