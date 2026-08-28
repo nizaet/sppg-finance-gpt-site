@@ -48,11 +48,15 @@ async function download(path, fallbackFilename) {
   } finally { clearTimeout(timeout); }
 }
 
-export function fileToBase64(file) {
+export function fileToBase64(file, onProgress = null) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Gagal membaca file"));
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.({ loaded: event.loaded, total: event.total });
+    };
     reader.onload = () => {
+      onProgress?.({ loaded: file.size, total: file.size });
       const raw = String(reader.result || "");
       resolve(raw.includes(",") ? raw.split(",", 2)[1] : raw);
     };
@@ -89,8 +93,8 @@ export const accountantApi = {
       body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, invoice_number: invoiceNumber || null, invoice_amount: invoiceAmount == null ? null : Number(invoiceAmount), received_at: null }),
     });
   },
-  previewInvoiceDocument: async ({ file, site = null, category = null, submissionId = null }) => {
-    const contentBase64 = await fileToBase64(file);
+  previewInvoiceDocument: async ({ file, site = null, category = null, submissionId = null, onReadProgress = null }) => {
+    const contentBase64 = await fileToBase64(file, onReadProgress);
     return request("/v1/accountant-invoices/document-preview", {
       method: "POST",
       body: JSON.stringify({
@@ -116,8 +120,8 @@ export const accountantApi = {
   },
   getDirectInvoices: (site = "") => request(`/v1/accountant-invoices/direct?site=${encodeURIComponent(site || "")}`),
   getAllInvoices: (site = "") => request(`/v1/accountant-invoices/all?site=${encodeURIComponent(site || "")}`),
-  previewApprovalEvidence: async ({ file, site = null }) => {
-    const contentBase64 = await fileToBase64(file);
+  previewApprovalEvidence: async ({ file, site = null, onReadProgress = null }) => {
+    const contentBase64 = await fileToBase64(file, onReadProgress);
     return request("/v1/approval-evidence/document-preview", {
       method: "POST",
       body: JSON.stringify({ file_name: file.name, mime_type: file.type || "application/octet-stream", content_base64: contentBase64, site: site || null, commit: false }),
