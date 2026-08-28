@@ -430,17 +430,42 @@ def upload_direct_invoice(payload: DirectInvoiceIn) -> dict[str, Any]:
                 # created an unnecessary dead end in the same-row upload flow.
                 excel_automatically_marked_sent = submission_status == "READY"
                 production_cycle_id = submission.get("production_cycle_id")
+            # Identity is site + normalized invoice number. Never silently merge
+            # different accounting facts under the same number.
             cur.execute(
-                """select id,invoice_evidence_uri,accountant_submission_id from accountant_invoices
-                   where upper(coalesce(site,''))=%s and lower(trim(coalesce(invoice_number,'')))=lower(trim(%s))
+                """select id,invoice_evidence_uri,accountant_submission_id,invoice_category,
+                          invoice_date,invoice_amount
+                   from accountant_invoices
+                   where upper(coalesce(site,''))=%s
+                     and lower(trim(coalesce(invoice_number,'')))=lower(trim(%s))
                    order by id desc limit 1""",
                 (payload.site, payload.invoice_number),
             )
             duplicate = cur.fetchone()
             if duplicate:
                 duplicate_submission_id = duplicate.get("accountant_submission_id")
-                if payload.accountant_submission_id is not None and duplicate_submission_id != payload.accountant_submission_id:
-                    raise HTTPException(409, "nomor invoice sudah tersimpan pada alur Excel/invoice lain")
+                same_document = (
+                    duplicate_submission_id == payload.accountant_submission_id
+                    and str(duplicate.get("invoice_category") or "").upper() == payload.category
+                    and duplicate.get("invoice_date") == payload.invoice_date
+                    and abs(float(duplicate.get("invoice_amount") or 0) - float(payload.invoice_amount)) < 0.01
+                )
+                if not same_document:
+                    raise HTTPException(
+                        409,
+                        detail={
+                            "message": (
+                                f"Nomor invoice {payload.invoice_number} sudah dipakai oleh Invoice "
+                                f"#{duplicate['id']} pada {payload.site}, tetapi tanggal/kategori/nilainya berbeda. "
+                                "Data tidak digabung. Periksa nomor invoice; jika entri lama salah, hapus dari Kelola "
+                                "selama belum PAID, lalu simpan ulang."
+                            ),
+                            "existingInvoiceId": duplicate["id"],
+                            "existingInvoiceAmount": float(duplicate.get("invoice_amount") or 0),
+                            "existingInvoiceDate": str(duplicate.get("invoice_date") or ""),
+                            "existingCategory": duplicate.get("invoice_category"),
+                        },
+                    )
                 if excel_automatically_marked_sent:
                     cur.execute(
                         """update accountant_submissions
