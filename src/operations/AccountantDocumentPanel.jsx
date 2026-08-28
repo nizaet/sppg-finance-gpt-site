@@ -9,6 +9,22 @@ const CATEGORIES = [
   ["UPAH", "Upah"], ["BAHAN_BAKU", "Bahan Baku"], ["OPERASIONAL_LAIN", "Operasional Lain"],
 ];
 
+function startReadProgress(setProgress) {
+  let percent = 6;
+  setProgress({ percent, label: "Menyiapkan pembacaan…" });
+  return window.setInterval(() => {
+    percent = Math.min(90, percent + (percent < 35 ? 7 : 3));
+    setProgress({ percent, label: percent < 35 ? "Membaca file dari perangkat…" : "Menganalisis seluruh transaksi…" });
+  }, 550);
+}
+
+function ReadProgress({ progress }) {
+  return <div className="ops-file-progress" role="status" aria-live="polite">
+    <div><span>{progress.label}</span><strong>{progress.percent}%</strong></div>
+    <div className="ops-file-progress-track"><span style={{ width: `${progress.percent}%` }}/></div>
+  </div>;
+}
+
 export default function AccountantDocumentPanel({ onChanged, reportError, reportMessage }) {
   const [site, setSite] = useState("MAJA");
   const [category, setCategory] = useState("SEWA_MITRA");
@@ -21,6 +37,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
   const [proofPreview, setProofPreview] = useState(null);
   const [proofBusy, setProofBusy] = useState(false);
   const [proofProgress, setProofProgress] = useState(null);
+  const [ledgerSyncBusy, setLedgerSyncBusy] = useState(false);
 
   const readInvoice = async () => {
     if (!file) return reportError("Pilih file invoice PDF/JPG/PNG terlebih dahulu.");
@@ -81,6 +98,16 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     }
   };
 
+  const syncLedger = async () => {
+    setLedgerSyncBusy(true); reportError("");
+    try {
+      const result = await accountantApi.syncAccountantLedger(proofSite);
+      reportMessage(`Sinkron Akuntan ${proofSite} selesai: ${result.synced || 0} dari ${result.attempted || 0} pemasukan PAID sejak ${result.fromDate || "2026-08-24"}.`);
+      await onChanged?.();
+    } catch (e) { reportError(e.message || "Gagal menyinkronkan pemasukan ke Akuntan"); }
+    finally { setLedgerSyncBusy(false); }
+  };
+
   const saveProof = async () => {
     if (!proofPreview?.willApproveCount) return reportError("Tidak ada transaksi SUCCESS yang cocok secara aman.");
     if (!window.confirm(`Tandai ${proofPreview.willApproveCount} Maker sebagai PAID dan tautkan satu file bukti yang sama?`)) return;
@@ -133,6 +160,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
         <div className="ops-action-field"><span>Aksi</span><button type="button" onClick={e=>{e.preventDefault();readProof();}} disabled={proofBusy} aria-disabled={proofBusy}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button>{!proofFile&&<small className="ops-file-hint">Pilih file terlebih dahulu.</small>}</div>
       </div>
       {proofProgress&&<ReadProgress progress={proofProgress}/>}
+      <div className="ops-row-actions"><button type="button" onClick={syncLedger} disabled={ledgerSyncBusy}><Upload size={14}/> {ledgerSyncBusy ? "Menyinkronkan…" : `Sinkronkan Semua PAID ke Akuntan ${proofSite}`}</button></div>
       {proofPreview&&<div className="ops-parse-result">
         <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
