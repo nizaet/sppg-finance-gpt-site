@@ -125,8 +125,8 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
       <div className="ops-module-header"><div><span className="ops-kicker">BUKTI APPROVAL MASSAL</span><h3>Satu File untuk Beberapa Maker</h3><p>Sistem membaca seluruh transaksi dalam PDF/gambar, mencocokkan nomor referensi atau nilai unik, lalu menautkan satu link Drive ke semua Maker yang cocok. Transaksi Pending/Failed tidak diapprove.</p></div></div>
       <div className="ops-form-grid">
         <label>Site<select value={proofSite} onChange={e=>{setProofSite(e.target.value);setProofPreview(null);}}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
-        <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{setProofFile(e.target.files?.[0]||null);setProofPreview(null);}}/></label>
-        <label>Aksi<button type="button" onClick={readProof} disabled={proofBusy||!proofFile}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button></label>
+        <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}} onInput={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}}/>{proofFile&&<small className="ops-file-ready">✓ File siap dibaca</small>}</label>
+        <label>Aksi<button type="button" onClick={readProof} disabled={proofBusy||!proofFile} aria-disabled={proofBusy||!proofFile}><FileSearch size={14}/> {proofBusy?"Membaca…":proofFile?"Baca Semua Transaksi":"Pilih file terlebih dahulu"}</button></label>
       </div>
       {proofProgress&&<ReadProgress progress={proofProgress}/>}
       {proofPreview&&<div className="ops-parse-result">
