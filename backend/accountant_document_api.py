@@ -780,15 +780,15 @@ def _approval_parse(payload: ApprovalEvidenceIn, data: bytes, mime: str) -> dict
         return payload.parsed_payload
     text = _pdf_text(data) if mime == "application/pdf" else ""
     deterministic_rows = _bank_status_transactions(text) or _mandiri_status_transactions(text)
+    # Bank status PDFs have complete selectable text. Return immediately: the
+    # AI call is unnecessary, can sample only some rows, and may exceed the web
+    # request timeout even though every transaction was already read locally.
+    if deterministic_rows:
+        return {"transactions": deterministic_rows}
     try:
         parsed = _document_ai(APPROVAL_PROMPT, data, mime, text)
     except HTTPException:
         parsed = {}
-    # A BNI/BGN Transaction Status table already contains structured text.
-    # Prefer all deterministic rows over an incomplete AI sample, while keeping
-    # AI as the reader for scans and other bank formats.
-    if deterministic_rows:
-        return {**parsed, "transactions": deterministic_rows}
     if not parsed:
         raise HTTPException(503, "AI belum berhasil membaca bukti approval")
     return parsed
