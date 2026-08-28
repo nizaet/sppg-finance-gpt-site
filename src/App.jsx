@@ -1769,7 +1769,19 @@ function SmartCateringAccountant() {
     if (!selectedDetail?.data) return [];
     const q = detailSearch.trim().toLowerCase();
     return selectedDetail.data
-      .map(t => ({ ...t, outstanding: txOutstanding(t), debtActive: txIsDebtActive(t), inputMs: txInputMs(t) }))
+      .map(t => {
+        const itemKey = String(t.desc || "").split(" - ").pop().trim().toLowerCase();
+        const price = safeNumber(t.unitPrice);
+        const candidates = transactions
+          .filter(x => x.id !== t.id && safeNumber(x.unitPrice) > 0
+            && String(x.orderBy || "").trim().toLowerCase() === String(t.orderBy || "").trim().toLowerCase()
+            && String(x.desc || "").split(" - ").pop().trim().toLowerCase() === itemKey
+            && String(x.date || "") <= String(t.date || ""))
+          .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")) || txInputMs(b) - txInputMs(a));
+        const previousPrice = candidates.length ? safeNumber(candidates[0].unitPrice) : null;
+        return { ...t, outstanding: txOutstanding(t), debtActive: txIsDebtActive(t), inputMs: txInputMs(t),
+          previousPrice, priceDelta: previousPrice != null && price > 0 ? price - previousPrice : null };
+      })
       .filter(t => !q || `${t.date} ${t.desc} ${t.category} ${t.orderBy} ${t.note} ${t.id} ${t.amount} ${t.type} ${t.paymentStatus} ${t.unit} ${t.unitPrice}`.toLowerCase().includes(q))
       .sort((a,b) => {
         if (detailSort === "DATE_DESC") return String(b.date).localeCompare(String(a.date)) || b.inputMs - a.inputMs;
@@ -1779,7 +1791,7 @@ function SmartCateringAccountant() {
         if (detailSort === "VENDOR") return String(a.orderBy || "").localeCompare(String(b.orderBy || ""), "id-ID");
         return b.inputMs - a.inputMs || String(b.date).localeCompare(String(a.date));
       });
-  }, [selectedDetail, detailSearch, detailSort]);
+  }, [selectedDetail, detailSearch, detailSort, transactions]);
 
   const deleteDetailTransaction = (t) => {
     confirmAction("Hapus Transaksi dari Rincian?", `Hapus ${t.desc} sebesar ${formatIDR(t.amount)}?`, async () => {
@@ -2592,7 +2604,7 @@ function SmartCateringAccountant() {
             <span>Total filter: <b>{formatIDR(detailRows.reduce((a,b)=>a+safeNumber(b.amount),0))}</b></span>
             <span>Hutang aktif: <b>{formatIDR(detailRows.reduce((a,b)=>a+safeNumber(b.outstanding),0))}</b></span>
           </div>
-          <div className="scroll-table detail-scroll"><Table><TableHeader><TableRow><TableHead>Input</TableHead><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Jumlah</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{detailRows.map(t=><TableRow key={t.id}><TableCell><small className="mono">{t.updatedAt ? "updated" : t.createdAt ? "created" : "date"}</small></TableCell><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.category}</small>{t.note ? <small className="mono">{t.note}</small> : null}{safeNumber(t.qty) || safeNumber(t.unitPrice) ? <small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small> : null}</TableCell><TableCell>{t.orderBy || "-"}</TableCell><TableCell>{t.debtActive ? <Badge variant="destructive">Hutang</Badge> : <Badge variant="soft">Lunas</Badge>}</TableCell><TableCell className={`right strong ${t.type==="income"?"green-text":"red-text"}`}>{formatIDR(t.amount)}</TableCell><TableCell><div className="row-actions"><button title="Edit" onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button title="Hapus" onClick={()=>deleteDetailTransaction(t)}><Trash2 size={13}/></button></div></TableCell></TableRow>)}{detailRows.length===0 && <TableRow><TableCell colSpan={7} className="center empty">Tidak ada transaksi sesuai pencarian.</TableCell></TableRow>}</TableBody></Table></div>
+          <div className="scroll-table detail-scroll"><Table><TableHeader><TableRow><TableHead>Input</TableHead><TableHead>Tanggal</TableHead><TableHead>Deskripsi</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="right">Jumlah</TableHead><TableHead>Aksi</TableHead></TableRow></TableHeader><TableBody>{detailRows.map(t=><TableRow key={t.id}><TableCell><small className="mono">{t.updatedAt ? "updated" : t.createdAt ? "created" : "date"}</small></TableCell><TableCell>{t.date}</TableCell><TableCell>{t.desc}<small>{t.category}</small>{t.note ? <small className="mono">{t.note}</small> : null}{safeNumber(t.qty) || safeNumber(t.unitPrice) ? <small className="mono">{t.qty} {t.unit} x {formatIDR(t.unitPrice)}</small> : null}{t.priceDelta != null ? <small className={t.priceDelta > 0 ? "red-text" : t.priceDelta < 0 ? "green-text" : "mono"}>{t.priceDelta > 0 ? "Harga naik" : t.priceDelta < 0 ? "Harga turun" : "Harga tetap"} {t.priceDelta ? formatIDR(Math.abs(t.priceDelta)) + "/" + (t.unit || "unit") : ""} dari {formatIDR(t.previousPrice)}</small> : null}</TableCell><TableCell>{t.orderBy || "-"}</TableCell><TableCell>{t.debtActive ? <Badge variant="destructive">Hutang</Badge> : <Badge variant="soft">Lunas</Badge>}</TableCell><TableCell className={`right strong ${t.type==="income"?"green-text":"red-text"}`}>{formatIDR(t.amount)}</TableCell><TableCell><div className="row-actions"><button title="Edit" onClick={()=>openEdit(t)}><Edit2 size={13}/></button><button title="Hapus" onClick={()=>deleteDetailTransaction(t)}><Trash2 size={13}/></button></div></TableCell></TableRow>)}{detailRows.length===0 && <TableRow><TableCell colSpan={7} className="center empty">Tidak ada transaksi sesuai pencarian.</TableCell></TableRow>}</TableBody></Table></div>
         </Modal>}
 
         {backupOpen && <Modal title="Riwayat Backup Cloud" onClose={()=>setBackupOpen(false)}>{isLoadingBackups ? <div className="center"><Loader2 className="spin"/> Loading data...</div> : <div className="backup-list">{backupList.map(b=><div key={b.id} className="backup-row"><div><b>{new Date(b.createdAtClient || b.id).toLocaleString("id-ID")}</b><small>Transaksi: {b.counts?.transactions || 0} · Stok: {b.counts?.inventory || 0} · Shareholder: {b.counts?.shareholders || 0}</small><small>{b.backupType || "metadata_lama"}</small></div><div className="row-actions"><Button size="sm" variant="outline" onClick={()=>loadBackup(b)}>Restore</Button><Button size="sm" variant="red" onClick={()=>deleteBackupPoint(b)}><Trash2 size={13}/> Hapus</Button></div></div>)}{backupList.length===0 && <p className="center empty">Belum ada backup tersimpan.</p>}</div>}</Modal>}
