@@ -657,6 +657,47 @@ def _bank_status_transactions(text: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _mandiri_status_transactions(text: str) -> list[dict[str, Any]]:
+    """Read Mandiri/Jasper Transaction Status PDF rows without relying on AI."""
+    if "TRANSACTION STATUS" not in text.upper() or "Reference No." not in text:
+        return []
+    row_start = r"(?=\b\d{2}-[A-Za-z]{3}-20\d{2}\s+20\d{12,})"
+    rows: list[dict[str, Any]] = []
+    for block in re.split(row_start, text):
+        compact = re.sub(r"\s+", " ", block).strip()
+        head = re.match(r"(\d{2})-([A-Za-z]{3})-(20\d{2})\s+(20\d{12,})", compact)
+        if not head:
+            continue
+        if re.search(r"\bBerhasil\b", compact, re.I):
+            status = "SUCCESS"
+        elif re.search(r"\b(?:Pending|Menunggu)\b", compact, re.I):
+            status = "PENDING"
+        elif re.search(r"\b(?:Gagal|Failed)\b", compact, re.I):
+            status = "FAILED"
+        else:
+            continue
+        amount_match = re.search(r"\bIDR\s+([0-9][0-9,.]+)", compact, re.I)
+        amount = _number(amount_match.group(1)) if amount_match else None
+        if amount is None:
+            continue
+        reference_text = re.sub(r"\s+", "", block.upper())
+        reference_match = re.search(
+            r"\d{1,3}/(?:BB|IM|OP|PC)/[A-Z]{2,8}/VIII/(?:20(?:\d{0,2})?)?",
+            reference_text,
+        )
+        month = ENGLISH_MONTHS.get(head.group(2).lower())
+        transaction_date = date(int(head.group(3)), month, int(head.group(1))).isoformat() if month else None
+        rows.append({
+            "transaction_id": head.group(4),
+            "reference_number": reference_match.group(0) if reference_match else None,
+            "beneficiary": None,
+            "amount": amount,
+            "status": status,
+            "transaction_date": transaction_date,
+        })
+    return rows
+
+
 def _maker_candidates(site: str | None) -> list[dict[str, Any]]:
     require_db()
     with connection() as conn:
@@ -718,7 +759,7 @@ def _approval_parse(payload: ApprovalEvidenceIn, data: bytes, mime: str) -> dict
     if payload.parsed_payload:
         return payload.parsed_payload
     text = _pdf_text(data) if mime == "application/pdf" else ""
-    deterministic_rows = _bank_status_transactions(text)
+    deterministic_rows = _bank_status_transactions(text) or _mandiri_status_transactions(text)
     try:
         parsed = _document_ai(APPROVAL_PROMPT, data, mime, text)
     except HTTPException:
