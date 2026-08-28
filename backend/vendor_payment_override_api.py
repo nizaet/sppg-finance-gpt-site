@@ -318,6 +318,63 @@ def record_vendor_payment_evidence(payload: VendorPaymentEvidenceIn) -> dict[str
     return result
 
 
+@router.post("/vendor-payments/itemize-finance")
+def itemize_vendor_payment_finance(site: Literal["MAJA", "CEMPLANG"] | None = None) -> dict[str, Any]:
+    """Convert old aggregate vendor-payment rows into their invoice-item rows.
+
+    Safe to run repeatedly: the first legacy row is rewritten in place and the
+    remaining invoice items use stable ids, so no double expense is created.
+    """
+    _require_db()
+    synced_rows: list[dict[str, Any]] = []
+    inserted = 0
+    processed = 0
+    with connection() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                select vp.id as payment_id,vp.site,vp.vendor_code,vp.amount,vp.paid_at,vp.payment_source,
+                       vp.reference_number,vp.evidence_uri,vp.source_external_id,vp.reconciliation_note,
+                       vi.id,vi.invoice_number,vi.net_amount,vi.purchase_order_id,vi.goods_receipt_id,po.po_code
+                from vendor_payments vp
+                join vendor_invoices vi on vi.id=vp.vendor_invoice_id
+                left join purchase_orders po on po.id=vi.purchase_order_id
+                where vp.payment_status in ('PAID','RECONCILED')
+            """
+            params: list[Any] = []
+            if site:
+                sql += " and upper(vp.site)=upper(%s)"
+                params.append(site)
+            sql += " order by vp.id"
+            cur.execute(sql, params)
+            payments = [dict(row) for row in cur.fetchall()]
+            for payment in payments:
+                payload = VendorPaymentEvidenceIn(
+                    site=str(payment["site"]).upper(), vendor_code=str(payment["vendor_code"]),
+                    amount=float(payment["amount"]), paid_at=payment.get("paid_at"),
+                    payment_source=payment.get("payment_source"), reference_number=payment.get("reference_number"),
+                    evidence_uri=payment.get("evidence_uri"), source_external_id=payment.get("source_external_id"),
+                    purchase_order_id=payment.get("purchase_order_id"), goods_receipt_id=payment.get("goods_receipt_id"),
+                    vendor_invoice_id=int(payment["id"]), note=str(payment.get("reconciliation_note") or ""),
+                    actor="itemize-backfill", commit=True,
+                )
+                invoice = {
+                    "id": int(payment["id"]), "invoice_number": payment.get("invoice_number"),
+                    "po_code": payment.get("po_code"), "net_amount": payment.get("net_amount"),
+                }
+                rows, created = _finance_rows(cur, int(payment["payment_id"]), payload,
+                                              payment.get("paid_at") or datetime.now(timezone.utc), invoice)
+                synced_rows.extend(rows); inserted += created; processed += 1
+            conn.commit()
+    outcomes = []
+    for row in synced_rows:
+        status, path, doc_id, error = _sync_row(row)
+        _update_sync_status(row["transaction_id"], status, doc_id, error, row.get("evidence_uri"))
+        outcomes.append({"transactionId": row["transaction_id"], "status": status, "error": error})
+    return {"site": site, "paymentsProcessed": processed, "financeRows": len(synced_rows),
+            "newRows": inserted, "synced": sum(1 for x in outcomes if x["status"] == "SYNCED"),
+            "failed": sum(1 for x in outcomes if x["status"] != "SYNCED"), "results": outcomes}
+
+
 @router.post("/vendor-payments/{payment_id}/reconcile")
 def reconcile_vendor_payment(payment_id: int, payload: VendorPaymentReconcileIn) -> dict[str, Any]:
     _require_db()
