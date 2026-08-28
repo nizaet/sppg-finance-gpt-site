@@ -51,6 +51,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   const [busy, setBusy] = useState(false);
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
+  const [ledgerSyncBusy, setLedgerSyncBusy] = useState(false);
 
   const selected = items.find((row) => String(row.invoice_id) === String(selectedId)) || null;
   const refreshVersion = typeof refreshToken === "object" ? refreshToken.version : refreshToken;
@@ -104,6 +105,15 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     setProofFile(null); setProofPreview(null);
     await load(); await onChanged?.();
   };
+  const syncAccountantIncome = async () => {
+    setLedgerSyncBusy(true); reportError("");
+    try {
+      const result = await accountantApi.syncAccountantLedger(site || null);
+      reportMessage(`Sinkronisasi selesai: ${result.synced || 0} dari ${result.attempted || 0} pemasukan PAID masuk ke Akuntan ${site || "MAJA dan CEMPLANG"}.`);
+      await load();
+    } catch (error) { reportError(error.message || "Gagal menyinkronkan pemasukan Akuntan"); }
+    finally { setLedgerSyncBusy(false); }
+  };
   const createMaker = async () => {
     if (!selected || !window.confirm(`Buat Maker dari invoice ${selected.invoice_number} sebesar ${money(selected.invoice_amount)}?`)) return;
     setBusy(true); reportError("");
@@ -116,7 +126,13 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   const approveWithoutEvidence = async () => {
     if (!selected?.maker_id || !window.confirm(`Tandai Maker #${selected.maker_id} sebagai APPROVED tanpa bukti file?`)) return;
     setBusy(true); reportError("");
-    try { await accountantApi.confirmMakerApproved(selected.maker_id); await afterAction(`Maker #${selected.maker_id} ditandai APPROVED dan PAID.`); }
+    try {
+      const result = await accountantApi.confirmMakerApproved(selected.maker_id);
+      const sync = result?.accountantLedgerSync;
+      const syncText = sync ? ` Sinkron Akuntan: ${sync.synced || 0}/${sync.attempted || 0}.` : "";
+      if (sync?.failed) reportError(`Maker sudah PAID, tetapi ${sync.failed} pemasukan gagal disinkronkan: ${(sync.errors || []).join(" ")}`);
+      await afterAction(`Maker #${selected.maker_id} ditandai APPROVED dan PAID.${syncText}`);
+    }
     catch (error) { reportError(error.message || "Gagal mengubah status approval"); }
     finally { setBusy(false); }
   };
@@ -167,7 +183,7 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   return <section className="ops-module">
     <div className="ops-module-header">
       <div><span className="ops-kicker">KALENDER INVOICE & BGN TERPADU</span><h3>Invoice → Maker → Approval / Paid</h3><p>Semua invoice bahan baku dan operasional tampil pada tanggal invoice. Pada alur BGN, approval berarti transaksi PAID.</p></div>
-      <div className="ops-inline-controls"><select aria-label="Filter site" value={site} onChange={(event)=>setSite(event.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select><select aria-label="Filter kategori" value={category} onChange={(event)=>setCategory(event.target.value)}><option value="">Semua kategori</option>{categories.map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select><button type="button" className={viewMode === "list" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("list")}><List size={14}/> List</button><button type="button" className={viewMode === "calendar" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("calendar")}><CalendarDays size={14}/> Kalender</button><button type="button" onClick={load} disabled={busy}><RefreshCw size={14}/> Refresh</button></div>
+      <div className="ops-inline-controls"><select aria-label="Filter site" value={site} onChange={(event)=>setSite(event.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select><select aria-label="Filter kategori" value={category} onChange={(event)=>setCategory(event.target.value)}><option value="">Semua kategori</option>{categories.map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select><button type="button" className={viewMode === "list" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("list")}><List size={14}/> List</button><button type="button" className={viewMode === "calendar" ? "ops-toggle-active" : ""} onClick={()=>setViewMode("calendar")}><CalendarDays size={14}/> Kalender</button><button type="button" onClick={load} disabled={busy}><RefreshCw size={14}/> Refresh</button><button type="button" onClick={syncAccountantIncome} disabled={busy||ledgerSyncBusy}><RefreshCw size={14}/> {ledgerSyncBusy ? "Sinkron…" : "Sinkron Pemasukan"}</button></div>
     </div>
     <div className="ops-summary-strip" style={{ marginBottom: 12 }}>{Object.entries(STATUS).map(([key, meta])=><span key={key} style={{ background: meta.bg, border: `1px solid ${meta.border}` }}>{meta.label} <strong>{counts[key]}</strong></span>)}</div>
     {viewMode === "calendar" && <><div className="ops-row-actions" style={{ justifyContent: "space-between", marginBottom: 10 }}><button type="button" onClick={()=>setMonth(shiftMonth(month,-1))}><ChevronLeft size={15}/> Bulan lalu</button><strong style={{ fontSize: 18, textTransform: "capitalize" }}><CalendarDays size={17} style={{ verticalAlign: "-3px", marginRight: 6 }}/>{monthTitle(month)}</strong><button type="button" onClick={()=>setMonth(shiftMonth(month,1))}>Bulan berikut <ChevronRight size={15}/></button></div>
