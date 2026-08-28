@@ -275,3 +275,36 @@ def delete_accountant_submission_cascade(submission_id: int) -> dict[str, Any]:
         "driveCleanup": drive_results,
         "note": "Production cycle, Calculator planning, PO, receiving, finance ledger, dan stok tidak dihapus.",
     }
+
+
+@router.delete("/accountant-invoices/{invoice_id}")
+def delete_direct_accountant_invoice(invoice_id: int) -> dict[str, Any]:
+    """Delete a mistaken direct invoice before it becomes PAID."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""select id,accountant_submission_id,invoice_number,invoice_evidence_uri
+                           from accountant_invoices where id=%s""", (invoice_id,))
+            invoice = cur.fetchone()
+            if not invoice:
+                raise HTTPException(404, "invoice tidak ditemukan")
+            if invoice.get("accountant_submission_id") is not None:
+                raise HTTPException(409, "invoice ini terhubung ke Excel Akuntan. Gunakan Hapus Alur pada baris Excel agar data terkait konsisten.")
+            cur.execute("""select m.id,m.status,
+                                  exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as has_receipt,
+                                  coalesce((select upper(a.status) from bgn_approvals a where a.bgn_maker_id=m.id order by a.created_at desc,a.id desc limit 1),'PENDING') as approval_status
+                           from bgn_makers m where m.accountant_invoice_id=%s""", (invoice_id,))
+            makers = [dict(row) for row in cur.fetchall()]
+            protected = [row for row in makers if bool(row.get("has_receipt")) or str(row.get("status") or "").upper() == "PAID" or str(row.get("approval_status") or "").upper() == "APPROVED"]
+            if protected:
+                raise HTTPException(409, "invoice tidak dapat dihapus karena Maker sudah APPROVED/PAID. Lakukan koreksi akuntansi, bukan delete.")
+            maker_ids = [int(row["id"]) for row in makers]
+            if maker_ids:
+                cur.execute("delete from bgn_approvals where bgn_maker_id=any(%s)", (maker_ids,))
+                cur.execute("delete from bgn_makers where id=any(%s)", (maker_ids,))
+            cur.execute("delete from accountant_invoice_items where accountant_invoice_id=%s", (invoice_id,))
+            cur.execute("delete from accountant_invoices where id=%s", (invoice_id,))
+            conn.commit()
+    drive_cleanup = _delete_drive_uri(invoice.get("invoice_evidence_uri")) if invoice.get("invoice_evidence_uri") else None
+    return {"deleted": True, "invoiceId": invoice_id, "deletedMakerIds": maker_ids, "driveCleanup": drive_cleanup,
+            "note": "Invoice langsung yang salah dihapus. Maker pending ikut dihapus; data PAID terlindungi."}
