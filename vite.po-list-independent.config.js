@@ -3,8 +3,10 @@ import financeUiPlacementPlugin from "./vite.finance-ui-placement.js";
 
 function poListIndependentPlugin() {
   return {
-    name: "sppg-po-list-independent-v1",
-    enforce: "post",
+    name: "sppg-po-list-independent-v2",
+    // This plugin rewrites raw JSX/source markers. It must run before React/Vite
+    // compiles OperationsPoPlanner, otherwise the string anchors no longer exist.
+    enforce: "pre",
     transform(code, id) {
       if (!id.includes("/src/operations/OperationsPoPlanner.jsx")) return null;
       let out = code;
@@ -25,7 +27,7 @@ function poListIndependentPlugin() {
 
       const helperMarker = '  const loadBase = async () => {';
       if (out.includes(helperMarker) && !out.includes("const refreshPoListOnly = async")) {
-        const helper = `  const currentPoMonthBounds = () => {\n    const now = new Date();\n    const year = now.getFullYear();\n    const month = now.getMonth() + 1;\n    const mm = String(month).padStart(2, "0");\n    const lastDay = new Date(year, month, 0).getDate();\n    return { fromDate: year + "-" + mm + "-01", toDate: year + "-" + mm + "-" + String(lastDay).padStart(2, "0") };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = currentPoMonthBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      setPoListLoaded(true);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
+        const helper = `  const poListBounds = () => {\n    const isoLocal = (value) => {\n      const d = new Date(value);\n      const shifted = new Date(d.getTime() - d.getTimezoneOffset() * 60000);\n      return shifted.toISOString().slice(0, 10);\n    };\n    const now = new Date();\n    const from = new Date(now);\n    const to = new Date(now);\n    from.setDate(from.getDate() - 31);\n    to.setDate(to.getDate() + 62);\n    return { fromDate: isoLocal(from), toDate: isoLocal(to) };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = poListBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      setPoListLoaded(true);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
         out = out.replace(helperMarker, helper + helperMarker);
       }
 
@@ -36,7 +38,7 @@ function poListIndependentPlugin() {
 
       const loadBasePattern = /  const loadBase = async \(\) => \{[\s\S]*?\n  \};\n\n  const pullDailyData = async \(\) => \{/;
       if (loadBasePattern.test(out)) {
-        const replacement = `  const loadBase = async () => {\n    setLoading(true);\n    setError("");\n    setReminders([]);\n    try {\n      const [poResult, vendorResult] = await Promise.allSettled([\n        refreshPoListOnly(),\n        operationsApi.getReferenceVendors(activeSite),\n      ]);\n\n      if (vendorResult.status === "fulfilled") {\n        const vendorsData = vendorResult.value;\n        const uniqueVendors = new Map(FALLBACK_VENDORS.map(([code, name]) => [code, { code, name }]));\n        (vendorsData?.items || []).forEach((item) => {\n          if (item?.code) uniqueVendors.set(String(item.code).toUpperCase(), { code: String(item.code).toUpperCase(), name: item.name || item.code });\n        });\n        setVendorOptions(Array.from(uniqueVendors.values()).sort((a, b) => a.name.localeCompare(b.name, "id")));\n        const phones = {};\n        (vendorsData?.items || []).forEach((item) => {\n          if (item?.code && item?.metadata?.whatsapp_phone) phones[String(item.code).toUpperCase()] = String(item.metadata.whatsapp_phone);\n        });\n        setVendorPhones(phones);\n        setPhoneValue(phones[phoneVendor] || "");\n      } else {\n        setError("Daftar vendor belum termuat. " + (vendorResult.reason?.message || ""));\n      }\n\n      if (poResult.status === "rejected" && vendorResult.status === "rejected") {\n        setError("List PO dan vendor belum termuat. Gunakan Refresh List PO; pengingat dapat ditarik terpisah.");\n      }\n      // Reminder sengaja TIDAK ditunggu di sini. Endpoint reminder dapat berat dan\n      // mempunyai tombol Tarik / Sinkron Pengingat sendiri. List PO harus tetap cepat.\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  const pullDailyData = async () => {`;
+        const replacement = `  const loadBase = async () => {\n    setLoading(true);\n    setError("");\n    setReminders([]);\n    try {\n      const [poResult, vendorResult] = await Promise.allSettled([\n        refreshPoListOnly(),\n        operationsApi.getReferenceVendors(activeSite),\n      ]);\n\n      if (vendorResult.status === "fulfilled") {\n        const vendorsData = vendorResult.value;\n        const uniqueVendors = new Map(FALLBACK_VENDORS.map(([code, name]) => [code, { code, name }]));\n        (vendorsData?.items || []).forEach((item) => {\n          if (item?.code) uniqueVendors.set(String(item.code).toUpperCase(), { code: String(item.code).toUpperCase(), name: item.name || item.code });\n        });\n        setVendorOptions(Array.from(uniqueVendors.values()).sort((a, b) => a.name.localeCompare(b.name, "id")));\n        const phones = {};\n        (vendorsData?.items || []).forEach((item) => {\n          if (item?.code && item?.metadata?.whatsapp_phone) phones[String(item.code).toUpperCase()] = String(item.metadata.whatsapp_phone);\n        });\n        setVendorPhones(phones);\n        setPhoneValue(phones[phoneVendor] || "");\n      } else {\n        setError("Daftar vendor belum termuat. " + (vendorResult.reason?.message || ""));\n      }\n\n      if (poResult.status === "rejected" && vendorResult.status === "rejected") {\n        setError("List PO dan vendor belum termuat. Gunakan Refresh List PO; pengingat dapat ditarik terpisah.");\n      }\n      // Reminder deliberately does not block the saved-PO list.\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  const pullDailyData = async () => {`;
         out = out.replace(loadBasePattern, replacement);
       }
 
@@ -48,22 +50,22 @@ function poListIndependentPlugin() {
         );
       }
 
-      out = out.replace(
+      out = out.replaceAll(
         '      const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 });\n      setPurchaseOrders(poData?.items || []);',
         '      await refreshPoListOnly();'
       );
 
       const listHeader = '<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah.</p></div>\n        </div>';
-      if (out.includes(listHeader) && !out.includes('data-refresh-po-list="v1"')) {
+      if (out.includes(listHeader) && !out.includes('data-refresh-po-list="v2"')) {
         out = out.replace(
           listHeader,
-          '<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah. List membaca seluruh bulan berjalan dan tidak menunggu pengingat.</p></div>\n          <div className="ops-row-actions"><button data-refresh-po-list="v1" type="button" onClick={refreshPoListOnly} disabled={poListLoading}><RefreshCw size={14} /> {poListLoading ? "Memuat List…" : "Refresh List PO"}</button></div>\n        </div>'
+          '<div><span className="ops-kicker">PO TERCATAT</span><h3>Purchase Order Aktual</h3><p>Planning, stok, PO, receiving, invoice dan pembayaran tetap layer terpisah. List membaca periode operasional lintas bulan agar PO akhir bulan dan awal bulan berikutnya tidak hilang.</p></div>\n          <div className="ops-row-actions"><button data-refresh-po-list="v2" type="button" onClick={refreshPoListOnly} disabled={poListLoading}><RefreshCw size={14} /> {poListLoading ? "Memuat List…" : "Refresh List PO"}</button></div>\n        </div>'
         );
       }
 
       out = out.replace(
         '{!loading && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Belum ada PO tercatat untuk site ini.</td></tr>}',
-        '{!poListLoading && !poListLoaded && <tr><td colSpan="9" className="ops-empty-cell">List PO belum ditarik. Tekan Refresh List PO bila ingin memuatnya.</td></tr>}{!poListLoading && poListLoaded && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Tidak ada PO tercatat untuk site ini.</td></tr>}'
+        '{!poListLoading && !poListLoaded && <tr><td colSpan="9" className="ops-empty-cell">List PO belum ditarik. Tekan Refresh List PO bila ingin memuatnya.</td></tr>}{!poListLoading && poListLoaded && purchaseOrders.length === 0 && <tr><td colSpan="9" className="ops-empty-cell">Tidak ada PO tercatat untuk site ini pada periode operasional.</td></tr>}'
       );
 
       return out === code ? null : { code: out, map: null };
