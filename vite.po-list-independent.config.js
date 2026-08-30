@@ -27,7 +27,7 @@ function poListIndependentPlugin() {
 
       const helperMarker = '  const loadBase = async () => {';
       if (out.includes(helperMarker) && !out.includes("const refreshPoListOnly = async")) {
-        const helper = `  const poListBounds = () => {\n    const isoLocal = (value) => {\n      const d = new Date(value);\n      const shifted = new Date(d.getTime() - d.getTimezoneOffset() * 60000);\n      return shifted.toISOString().slice(0, 10);\n    };\n    const now = new Date();\n    const from = new Date(now);\n    const to = new Date(now);\n    from.setDate(from.getDate() - 31);\n    to.setDate(to.getDate() + 62);\n    return { fromDate: isoLocal(from), toDate: isoLocal(to) };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = poListBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      setPoListLoaded(true);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
+        const helper = `  const poListBounds = () => {\n    const isoLocal = (value) => {\n      const d = new Date(value);\n      const shifted = new Date(d.getTime() - d.getTimezoneOffset() * 60000);\n      return shifted.toISOString().slice(0, 10);\n    };\n    const now = new Date();\n    const from = new Date(now);\n    const to = new Date(now);\n    from.setDate(from.getDate() - 31);\n    to.setDate(to.getDate() + 92);\n    return { fromDate: isoLocal(from), toDate: isoLocal(to) };\n  };\n\n  const refreshPoListOnly = async () => {\n    const requestedSite = activeSite;\n    const bounds = poListBounds();\n    setPoListLoading(true);\n    try {\n      const poData = await operationsApi.getPurchaseOrders({\n        site: requestedSite,\n        includeArchived: true,\n        fromDate: bounds.fromDate,\n        toDate: bounds.toDate,\n        limit: 500,\n      });\n      if (String(activeSiteRef.current || "").toUpperCase() !== String(requestedSite || "").toUpperCase()) return poData;\n      const rows = (poData?.items || []).filter((po) => !po?.site || String(po.site).toUpperCase() === String(requestedSite).toUpperCase());\n      setPurchaseOrders(rows);\n      setPoListLoaded(true);\n      return poData;\n    } catch (err) {\n      setError("Gagal refresh List PO. " + (err.message || ""));\n      throw err;\n    } finally {\n      setPoListLoading(false);\n    }\n  };\n\n`;
         out = out.replace(helperMarker, helper + helperMarker);
       }
 
@@ -73,6 +73,31 @@ function poListIndependentPlugin() {
   };
 }
 
+function poCalendarCrossMonthPlugin() {
+  return {
+    name: "sppg-po-calendar-cross-month-v1",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.includes("/src/operations/PoOpsEnhancements.jsx")) return null;
+      let out = code;
+
+      const refreshActualOld = `  const refreshActualPo = async () => {\n    const bounds = monthBounds(calendarMonth || today().slice(0, 7));\n    const result = await operationsApi.getPurchaseOrders({\n      site: activeSite,\n      limit: 500,\n      fromDate: bounds.first,\n      toDate: bounds.last,\n    });\n    setPurchaseOrders?.(activePoRows(result?.items || []));\n    setPoListLoaded?.(true);\n  };`;
+      const refreshActualNew = `  const refreshActualPo = async () => {\n    const fromDate = shiftDate(today(), -31);\n    const toDate = shiftDate(today(), 92);\n    const result = await operationsApi.getPurchaseOrders({\n      site: activeSite,\n      includeArchived: true,\n      limit: 500,\n      fromDate,\n      toDate,\n    });\n    setPurchaseOrders?.(activePoRows(result?.items || []));\n    setPoListLoaded?.(true);\n  };`;
+      out = out.replace(refreshActualOld, refreshActualNew);
+
+      const calendarLogicPattern = /  const refreshCalendar = async \(\) => \{[\s\S]*?\n  \}, \[calendarMonth\]\);/;
+      const calendarLogicNew = `  const visibleCalendarBounds = () => {\n    const bounds = monthBounds(calendarMonth);\n    const firstWeekDay = (new Date(bounds.year, bounds.month - 1, 1).getDay() + 6) % 7;\n    const usedCells = firstWeekDay + bounds.lastDay;\n    const trailingDays = (7 - (usedCells % 7)) % 7;\n    return {\n      ...bounds,\n      firstVisible: shiftDate(bounds.first, -firstWeekDay),\n      lastVisible: shiftDate(bounds.last, trailingDays),\n    };\n  };\n\n  const refreshCalendar = async () => {\n    const bounds = visibleCalendarBounds();\n    const result = await operationsApi.getPurchaseOrders({\n      site: activeSite,\n      includeArchived: true,\n      fromDate: bounds.firstVisible,\n      toDate: bounds.lastVisible,\n      limit: 500,\n    });\n    const rows = result?.items || [];\n    setCalendarPos(rows);\n  };\n\n  const calendarCells = useMemo(() => {\n    const bounds = visibleCalendarBounds();\n    const cells = [];\n    let cursor = bounds.firstVisible;\n    while (cursor <= bounds.lastVisible) {\n      cells.push({\n        date: cursor,\n        day: Number(cursor.slice(8, 10)),\n        inMonth: cursor.slice(0, 7) === calendarMonth,\n      });\n      cursor = shiftDate(cursor, 1);\n    }\n    return cells;\n  }, [calendarMonth]);`;
+      out = out.replace(calendarLogicPattern, calendarLogicNew);
+
+      const renderPattern = /\{calendarCells\.map\(\(day, index\) => \{[\s\S]*?\n        \}\)\}/;
+      const renderNew = `{calendarCells.map((cell, index) => {\n          const dateValue = cell.date;\n          const dayPos = poByDate.get(dateValue) || [];\n          const monthLabel = new Date(\`${'${dateValue}'}T12:00:00\`).toLocaleDateString("id-ID", { month: "short" });\n          return (\n            <div key={dateValue || index} style={{ minHeight: 86, border: "1px solid rgba(127,127,127,.25)", borderRadius: 8, padding: 6, opacity: cell.inMonth ? 1 : 0.72, background: cell.inMonth ? undefined : "rgba(127,127,127,.06)" }}>\n              <div style={{ display: "flex", gap: 4, alignItems: "baseline" }}>\n                <strong>{cell.day}</strong>\n                {!cell.inMonth && <span className="ops-muted" style={{ fontSize: 10 }}>{monthLabel}</span>}\n              </div>\n              {dayPos.map((po) => (\n                <button key={\`${'${po.id}'}-${'${dateValue}'}\`} type="button" onClick={() => openCalendarPo(po)} style={{ display: "block", width: "100%", marginTop: 5, textAlign: "left", whiteSpace: "normal" }}>\n                  <strong>{po.vendor_code}</strong>\n                  <div className="ops-muted">{po.po_code}</div>\n                  <div className="ops-muted">PO dibuat {compactTimestamp(po.created_at).slice(0, 10)}</div>\n                </button>\n              ))}\n            </div>\n          );\n        })}`;
+      out = out.replace(renderPattern, renderNew);
+
+      return out === code ? null : { code: out, map: null };
+    },
+  };
+}
+
 // The Cemplang accountant module can pass through the inherited transform more
 // than once while Vite resolves the query-suffixed App.jsx module. Once the
 // transform has already installed the fixed Cemplang runtime site, running the
@@ -98,5 +123,5 @@ const inheritedPlugins = (baseConfig.plugins || []).map((plugin) => {
 
 export default {
   ...baseConfig,
-  plugins: [...inheritedPlugins, poListIndependentPlugin(), financeUiPlacementPlugin()],
+  plugins: [...inheritedPlugins, poListIndependentPlugin(), poCalendarCrossMonthPlugin(), financeUiPlacementPlugin()],
 };
