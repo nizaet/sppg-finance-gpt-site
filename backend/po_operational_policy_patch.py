@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import re
 from typing import Any
 
+from backend import inventory_projection_v2_api as inventory_projection
+from backend import planning_api as planning
 from backend import po_reminder_v4_api as reminder
 from backend import purchase_order_workflow_api as workflow
-from backend.inventory_projection_v2_api import inventory_balances_v2
+from backend.db import connection
 from backend.item_taxonomy import item_family, normalize_item_text, vendor_for_item
+from backend.stock_opname_parser import canonical_unit
 
 _INSTALLED = False
 _ORIGINAL_FORMATTER = workflow.format_purchase_order_whatsapp
 _ORIGINAL_PROJECTION_LOOKUP = reminder._projection_lookup
 _ORIGINAL_RULE_RESOLVER = reminder._resolve_procurement_rule
+_ORIGINAL_INVENTORY_BALANCES_V2 = inventory_projection.inventory_balances_v2
+_ORIGINAL_GET_PLANNING_SNAPSHOT = planning.get_planning_snapshot
 
 _RULE_CATEGORY_HINT = {
     "EGG": "TELUR",
@@ -69,10 +74,8 @@ def _database_rule_for_item(
 ) -> dict[str, Any] | None:
     """Pick the active effective-dated category rule across all vendors.
 
-    This makes vendor_rules the editable source of truth. Exact item-family rules
-    beat stale preferred_vendor/category values copied into an old planning row.
-    When legacy duplicate rules exist, the normal taxonomy vendor is only used as
-    a tie-breaker until the operator saves a new assignment from Vendor Master.
+    vendor_rules is the editable source of truth. Exact item-family rules beat
+    stale preferred_vendor/category values copied into an older planning row.
     """
     site = str(row.get("site") or "").upper().strip()
     cook = row.get("cooking_date")
@@ -115,8 +118,6 @@ def _resolve_procurement_rule(
     family = _intrinsic_family(row)
     cook = row.get("cooking_date")
 
-    # Name-based family prevents e.g. Tahu/Bawang Putih from inheriting a stale
-    # BAHAN_KERING/KOPERASI category stored in the Calculator snapshot.
     fallback_vendor = vendor_for_item(
         row.get("item_name"),
         None if family != "UNKNOWN" else row.get("category_code"),
@@ -139,8 +140,6 @@ def _resolve_procurement_rule(
     if not vendor or not isinstance(cook, date):
         return vendor, None, family
 
-    # Preserve the dedicated Cemplang Tempe safety rule when there is no active
-    # database assignment for TEMPE.
     if family == "TEMPE" and site == "CEMPLANG" and vendor == "KOPERASI":
         rule = reminder._strict_cemplang_tempe_rule(rules, cook)
     else:
@@ -153,9 +152,20 @@ def _resolve_procurement_rule(
     return vendor, rule, bucket
 
 
+def _stock_key(name: Any, unit: Any) -> tuple[str, str]:
+    return reminder._stock_key(name, canonical_unit(unit) or unit)
+
+
+def _available(item: dict[str, Any]) -> float:
+    value = item.get("available_for_po")
+    if value is None:
+        value = item.get("balance")
+    return max(0.0, float(value or 0))
+
+
 def _warehouse_projection_lookup(distribution_date: date) -> tuple[dict[tuple[str, str], float], str]:
     try:
-        payload = inventory_balances_v2(
+        payload = _ORIGINAL_INVENTORY_BALANCES_V2(
             site="KOPERASI",
             search="",
             limit=1000,
@@ -166,12 +176,8 @@ def _warehouse_projection_lookup(distribution_date: date) -> tuple[dict[tuple[st
 
     lookup: dict[tuple[str, str], float] = {}
     for item in payload.get("items") or []:
-        key = reminder._stock_key(item.get("item_name"), item.get("unit"))
-        raw_available = item.get("available_for_po")
-        if raw_available is None:
-            raw_available = item.get("balance")
-        available = max(0.0, float(raw_available or 0))
-        lookup[key] = max(lookup.get(key, 0.0), available)
+        key = _stock_key(item.get("item_name"), item.get("unit"))
+        lookup[key] = max(lookup.get(key, 0.0), _available(item))
     return lookup, str(payload.get("projectionModel") or "KOPERASI_INVENTORY_PROJECTION_V2")
 
 
@@ -189,6 +195,169 @@ def _projection_lookup(site: str, distribution_date: date) -> tuple[dict[tuple[s
     for key, amount in warehouse_lookup.items():
         merged[key] = max(0.0, float(merged.get(key, 0.0))) + max(0.0, float(amount or 0.0))
     return merged, f"{site_basis}+{warehouse_basis}"
+
+
+def _merge_stock_rows(site_items: list[dict[str, Any]], warehouse_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose Gudang Koperasi stock to the PO planner as usable stock.
+
+    This is intentionally additive. The planner already computes PO Qty as
+    planning minus available_for_po, so feeding the combined availability makes
+    stock that is ready in Gudang Koperasi suppress unnecessary vendor ordering.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in site_items:
+        item = dict(raw)
+        key = _stock_key(item.get("item_name"), item.get("unit"))
+        item["site_available_for_po"] = _available(item)
+        item["warehouse_available_for_po"] = 0.0
+        merged[key] = item
+
+    for raw in warehouse_items:
+        warehouse = dict(raw)
+        key = _stock_key(warehouse.get("item_name"), warehouse.get("unit"))
+        warehouse_available = _available(warehouse)
+        if key not in merged:
+            item = warehouse
+            item["site_available_for_po"] = 0.0
+            item["warehouse_available_for_po"] = warehouse_available
+            item["available_for_po"] = warehouse_available
+            item["balance"] = warehouse_available
+            item["stock_basis"] = "GUDANG_KOPERASI_AVAILABLE_FOR_SITE_PO"
+            areas = list(item.get("area_codes") or [])
+            if "KOPERASI" not in areas:
+                areas.append("KOPERASI")
+            item["area_codes"] = areas
+            merged[key] = item
+            continue
+
+        item = merged[key]
+        site_available = _available(item)
+        total_available = round(site_available + warehouse_available, 4)
+        item["site_available_for_po"] = site_available
+        item["warehouse_available_for_po"] = warehouse_available
+        item["available_for_po"] = total_available
+        item["balance"] = total_available
+        item["projected_balance"] = round(float(item.get("projected_balance") or 0) + float(warehouse.get("projected_balance") or warehouse_available), 4)
+        item["actual_balance"] = round(float(item.get("actual_balance") or 0) + float(warehouse.get("actual_balance") or warehouse_available), 4)
+        item["stock_basis"] = f"{item.get('stock_basis') or 'SITE'}+GUDANG_KOPERASI"
+        item["raw_item_names"] = list(dict.fromkeys([
+            *(item.get("raw_item_names") or []),
+            warehouse.get("item_name"),
+            *(warehouse.get("raw_item_names") or []),
+        ]))
+        areas = list(dict.fromkeys([*(item.get("area_codes") or []), "KOPERASI"]))
+        item["area_codes"] = areas
+
+    return list(merged.values())
+
+
+def inventory_balances_v2_with_warehouse(
+    site: str,
+    search: str = "",
+    limit: int = 300,
+    for_date: date | None = None,
+) -> dict[str, Any]:
+    normalized_site = str(site or "").upper().strip()
+    if normalized_site not in {"MAJA", "CEMPLANG"}:
+        return _ORIGINAL_INVENTORY_BALANCES_V2(site=site, search=search, limit=limit, for_date=for_date)
+
+    base = _ORIGINAL_INVENTORY_BALANCES_V2(site=site, search="", limit=1000, for_date=for_date)
+    try:
+        warehouse = _ORIGINAL_INVENTORY_BALANCES_V2(site="KOPERASI", search="", limit=1000, for_date=for_date)
+        combined = _merge_stock_rows(base.get("items") or [], warehouse.get("items") or [])
+    except Exception as exc:
+        base["warehouseStockIncluded"] = False
+        base["warehouseStockError"] = type(exc).__name__
+        return base
+
+    needle = search.strip().lower()
+    if needle:
+        combined = [
+            item for item in combined
+            if needle in " ".join([
+                str(item.get("item_name") or ""),
+                *(str(value) for value in item.get("raw_item_names") or []),
+            ]).lower()
+        ]
+    combined.sort(key=lambda item: str(item.get("item_name") or "").lower())
+    base["items"] = combined[:limit]
+    base["count"] = len(base["items"])
+    base["warehouseStockIncluded"] = True
+    base["warehouseStockSite"] = "KOPERASI"
+    base["projectionModel"] = f"{base.get('projectionModel') or 'SITE'} + Gudang Koperasi available stock"
+    return base
+
+
+def _snapshot_cooking_date(snapshot: dict[str, Any]) -> date | None:
+    raw = snapshot.get("cooking_at")
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            pass
+    distribution = workflow.as_date(snapshot.get("distribution_date"))
+    return distribution - timedelta(days=1) if distribution else None
+
+
+def _active_rules_for_snapshot(site: str, cook: date) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select vr.*, e.name vendor_name
+                from vendor_rules vr
+                join entities e on e.code=vr.vendor_code
+                where (vr.site_code is null or upper(vr.site_code)=upper(%s))
+                  and vr.effective_from <= %s
+                  and (vr.effective_to is null or vr.effective_to >= %s)
+                """,
+                (site, cook, cook),
+            )
+            rules = [dict(row) for row in cur.fetchall()]
+            cur.execute("select upper(code) code,name from entities where active=true")
+            names = {str(row["code"]).upper(): str(row.get("name") or row["code"]) for row in cur.fetchall()}
+    return rules, names
+
+
+def get_planning_snapshot_with_vendor_policy(snapshot_id: int) -> dict[str, Any]:
+    """Refresh preferred vendor from effective vendor rules before PO drafting."""
+    snapshot = _ORIGINAL_GET_PLANNING_SNAPSHOT(snapshot_id)
+    site = str(snapshot.get("site") or "").upper().strip()
+    cook = _snapshot_cooking_date(snapshot)
+    if site not in {"MAJA", "CEMPLANG"} or cook is None:
+        return snapshot
+
+    try:
+        rules, vendor_names = _active_rules_for_snapshot(site, cook)
+    except Exception:
+        return snapshot
+
+    corrected = []
+    for raw in snapshot.get("items") or []:
+        item = dict(raw)
+        vendor, rule, _ = _resolve_procurement_rule(
+            rules,
+            vendor_names,
+            {
+                **item,
+                "site": site,
+                "cooking_date": cook,
+            },
+        )
+        if vendor:
+            previous = item.get("preferred_vendor_code")
+            item["preferred_vendor_code"] = vendor
+            item["vendor_assignment_source"] = "VENDOR_RULE_DATABASE" if rule else "ITEM_TAXONOMY"
+            if previous and str(previous).upper() != vendor:
+                item["previous_preferred_vendor_code"] = previous
+        corrected.append(item)
+    snapshot["items"] = corrected
+    snapshot["vendorPolicyApplied"] = True
+    return snapshot
 
 
 def _protein_next_day(item_name: Any) -> bool:
@@ -302,11 +471,31 @@ def format_purchase_order_whatsapp(po: dict[str, Any], vendor_name: str) -> str:
     return "\n".join(lines)
 
 
+def _patch_route(router: Any, suffix: str, endpoint: Any) -> bool:
+    for route in router.routes:
+        if str(getattr(route, "path", "")).endswith(suffix):
+            route.endpoint = endpoint
+            if getattr(route, "dependant", None) is not None:
+                route.dependant.call = endpoint
+            return True
+    return False
+
+
 def install() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
+
     workflow.format_purchase_order_whatsapp = format_purchase_order_whatsapp
     reminder._resolve_procurement_rule = _resolve_procurement_rule
     reminder._projection_lookup = _projection_lookup
+
+    # The manual PO planner reads these API routes directly. Patching only the
+    # reminder backend would leave stale vendor and warehouse stock in the UI.
+    inventory_projection.inventory_balances_v2 = inventory_balances_v2_with_warehouse
+    _patch_route(inventory_projection.router, "/inventory/balances-v2", inventory_balances_v2_with_warehouse)
+
+    planning.get_planning_snapshot = get_planning_snapshot_with_vendor_policy
+    _patch_route(planning.router, "/planning-snapshots/{snapshot_id}", get_planning_snapshot_with_vendor_policy)
+
     _INSTALLED = True
