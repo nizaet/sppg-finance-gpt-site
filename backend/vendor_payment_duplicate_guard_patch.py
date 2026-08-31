@@ -10,7 +10,7 @@ _INSTALLED = False
 
 
 def _existing_result(payload: payment_api.VendorPaymentEvidenceIn, payment: dict, invoice: dict | None, *, committed: bool,
-                     finance: dict | None = None, finance_inserted: bool = False) -> dict:
+                     finance: dict | None = None, finance_inserted: bool = False, finance_count: int = 0) -> dict:
     unresolved = invoice is None
     warnings = []
     if unresolved:
@@ -37,17 +37,37 @@ def _existing_result(payload: payment_api.VendorPaymentEvidenceIn, payment: dict
         "financeTransactionCreated": bool(finance),
         "financeTransactionInserted": finance_inserted,
         "financeTransactionId": finance.get("transaction_id") if finance else payment.get("finance_transaction_id"),
+        "financeTransactionCount": finance_count or (1 if finance else 0),
     }
 
 
-def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvidenceIn):
-    """Return/recover an existing payment without ever creating a second finance row.
+def _load_finance_rows(cur, payment: dict) -> list[dict]:
+    tx_id = str(payment.get("finance_transaction_id") or "").strip()
+    if tx_id:
+        cur.execute("select * from finance_transactions where transaction_id=%s", (tx_id,))
+        first = cur.fetchone()
+        if first:
+            # New payment flow stores one finance row per invoice item. Fetch the
+            # rest using the stable transaction-id prefix so retries recover the
+            # complete group rather than manufacturing another expense row.
+            prefix = f"vendorpay_{str(payment.get('site') or '').lower()}_{payment['id']}"
+            cur.execute(
+                "select * from finance_transactions where transaction_id=%s or transaction_id like %s order by transaction_id",
+                (prefix, f"{prefix}_item_%"),
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+            return rows or [dict(first)]
 
-    Reconciliation of an already-recorded PAID_UNRECONCILED transfer is handled
-    only by /vendor-payments/{payment_id}/reconcile. The stable payment row owns
-    the original paid_at, so retries on later days cannot produce a new finance
-    idempotency key or silently relabel the transfer as reconciled.
-    """
+    prefix = f"vendorpay_{str(payment.get('site') or '').lower()}_{payment['id']}"
+    cur.execute(
+        "select * from finance_transactions where transaction_id=%s or transaction_id like %s order by transaction_id",
+        (prefix, f"{prefix}_item_%"),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvidenceIn):
+    """Return/recover an existing payment without creating duplicate expense rows."""
     if not database_ready():
         return _ORIGINAL(payload)
 
@@ -56,12 +76,20 @@ def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvi
         with lookup_conn.cursor() as cur:
             cur.execute("select * from vendor_payments where source_key=%s", (key,))
             existing = cur.fetchone()
+            # Evidence upload can produce a new Drive URI on a retry. The UI also
+            # sends a stable bank-transfer source_external_id, so use it as the
+            # second idempotency key instead of recording the same transfer twice.
+            if not existing and payload.source_external_id:
+                cur.execute(
+                    "select * from vendor_payments where source_external_id=%s and upper(site)=upper(%s) and upper(vendor_code)=upper(%s) order by id desc limit 1",
+                    (payload.source_external_id, payload.site, payload.vendor_code.upper().strip()),
+                )
+                existing = cur.fetchone()
     if not existing:
         return _ORIGINAL(payload)
 
     with connection() as conn:
         with conn.cursor() as cur:
-            # Reload under the transaction used for any recovery write.
             cur.execute("select * from vendor_payments where id=%s", (existing["id"],))
             payment = cur.fetchone()
             if not payment:
@@ -76,43 +104,57 @@ def record_vendor_payment_evidence_guarded(payload: payment_api.VendorPaymentEvi
                 )
                 invoice = cur.fetchone()
 
-            cur.execute("select * from finance_transactions where source_ref=%s order by transaction_id limit 1", (f"vendor-payment:{payment['id']}",))
-            finance = cur.fetchone()
+            finance_rows = _load_finance_rows(cur, payment)
+            finance = finance_rows[0] if finance_rows else None
             if not payload.commit:
-                return _existing_result(payload, payment, invoice, committed=False, finance=finance)
+                return _existing_result(payload, payment, invoice, committed=False, finance=finance,
+                                        finance_count=len(finance_rows))
 
-            finance_inserted = False
-            if not finance:
+            inserted_count = 0
+            if not finance_rows:
                 stored_paid_at = payment.get("paid_at") or datetime.now(timezone.utc)
                 stable_payload = payload.model_copy(update={
                     "amount": float(payment.get("amount") or payload.amount),
                     "paid_at": stored_paid_at,
                     "vendor_invoice_id": payment.get("vendor_invoice_id"),
+                    "evidence_uri": payment.get("evidence_uri") or payload.evidence_uri,
                 })
-                finance, finance_inserted = payment_api._finance_row(
+                finance_rows, inserted_count = payment_api._finance_rows(
                     cur,
                     int(payment["id"]),
                     stable_payload,
                     stored_paid_at,
                     invoice,
                 )
-            elif payment.get("finance_transaction_id") != finance.get("transaction_id"):
+                finance = finance_rows[0] if finance_rows else None
+            elif finance and payment.get("finance_transaction_id") != finance.get("transaction_id"):
                 cur.execute(
                     "update vendor_payments set finance_transaction_id=%s,updated_at=now() where id=%s",
                     (finance["transaction_id"], payment["id"]),
                 )
             conn.commit()
 
-    result = _existing_result(payload, payment, invoice, committed=True, finance=finance, finance_inserted=finance_inserted)
-    if finance:
-        sync_status, firestore_path, firestore_doc_id, sync_error = payment_api._sync_row(finance)
+    result = _existing_result(
+        payload, payment, invoice, committed=True, finance=finance,
+        finance_inserted=inserted_count > 0, finance_count=len(finance_rows),
+    )
+    sync_results = []
+    for row in finance_rows:
+        sync_status, firestore_path, firestore_doc_id, sync_error = payment_api._sync_row(row)
         payment_api._update_sync_status(
-            finance["transaction_id"], sync_status, firestore_doc_id, sync_error, payment.get("evidence_uri") or payload.evidence_uri
+            row["transaction_id"], sync_status, firestore_doc_id, sync_error,
+            payment.get("evidence_uri") or payload.evidence_uri,
         )
+        sync_results.append({
+            "transactionId": row["transaction_id"],
+            "status": sync_status,
+            "document": firestore_path,
+            "error": sync_error,
+        })
+    if sync_results:
         result.update({
-            "firestoreSyncStatus": sync_status,
-            "firestoreDocument": firestore_path,
-            "syncError": sync_error,
+            "financeTransactions": sync_results,
+            "firestoreSyncStatus": "SYNCED" if all(x["status"] == "SYNCED" for x in sync_results) else "PARTIAL",
         })
     return result
 
