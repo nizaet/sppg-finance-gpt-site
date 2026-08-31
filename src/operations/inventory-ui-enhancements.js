@@ -10,6 +10,17 @@ function findInventoryRoot() {
   return title?.closest(".ops-domain-stack") || null;
 }
 
+function applyMasterState(section, button) {
+  const hasCollapsed = section.classList.contains("inventory-master-collapsed");
+  if (hasCollapsed !== masterCollapsed) {
+    section.classList.toggle("inventory-master-collapsed", masterCollapsed);
+  }
+  const label = masterCollapsed ? "Tampilkan Master Barang" : "Sembunyikan Master Barang";
+  const expanded = masterCollapsed ? "false" : "true";
+  if (button.textContent !== label) button.textContent = label;
+  if (button.getAttribute("aria-expanded") !== expanded) button.setAttribute("aria-expanded", expanded);
+}
+
 function ensureMasterCollapse(root) {
   if (!root) return;
   const title = Array.from(root.querySelectorAll(".ops-module h3"))
@@ -18,8 +29,9 @@ function ensureMasterCollapse(root) {
   const header = section?.querySelector(":scope > .ops-module-header");
   if (!section || !header) return;
 
-  section.classList.add("inventory-master-collapsible");
-  section.classList.toggle("inventory-master-collapsed", masterCollapsed);
+  if (!section.classList.contains("inventory-master-collapsible")) {
+    section.classList.add("inventory-master-collapsible");
+  }
 
   let controls = header.querySelector("[data-inventory-master-toggle-wrap]");
   if (!controls) {
@@ -36,15 +48,12 @@ function ensureMasterCollapse(root) {
     button.dataset.inventoryMasterToggle = "true";
     button.addEventListener("click", () => {
       masterCollapsed = !masterCollapsed;
-      section.classList.toggle("inventory-master-collapsed", masterCollapsed);
-      button.textContent = masterCollapsed ? "Tampilkan Master Barang" : "Sembunyikan Master Barang";
-      button.setAttribute("aria-expanded", masterCollapsed ? "false" : "true");
+      applyMasterState(section, button);
     });
     controls.appendChild(button);
   }
 
-  button.textContent = masterCollapsed ? "Tampilkan Master Barang" : "Sembunyikan Master Barang";
-  button.setAttribute("aria-expanded", masterCollapsed ? "false" : "true");
+  applyMasterState(section, button);
 }
 
 function syncEditorFeedback(root) {
@@ -69,9 +78,13 @@ function syncEditorFeedback(root) {
   const message = error?.textContent?.trim() || success?.textContent?.trim() || "";
   const state = error ? "error" : success ? "success" : "";
   if (feedback.textContent !== message) feedback.textContent = message;
-  feedback.classList.toggle("is-error", state === "error");
-  feedback.classList.toggle("is-success", state === "success");
-  feedback.hidden = !message;
+  if (feedback.classList.contains("is-error") !== (state === "error")) {
+    feedback.classList.toggle("is-error", state === "error");
+  }
+  if (feedback.classList.contains("is-success") !== (state === "success")) {
+    feedback.classList.toggle("is-success", state === "success");
+  }
+  if (feedback.hidden === Boolean(message)) feedback.hidden = !message;
 }
 
 function enhance() {
