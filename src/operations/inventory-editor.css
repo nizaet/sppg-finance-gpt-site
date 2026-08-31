@@ -14,16 +14,50 @@
   margin: 0;
   padding: 20px;
   border-radius: 16px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
   background: var(--ops-surface, var(--app-surface, #ffffff));
+  box-shadow: 0 0 0 100vmax rgba(4, 12, 24, 0.48), 0 24px 80px rgba(0, 0, 0, 0.38);
+  pointer-events: auto;
 }
 
+/* The old full-screen pseudo backdrop could sit in the pointer hit-test path
+   on some browsers. The backdrop is now paint-only via box-shadow, so form
+   controls and Simpan Koreksi always receive the click. */
 #inventory-manual-edit::before {
-  content: "";
-  position: fixed;
-  inset: -100vh -100vw;
-  z-index: -1;
-  background: rgba(4, 12, 24, 0.48);
+  display: none;
+}
+
+#inventory-manual-edit button,
+#inventory-manual-edit input,
+#inventory-manual-edit select,
+#inventory-manual-edit textarea {
+  pointer-events: auto;
+}
+
+.inventory-editor-feedback {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.inventory-editor-feedback.is-error {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.28);
+}
+
+.inventory-editor-feedback.is-success {
+  background: rgba(22, 163, 74, 0.1);
+  border: 1px solid rgba(22, 163, 74, 0.28);
+}
+
+/* Master Barang is rarely needed during daily stock work. Keep only its header
+   visible by default and let the operator expand it on demand. */
+.inventory-master-collapsible.inventory-master-collapsed > :not(.ops-module-header) {
+  display: none !important;
+}
+
+.inventory-master-collapsible.inventory-master-collapsed {
+  padding-bottom: 12px;
 }
 
 @media (max-width: 720px) {
