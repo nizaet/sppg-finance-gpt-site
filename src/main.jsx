@@ -7,6 +7,7 @@ import CalculatorGateway from "./auth/CalculatorGateway.jsx";
 import { authApi, readSessionToken } from "./auth/session.js";
 import { applyAppTheme } from "./theme.js";
 import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
+import "./operations/inventory-editor.css";
 
 applyAppTheme();
 installRuntimeUiPolish();
