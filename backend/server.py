@@ -7,6 +7,7 @@ Serve React frontend + SPPG API from one Railway service.
 All /v1 routes remain API endpoints and are protected by SPPG role middleware.
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -25,15 +26,58 @@ install_calculator_ai_patch()
 install_finance_runtime_patch()
 po_policy.install()
 
+# Gudang MAJA, CEMPLANG, and KOPERASI are separate physical locations. The PO
+# policy may consult another location explicitly, but the public inventory route
+# must never merge KOPERASI stock into a dapur balance.
+po_policy.inventory_projection.inventory_balances_v2 = po_policy._ORIGINAL_INVENTORY_BALANCES_V2
+po_policy._patch_route(
+    po_policy.inventory_projection.router,
+    "/inventory/balances-v2",
+    po_policy._ORIGINAL_INVENTORY_BALANCES_V2,
+)
+
+
+def _site_only_po_projection(site, distribution_date):
+    """Stock available immediately before the cooking day for a distribution.
+
+    Inventory consumption happens on the cooking day. The reminder therefore
+    projects to D-1 (the normal cooking date), rather than subtracting the plan
+    for the prior distribution a second time from a same-day physical SO.
+    """
+    stock_before_date = distribution_date - timedelta(days=1)
+    try:
+        payload = po_policy._ORIGINAL_INVENTORY_BALANCES_V2(
+            site=site,
+            search="",
+            limit=1000,
+            for_date=stock_before_date,
+        )
+    except Exception:
+        return {}, "PROJECTION_UNAVAILABLE"
+
+    lookup = {}
+    for item in payload.get("items") or []:
+        key = po_policy.reminder._stock_key(item.get("item_name"), item.get("unit"))
+        available = item.get("available_for_po")
+        if available is None:
+            available = item.get("balance")
+        lookup[key] = max(lookup.get(key, 0.0), max(0.0, float(available or 0)))
+    return lookup, str(payload.get("projectionModel") or "INVENTORY_PROJECTION_V2_COOKING_DAY")
+
+
+# Reminder reads only the selected dapur stock. Gudang Koperasi remains a
+# separate source and is shown/handled separately by the PO planner.
+po_policy.reminder._projection_lookup = _site_only_po_projection
+
 # backend.app has already copied nested APIRouter routes onto the live FastAPI
-# application before runtime patches are installed. Replace those copied route
-# callables too, otherwise the PO screen would keep using the old inventory and
-# planning endpoints even though their source modules were patched.
+# application before runtime patches are installed. Replace only the planning
+# snapshot callable so vendor/lead-time policy is refreshed. Inventory stays on
+# the original site-scoped endpoint above.
 for _route in fastapi_app.routes:
     _path = str(getattr(_route, "path", ""))
     _endpoint = None
     if _path.endswith("/inventory/balances-v2"):
-        _endpoint = po_policy.inventory_balances_v2_with_warehouse
+        _endpoint = po_policy._ORIGINAL_INVENTORY_BALANCES_V2
     elif _path.endswith("/planning-snapshots/{snapshot_id}"):
         _endpoint = po_policy.get_planning_snapshot_with_vendor_policy
     if _endpoint is not None:
