@@ -45,6 +45,17 @@ function monthBounds(value) {
   };
 }
 
+function calendarGridBounds(value) {
+  const bounds = monthBounds(value);
+  const firstWeekDay = (new Date(bounds.year, bounds.month - 1, 1).getDay() + 6) % 7;
+  const lastWeekDay = (new Date(bounds.year, bounds.month - 1, bounds.lastDay).getDay() + 6) % 7;
+  return {
+    ...bounds,
+    firstVisible: shiftDate(bounds.first, -firstWeekDay),
+    lastVisible: shiftDate(bounds.last, 6 - lastWeekDay),
+  };
+}
+
 function activePoRows(rows) {
   return (rows || []).filter((po) => !["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"].includes(String(po?.status || "").toUpperCase()));
 }
@@ -106,12 +117,14 @@ export default function PoOpsEnhancements({
   const [calendarAction, setCalendarAction] = useState("");
 
   const refreshActualPo = async () => {
-    const bounds = monthBounds(calendarMonth || today().slice(0, 7));
+    const fromDate = shiftDate(today(), -31);
+    const toDate = shiftDate(today(), 92);
     const result = await operationsApi.getPurchaseOrders({
       site: activeSite,
+      includeArchived: true,
       limit: 500,
-      fromDate: bounds.first,
-      toDate: bounds.last,
+      fromDate,
+      toDate,
     });
     setPurchaseOrders?.(activePoRows(result?.items || []));
     setPoListLoaded?.(true);
@@ -180,20 +193,30 @@ export default function PoOpsEnhancements({
   };
 
   const refreshCalendar = async () => {
-    const bounds = monthBounds(calendarMonth);
-    const result = await operationsApi.getPurchaseOrders({ site: activeSite, includeArchived: true, fromDate: bounds.first, toDate: bounds.last, limit: 500 });
+    const bounds = calendarGridBounds(calendarMonth);
+    const result = await operationsApi.getPurchaseOrders({
+      site: activeSite,
+      includeArchived: true,
+      fromDate: bounds.firstVisible,
+      toDate: bounds.lastVisible,
+      limit: 500,
+    });
     const rows = result?.items || [];
     setCalendarPos(rows);
-    setPurchaseOrders?.(activePoRows(rows));
-    setPoListLoaded?.(true);
   };
 
   const calendarCells = useMemo(() => {
-    const bounds = monthBounds(calendarMonth);
-    const firstWeekDay = (new Date(bounds.year, bounds.month - 1, 1).getDay() + 6) % 7;
-    const cells = Array(firstWeekDay).fill(null);
-    for (let day = 1; day <= bounds.lastDay; day += 1) cells.push(String(day).padStart(2, "0"));
-    while (cells.length % 7) cells.push(null);
+    const bounds = calendarGridBounds(calendarMonth);
+    const cells = [];
+    let cursor = bounds.firstVisible;
+    while (cursor <= bounds.lastVisible) {
+      cells.push({
+        date: cursor,
+        day: Number(cursor.slice(8, 10)),
+        inMonth: cursor.slice(0, 7) === calendarMonth,
+      });
+      cursor = shiftDate(cursor, 1);
+    }
     return cells;
   }, [calendarMonth]);
 
@@ -304,13 +327,13 @@ export default function PoOpsEnhancements({
   const calendarStatus = String(calendarPo?.status || "").toUpperCase();
 
   return (
-    <div data-po-actual-calendar="v25" className="ops-draft-group">
+    <div data-po-actual-calendar="v26" className="ops-draft-group">
       <div className="ops-draft-group-head">
         <div>
           <strong>Kalender PO Aktual</strong>
-          <span>PO aktual pada tanggal distribusi. Klik PO untuk melihat detail dan menjalankan aksi yang sama seperti mode list.</span>
+          <span>PO aktual pada tanggal distribusi. Kalender menampilkan sisa minggu dari bulan sebelum/sesudah agar PO lintas bulan tidak tersembunyi.</span>
         </div>
-        <div className="ops-row-actions" data-po-actual-refresh="v25">
+        <div className="ops-row-actions" data-po-actual-refresh="v26">
           <button type="button" onClick={refreshActualPo} disabled={progress.active}><RefreshCw size={14} /> Refresh PO Aktual</button>
           <button className="ops-button-primary" type="button" onClick={syncAllBlocks} disabled={progress.active}><RefreshCw size={14} /> Sinkron Semua Blok</button>
         </div>
@@ -326,21 +349,23 @@ export default function PoOpsEnhancements({
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6, marginTop: 10 }}>
         {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((day) => <strong key={day} className="ops-muted" style={{ textAlign: "center" }}>{day}</strong>)}
-        {calendarCells.map((day, index) => {
-          const dateValue = day ? `${calendarMonth}-${day}` : "";
-          const dayPos = dateValue ? (poByDate.get(dateValue) || []) : [];
+        {calendarCells.map((cell) => {
+          const dateValue = cell.date;
+          const dayPos = poByDate.get(dateValue) || [];
+          const monthLabel = new Date(`${dateValue}T12:00:00`).toLocaleDateString("id-ID", { month: "short" });
           return (
-            <div key={`${calendarMonth}-${index}`} style={{ minHeight: 86, border: "1px solid rgba(127,127,127,.25)", borderRadius: 8, padding: 6, opacity: day ? 1 : 0.25 }}>
-              {day && <>
-                <strong>{Number(day)}</strong>
-                {dayPos.map((po) => (
-                  <button key={`${po.id}-${dateValue}`} type="button" onClick={() => openCalendarPo(po)} style={{ display: "block", width: "100%", marginTop: 5, textAlign: "left", whiteSpace: "normal" }}>
-                    <strong>{po.vendor_code}</strong>
-                    <div className="ops-muted">{po.po_code}</div>
-                    <div className="ops-muted">PO dibuat {compactTimestamp(po.created_at).slice(0, 10)}</div>
-                  </button>
-                ))}
-              </>}
+            <div key={dateValue} style={{ minHeight: 86, border: "1px solid rgba(127,127,127,.25)", borderRadius: 8, padding: 6, opacity: cell.inMonth ? 1 : 0.72, background: cell.inMonth ? undefined : "rgba(127,127,127,.06)" }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "baseline" }}>
+                <strong>{cell.day}</strong>
+                {!cell.inMonth && <span className="ops-muted" style={{ fontSize: 10 }}>{monthLabel}</span>}
+              </div>
+              {dayPos.map((po) => (
+                <button key={`${po.id}-${dateValue}`} type="button" onClick={() => openCalendarPo(po)} style={{ display: "block", width: "100%", marginTop: 5, textAlign: "left", whiteSpace: "normal" }}>
+                  <strong>{po.vendor_code}</strong>
+                  <div className="ops-muted">{po.po_code}</div>
+                  <div className="ops-muted">PO dibuat {compactTimestamp(po.created_at).slice(0, 10)}</div>
+                </button>
+              ))}
             </div>
           );
         })}
