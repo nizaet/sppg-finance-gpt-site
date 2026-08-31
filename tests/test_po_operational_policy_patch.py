@@ -1,6 +1,7 @@
 from datetime import date
 
 from backend.po_operational_policy_patch import (
+    _merge_stock_rows,
     _resolve_procurement_rule,
     format_purchase_order_whatsapp,
 )
@@ -123,3 +124,49 @@ def test_bawang_putih_uses_produce_rule_even_with_stale_koperasi_category():
     vendor, rule, _ = _resolve_procurement_rule(rules, {"HOLIL": "Holil"}, row)
     assert vendor == "HOLIL"
     assert rule["category_code"] == "SAYUR_BUAH"
+
+
+def test_gudang_koperasi_stock_is_added_to_site_available_stock():
+    site_rows = [{
+        "item_name": "Bawang Putih",
+        "unit": "kg",
+        "available_for_po": 2,
+        "balance": 2,
+        "actual_balance": 2,
+        "projected_balance": 2,
+        "raw_item_names": ["Bawang Putih"],
+        "area_codes": ["GUDANG_KERING"],
+    }]
+    warehouse_rows = [{
+        "item_name": "Bawang Putih",
+        "unit": "KG",
+        "available_for_po": 8,
+        "balance": 8,
+        "actual_balance": 8,
+        "projected_balance": 8,
+        "raw_item_names": ["Bw Putih"],
+        "area_codes": ["KOPERASI"],
+    }]
+    merged = _merge_stock_rows(site_rows, warehouse_rows)
+    assert len(merged) == 1
+    assert merged[0]["available_for_po"] == 10
+    assert merged[0]["site_available_for_po"] == 2
+    assert merged[0]["warehouse_available_for_po"] == 8
+    assert "Bw Putih" in merged[0]["raw_item_names"]
+
+
+def test_warehouse_only_bawang_putih_remains_visible_to_po_planner():
+    merged = _merge_stock_rows([], [{
+        "item_name": "Bawang Putih",
+        "unit": "kg",
+        "available_for_po": 6.3,
+        "balance": 6.3,
+        "actual_balance": 6.3,
+        "projected_balance": 6.3,
+        "raw_item_names": ["bawang putih", "bw putih"],
+        "area_codes": ["KOPERASI"],
+    }])
+    assert len(merged) == 1
+    assert merged[0]["available_for_po"] == 6.3
+    assert merged[0]["warehouse_available_for_po"] == 6.3
+    assert merged[0]["stock_basis"] == "GUDANG_KOPERASI_AVAILABLE_FOR_SITE_PO"
