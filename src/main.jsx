@@ -7,10 +7,12 @@ import CalculatorGateway from "./auth/CalculatorGateway.jsx";
 import { authApi, readSessionToken } from "./auth/session.js";
 import { applyAppTheme } from "./theme.js";
 import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
+import { installInventoryUiEnhancements } from "./operations/inventory-ui-enhancements.js";
 import "./operations/inventory-editor.css";
 
 applyAppTheme();
 installRuntimeUiPolish();
+installInventoryUiEnhancements();
 
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
