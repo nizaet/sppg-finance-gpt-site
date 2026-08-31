@@ -221,8 +221,8 @@ def _finance_rows(cur: Any, payment_id: int, payload: VendorPaymentEvidenceIn, p
         ]))
         raw_text = json.dumps({"vendorPaymentId": payment_id, "vendorInvoiceId": invoice["id"] if invoice else None,
                                "vendorInvoiceItemId": item_id, "vendorCode": vendor, "site": site,
-                               "amount": item["allocated_amount"], "qty": item["allocated_qty"],
-                               "unit": item.get("unit"), "unitPrice": item.get("vendor_cost_price"),
+                               "amount": float(item["allocated_amount"] or 0), "qty": float(item["allocated_qty"] or 0),
+                               "unit": item.get("unit"), "unitPrice": float(item.get("vendor_cost_price") or 0),
                                "paidAt": paid_at.isoformat(), "reconciliationStatus": status}, ensure_ascii=False)
         values = (idem, site, paid_at.date(), description, category, item["allocated_amount"], item["allocated_qty"],
                   item.get("unit") or "item", item.get("vendor_cost_price") or 0, label,
