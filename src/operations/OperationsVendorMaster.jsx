@@ -9,6 +9,7 @@ function rowKey(item, idx) {
 export default function OperationsVendorMaster({ fixedSite = "" }) {
   const [site, setSite] = useState(fixedSite || "");
   const [items, setItems] = useState([]);
+  const [vendorCatalog, setVendorCatalog] = useState([]);
   const [edits, setEdits] = useState({});
   const [vendorEdits, setVendorEdits] = useState({});
   const [phoneEdits, setPhoneEdits] = useState({});
@@ -28,9 +29,14 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
     setLoading(true);
     setError("");
     try {
-      const data = await operationsApi.getReferenceVendors(activeSite);
+      const [data, catalogData] = await Promise.all([
+        operationsApi.getReferenceVendors(activeSite),
+        activeSite ? operationsApi.getReferenceVendors("") : Promise.resolve(null),
+      ]);
       const rows = data?.items || [];
+      const catalogRows = catalogData?.items || rows;
       setItems(rows);
+      setVendorCatalog(catalogRows);
       const next = {};
       const nextVendors = {};
       const nextPhones = {};
@@ -38,7 +44,9 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
         const key = rowKey(item, idx);
         next[key] = item.lead_time_days_before_cooking == null ? "" : String(item.lead_time_days_before_cooking);
         nextVendors[key] = item.code;
-        nextPhones[item.code] = String(item.metadata?.whatsapp_phone || "");
+      });
+      catalogRows.forEach((item) => {
+        if (item?.code && nextPhones[item.code] == null) nextPhones[item.code] = String(item.metadata?.whatsapp_phone || "");
       });
       setEdits(next);
       setVendorEdits(nextVendors);
@@ -54,11 +62,11 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
 
   const vendorChoices = useMemo(() => {
     const map = new Map();
-    items.forEach((item) => {
+    vendorCatalog.forEach((item) => {
       if (item?.code) map.set(item.code, item.name || item.code);
     });
     return Array.from(map.entries()).map(([code, name]) => ({ code, name })).sort((a, b) => a.name.localeCompare(b.name, "id"));
-  }, [items]);
+  }, [vendorCatalog]);
 
   const dirtyCount = useMemo(() => items.filter((item, idx) => {
     const key = rowKey(item, idx);
@@ -70,9 +78,11 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
 
   const phoneDirtyCount = useMemo(() => {
     const vendors = new Map();
-    items.forEach((item) => vendors.set(item.code, String(item.metadata?.whatsapp_phone || "")));
+    vendorCatalog.forEach((item) => {
+      if (item?.code && !vendors.has(item.code)) vendors.set(item.code, String(item.metadata?.whatsapp_phone || ""));
+    });
     return Array.from(vendors.entries()).filter(([code, current]) => String(phoneEdits[code] ?? current).trim() !== current).length;
-  }, [items, phoneEdits]);
+  }, [vendorCatalog, phoneEdits]);
 
   const saveRule = async (item, idx) => {
     const key = rowKey(item, idx);
