@@ -1,0 +1,39 @@
+/* Stock correction is opened from a row far down the inventory table.
+   Keep the editor in the viewport instead of forcing the operator back to the
+   top of the Gudang page. The selector is intentionally scoped to this one
+   editor so no other Operations panels are affected. */
+#inventory-manual-edit {
+  position: fixed;
+  z-index: 1400;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(82vh, 720px);
+  overflow: auto;
+  margin: 0;
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  background: var(--ops-surface, var(--app-surface, #ffffff));
+}
+
+#inventory-manual-edit::before {
+  content: "";
+  position: fixed;
+  inset: -100vh -100vw;
+  z-index: -1;
+  background: rgba(4, 12, 24, 0.48);
+}
+
+@media (max-width: 720px) {
+  #inventory-manual-edit {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 28px);
+    padding: 14px;
+  }
+
+  #inventory-manual-edit .ops-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
