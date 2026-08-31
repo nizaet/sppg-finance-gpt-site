@@ -159,9 +159,17 @@ def _invoice_payment_items(cur: Any, invoice: dict[str, Any] | None, payment_amo
     if not invoice:
         return []
     cur.execute("""
-        select id,item_code,item_name,coalesce(payable_qty,invoiced_qty,0) as payable_qty,
-               unit,coalesce(vendor_cost_price,0) as vendor_cost_price,coalesce(line_total,0) as line_total
-        from vendor_invoice_items where vendor_invoice_id=%s order by id
+        select vii.id,vii.item_code,vii.item_name,
+               coalesce(
+                 nullif(to_jsonb(vii)->>'payable_qty','')::numeric,
+                 vii.invoiced_qty,
+                 0
+               ) as payable_qty,
+               vii.unit,coalesce(vii.vendor_cost_price,0) as vendor_cost_price,
+               coalesce(vii.line_total,0) as line_total
+        from vendor_invoice_items vii
+        where vii.vendor_invoice_id=%s
+        order by vii.id
     """, (invoice["id"],))
     rows = [dict(row) for row in cur.fetchall()]
     total = round(sum(float(row.get("line_total") or 0) for row in rows), 2)
