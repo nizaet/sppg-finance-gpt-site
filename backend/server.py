@@ -19,11 +19,28 @@ from backend.auth_middleware import SppgAccessMiddleware
 from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_ai_runtime_patch import install as install_calculator_ai_patch
 from backend.finance_runtime_patch import install as install_finance_runtime_patch
-from backend.po_operational_policy_patch import install as install_po_operational_policy_patch
+from backend import po_operational_policy_patch as po_policy
 
 install_calculator_ai_patch()
 install_finance_runtime_patch()
-install_po_operational_policy_patch()
+po_policy.install()
+
+# backend.app has already copied nested APIRouter routes onto the live FastAPI
+# application before runtime patches are installed. Replace those copied route
+# callables too, otherwise the PO screen would keep using the old inventory and
+# planning endpoints even though their source modules were patched.
+for _route in fastapi_app.routes:
+    _path = str(getattr(_route, "path", ""))
+    _endpoint = None
+    if _path.endswith("/inventory/balances-v2"):
+        _endpoint = po_policy.inventory_balances_v2_with_warehouse
+    elif _path.endswith("/planning-snapshots/{snapshot_id}"):
+        _endpoint = po_policy.get_planning_snapshot_with_vendor_policy
+    if _endpoint is not None:
+        _route.endpoint = _endpoint
+        if getattr(_route, "dependant", None) is not None:
+            _route.dependant.call = _endpoint
+
 from backend.calculator_pages import calculator_html  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
