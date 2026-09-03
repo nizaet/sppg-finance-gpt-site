@@ -1441,8 +1441,10 @@ function SmartCateringAccountant() {
 
   const getShareData = (s) => {
     const shareGross = calculatedDividendPool.total * (safeNumber(s.pct) / 100);
-    const grossInsentifShare = calculatedDividendPool.insentifPart * (safeNumber(s.pct) / 100);
-    const fee = grossInsentifShare * (safeNumber(s.mgmtFee) / 100);
+    // Management fee follows the shareholder's gross dividend.  It must also
+    // work when the owner sets a manual dividend pool or the selected period
+    // has no recorded incentive income.
+    const fee = shareGross * (safeNumber(s.mgmtFee) / 100);
     const calculatedNet = Math.floor(shareGross - fee);
     const manualVal = manualDistributions[s.id];
     const net = manualVal !== undefined && manualVal !== "" ? parseIDRInput(String(manualVal)) : calculatedNet;
