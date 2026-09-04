@@ -42,6 +42,15 @@ class VendorPayableFromReceiptIn(BaseModel):
     lines: list[VendorCostLineIn] = Field(min_length=1)
 
 
+class VendorPayableCorrectionIn(BaseModel):
+    invoice_number: str | None = Field(default=None, max_length=180)
+    invoice_date: date | None = None
+    due_date: date | None = None
+    gross_amount: float = Field(ge=0)
+    reject_deduction: float = Field(default=0, ge=0)
+    correction_note: str = Field(min_length=3, max_length=1000)
+
+
 def payable_source_key(payload: VendorPayableFromReceiptIn, vendor_code: str) -> str:
     canonical = {
         "site": payload.site,
@@ -207,16 +216,17 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
                 })
                 return result
 
+            payable_status = "CLOSED" if net_amount <= 0.01 else "UNPAID"
             cur.execute(
                 """insert into vendor_invoices(
                      vendor_code,site,production_cycle_id,purchase_order_id,goods_receipt_id,
                      invoice_number,invoice_date,gross_amount,reject_deduction,net_amount,
                      evidence_uri,payable_status,due_date,source_key
-                   ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'UNPAID',%s,%s) returning id""",
+                   ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
                 (
                     ctx["vendor_code"], ctx["site"], ctx["production_cycle_id"], ctx["purchase_order_id"],
                     ctx["goods_receipt_id"], payload.invoice_number, payload.invoice_date, gross_amount,
-                    reject_deduction, net_amount, payload.evidence_uri, payload.due_date, source_key,
+                    reject_deduction, net_amount, payload.evidence_uri, payable_status, payload.due_date, source_key,
                 ),
             )
             invoice_id = cur.fetchone()["id"]
@@ -238,6 +248,34 @@ def vendor_payable_from_receipt(payload: VendorPayableFromReceiptIn) -> dict[str
             conn.commit()
             result.update({"committed": True, "duplicate": False, "vendorInvoiceId": invoice_id})
             return result
+
+
+@router.post("/vendor-payables/{invoice_id}/correct")
+def correct_vendor_payable(invoice_id: int, payload: VendorPayableCorrectionIn) -> dict[str, Any]:
+    """Correct an unpaid vendor payable without rewriting its PO/receipt trail."""
+    require_db()
+    net_amount = round(max(float(payload.gross_amount) - float(payload.reject_deduction), 0), 2)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,payable_status from vendor_invoices where id=%s", (invoice_id,))
+            existing = cur.fetchone()
+            if not existing:
+                raise HTTPException(404, "tagihan vendor tidak ditemukan")
+            if str(existing.get("payable_status") or "UNPAID").upper() in {"PAID", "RECONCILED", "CANCELLED", "CANCELED"}:
+                raise HTTPException(409, "tagihan yang sudah dibayar/ditutup tidak dapat dikoreksi")
+            status = "CLOSED" if net_amount <= 0.01 else "UNPAID"
+            cur.execute("""
+                update vendor_invoices
+                   set invoice_number=%s,invoice_date=%s,due_date=%s,gross_amount=%s,reject_deduction=%s,
+                       net_amount=%s,payable_status=%s,correction_note=%s,updated_at=now()
+                 where id=%s
+                 returning id as vendor_invoice_id,invoice_number,invoice_date,due_date,gross_amount,
+                           reject_deduction,net_amount,payable_status
+            """, (payload.invoice_number or None, payload.invoice_date, payload.due_date, payload.gross_amount,
+                    payload.reject_deduction, net_amount, status, payload.correction_note.strip(), invoice_id))
+            row = dict(cur.fetchone())
+            conn.commit()
+    return {"committed": True, "correctionNote": payload.correction_note, "item": row}
 
 
 @router.get("/vendor-payables")
