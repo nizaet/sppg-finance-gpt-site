@@ -70,6 +70,14 @@ def inventory_balances(
     target_date = for_date or (datetime.now(jakarta).date() + timedelta(days=1))
     timezone_name = str(jakarta)
 
+    # inventory_balances_v2 calls this function directly instead of through
+    # FastAPI dependency resolution. In that path the Python default is a
+    # fastapi Query object, not a bool, and psycopg cannot adapt it as an SQL
+    # parameter. Treat that internal call as the operational view: manual stock
+    # corrections must be visible immediately to Gudang and PO calculations.
+    if not isinstance(include_current_corrections, bool):
+        include_current_corrections = True
+
     with connection() as conn:
         with conn.cursor() as cur:
             masters = load_item_matchers(cur, None if location == "KOPERASI" else location)
@@ -135,8 +143,22 @@ def inventory_balances(
             """
             movement_params: list[Any] = [location, location, target_date, include_current_corrections, target_date]
             if stock_date:
-                movement_sql += " and date(coalesce(occurred_at,created_at)) > %s"
-                movement_params.append(stock_date)
+                # The SO is the physical baseline. Facts from later dates always
+                # apply. A manual correction made after that SO on the same date
+                # also applies; corrections from before the latest SO must not be
+                # replayed on top of the new physical count.
+                movement_sql += """
+                  and (
+                    date(coalesce(occurred_at,created_at)) > %s
+                    or (
+                      %s
+                      and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
+                      and date(coalesce(occurred_at,created_at)) = %s
+                      and coalesce(occurred_at,created_at) > %s
+                    )
+                  )
+                """
+                movement_params.extend([stock_date, include_current_corrections, stock_date, latest_so["created_at"]])
             cur.execute(movement_sql, movement_params)
             actual_movement_dates: set[tuple[str, str, date]] = set()
             for movement in cur.fetchall():
@@ -179,7 +201,7 @@ def inventory_balances(
                     select psi.item_name,psi.planned_qty,psi.unit,ps.distribution_date
                     from (
                       -- A plan used for yesterday's cooking can later be marked
-                      -- SUPERSEDED after the calculator is edited.  It is still
+                      -- SUPERSEDED after the calculator is edited. It is still
                       -- real consumption and must deplete the SO projection.
                       select distinct on (site,distribution_date) id,site,distribution_date
                       from planning_snapshots
