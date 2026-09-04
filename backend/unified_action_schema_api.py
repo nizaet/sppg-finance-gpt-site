@@ -848,6 +848,30 @@ def schema_v0187() -> dict[str, Any]:
     return payload
 
 
+def schema_v0188() -> dict[str, Any]:
+    """Keep the v0.18.6 operation surface; classify approval by effect only."""
+    payload = deepcopy(schema_v0186())
+    payload["info"] = {
+        "title": "SPPG Full Operations Application Bridge",
+        "version": "0.18.8",
+        "description": "Same SPPG Action surface as v0.18.6. Read-only actions run without approval; actions that record, change, or confirm operational data remain consequential.",
+    }
+    write_operation_ids = {
+        "processSppgVendorPayableFromReceipt", "confirmSppgVendorPayment", "postSppgReceiptToInventory",
+        "processSppgInventoryUsage", "previewOrRecordSppgGoodsReceiptFromMessage",
+        "stageSuppliedSppgWhatsAppActivityForReview", "createSppgAccountantTransactions",
+        "updateSppgAccountantTransaction", "previewOrRecordSppgStockOpnameFromWhatsApp",
+        "learnSppgConversationTurn", "recordExplicitSppgKnowledge", "previewOrRecordSppgVendorPaymentEvidence",
+        "reconcileRecordedSppgVendorPayment", "confirmSppgBgnMakerApproved", "confirmSppgBgnMakerPaid",
+        "previewOrExecuteSppgOperationalApplication",
+    }
+    for methods in payload["paths"].values():
+        for operation in methods.values():
+            if isinstance(operation, dict) and operation.get("operationId"):
+                operation["x-openai-isConsequential"] = operation["operationId"] in write_operation_ids
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
