@@ -42,6 +42,45 @@ def _archive_reason(row: dict[str, Any], today: date) -> str | None:
     return None
 
 
+def _item_refs(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose compact saved-item references used by the PO planner.
+
+    The active-list query already fetched planning item ids and normalized
+    item/unit keys, but the React PO planner historically looked for ``item_refs``.
+    Without this bridge an existing saved Tempe PO could be shown in the list yet
+    the planning row still offered to create another PO. Keep both identifiers so
+    old and new PO records are detected without rewriting history.
+    """
+    refs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for raw_id in row.get("planning_item_ids") or []:
+        if raw_id is None:
+            continue
+        key = (str(raw_id), "", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"planning_snapshot_item_id": raw_id})
+
+    for raw_key in row.get("item_keys") or []:
+        text = str(raw_key or "").strip()
+        if not text:
+            continue
+        name, sep, unit = text.rpartition("|")
+        if not sep:
+            name, unit = text, ""
+        name = name.strip()
+        unit = unit.strip()
+        key = ("", name, unit)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"item_name": name, "unit": unit})
+
+    return refs
+
+
 @router.get("/purchase-orders-active")
 def list_purchase_orders_active(
     site: str = "",
@@ -159,10 +198,15 @@ def list_purchase_orders_active(
             for row in rows:
                 item = dict(row)
                 item.update(resolve_purchase_order_schedule(cur, item))
+                item["item_refs"] = _item_refs(item)
                 reason = _archive_reason(item, jakarta_today)
                 item["archived"] = bool(reason)
                 item["archive_reason"] = reason
-                if reason and not include_archived and not normalized_search:
+                # Keep recently RECEIVED POs in the active window so the planner
+                # can see that an item was already ordered/received and never
+                # offer a duplicate PO. Older H+2 history remains hidden.
+                should_hide = bool(reason and reason != "BARANG_SUDAH_DATANG_SEMUA" and not include_archived and not normalized_search)
+                if should_hide:
                     archived_count += 1
                     continue
                 items.append(item)
