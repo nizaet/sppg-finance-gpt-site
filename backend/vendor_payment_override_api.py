@@ -30,6 +30,10 @@ class VendorPaymentEvidenceIn(BaseModel):
     note: str = ""
     actor: str = "chatgpt"
     commit: bool = False
+    # A confirmed bank transfer can deliberately contain a vendor credit that
+    # is not tied to an invoice yet.  Do not let the matcher attach that excess
+    # to an unrelated open invoice just because the amount happens to fit.
+    force_unreconciled: bool = False
 
 
 class VendorPaymentReconcileIn(BaseModel):
@@ -266,6 +270,9 @@ def record_vendor_payment_evidence(payload: VendorPaymentEvidenceIn) -> dict[str
         with conn.cursor() as cur:
             rows = _candidate_invoices(cur, payload)
             invoice, warnings = _safe_invoice(rows, amount, payload.vendor_invoice_id)
+            if payload.force_unreconciled:
+                invoice = None
+                warnings.append("kelebihan transfer dicatat sebagai kredit vendor yang belum dialokasikan")
             po_id, gr_id = _safe_candidate_refs(cur, payload, warnings)
             candidate_invoice_id = int(rows[0]["id"]) if payload.vendor_invoice_id is not None and rows and not invoice else None
             result: dict[str, Any] = {
