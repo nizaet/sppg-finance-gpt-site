@@ -76,6 +76,11 @@ function plugin() {
       }
 
       if (id.includes("/src/operations/OperationsPayments.jsx")) {
+        // The payment screen now owns its correction/action column.  The old
+        // source-to-source calendar transform only applies to the legacy
+        // ten-column table; applying it to the newer table aborts production
+        // builds on a harmless UI change.
+        if (code.includes('<th>Aksi</th>')) return null;
         let out = code;
         out = mustReplace(
           out,
