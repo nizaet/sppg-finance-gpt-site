@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from backend import action_schema_runtime_patch as action_patch
 from backend import unified_action_schema_api as schema_api
+from backend.db import database_ready
 
 router = APIRouter(tags=["gpt-legacy-compat"])
 SERVER = "https://sppg-finance-gpt-site-production-5b7d.up.railway.app"
@@ -19,13 +21,7 @@ NO_CACHE = {
 
 
 def _build_legacy_v0186() -> dict[str, Any]:
-    """Recreate the pre-runtime-patch v0.18.6 Action schema once at startup.
-
-    v0.18.6 is the user's last known-good Custom GPT schema. Later runtime
-    patches intentionally renamed a few operationIds while keeping the same
-    endpoints. For diagnosis and rollback, build the original v0.18.6 surface
-    before serving requests, then restore the current patched generator.
-    """
+    """Recreate the pre-runtime-patch v0.18.6 Action schema once at startup."""
     active_v0184 = schema_api.schema_v0184
     try:
         schema_api.schema_v0184 = action_patch._ORIGINAL_V0184
@@ -47,12 +43,52 @@ def _build_legacy_v0186() -> dict[str, Any]:
     return payload
 
 
+def _status_response() -> dict[str, Any]:
+    """Non-sensitive bridge health used only to separate transport from auth."""
+    return {
+        "databaseReady": database_ready(),
+        "googleCredentialsConfigured": bool(os.getenv("SPPG_GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()),
+        "rawChatFolderConfigured": bool(os.getenv("SPPG_DRIVE_RAW_CHAT_FOLDER_ID", "").strip()),
+        "firestoreProject": os.getenv("SPPG_FIRESTORE_PROJECT_ID", "sppg-finance-gpt"),
+    }
+
+
 LEGACY_V0186 = _build_legacy_v0186()
+
+
+def _build_v0191() -> dict[str, Any]:
+    """Use the proven v0.18.6 Action surface, but make only bridge status public.
+
+    This is diagnostic by design. If getSppgAccountantBridgeStatus still raises
+    ClientResponseError here, Bearer authentication is not the cause because the
+    operation no longer requires it. All real operational reads/writes remain on
+    the original authenticated paths.
+    """
+    payload = deepcopy(LEGACY_V0186)
+    payload.setdefault("info", {})["version"] = "0.19.1-legacy-v0186-public-status"
+    old_status = deepcopy(payload.get("paths", {}).get("/v1/gpt/status") or {})
+    status_get = deepcopy(old_status.get("get") or {})
+    if not status_get:
+        status_get = {
+            "operationId": "getSppgAccountantBridgeStatus",
+            "summary": "Check the SPPG Accountant database and Firestore bridge",
+            "responses": {"200": {"description": "Bridge status"}},
+        }
+    status_get["security"] = []
+    status_get["description"] = (
+        "PUBLIC DIAGNOSTIC READ. No API key is required. Returns only non-sensitive "
+        "bridge readiness flags so GPT Action transport can be tested independently of Bearer auth."
+    )
+    payload.setdefault("paths", {}).pop("/v1/gpt/status", None)
+    payload["paths"]["/v1/gpt/status-public"] = {"get": status_get}
+    return payload
+
+
+LEGACY_V0191 = _build_v0191()
 
 
 @router.get("/gpt/ping", include_in_schema=False)
 def gpt_transport_ping() -> JSONResponse:
-    """Public transport probe. No application data and no auth required."""
     return JSONResponse(
         {
             "ok": True,
@@ -64,21 +100,29 @@ def gpt_transport_ping() -> JSONResponse:
     )
 
 
+@router.get("/gpt/status-public", include_in_schema=False)
+def gpt_public_bridge_status() -> JSONResponse:
+    return JSONResponse(_status_response(), headers=NO_CACHE)
+
+
 @router.get("/schema/chatgpt-sppg-v0190.json", include_in_schema=False)
 def chatgpt_sppg_v0190_legacy() -> JSONResponse:
-    """Fresh URL carrying the old proven v0.18.6 Action contract."""
     return JSONResponse(deepcopy(LEGACY_V0186), headers=NO_CACHE)
 
 
-@router.get("/schema/chatgpt-sppg-diagnostic-v1.json", include_in_schema=False)
-def chatgpt_sppg_diagnostic_v1() -> JSONResponse:
-    """Two-call schema that separates network/transport failure from bearer auth."""
+@router.get("/schema/chatgpt-sppg-v0191.json", include_in_schema=False)
+def chatgpt_sppg_v0191_legacy_public_status() -> JSONResponse:
+    return JSONResponse(deepcopy(LEGACY_V0191), headers=NO_CACHE)
+
+
+@router.get("/schema/chatgpt-sppg-diagnostic-v2.json", include_in_schema=False)
+def chatgpt_sppg_diagnostic_v2() -> JSONResponse:
     schema = {
         "openapi": "3.1.0",
         "info": {
             "title": "SPPG GPT Connection Diagnostic",
-            "version": "1.0.0",
-            "description": "First call pingSppgActionTransport. Then call getSppgAccountantBridgeStatus with Bearer auth.",
+            "version": "2.0.0",
+            "description": "Separates public transport, public app readiness, and authenticated bridge access.",
         },
         "servers": [{"url": SERVER}],
         "paths": {
@@ -86,53 +130,64 @@ def chatgpt_sppg_diagnostic_v1() -> JSONResponse:
                 "get": {
                     "operationId": "pingSppgActionTransport",
                     "summary": "Test public GPT Action transport to SPPG",
-                    "description": "No auth and no operational data. A successful response proves DNS/TLS/HTTP transport from GPT Actions to Railway.",
                     "security": [],
                     "x-openai-isConsequential": False,
                     "responses": {
                         "200": {
                             "description": "Transport reachable",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "ok": {"type": "boolean"},
-                                            "service": {"type": "string"},
-                                            "probe": {"type": "string"},
-                                            "authRequired": {"type": "boolean"},
-                                        },
-                                        "required": ["ok", "service", "probe", "authRequired"],
-                                    }
-                                }
-                            },
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "ok": {"type": "boolean"},
+                                    "service": {"type": "string"},
+                                    "probe": {"type": "string"},
+                                    "authRequired": {"type": "boolean"},
+                                },
+                            }}},
+                        }
+                    },
+                }
+            },
+            "/v1/gpt/status-public": {
+                "get": {
+                    "operationId": "getSppgPublicBridgeStatus",
+                    "summary": "Read non-sensitive SPPG bridge readiness without auth",
+                    "security": [],
+                    "x-openai-isConsequential": False,
+                    "responses": {
+                        "200": {
+                            "description": "Public bridge readiness",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "databaseReady": {"type": "boolean"},
+                                    "googleCredentialsConfigured": {"type": "boolean"},
+                                    "rawChatFolderConfigured": {"type": "boolean"},
+                                    "firestoreProject": {"type": "string"},
+                                },
+                            }}},
                         }
                     },
                 }
             },
             "/v1/gpt/status": {
                 "get": {
-                    "operationId": "getSppgAccountantBridgeStatus",
+                    "operationId": "getSppgAuthenticatedBridgeStatus",
                     "summary": "Test authenticated SPPG GPT bridge",
-                    "description": "If ping works but this fails, the remaining issue is Bearer/API-key configuration rather than Railway transport.",
                     "security": [{"bearerAuth": []}],
                     "x-openai-isConsequential": False,
                     "responses": {
                         "200": {
                             "description": "Authenticated bridge status",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "databaseReady": {"type": "boolean"},
-                                            "googleCredentialsConfigured": {"type": "boolean"},
-                                            "rawChatFolderConfigured": {"type": "boolean"},
-                                            "firestoreProject": {"type": "string"},
-                                        },
-                                    }
-                                }
-                            },
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "databaseReady": {"type": "boolean"},
+                                    "googleCredentialsConfigured": {"type": "boolean"},
+                                    "rawChatFolderConfigured": {"type": "boolean"},
+                                    "firestoreProject": {"type": "string"},
+                                },
+                            }}},
                         }
                     },
                 }
@@ -146,3 +201,8 @@ def chatgpt_sppg_diagnostic_v1() -> JSONResponse:
         },
     }
     return JSONResponse(schema, headers=NO_CACHE)
+
+
+@router.get("/schema/chatgpt-sppg-diagnostic-v1.json", include_in_schema=False)
+def chatgpt_sppg_diagnostic_v1() -> JSONResponse:
+    return chatgpt_sppg_diagnostic_v2()
