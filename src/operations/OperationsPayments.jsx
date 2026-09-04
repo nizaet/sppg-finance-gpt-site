@@ -212,6 +212,17 @@ export default function OperationsPayments({ fixedSite = "" }) {
     } catch (err) { setError(err.message || "Gagal mengoreksi tagihan vendor"); }
     finally { setSavingPayableEdit(false); }
   };
+  const deleteRejectedPayable = async (item) => {
+    if (!window.confirm(`Hapus tagihan reject/netto Rp0 ${item.vendor_code} · ${item.po_code || `#${item.vendor_invoice_id}`}?\n\nPO dan penerimaan barang tetap ada.`)) return;
+    setSavingPayableEdit(true); setError("");
+    try {
+      await operationsApi.deleteRejectedVendorPayable(item.vendor_invoice_id);
+      setActionMessage("Tagihan reject dihapus. PO dan receipt tidak berubah.");
+      if (editingPayable?.vendor_invoice_id === item.vendor_invoice_id) { setEditingPayable(null); setPayableEdit(null); }
+      await load();
+    } catch (err) { setError(err.message || "Gagal menghapus tagihan reject"); }
+    finally { setSavingPayableEdit(false); }
+  };
 
   return (
     <div className="ops-domain-stack">
@@ -359,6 +370,7 @@ export default function OperationsPayments({ fixedSite = "" }) {
                   <td>
                     {Number(item.net_amount || 0) > 0.01 && <button type="button" className="ops-button-primary" onClick={() => setPaymentModalItem(item)}>Bayar + Bukti</button>}
                     <button type="button" onClick={() => openPayableEdit(item)} style={{ marginLeft: Number(item.net_amount || 0) > 0.01 ? 6 : 0 }}>Koreksi</button>
+                    {Number(item.net_amount || 0) <= 0.01 && <button type="button" className="danger" onClick={() => deleteRejectedPayable(item)} disabled={savingPayableEdit} style={{ marginLeft: 6 }}>Hapus</button>}
                   </td>
                 </tr>
               ))}
