@@ -80,6 +80,7 @@ export const operationsApi = {
   deleteRejectedVendorPayable: (id) => request(`/v1/vendor-payables/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getVendorPayments: ({ status = "", site = "" } = {}) => { const q = new URLSearchParams(); if (status) q.set("status", status); if (site) q.set("site", site); return request(`/v1/vendor-payments?${q}`); },
   getInventoryBalances: ({ site, search = "", limit = 300, forDate = "" }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); if (forDate) q.set("forDate", forDate); return request(`/v1/inventory/balances-v2?${q}`); },
+  getKoperasiTransfers: ({ fromDate = "", toDate = "", destination = "", limit = 1000 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (fromDate) q.set("fromDate", fromDate); if (toDate) q.set("toDate", toDate); if (destination) q.set("destination", destination); return request(`/v1/inventory/koperasi-transfers?${q}`); },
   previewStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
   commitStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: true }) }),
   getStockOpnames: ({ location = "", limit = 50 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (location) q.set("location", location); return request(`/v1/inventory/stock-opnames?${q}`); },
