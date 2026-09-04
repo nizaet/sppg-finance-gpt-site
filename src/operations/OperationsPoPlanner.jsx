@@ -63,9 +63,60 @@ function safeVendorForPlanningItem(item, site) {
       ? { vendor: "KOPERASI", method: "confirmed_internal_rule" }
       : { vendor: "", method: "unassigned" };
   }
+  // The calculator often labels pantry items simply as "BAHAN BAKU".  Do
+  // not make those items disappear from the Koperasi draft merely because the
+  // category has not been normalised to "bahan kering" yet.
+  if (/\b(tepung|tapioka|terigu|maizena|panir|breadcrumb|knorr|kaldu|totole|bubuk|minyak|gula|garam|kecap|saus|saos|cuka|baking powder|lada|merica|ketumbar|santan|susu|milk|beras)\b/.test(text)) {
+    return { vendor: "KOPERASI", method: "confirmed_internal_rule" };
+  }
   if (/\b(bahan kering|sembako|dry goods|packaging)\b/.test(category)) return { vendor: "KOPERASI", method: "confirmed_internal_rule" };
   if (/\b(sayur|buah|bumbu|vegetable|fruit)\b/.test(category)) return { vendor: "HOLIL", method: "category_rule" };
   return { vendor: "", method: "unassigned" };
+}
+
+function stockTypeCode(value) {
+  const text = normalize(value);
+  const patterns = [
+    ["TEPUNG_TAPIOKA", /\b(tepung tapioka|tapioka)\b/],
+    ["TEPUNG_TERIGU", /\b(tepung terigu|terigu)\b/],
+    ["TEPUNG_MAIZENA", /\b(tepung maizena|maizena)\b/],
+    ["TEPUNG_BERAS", /\btepung beras\b/],
+    ["TEPUNG_PANIR", /\b(tepung panir|breadcrumbs?)\b/],
+    ["KALDU_AYAM_BUBUK", /\b(knorr.*chicken|chicken powder|kaldu ayam)\b/],
+    ["KALDU_JAMUR", /\b(totole|kaldu jamur)\b/],
+    ["MINYAK_GORENG", /\bminyak goreng\b/],
+    ["MINYAK_WIJEN", /\bminyak wijen\b/],
+    ["KECAP_MANIS", /\bkecap manis\b/],
+    ["KECAP_ASIN", /\bkecap asin\b/],
+    ["KECAP_INGGRIS", /\b(kecap inggris|worcestershire)\b/],
+    ["SAUS_TOMAT", /\b(saus|saos) tomat\b/],
+    ["SAUS_SAMBAL", /\b(saus|saos) sambal\b/],
+    ["GULA_PASIR", /\b(gula pasir|gula putih)\b/],
+    ["TELUR", /\b(telur|eggs?)\b/],
+    ["TEMPE", /\btempe\b/],
+    ["TAHU", /\b(tahu|tofu)\b/],
+    ["BERAS", /\b(beras|rice)\b/],
+  ];
+  const matched = patterns.find(([, pattern]) => pattern.test(text));
+  return matched ? matched[0] : null;
+}
+
+function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
+  const amount = Number(qtyValue || 0);
+  const from = normalizeUnit(fromUnit);
+  const to = normalizeUnit(toUnit);
+  if (from === to) return amount;
+  if (typeCode === "MINYAK_GORENG") {
+    const litres = from === "liter" ? amount : from === "pcs" ? amount * 2 : from === "dus" ? amount * 12 : null;
+    if (litres == null) return null;
+    return to === "liter" ? litres : to === "pcs" ? litres / 2 : to === "dus" ? litres / 12 : null;
+  }
+  if (typeCode === "BERAS") {
+    const kilograms = from === "kg" ? amount : from === "karung" ? amount * 25 : null;
+    if (kilograms == null) return null;
+    return to === "kg" ? kilograms : to === "karung" ? kilograms / 25 : null;
+  }
+  return null;
 }
 
 function buildStockLookup(items = []) {
@@ -83,6 +134,8 @@ function buildStockLookup(items = []) {
       stockAsOf: item.stock_as_of || null,
       basis: item.stock_basis || "LEDGER_ONLY",
       confidence: item.confidence || "LOW",
+      typeCode: item.stock_type_code || stockTypeCode(item.item_name),
+      unit,
     };
     names.forEach((name) => {
       exact.set(`${name}|${unit}`, stock);
@@ -97,6 +150,33 @@ function buildStockLookup(items = []) {
 function stockForItem(item, lookup) {
   const name = normalize(item.item_name);
   const unit = normalizeUnit(item.unit);
+  const typeCode = stockTypeCode(item.item_name);
+  // Koperasi stock may be recorded as a brand or package while the calculator
+  // uses the ingredient name.  The API classifies the physical stock by type;
+  // sum only identical confirmed types and only when the units are identical
+  // or have an explicit operational conversion.  This deliberately does not
+  // use fuzzy name matching or central Koperasi stock.
+  if (typeCode) {
+    const matched = (lookup.entries || []).filter((candidate) => candidate.stock.typeCode === typeCode);
+    const converted = matched.map((candidate) => convertKnownStockQty(candidate.stock.balance, candidate.unit, unit, typeCode));
+    if (converted.length && converted.every((value) => value != null)) {
+      const actual = matched.map((candidate) => convertKnownStockQty(candidate.stock.actualBalance, candidate.unit, unit, typeCode));
+      const projected = matched.map((candidate) => convertKnownStockQty(candidate.stock.projectedBalance, candidate.unit, unit, typeCode));
+      const planned = matched.map((candidate) => convertKnownStockQty(candidate.stock.plannedDepletion, candidate.unit, unit, typeCode));
+      if ([actual, projected, planned].every((values) => values.every((value) => value != null))) {
+        const sum = (values) => Number(values.reduce((total, value) => total + Number(value || 0), 0).toFixed(4));
+        return {
+          balance: sum(converted),
+          actualBalance: sum(actual),
+          projectedBalance: sum(projected),
+          plannedDepletion: sum(planned),
+          stockAsOf: matched.map((candidate) => candidate.stock.stockAsOf).filter(Boolean).sort().at(-1) || null,
+          basis: "CONFIRMED_ITEM_TYPE_STOCK_MATCH",
+          confidence: matched.some((candidate) => candidate.stock.confidence === "LOW") ? "LOW" : "HIGH",
+        };
+      }
+    }
+  }
   const exact = lookup.exact.get(`${name}|${unit}`);
   if (exact != null) return exact;
   const contained = (lookup.entries || []).filter((candidate) => candidate.unit === unit && candidate.name.length >= 4 && (` ${name} `.includes(` ${candidate.name} `) || ` ${candidate.name} `.includes(` ${name} `)));
