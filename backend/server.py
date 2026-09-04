@@ -7,6 +7,7 @@ Serve React frontend + SPPG API from one Railway service.
 All /v1 routes remain API endpoints and are protected by SPPG role middleware.
 """
 
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 
@@ -142,21 +143,42 @@ fastapi_app.include_router(koperasi_transfer_export_router)
 
 
 def _stable_gpt_schema(version: str) -> dict:
-    """Return the same stable Action surface under a cache-busting URL.
+    """Wrap current operations in the old proven Custom GPT schema envelope.
 
-    Do not rename operationIds here. The Custom GPT instructions depend on the
-    stable names supplied by action_schema_runtime_patch, including
-    getSppgOperationalContext and learnSppgConversation.
+    The old connected schema used a plain OpenAPI 3.1 document with one Railway
+    server, one top-level bearerAuth security requirement, explicit paths, and a
+    simple HTTP bearer security scheme. Keep that transport/auth contract stable
+    and only reuse the current paths/response schemas. This avoids another GPT
+    Action redesign while preserving today's operational capabilities.
     """
-    payload = schema_v0188()
-    payload["servers"] = [{"url": GPT_ACTION_SERVER}]
-    payload.setdefault("info", {})["version"] = version
-    return payload
+    current = schema_v0188()
+    current_components = deepcopy(current.get("components") or {})
+
+    # Match the legacy schema's proven authentication declaration exactly.
+    current_components["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+        }
+    }
+
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "SPPG Vendor and Inventory Operations",
+            "version": version,
+            "description": "Operational vendor reconciliation, stock, invoice parsing, payment, planning, and application context for MAJA and CEMPLANG.",
+        },
+        "servers": [{"url": GPT_ACTION_SERVER}],
+        "security": [{"bearerAuth": []}],
+        "paths": deepcopy(current.get("paths") or {}),
+        "components": current_components,
+    }
 
 
-# Keep v0188 for existing GPTs and expose v0189 as a clean import URL. The
-# operation surface is intentionally identical; v0189 only breaks stale schema
-# caching/import state in GPT Builder.
+# Keep v0188 for existing GPTs and expose v0189 as a clean import URL. v0189
+# deliberately uses the legacy-proven OpenAPI/auth envelope while retaining the
+# current operation paths and operationIds.
 @fastapi_app.get("/v1/schema/chatgpt-sppg-v0188.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0188_canonical() -> JSONResponse:
     return JSONResponse(_stable_gpt_schema("0.18.8"), headers=SCHEMA_HEADERS)
