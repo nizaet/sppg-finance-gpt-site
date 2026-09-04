@@ -141,7 +141,12 @@ def read_application_operation(payload: GptOperationReadIn) -> dict[str, Any]:
     elif p.resource == "RECEIVING_VARIANCE":
         result = receiving_variance(p.site or "", p.limit or 200)
     elif p.resource == "STOCK_OPNAMES":
-        result = stock_opname_detail(p.record_id) if p.record_id else stock_opnames(p.location or "", p.limit or 50, False)
+        # Inventory calls the same concept "location" because KOPERASI is also a
+        # valid warehouse. GPT callers naturally use "site" for MAJA/CEMPLANG.
+        # Accept both names so STOCK_OPNAMES behaves consistently with the other
+        # site-scoped resources; explicit location wins when both are supplied.
+        stock_location = p.location or p.site or ""
+        result = stock_opname_detail(p.record_id) if p.record_id else stock_opnames(stock_location, p.limit or 50, False)
     elif p.resource == "INVENTORY_ITEM_MASTER":
         result = inventory_items(p.search or "", p.limit or 500)
     elif p.resource == "ACTUAL_USAGE":
