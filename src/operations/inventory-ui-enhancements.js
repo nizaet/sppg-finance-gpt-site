@@ -110,6 +110,151 @@ async function apiJson(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+async function apiBlob(path) {
+  const token = readSessionToken();
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    let detail = "";
+    try { detail = await response.text(); } catch {}
+    throw new Error(`SPPG Core API ${response.status}: ${detail || response.statusText}`);
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  return {
+    blob: await response.blob(),
+    filename: encoded ? decodeURIComponent(encoded) : "Kiriman_Gudang_Koperasi.xlsx",
+  };
+}
+
+function boundsForMonth(value) {
+  const matched = String(value || "").match(/^(\d{4})-(\d{2})$/);
+  if (!matched) return null;
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const last = new Date(year, month, 0).getDate();
+  return {
+    from: `${matched[1]}-${matched[2]}-01`,
+    to: `${matched[1]}-${matched[2]}-${String(last).padStart(2, "0")}`,
+  };
+}
+
+function makeField(labelText, control) {
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  label.appendChild(control);
+  return label;
+}
+
+function ensureTransferExportControls(root) {
+  if (!root) return;
+  const title = Array.from(root.querySelectorAll(".ops-module h3"))
+    .find((node) => node.textContent?.trim() === "Daftar Kiriman Barang");
+  const section = title?.closest(".ops-module");
+  const header = section?.querySelector(":scope > .ops-module-header");
+  if (!section || !header) return;
+
+  const oldExport = Array.from(header.querySelectorAll("button"))
+    .find((button) => button.textContent?.includes("Ekspor Excel"));
+  if (oldExport) {
+    oldExport.hidden = true;
+    oldExport.dataset.legacyKoperasiExport = "true";
+  }
+
+  if (section.querySelector("[data-koperasi-xlsx-export]")) return;
+
+  const monthInput = header.querySelector('input[type="month"]');
+  const defaults = boundsForMonth(monthInput?.value) || (() => {
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    return boundsForMonth(month);
+  })();
+
+  const fromInput = document.createElement("input");
+  fromInput.type = "date";
+  fromInput.value = defaults?.from || "";
+
+  const toInput = document.createElement("input");
+  toInput.type = "date";
+  toInput.value = defaults?.to || "";
+
+  const destination = document.createElement("select");
+  [["", "Semua site"], ["MAJA", "MAJA"], ["CEMPLANG", "CEMPLANG"]].forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    destination.appendChild(option);
+  });
+
+  const download = document.createElement("button");
+  download.type = "button";
+  download.textContent = "Download XLSX";
+
+  const status = document.createElement("div");
+  status.className = "ops-muted";
+  status.style.alignSelf = "end";
+  status.style.paddingBottom = "8px";
+  status.textContent = "Qty diekspor sebagai angka Excel, bukan teks HTML.";
+
+  const panel = document.createElement("div");
+  panel.dataset.koperasiXlsxExport = "true";
+  panel.className = "ops-form-grid";
+  panel.style.marginTop = "12px";
+  panel.style.padding = "12px";
+  panel.style.border = "1px solid var(--ops-border, #dbe4f0)";
+  panel.style.borderRadius = "10px";
+  panel.append(
+    makeField("Dari tanggal", fromInput),
+    makeField("Sampai tanggal", toInput),
+    makeField("Site tujuan", destination),
+    makeField("Ekspor", download),
+    status,
+  );
+
+  header.insertAdjacentElement("afterend", panel);
+
+  monthInput?.addEventListener("change", () => {
+    const bounds = boundsForMonth(monthInput.value);
+    if (!bounds) return;
+    fromInput.value = bounds.from;
+    toInput.value = bounds.to;
+  });
+
+  download.addEventListener("click", async () => {
+    if (!fromInput.value || !toInput.value) {
+      status.textContent = "Pilih tanggal awal dan akhir.";
+      return;
+    }
+    if (toInput.value < fromInput.value) {
+      status.textContent = "Tanggal akhir tidak boleh lebih kecil dari tanggal awal.";
+      return;
+    }
+
+    const query = new URLSearchParams({ fromDate: fromInput.value, toDate: toInput.value });
+    if (destination.value) query.set("destination", destination.value);
+    download.disabled = true;
+    status.textContent = "Menyiapkan XLSX…";
+    try {
+      const { blob, filename } = await apiBlob(`/v1/inventory/koperasi-transfers/export.xlsx?${query}`);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      status.textContent = `XLSX selesai: ${filename}`;
+    } catch (error) {
+      status.textContent = error?.message || "Gagal mengekspor XLSX.";
+    } finally {
+      download.disabled = false;
+    }
+  });
+}
+
 async function findInventoryMaster(name) {
   const query = new URLSearchParams({ search: name });
   const data = await apiJson(`/v1/inventory/items?${query}`);
@@ -250,6 +395,7 @@ function enhance() {
   const root = findInventoryRoot();
   if (!root) return;
   ensureMasterCollapse(root);
+  ensureTransferExportControls(root);
   syncEditorFeedback(root);
 }
 
