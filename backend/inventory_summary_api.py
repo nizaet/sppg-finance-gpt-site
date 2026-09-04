@@ -56,6 +56,7 @@ def inventory_balances(
     search: str = "",
     limit: int = Query(default=300, ge=1, le=1000),
     for_date: date | None = Query(default=None, alias="forDate"),
+    include_current_corrections: bool = Query(default=False, alias="includeCurrentCorrections"),
 ) -> dict[str, Any]:
     """Stock before forDate from the latest SO, later facts, and prior plans.
 
@@ -126,9 +127,13 @@ def inventory_balances(
                        coalesce(occurred_at,created_at) as occurred_at
                 from inventory_movements
                 where (upper(coalesce(to_location,''))=%s or upper(coalesce(from_location,''))=%s)
-                  and date(coalesce(occurred_at,created_at)) < %s
+                  and (
+                    date(coalesce(occurred_at,created_at)) < %s
+                    or (%s and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
+                        and date(coalesce(occurred_at,created_at)) = %s)
+                  )
             """
-            movement_params: list[Any] = [location, location, target_date]
+            movement_params: list[Any] = [location, location, target_date, include_current_corrections, target_date]
             if stock_date:
                 movement_sql += " and date(coalesce(occurred_at,created_at)) > %s"
                 movement_params.append(stock_date)
