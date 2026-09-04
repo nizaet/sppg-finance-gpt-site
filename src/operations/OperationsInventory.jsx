@@ -11,6 +11,13 @@ const localDateTime = (value) => value ? new Date(value).toLocaleString("id-ID",
   timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
 }) : "-";
 const stockKey = (name, unit) => `${String(name || "").toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim()}|${String(unit || "").toLocaleLowerCase("id-ID").trim()}`;
+const todayMonth = () => new Date().toISOString().slice(0, 7);
+const transferMonthBounds = (month) => {
+  const first = new Date(`${month}-01T12:00:00`);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  return { fromDate: `${month}-01`, toDate: `${month}-${String(last.getDate()).padStart(2, "0")}`, first, last };
+};
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 
 export default function OperationsInventory({ fixedSite = "" }) {
   const [site, setSite] = useState(fixedSite || "MAJA");
@@ -27,6 +34,9 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const [masters, setMasters] = useState([]);
   const [masterForm, setMasterForm] = useState({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
   const [stockEdit, setStockEdit] = useState(null);
+  const [transfers, setTransfers] = useState([]);
+  const [transferMonth, setTransferMonth] = useState(todayMonth());
+  const [selectedTransferDate, setSelectedTransferDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -70,15 +80,19 @@ export default function OperationsInventory({ fixedSite = "" }) {
     setLoading(true);
     setError("");
     try {
-      const [data, opnameData, masterData] = await Promise.all([
+      const [data, opnameData, masterData, transferData] = await Promise.all([
         operationsApi.getInventoryBalances({ site: activeSite, search: searchValue, limit: 1000 }),
         operationsApi.getStockOpnames({ location: activeSite, limit: 50 }),
         operationsApi.getInventoryItems(""),
+        activeSite === "KOPERASI"
+          ? operationsApi.getKoperasiTransfers(transferMonthBounds(transferMonth))
+          : Promise.resolve({ items: [] }),
       ]);
       setItems(data?.items || []);
       setBalanceMeta(data || null);
       setHistory(opnameData?.items || []);
       setMasters(masterData?.items || []);
+      setTransfers(transferData?.items || []);
     } catch (err) {
       setError(err.message || "Gagal mengambil stok gudang");
     } finally {
@@ -87,6 +101,34 @@ export default function OperationsInventory({ fixedSite = "" }) {
   };
 
   useEffect(() => { load(""); }, [activeSite]);
+
+  const loadTransfers = async (month = transferMonth) => {
+    if (activeSite !== "KOPERASI") return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await operationsApi.getKoperasiTransfers(transferMonthBounds(month));
+      setTransfers(data?.items || []);
+      setSelectedTransferDate("");
+    } catch (err) {
+      setError(err.message || "Gagal mengambil riwayat kiriman Gudang Koperasi");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportTransfersExcel = () => {
+    if (!transfers.length) return setError("Belum ada kiriman pada bulan ini untuk diekspor.");
+    const rows = transfers.map((item) => `<tr><td>${escapeHtml(item.transfer_date)}</td><td>${escapeHtml(item.to_location)}</td><td>${escapeHtml(item.item_name)}</td><td style="mso-number-format:'0.0000'">${escapeHtml(item.qty)}</td><td>${escapeHtml(item.unit)}</td><td>${escapeHtml(item.po_code || "-")}</td><td>${escapeHtml(item.receipt_code || "-")}</td><td>${escapeHtml(item.reporter || "-")}</td></tr>`).join("");
+    const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><thead><tr><th>Tanggal kirim</th><th>Tujuan</th><th>Barang</th><th>Qty</th><th>Satuan</th><th>PO</th><th>Receipt</th><th>Penerima</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+    const blob = new Blob(["\ufeff", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `Kiriman_Gudang_Koperasi_${transferMonth}.xls`;
+    link.click();
+    URL.revokeObjectURL(href);
+  };
 
   const previewSo = async () => {
     if (!soText.trim()) return setError("Paste laporan SO WhatsApp terlebih dahulu.");
@@ -320,6 +362,18 @@ export default function OperationsInventory({ fixedSite = "" }) {
   const negativeCount = useMemo(() => items.filter((item) => Number(item.projected_balance ?? item.balance ?? 0) < 0).length, [items]);
   const lowConfidenceCount = useMemo(() => items.filter((item) => item.confidence === "LOW").length, [items]);
   const historyRows = useMemo(() => history.map((row) => ({ ...row, is_balance_active: Number(row.id) === Number(balanceMeta?.latestStockOpnameId) })), [history, balanceMeta?.latestStockOpnameId]);
+  const transfersByDate = useMemo(() => transfers.reduce((all, item) => {
+    const key = String(item.transfer_date || "");
+    if (!key) return all;
+    (all[key] ||= []).push(item);
+    return all;
+  }, {}), [transfers]);
+  const calendarDays = useMemo(() => {
+    const { first, last } = transferMonthBounds(transferMonth);
+    const mondayOffset = (first.getDay() + 6) % 7;
+    return Array.from({ length: mondayOffset + last.getDate() }, (_, index) => index < mondayOffset ? null : index - mondayOffset + 1);
+  }, [transferMonth]);
+  const selectedTransfers = selectedTransferDate ? (transfersByDate[selectedTransferDate] || []) : [];
 
   return (
     <div className="ops-domain-stack">
@@ -365,6 +419,41 @@ export default function OperationsInventory({ fixedSite = "" }) {
           </tr>)}</tbody></table></div>
         </div>}
       </section>
+
+      {activeSite === "KOPERASI" && <section className="ops-module">
+        <div className="ops-module-header">
+          <div>
+            <span className="ops-kicker">GUDANG KOPERASI → DAPUR</span>
+            <h3>Daftar Kiriman Barang</h3>
+            <p>Setiap penerimaan PO Koperasi ke MAJA atau CEMPLANG tercatat sebagai transfer: stok Gudang Koperasi berkurang dan stok dapur tujuan bertambah. Ini bukan pembelian atau beban baru.</p>
+          </div>
+          <div className="ops-inline-controls">
+            <input type="month" value={transferMonth} onChange={(event) => setTransferMonth(event.target.value)} />
+            <button type="button" onClick={() => loadTransfers()} disabled={loading}><RefreshCw size={15} /> Tampilkan</button>
+            <button type="button" onClick={exportTransfersExcel} disabled={!transfers.length}>Ekspor Excel</button>
+          </div>
+        </div>
+        <div className="ops-summary-strip"><span>Bulan <strong>{new Date(`${transferMonth}-01T12:00:00`).toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</strong></span><span>Baris kiriman <strong>{transfers.length}</strong></span><span>Ke MAJA <strong>{transfers.filter((item) => item.to_location === "MAJA").length}</strong></span><span>Ke CEMPLANG <strong>{transfers.filter((item) => item.to_location === "CEMPLANG").length}</strong></span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginTop: 12 }}>
+          {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((label) => <div key={label} className="ops-muted" style={{ textAlign: "center", fontWeight: 700 }}>{label}</div>)}
+          {calendarDays.map((day, index) => {
+            if (day === null) return <div key={`empty-${index}`} />;
+            const date = `${transferMonth}-${String(day).padStart(2, "0")}`;
+            const dayTransfers = transfersByDate[date] || [];
+            const destinations = Array.from(new Set(dayTransfers.map((item) => item.to_location))).join(" · ");
+            return <button key={date} type="button" onClick={() => dayTransfers.length && setSelectedTransferDate(date)} disabled={!dayTransfers.length} style={{ minHeight: 82, textAlign: "left", border: "1px solid #dbe4f0", borderRadius: 9, padding: 8, background: dayTransfers.length ? "#ecfdf5" : "#fff", color: "#1e293b", cursor: dayTransfers.length ? "pointer" : "default", opacity: dayTransfers.length ? 1 : .7 }}>
+              <strong>{day}</strong>{dayTransfers.length > 0 && <><div style={{ fontSize: 12, color: "#047857", marginTop: 6 }}>{dayTransfers.length} baris kiriman</div><div className="ops-muted" style={{ fontSize: 11 }}>{destinations}</div></>}
+            </button>;
+          })}
+        </div>
+        {!transfers.length && !loading && <div className="ops-notice" style={{ marginTop: 12 }}>Belum ada transfer Koperasi ke dapur pada bulan ini.</div>}
+        {selectedTransferDate && <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedTransferDate("")}>
+          <div role="dialog" aria-modal="true" className="modal wide">
+            <div className="modal-head"><h3>Kiriman Gudang Koperasi - {selectedTransferDate}</h3><button type="button" onClick={() => setSelectedTransferDate("")}><XCircle size={18} /></button></div>
+            <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Tujuan</th><th>Barang</th><th>Qty</th><th>Unit</th><th>PO</th><th>Receipt</th><th>Penerima</th></tr></thead><tbody>{selectedTransfers.map((item) => <tr key={item.movement_id}><td><strong>{item.to_location}</strong></td><td>{item.item_name}</td><td>{qty(item.qty)}</td><td>{item.unit || "-"}</td><td>{item.po_code || "-"}</td><td>{item.receipt_code || "-"}</td><td>{item.reporter || "-"}</td></tr>)}</tbody></table></div>
+          </div>
+        </div>}
+      </section>}
 
       <section className="ops-module">
         <div className="ops-module-header"><div><span className="ops-kicker">MASTER BARANG & ALIAS</span><h3>Tambah atau Perbarui Klasifikasi</h3><p>Contoh: buat “Mi telur ayam” sebagai jenis tersendiri lalu masukkan alias “mi telur”, “mie telur ayam”. Laporan berikutnya akan dikenali lebih cepat.</p></div></div>
