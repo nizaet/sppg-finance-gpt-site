@@ -20,6 +20,17 @@ NO_CACHE = {
 }
 
 
+def _operation_ids(payload: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for methods in (payload.get("paths") or {}).values():
+        if not isinstance(methods, dict):
+            continue
+        for operation in methods.values():
+            if isinstance(operation, dict) and operation.get("operationId"):
+                ids.append(str(operation["operationId"]))
+    return ids
+
+
 def _build_legacy_v0186() -> dict[str, Any]:
     """Recreate the pre-runtime-patch v0.18.6 Action schema once at startup."""
     active_v0184 = schema_api.schema_v0184
@@ -57,13 +68,7 @@ LEGACY_V0186 = _build_legacy_v0186()
 
 
 def _build_v0191() -> dict[str, Any]:
-    """Use the proven v0.18.6 Action surface, but make only bridge status public.
-
-    This is diagnostic by design. If getSppgAccountantBridgeStatus still raises
-    ClientResponseError here, Bearer authentication is not the cause because the
-    operation no longer requires it. All real operational reads/writes remain on
-    the original authenticated paths.
-    """
+    """Legacy full schema with a public status replacement for diagnostics."""
     payload = deepcopy(LEGACY_V0186)
     payload.setdefault("info", {})["version"] = "0.19.1-legacy-v0186-public-status"
     old_status = deepcopy(payload.get("paths", {}).get("/v1/gpt/status") or {})
@@ -87,6 +92,32 @@ def _build_v0191() -> dict[str, Any]:
 LEGACY_V0191 = _build_v0191()
 
 
+def _build_v0192_full() -> dict[str, Any]:
+    """Full operational GPT schema using the proven legacy transport/auth contract.
+
+    Unlike the diagnostic schema, this intentionally exposes the complete
+    v0.18.6 operation set, including readSppgOperationalApplication, PO/receipt,
+    inventory, payable, Accountant/BGN, and conversation-memory actions. The
+    authenticated /v1/gpt/status route is preserved because Bearer auth has now
+    been proven from GPT Builder to Railway.
+    """
+    payload = deepcopy(LEGACY_V0186)
+    operation_ids = _operation_ids(payload)
+    payload.setdefault("info", {})["version"] = "0.19.2-full-legacy-v0186"
+    payload["info"]["title"] = "SPPG FULL OPERATIONS - Legacy Compatible"
+    payload["info"]["description"] = (
+        f"Full SPPG operational Action surface restored from the last known-good v0.18.6 contract. "
+        f"Server and Bearer authentication are unchanged. Exported operation count: {len(operation_ids)}."
+    )
+    # Helpful metadata for human inspection. GPT Builder ignores x-* fields.
+    payload["x-sppg-operation-count"] = len(operation_ids)
+    payload["x-sppg-operation-ids"] = operation_ids
+    return payload
+
+
+FULL_V0192 = _build_v0192_full()
+
+
 @router.get("/gpt/ping", include_in_schema=False)
 def gpt_transport_ping() -> JSONResponse:
     return JSONResponse(
@@ -105,6 +136,22 @@ def gpt_public_bridge_status() -> JSONResponse:
     return JSONResponse(_status_response(), headers=NO_CACHE)
 
 
+@router.get("/gpt/schema-v0192-summary", include_in_schema=False)
+def gpt_v0192_schema_summary() -> JSONResponse:
+    ids = _operation_ids(FULL_V0192)
+    return JSONResponse(
+        {
+            "schema": "v0192",
+            "operationCount": len(ids),
+            "operationIds": ids,
+            "hasOperationalGateway": "readSppgOperationalApplication" in ids,
+            "hasOperationalExecute": "previewOrExecuteSppgOperationalApplication" in ids,
+            "hasOperationalContext": any("Operational" in value or "operational" in value for value in ids),
+        },
+        headers=NO_CACHE,
+    )
+
+
 @router.get("/schema/chatgpt-sppg-v0190.json", include_in_schema=False)
 def chatgpt_sppg_v0190_legacy() -> JSONResponse:
     return JSONResponse(deepcopy(LEGACY_V0186), headers=NO_CACHE)
@@ -113,6 +160,11 @@ def chatgpt_sppg_v0190_legacy() -> JSONResponse:
 @router.get("/schema/chatgpt-sppg-v0191.json", include_in_schema=False)
 def chatgpt_sppg_v0191_legacy_public_status() -> JSONResponse:
     return JSONResponse(deepcopy(LEGACY_V0191), headers=NO_CACHE)
+
+
+@router.get("/schema/chatgpt-sppg-v0192.json", include_in_schema=False)
+def chatgpt_sppg_v0192_full() -> JSONResponse:
+    return JSONResponse(deepcopy(FULL_V0192), headers=NO_CACHE)
 
 
 @router.get("/schema/chatgpt-sppg-diagnostic-v2.json", include_in_schema=False)
