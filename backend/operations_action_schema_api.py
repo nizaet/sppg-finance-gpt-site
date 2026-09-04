@@ -133,6 +133,7 @@ def schema() -> dict[str, Any]:
                 "parameters": [
                     {"in": "query", "name": "site", "schema": {"type": "string", "enum": ["MAJA", "CEMPLANG"]}},
                     {"in": "query", "name": "vendor", "schema": {"type": "string"}},
+                    {"in": "query", "name": "poCode", "schema": {"type": "string"}},
                     {"in": "query", "name": "distributionDate", "schema": {"type": "string", "format": "date"}},
                     {"in": "query", "name": "status", "schema": {"type": "string"}},
                     {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
