@@ -278,6 +278,27 @@ def correct_vendor_payable(invoice_id: int, payload: VendorPayableCorrectionIn) 
     return {"committed": True, "correctionNote": payload.correction_note, "item": row}
 
 
+@router.delete("/vendor-payables/{invoice_id}")
+def delete_unpaid_vendor_payable(invoice_id: int) -> dict[str, Any]:
+    """Remove a rejected/unpaid payable only; the PO and goods receipt stay intact."""
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,net_amount,payable_status from vendor_invoices where id=%s", (invoice_id,))
+            invoice = cur.fetchone()
+            if not invoice:
+                raise HTTPException(404, "tagihan vendor tidak ditemukan")
+            cur.execute("select count(*) as count from vendor_payments where vendor_invoice_id=%s", (invoice_id,))
+            if int(cur.fetchone()["count"] or 0) > 0:
+                raise HTTPException(409, "tagihan tidak dapat dihapus karena sudah memiliki bukti pembayaran")
+            if float(invoice.get("net_amount") or 0) > 0.01:
+                raise HTTPException(409, "hanya tagihan netto Rp0/reject yang dapat dihapus dari layar ini")
+            cur.execute("delete from vendor_invoice_items where vendor_invoice_id=%s", (invoice_id,))
+            cur.execute("delete from vendor_invoices where id=%s", (invoice_id,))
+            conn.commit()
+    return {"deleted": True, "vendorInvoiceId": invoice_id, "poReceiptPreserved": True}
+
+
 @router.get("/vendor-payables")
 def list_vendor_payables(
     site: str = "",
