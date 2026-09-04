@@ -55,6 +55,8 @@ function monthlyCalendarPlugin() {
       }
 
       if (id.includes("/src/operations/OperationsPayments.jsx")) {
+        // Native payment evidence UI supersedes the old string-based injector.
+        if (code.includes("NATIVE_VENDOR_PAYMENT_EVIDENCE")) return null;
         if (!out.includes('VendorPaymentEvidenceModal from "./VendorPaymentEvidenceModal.jsx"')) {
           out = out.replace(
             'import { operationsApi } from "./apiClient";',
