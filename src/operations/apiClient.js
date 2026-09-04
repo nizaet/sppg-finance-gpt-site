@@ -77,6 +77,7 @@ export const operationsApi = {
   confirmVendorPayment: (payload, commit = false) => request("/v1/vendor-payments/confirm", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   getVendorPayables: ({ status = "", site = "", vendor = "", limit = 200 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (status) q.set("status", status); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); return request(`/v1/vendor-payables?${q}`); },
   correctVendorPayable: (id, payload) => request(`/v1/vendor-payables/${encodeURIComponent(id)}/correct`, { method: "POST", body: JSON.stringify(payload) }),
+  deleteRejectedVendorPayable: (id) => request(`/v1/vendor-payables/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getVendorPayments: ({ status = "", site = "" } = {}) => { const q = new URLSearchParams(); if (status) q.set("status", status); if (site) q.set("site", site); return request(`/v1/vendor-payments?${q}`); },
   getInventoryBalances: ({ site, search = "", limit = 300, forDate = "" }) => { const q = new URLSearchParams({ site, limit: String(limit) }); if (search) q.set("search", search); if (forDate) q.set("forDate", forDate); return request(`/v1/inventory/balances-v2?${q}`); },
   previewStockOpname: (payload) => request("/v1/inventory/stock-opname/whatsapp", { method: "POST", body: JSON.stringify({ ...payload, commit: false }) }),
