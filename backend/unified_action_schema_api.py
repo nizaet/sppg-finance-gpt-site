@@ -824,6 +824,30 @@ def schema_v0186() -> dict[str, Any]:
     return payload
 
 
+def schema_v0187() -> dict[str, Any]:
+    """Same Action count, with an explicit deterministic PO/receipt playbook."""
+    payload = deepcopy(schema_v0186())
+    payload["info"] = {
+        "title": "SPPG Full Operations Application Bridge",
+        "version": "0.18.7",
+        "description": "Use deterministic PO then receipt lookup before reconciling any vendor invoice or transfer. Do not conclude a PO is missing until both searches return empty.",
+    }
+    po = payload["paths"].get("/v1/purchase-orders/search", {}).get("get")
+    if po:
+        po["description"] = (
+            "READ-ONLY and REQUIRED before payable reconciliation. If the user gives a PO code, search poCode exactly first. "
+            "Otherwise search site + vendor with dateFrom/dateTo around the invoice date, without status unless explicitly supplied. "
+            "Do not say a PO is missing before this search returns no rows."
+        )
+    receipts = payload["paths"].get("/v1/goods-receipts/search", {}).get("get")
+    if receipts:
+        receipts["description"] = (
+            "READ-ONLY and REQUIRED after a candidate PO is found. Search each candidate by purchaseOrderId, site and vendor. "
+            "Use the returned receipt IDs for reconciliation; never invent a receipt ID or reject a valid invoice merely because its item spelling differs."
+        )
+    return payload
+
+
 @router.get("/schema/chatgpt-sppg-v0180.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0180() -> JSONResponse:
     return JSONResponse(schema_v0180())
