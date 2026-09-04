@@ -55,6 +55,7 @@ from backend.purchase_order_workflow_api import router as purchase_order_workflo
 from backend.calculator_data_api import router as calculator_data_router
 from backend.firebase_auth_api import router as firebase_auth_router
 from backend.knowledge_runtime_api import router as knowledge_runtime_router
+from backend.gpt_legacy_compat_api import router as gpt_legacy_compat_router
 from backend.hermes_knowledge_api import router as hermes_knowledge_router
 from backend.hermes_action_api import owner_router as hermes_action_owner_router, router as hermes_action_router
 from backend.hermes_receiving_preview_api import router as hermes_receiving_preview_router
@@ -74,6 +75,7 @@ install_po_delivery_receipt_reconcile_patch()
 operational_router.include_router(auth_router)
 operational_router.include_router(firebase_auth_router)
 operational_router.include_router(knowledge_runtime_router)
+operational_router.include_router(gpt_legacy_compat_router)
 operational_router.include_router(hermes_knowledge_router)
 operational_router.include_router(hermes_action_router)
 operational_router.include_router(hermes_action_owner_router)
