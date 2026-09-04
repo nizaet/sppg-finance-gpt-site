@@ -861,7 +861,7 @@ def schema_v0188() -> dict[str, Any]:
         "processSppgInventoryUsage", "previewOrRecordSppgGoodsReceiptFromMessage",
         "stageSuppliedSppgWhatsAppActivityForReview", "createSppgAccountantTransactions",
         "updateSppgAccountantTransaction", "previewOrRecordSppgStockOpnameFromWhatsApp",
-        "learnSppgConversationTurn", "recordExplicitSppgKnowledge", "previewOrRecordSppgVendorPaymentEvidence",
+        "learnSppgConversation", "recordExplicitSppgKnowledge", "previewOrRecordSppgVendorPaymentEvidence",
         "reconcileRecordedSppgVendorPayment", "confirmSppgBgnMakerApproved", "confirmSppgBgnMakerPaid",
         "previewOrExecuteSppgOperationalApplication",
     }
