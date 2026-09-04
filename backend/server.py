@@ -34,6 +34,8 @@ po_policy.install()
 def _po_inventory_balances_v2(*args, **kwargs):
     """Return one physical stock row per classified ingredient type.
 
+    MAJA and CEMPLANG use this exact same calculation path. Their Firestore
+    planning roots remain separate, but warehouse projection rules are shared.
     raw_item_names are aliases for the same warehouse row, not separate stock
     lots. The PO frontend uses aliases for exact-name matching and previously
     also iterated them as stock entries, so a 1 kg Knorr row with four aliases
@@ -44,6 +46,8 @@ def _po_inventory_balances_v2(*args, **kwargs):
     for item in payload.get("items") or []:
         if str(item.get("stock_type_method") or "").upper() == "ITEM_TYPE_RULE":
             item["raw_item_names"] = []
+    payload["poWarehouseScope"] = str(payload.get("site") or payload.get("location") or "").upper()
+    payload["poWarehouseRule"] = "SELECTED_DAPUR_ONLY"
     return payload
 
 
@@ -124,6 +128,12 @@ SPA_HTML_HEADERS = {
     "Expires": "0",
     "X-Content-Type-Options": "nosniff",
 }
+SCHEMA_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+GPT_ACTION_SERVER = "https://sppg-finance-gpt-site-production-5b7d.up.railway.app"
 
 # Calculator AI must be served by Railway so provider keys stay in env vars and
 # never leak into the legacy browser/Firebase appConfig path.
@@ -131,12 +141,30 @@ fastapi_app.include_router(calculator_ai_router)
 fastapi_app.include_router(koperasi_transfer_export_router)
 
 
-# GPT Builder was instructed to import the /v1/schema URL, but backend.app only
-# exposed the compatibility /schema alias. Keep the canonical public URL live so
-# the custom GPT can re-import v0.18.8 without falling through to the SPA/404.
+def _stable_gpt_schema(version: str) -> dict:
+    """Return the same stable Action surface under a cache-busting URL.
+
+    Do not rename operationIds here. The Custom GPT instructions depend on the
+    stable names supplied by action_schema_runtime_patch, including
+    getSppgOperationalContext and learnSppgConversation.
+    """
+    payload = schema_v0188()
+    payload["servers"] = [{"url": GPT_ACTION_SERVER}]
+    payload.setdefault("info", {})["version"] = version
+    return payload
+
+
+# Keep v0188 for existing GPTs and expose v0189 as a clean import URL. The
+# operation surface is intentionally identical; v0189 only breaks stale schema
+# caching/import state in GPT Builder.
 @fastapi_app.get("/v1/schema/chatgpt-sppg-v0188.json", include_in_schema=False)
 def chatgpt_sppg_schema_v0188_canonical() -> JSONResponse:
-    return JSONResponse(schema_v0188())
+    return JSONResponse(_stable_gpt_schema("0.18.8"), headers=SCHEMA_HEADERS)
+
+
+@fastapi_app.get("/v1/schema/chatgpt-sppg-v0189.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0189_canonical() -> JSONResponse:
+    return JSONResponse(_stable_gpt_schema("0.18.9"), headers=SCHEMA_HEADERS)
 
 
 if ASSETS.is_dir():
