@@ -96,6 +96,12 @@ def inventory_balances_v2(
     Latest SO remains the physical anchor. After that anchor we apply actual
     movements/usage, taxonomy-matched planning depletion, and committed PO supply
     that has not yet become a real goods receipt.
+
+    ``actual_balance`` is the current physical dapur balance. ``projected_balance``
+    remains the forward projection after older plans/PO supply. PO drafting uses
+    ``available_for_po`` and must subtract the current physical dapur stock, not
+    silently zero that stock because a prior planning row is still waiting to be
+    posted as actual usage. This keeps MAJA and CEMPLANG on the same stock rule.
     """
     base = inventory_balances(site=site, search="", limit=1000, for_date=for_date)
     stock_date = base.get("latestStockOpnameDate")
@@ -255,7 +261,9 @@ def inventory_balances_v2(
             "actual_balance": actual_balance,
             "projected_balance": projected,
             "balance": projected,
-            "available_for_po": round(max(projected, 0), 4),
+            "available_for_po": round(max(actual_balance, 0), 4),
+            "projected_available_for_po": round(max(projected, 0), 4),
+            "po_stock_basis": "CURRENT_ACTUAL_DAPUR_STOCK",
             "stock_basis": "TYPE_CLASSIFIED_SO_PLUS_FACTS_MINUS_USAGE_PLUS_COMMITTED_PO_SUPPLY",
         })
         if expected_supply > 0 and row.get("confidence") == "HIGH":
@@ -269,6 +277,7 @@ def inventory_balances_v2(
     base["items"] = items[:limit]
     base["count"] = len(base["items"])
     base["projectionModel"] = "TYPE_CLASSIFIED: latest SO + facts - actual/planned usage + provisional committed PO supply"
+    base["poAvailabilityModel"] = "CURRENT_ACTUAL_DAPUR_STOCK"
     base["classificationModel"] = "ingredient_type_not_brand_or_variety"
     base["provisionalPoSupply"] = round(sum(expected.values()), 4)
     return base
