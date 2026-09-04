@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import urllib.parse
+import uuid
 from datetime import datetime, timezone
 from itertools import combinations
 from typing import Any
@@ -26,6 +28,7 @@ PAYMENT_SOURCE_BY_SITE = {
     "CEMPLANG": "myBCA",
 }
 CLOSED_PAYABLE = {"PAID", "RECONCILED", "CLOSED", "CANCELLED", "CANCELED"}
+logger = logging.getLogger(__name__)
 
 
 class EvidenceInspectIn(BaseModel):
@@ -57,6 +60,23 @@ def _safe_filename(value: str) -> str:
     name = value.replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip(" .")
     return (name or "bukti_transfer")[:160]
+
+
+def _raise_commit_failure(exc: Exception) -> None:
+    """Keep an unexpected backend failure actionable without leaking credentials.
+
+    A Drive upload or database write can fail after the browser has already
+    parsed the proof.  The client must receive a retryable error instead of an
+    opaque HTTP 500; the complete traceback remains only in Railway logs.
+    """
+    reference = uuid.uuid4().hex[:12]
+    logger.exception("vendor payment evidence commit failed; reference=%s", reference)
+    detail = re.sub(r"(?:postgres(?:ql)?|https?)://[^\s'\"]+", "[redacted-url]", str(exc or "")).strip()
+    detail = detail[:500] or type(exc).__name__
+    raise HTTPException(
+        503,
+        f"Pencatatan bukti pembayaran belum selesai (ref {reference}): {type(exc).__name__}: {detail}",
+    ) from exc
 
 
 def _decode_file(content_base64: str, mime_type: str) -> tuple[bytes, str]:
@@ -311,7 +331,7 @@ def inspect_vendor_payment_evidence(payload: EvidenceInspectIn) -> dict[str, Any
     return _inspect_result(invoice, parsed)
 
 
-def _selected_allocations(payload: EvidenceCommitIn) -> tuple[list[dict[str, Any]], str, str]:
+def _selected_allocations(payload: EvidenceCommitIn) -> tuple[list[dict[str, Any]], str, str, float]:
     requested = list(dict.fromkeys(payload.invoice_ids or [payload.vendor_invoice_id]))
     if payload.vendor_invoice_id not in requested:
         requested.insert(0, payload.vendor_invoice_id)
@@ -332,76 +352,97 @@ def _selected_allocations(payload: EvidenceCommitIn) -> tuple[list[dict[str, Any
 
     if len(allocations) > 1:
         allocation_total = round(sum(float(row["allocation_amount"]) for row in allocations), 2)
-        if abs(allocation_total - float(payload.amount)) > 0.01:
-            raise HTTPException(409, f"total invoice terpilih {allocation_total:.0f} tidak sama dengan nominal transfer {float(payload.amount):.0f}")
+        if float(payload.amount) + 0.01 < allocation_total:
+            raise HTTPException(409, f"nominal transfer {float(payload.amount):.0f} lebih kecil dari total invoice terpilih {allocation_total:.0f}")
     else:
         if float(payload.amount) > float(allocations[0]["allocation_amount"]) + 0.01:
             raise HTTPException(409, "nominal transfer melebihi sisa invoice; pilih invoice lain jika ini satu transfer gabungan")
         allocations[0]["allocation_amount"] = float(payload.amount)
-    return allocations, site, vendor
+    allocation_total = round(sum(float(row["allocation_amount"]) for row in allocations), 2)
+    return allocations, site, vendor, round(max(float(payload.amount) - allocation_total, 0), 2)
 
 
 @router.post("/commit")
 def commit_vendor_payment_evidence(payload: EvidenceCommitIn) -> dict[str, Any]:
-    allocations, site, vendor = _selected_allocations(payload)
-    source = PAYMENT_SOURCE_BY_SITE.get(site, "BCA")
-    data, mime = _decode_file(payload.content_base64, payload.mime_type)
-    paid_at = payload.paid_at or datetime.now(timezone.utc)
-
-    timestamp = paid_at.strftime("%Y%m%d_%H%M%S")
-    group_label = f"{len(allocations)}inv" if len(allocations) > 1 else f"inv{allocations[0]['vendor_invoice_id']}"
-    filename = f"bukti_vendor_{site.lower()}_{vendor.lower()}_{group_label}_{timestamp}_{_safe_filename(payload.file_name)}"
     try:
+        allocations, site, vendor, vendor_credit_amount = _selected_allocations(payload)
+        source = PAYMENT_SOURCE_BY_SITE.get(site, "BCA")
+        data, mime = _decode_file(payload.content_base64, payload.mime_type)
+        paid_at = payload.paid_at or datetime.now(timezone.utc)
+
+        timestamp = paid_at.strftime("%Y%m%d_%H%M%S")
+        group_label = f"{len(allocations)}inv" if len(allocations) > 1 else f"inv{allocations[0]['vendor_invoice_id']}"
+        filename = f"bukti_vendor_{site.lower()}_{vendor.lower()}_{group_label}_{timestamp}_{_safe_filename(payload.file_name)}"
         uploaded = upload_accountant_artifact(
             kind="invoice", filename=filename, data=data, mime_type=mime,
             site=site, bucket="BUKTI_PEMBAYARAN_VENDOR",
         )
     except AccountantDriveUploadError as exc:
         raise HTTPException(503, str(exc)[:1500]) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_commit_failure(exc)
 
-    reference = (payload.reference_number or "").strip() or None
-    group_key = reference or f"evidence-{timestamp}-{vendor}-{round(float(payload.amount),2)}"
-    payment_results: list[dict[str, Any]] = []
-    for row in allocations:
-        invoice_id = int(row["vendor_invoice_id"])
-        allocation_amount = float(row["allocation_amount"])
-        metadata_note = " | ".join(filter(None, [
-            payload.note or "",
-            f"bank_transfer_group={group_key}",
-            f"bank_transfer_total={round(float(payload.amount),2)}",
-            f"allocation_invoice_id={invoice_id}",
-            f"allocation_amount={allocation_amount}",
-            f"beneficiary={payload.beneficiary_name}" if payload.beneficiary_name else "",
-            f"beneficiary_account={payload.beneficiary_account}" if payload.beneficiary_account else "",
-            f"source_account={payload.source_account}" if payload.source_account else "",
-            f"remarks={payload.remarks}" if payload.remarks else "",
-            f"payment_source_rule={site}:{source}",
-        ]))
-        result = record_vendor_payment_evidence(VendorPaymentEvidenceIn(
-            site=site,
-            vendor_code=vendor,
-            amount=allocation_amount,
-            paid_at=paid_at,
-            payment_source=source,
-            reference_number=reference,
-            evidence_uri=uploaded["driveUri"],
-            source_external_id=f"bank-transfer:{group_key}:invoice:{invoice_id}",
-            purchase_order_id=row.get("purchase_order_id"),
-            goods_receipt_id=row.get("goods_receipt_id"),
-            vendor_invoice_id=invoice_id,
-            note=metadata_note,
-            actor=payload.actor,
-            commit=True,
-        ))
-        payment_results.append({
-            "vendorInvoiceId": invoice_id,
-            "invoiceNumber": row.get("invoice_number"),
-            "allocatedAmount": allocation_amount,
-            "vendorPaymentId": result.get("vendorPaymentId"),
-            "financeTransactionId": result.get("financeTransactionId"),
-            "payableStatusAfter": result.get("payableStatusAfter"),
-            "duplicate": result.get("duplicate", False),
-        })
+    try:
+        reference = (payload.reference_number or "").strip() or None
+        group_key = reference or f"evidence-{timestamp}-{vendor}-{round(float(payload.amount),2)}"
+        payment_results: list[dict[str, Any]] = []
+        for row in allocations:
+            invoice_id = int(row["vendor_invoice_id"])
+            allocation_amount = float(row["allocation_amount"])
+            metadata_note = " | ".join(filter(None, [
+                payload.note or "",
+                f"bank_transfer_group={group_key}",
+                f"bank_transfer_total={round(float(payload.amount),2)}",
+                f"allocation_invoice_id={invoice_id}",
+                f"allocation_amount={allocation_amount}",
+                f"beneficiary={payload.beneficiary_name}" if payload.beneficiary_name else "",
+                f"beneficiary_account={payload.beneficiary_account}" if payload.beneficiary_account else "",
+                f"source_account={payload.source_account}" if payload.source_account else "",
+                f"remarks={payload.remarks}" if payload.remarks else "",
+                f"payment_source_rule={site}:{source}",
+            ]))
+            result = record_vendor_payment_evidence(VendorPaymentEvidenceIn(
+                site=site,
+                vendor_code=vendor,
+                amount=allocation_amount,
+                paid_at=paid_at,
+                payment_source=source,
+                reference_number=reference,
+                evidence_uri=uploaded["driveUri"],
+                source_external_id=f"bank-transfer:{group_key}:invoice:{invoice_id}",
+                purchase_order_id=row.get("purchase_order_id"),
+                goods_receipt_id=row.get("goods_receipt_id"),
+                vendor_invoice_id=invoice_id,
+                note=metadata_note,
+                actor=payload.actor,
+                commit=True,
+            ))
+            payment_results.append({
+                "vendorInvoiceId": invoice_id,
+                "invoiceNumber": row.get("invoice_number"),
+                "allocatedAmount": allocation_amount,
+                "vendorPaymentId": result.get("vendorPaymentId"),
+                "financeTransactionId": result.get("financeTransactionId"),
+                "payableStatusAfter": result.get("payableStatusAfter"),
+                "duplicate": result.get("duplicate", False),
+            })
+        credit_result = None
+        if vendor_credit_amount > 0.01:
+            credit_result = record_vendor_payment_evidence(VendorPaymentEvidenceIn(
+                site=site, vendor_code=vendor, amount=vendor_credit_amount, paid_at=paid_at,
+                payment_source=source, reference_number=reference, evidence_uri=uploaded["driveUri"],
+                source_external_id=f"bank-transfer:{group_key}:vendor-credit",
+                note=" | ".join(filter(None, [payload.note or "", f"bank_transfer_group={group_key}",
+                    f"bank_transfer_total={round(float(payload.amount),2)}", f"vendor_credit={vendor_credit_amount}",
+                    "kelebihan transfer; saldo kredit vendor belum dialokasikan", payload.remarks or ""])),
+                actor=payload.actor, commit=True, force_unreconciled=True,
+            ))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_commit_failure(exc)
 
     return {
         "committed": True,
@@ -410,6 +451,8 @@ def commit_vendor_payment_evidence(payload: EvidenceCommitIn) -> dict[str, Any]:
         "invoiceIds": [int(row["vendor_invoice_id"]) for row in allocations],
         "transferAmount": round(float(payload.amount), 2),
         "allocationTotal": round(sum(float(row["allocation_amount"]) for row in allocations), 2),
+        "vendorCreditAmount": vendor_credit_amount,
+        "vendorCreditPaymentId": credit_result.get("vendorPaymentId") if credit_result else None,
         "paymentResults": payment_results,
         "evidenceUri": uploaded["driveUri"],
         "driveFolderId": uploaded.get("folderId"),
