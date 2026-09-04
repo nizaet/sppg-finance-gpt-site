@@ -73,7 +73,8 @@ export default function VendorPaymentEvidenceModal({ item, onClose, onSaved }) {
       .filter((row) => selectedInvoiceIds.includes(Number(row.vendorInvoiceId)))
       .reduce((sum, row) => sum + Number(row.remainingAmount || 0), 0);
   }, [candidateInvoices, selectedInvoiceIds, item]);
-  const selectionMatchesAmount = Math.abs(Number(amount || 0) - Number(selectedTotal || 0)) < 0.01;
+  const vendorCredit = Math.max(Number(amount || 0) - Number(selectedTotal || 0), 0);
+  const selectionMatchesAmount = Number(amount || 0) + 0.01 >= Number(selectedTotal || 0);
 
   useEffect(() => {
     const esc = (event) => { if (event.key === "Escape" && !saving && !reading) onClose?.(); };
@@ -131,12 +132,13 @@ export default function VendorPaymentEvidenceModal({ item, onClose, onSaved }) {
     if (!file) return setError("Upload bukti transfer terlebih dahulu.");
     if (Number(amount) <= 0) return setError("Nominal transfer harus lebih dari 0.");
     if (!selectedInvoiceIds.length) return setError("Pilih minimal satu invoice.");
-    if (selectedInvoiceIds.length > 1 && !selectionMatchesAmount) {
-      return setError(`Total invoice terpilih ${money(selectedTotal)} belum sama dengan nominal transfer ${money(amount)}.`);
+    if (!selectionMatchesAmount) {
+      return setError(`Nominal transfer ${money(amount)} lebih kecil dari total invoice terpilih ${money(selectedTotal)}.`);
     }
     const encoded = contentBase64 || await fileToBase64(file);
     const label = selectedInvoiceIds.length > 1 ? `${selectedInvoiceIds.length} invoice` : "1 invoice";
-    if (!window.confirm(`Simpan transfer ${money(amount)} untuk ${label} ${item.vendor_code}? Bukti asli akan diarsipkan ke Google Drive.`)) return;
+    const creditText = vendorCredit > 0.01 ? `\n\nKelebihan ${money(vendorCredit)} akan dicatat sebagai kredit ${item.vendor_code} yang belum dialokasikan.` : "";
+    if (!window.confirm(`Simpan transfer ${money(amount)} untuk ${label} ${item.vendor_code}? Bukti asli akan diarsipkan ke Google Drive.${creditText}`)) return;
     setSaving(true); setError("");
     try {
       const result = await postJson("/v1/vendor-payments/evidence/commit", {
@@ -182,7 +184,7 @@ export default function VendorPaymentEvidenceModal({ item, onClose, onSaved }) {
         </label>
         {file && <div className="ops-row-actions" style={{ marginBottom: 12 }}><button type="button" onClick={() => inspectFile()} disabled={reading || saving}><FileSearch size={15} /> {reading ? "Sedang membaca…" : "Baca Ulang Bukti"}</button><span className="ops-muted">{file.name}</span></div>}
         {confidence != null && <div className="ops-muted">Keyakinan pembacaan AI: {Math.round(Number(confidence || 0) * 100)}%</div>}
-        {multiInvoiceDetected && <div className="ops-success" style={{ marginTop: 10 }}><strong>✓ Transfer gabungan terdeteksi.</strong> Nominal cocok tepat dengan {selectedInvoiceIds.length} invoice {item.vendor_code}.</div>}
+        {multiInvoiceDetected && <div className="ops-success" style={{ marginTop: 10 }}><strong>✓ Transfer gabungan terdeteksi.</strong> Nominal transfer akan dialokasikan ke {selectedInvoiceIds.length} invoice {item.vendor_code}.</div>}
         {groupAmbiguous && <div className="ops-notice" style={{ marginTop: 10 }}><strong>Ada lebih dari satu kombinasi invoice yang mungkin.</strong> Centang invoice yang benar sampai totalnya sama dengan nominal transfer.</div>}
         {warnings.length > 0 && <div className="ops-error" style={{ marginTop: 10 }}>{warnings.map((w, i) => <div key={i}>• {w}</div>)}</div>}
         {error && <div className="ops-error" style={{ marginTop: 10 }}>{error}</div>}
@@ -200,8 +202,10 @@ export default function VendorPaymentEvidenceModal({ item, onClose, onSaved }) {
               </label>;
             })}
           </div>
-          <div className="ops-summary-strip" style={{ marginTop: 8 }}><span>Terpilih <strong>{selectedInvoiceIds.length} invoice</strong></span><span>Total invoice <strong>{money(selectedTotal)}</strong></span><span>Transfer <strong>{money(amount)}</strong></span><span>Status <strong>{selectionMatchesAmount ? "✓ COCOK" : "BELUM COCOK"}</strong></span></div>
+          <div className="ops-summary-strip" style={{ marginTop: 8 }}><span>Terpilih <strong>{selectedInvoiceIds.length} invoice</strong></span><span>Total invoice <strong>{money(selectedTotal)}</strong></span><span>Transfer <strong>{money(amount)}</strong></span>{vendorCredit > 0.01 && <span>Kredit vendor <strong>{money(vendorCredit)}</strong></span>}<span>Status <strong>{selectionMatchesAmount ? (vendorCredit > 0.01 ? "LEBIH BAYAR" : "✓ COCOK") : "KURANG"}</strong></span></div>
         </div>}
+
+        {vendorCredit > 0.01 && <div className="ops-notice" style={{ marginTop: 10 }}><strong>Lebih bayar {money(vendorCredit)}.</strong> Sistem akan menyimpan kelebihan ini sebagai kredit {item.vendor_code}, bukan menolak transfer dan bukan mengalokasikannya ke invoice lain secara otomatis.</div>}
 
         <div className="ops-form-grid" style={{ marginTop: 14 }}>
           <label>Nominal transfer<input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
