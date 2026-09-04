@@ -266,13 +266,15 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
         if amount <= 0:
             continue
         key = f"goods-receipt-stock:{goods_receipt_id}:{row['receipt_item_id']}"
+        is_koperasi_transfer = str(receipt["vendor_code"]).upper() == "KOPERASI"
         item = {
             "sourceKey": key,
             "itemName": row["item_name"],
             "qty": amount,
             "unit": row["unit"],
-            "fromLocation": "KOPERASI" if str(receipt["vendor_code"]).upper() == "KOPERASI" else f"VENDOR:{receipt['vendor_code']}",
+            "fromLocation": "KOPERASI" if is_koperasi_transfer else f"VENDOR:{receipt['vendor_code']}",
             "toLocation": site,
+            "movementType": "KOPERASI_STOCK_TRANSFER" if is_koperasi_transfer else "PURCHASE_RECEIPT",
         }
         preview.append(item)
         cur.execute("select id from inventory_movements where source_key=%s", (key,))
@@ -283,11 +285,11 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
             """insert into inventory_movements(
                  movement_type,item_code,item_name,qty,unit,from_location,to_location,production_cycle_id,
                  occurred_at,source_type,source_key,source_ref,notes
-               ) values ('PURCHASE_RECEIPT',%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
+               ) values (%s,%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
             (
-                row["item_code"], row["item_name"], row["qty"], row["unit"], item["fromLocation"], site,
+                item["movementType"], row["item_code"], row["item_name"], row["qty"], row["unit"], item["fromLocation"], site,
                 receipt["production_cycle_id"], receipt["received_at"], key,
-                f"receipt:{goods_receipt_id}", f"PO {receipt['po_code']}",
+                f"receipt:{goods_receipt_id}", f"Pengiriman Gudang Koperasi → {site}; PO {receipt['po_code']}" if is_koperasi_transfer else f"PO {receipt['po_code']}",
             ),
         )
         inserted += 1
@@ -351,6 +353,58 @@ def inventory_from_receipt(payload: ReceiptToStockIn) -> dict[str, Any]:
                 "committed": True,
                 **committed,
             }
+
+
+@router.get("/inventory/koperasi-transfers")
+def koperasi_transfer_history(
+    from_date: date | None = Query(default=None, alias="fromDate"),
+    to_date: date | None = Query(default=None, alias="toDate"),
+    destination: str = "",
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> dict[str, Any]:
+    """Read-only delivery ledger from Gudang Koperasi to each kitchen.
+
+    A KOPERASI receipt is a physical inter-warehouse transfer, not an expense.
+    The same movement is negative in KOPERASI stock and positive in the target
+    kitchen. Old rows used PURCHASE_RECEIPT; retain them in the history.
+    """
+    require_db()
+    target = destination.upper().strip()
+    if target and target not in {"MAJA", "CEMPLANG"}:
+        raise HTTPException(400, "destination must be MAJA or CEMPLANG")
+    sql = """
+        select im.id as movement_id,im.movement_type,im.item_code,im.item_name,im.qty,im.unit,
+               im.from_location,im.to_location,im.occurred_at,im.created_at,im.source_key,im.source_ref,im.notes,
+               gr.id as goods_receipt_id,gr.receipt_code,gr.reporter,
+               po.id as purchase_order_id,po.po_code,po.site as po_site,po.vendor_code
+        from inventory_movements im
+        left join goods_receipts gr
+          on im.source_type='GOODS_RECEIPT' and im.source_ref=('receipt:' || gr.id::text)
+        left join purchase_orders po on po.id=gr.purchase_order_id
+        where upper(coalesce(im.from_location,''))='KOPERASI'
+          and upper(coalesce(im.to_location,'')) in ('MAJA','CEMPLANG')
+          and upper(coalesce(im.movement_type,'')) in ('KOPERASI_STOCK_TRANSFER','PURCHASE_RECEIPT')
+    """
+    params: list[Any] = []
+    if from_date:
+        sql += " and date(coalesce(im.occurred_at,im.created_at)) >= %s"
+        params.append(from_date)
+    if to_date:
+        sql += " and date(coalesce(im.occurred_at,im.created_at)) <= %s"
+        params.append(to_date)
+    if target:
+        sql += " and upper(im.to_location)=%s"
+        params.append(target)
+    sql += " order by coalesce(im.occurred_at,im.created_at) desc,im.id desc limit %s"
+    params.append(limit)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            items = [dict(row) for row in cur.fetchall()]
+    for item in items:
+        occurred = item.get("occurred_at") or item.get("created_at")
+        item["transfer_date"] = occurred.date().isoformat() if occurred else None
+    return {"fromLocation": "KOPERASI", "items": items, "count": len(items)}
 
 
 class InventoryMasterItemIn(BaseModel):
