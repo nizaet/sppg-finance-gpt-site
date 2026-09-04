@@ -46,7 +46,10 @@ def _ensure_gpt_builder_object_properties(node: Any) -> None:
 
 def _knowledge_operation() -> dict[str, Any]:
     return {"get": {
-        "operationId": "getSppgOperationalRuntimeContext",
+        # Keep the operation id stable: the operational GPT instructions refer
+        # to this exact Action name.  A renamed id makes the model skip the
+        # mandatory live-context read even though the endpoint is healthy.
+        "operationId": "getSppgOperationalContext",
         "summary": "Load canonical, learned, and live SPPG operational context",
         "description": "READ-ONLY. Call at the start of every operational turn with q set to the user's current topic. Returns canonical rules, learned GPT conversation memory, and live PostgreSQL state. Never rely on prior-chat memory alone.",
         "x-openai-isConsequential": False,
@@ -82,7 +85,9 @@ def _learn_conversation_operation() -> dict[str, Any]:
         "actor": {"type": "string", "default": "chatgpt", "maxLength": 100},
     }, ["conversation_ref", "user_message"])
     return {"post": {
-        "operationId": "learnSppgConversationTurn",
+        # Match the stable instruction name while retaining the same endpoint
+        # and request contract.
+        "operationId": "learnSppgConversation",
         "summary": "Store each GPT turn and promote durable operational knowledge",
         "description": "AUTOMATIC MEMORY WRITE. Call after every meaningful user turn. Archive the user message and summarize useful context. Promote explicit facts, corrections, and action-confirmed results; mark uncertain inference as ASSISTANT_INFERENCE.",
         "x-openai-isConsequential": False,
