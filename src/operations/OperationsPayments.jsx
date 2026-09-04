@@ -43,6 +43,9 @@ export default function OperationsPayments({ fixedSite = "" }) {
   const [paymentEvidenceUri, setPaymentEvidenceUri] = useState("");
   const [paymentPreview, setPaymentPreview] = useState(null);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [editingPayable, setEditingPayable] = useState(null);
+  const [payableEdit, setPayableEdit] = useState(null);
+  const [savingPayableEdit, setSavingPayableEdit] = useState(false);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -76,9 +79,10 @@ export default function OperationsPayments({ fixedSite = "" }) {
   useEffect(() => { load(); }, [activeSite]);
 
   const outstanding = useMemo(
-    () => payables.filter((x) => !CLOSED.has(String(x.payable_status || "UNPAID").toUpperCase())),
+    () => payables.filter((x) => !CLOSED.has(String(x.payable_status || "UNPAID").toUpperCase()) && Number(x.net_amount || 0) > 0.01),
     [payables]
   );
+  const noPaymentRequired = useMemo(() => payables.filter((x) => !CLOSED.has(String(x.payable_status || "UNPAID").toUpperCase()) && Number(x.net_amount || 0) <= 0.01), [payables]);
   const outstandingTotal = useMemo(
     () => outstanding.reduce((sum, x) => sum + Number(x.net_amount || 0), 0),
     [outstanding]
@@ -189,6 +193,22 @@ export default function OperationsPayments({ fixedSite = "" }) {
     } finally {
       setSavingPayment(false);
     }
+  };
+
+  const openPayableEdit = (item) => {
+    setEditingPayable(item);
+    setPayableEdit({ invoice_number: item.invoice_number || "", invoice_date: item.invoice_date || "", due_date: item.due_date || "", gross_amount: String(Number(item.gross_amount || 0)), reject_deduction: String(Number(item.reject_deduction || 0)), correction_note: "" });
+    setError("");
+  };
+  const savePayableEdit = async () => {
+    if (!editingPayable || !payableEdit?.correction_note.trim()) return setError("Isi alasan koreksi agar jejak tagihan tetap jelas.");
+    setSavingPayableEdit(true); setError("");
+    try {
+      await operationsApi.correctVendorPayable(editingPayable.vendor_invoice_id, { ...payableEdit, gross_amount: Number(payableEdit.gross_amount || 0), reject_deduction: Number(payableEdit.reject_deduction || 0), invoice_number: payableEdit.invoice_number.trim() || null, invoice_date: payableEdit.invoice_date || null, due_date: payableEdit.due_date || null });
+      setActionMessage("Tagihan vendor dikoreksi. PO dan penerimaan barang tidak diubah.");
+      setEditingPayable(null); setPayableEdit(null); await load();
+    } catch (err) { setError(err.message || "Gagal mengoreksi tagihan vendor"); }
+    finally { setSavingPayableEdit(false); }
   };
 
   return (
@@ -308,11 +328,12 @@ export default function OperationsPayments({ fixedSite = "" }) {
           <span>Outstanding <strong>{outstanding.length}</strong></span>
           <span>Total netto <strong>{money(outstandingTotal)}</strong></span>
         </div>
+        {noPaymentRequired.length > 0 && <div className="ops-notice">{noPaymentRequired.length} tagihan netto Rp0 tidak dapat dibayar karena sudah habis oleh reject/potongan. Gunakan <strong>Koreksi</strong> bila angka tagihan salah.</div>}
         <div className="ops-table-wrap">
           <table className="ops-table">
-            <thead><tr><th>Vendor</th><th>Site</th><th>PO</th><th>Invoice</th><th>Distribusi</th><th>Bruto</th><th>Reject</th><th>Netto</th><th>Jatuh Tempo</th><th>Status</th></tr></thead>
+            <thead><tr><th>Vendor</th><th>Site</th><th>PO</th><th>Invoice</th><th>Distribusi</th><th>Bruto</th><th>Reject</th><th>Netto</th><th>Jatuh Tempo</th><th>Status</th><th>Aksi</th></tr></thead>
             <tbody>
-              {outstanding.map((item) => (
+              {[...outstanding, ...noPaymentRequired].map((item) => (
                 <tr key={item.vendor_invoice_id}>
                   <td><strong>{item.vendor_code}</strong></td>
                   <td>{item.site || "-"}</td>
@@ -323,13 +344,28 @@ export default function OperationsPayments({ fixedSite = "" }) {
                   <td>{money(item.reject_deduction)}</td>
                   <td><strong>{money(item.net_amount)}</strong></td>
                   <td>{item.due_date || "Belum ditetapkan"}</td>
-                  <td>{item.payable_status || "UNPAID"}</td>
+                  <td>{Number(item.net_amount || 0) <= 0.01 ? "TIDAK ADA BAYAR" : (item.payable_status || "UNPAID")}</td>
+                  <td><button type="button" onClick={() => openPayableEdit(item)}>Koreksi</button></td>
                 </tr>
               ))}
-              {!loading && outstanding.length === 0 && <tr><td colSpan="10" className="ops-empty-cell">Tidak ada tagihan vendor outstanding.</td></tr>}
+              {!loading && outstanding.length + noPaymentRequired.length === 0 && <tr><td colSpan="11" className="ops-empty-cell">Tidak ada tagihan vendor outstanding.</td></tr>}
             </tbody>
           </table>
         </div>
+        {editingPayable && payableEdit && <div className="ops-parse-result" style={{ marginTop: 14 }}>
+          <div><strong>Koreksi tagihan {editingPayable.vendor_code} · {editingPayable.po_code || `#${editingPayable.vendor_invoice_id}`}</strong></div>
+          <p className="ops-muted">Ubah angka invoice bila input salah atau ada perubahan item. PO dan receipt tetap tersimpan sebagai jejak asli.</p>
+          <div className="ops-form-grid">
+            <label>No. invoice<input value={payableEdit.invoice_number} onChange={(e) => setPayableEdit({ ...payableEdit, invoice_number: e.target.value })} /></label>
+            <label>Tgl invoice<input type="date" value={payableEdit.invoice_date} onChange={(e) => setPayableEdit({ ...payableEdit, invoice_date: e.target.value })} /></label>
+            <label>Jatuh tempo<input type="date" value={payableEdit.due_date} onChange={(e) => setPayableEdit({ ...payableEdit, due_date: e.target.value })} /></label>
+            <label>Bruto<input type="number" min="0" value={payableEdit.gross_amount} onChange={(e) => setPayableEdit({ ...payableEdit, gross_amount: e.target.value })} /></label>
+            <label>Reject/potongan<input type="number" min="0" value={payableEdit.reject_deduction} onChange={(e) => setPayableEdit({ ...payableEdit, reject_deduction: e.target.value })} /></label>
+            <label>Netto hasil<input value={money(Math.max(Number(payableEdit.gross_amount || 0) - Number(payableEdit.reject_deduction || 0), 0))} readOnly /></label>
+          </div>
+          <label>Alasan koreksi<input value={payableEdit.correction_note} onChange={(e) => setPayableEdit({ ...payableEdit, correction_note: e.target.value })} placeholder="Contoh: item PO berubah, transfer lebih bayar, atau reject salah input" /></label>
+          <div className="ops-row-actions" style={{ marginTop: 10 }}><button type="button" onClick={() => { setEditingPayable(null); setPayableEdit(null); }}>Batal</button><button type="button" onClick={savePayableEdit} disabled={savingPayableEdit}>{savingPayableEdit ? "Menyimpan…" : "Simpan Koreksi"}</button></div>
+        </div>}
       </section>
 
       <section className="ops-module">
