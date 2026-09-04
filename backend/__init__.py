@@ -40,6 +40,7 @@ from backend.bgn_paid_api import router as bgn_paid_router
 from backend.vendor_rule_admin_api import router as vendor_rule_admin_router
 from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_planning_bridge_api import router as calculator_planning_bridge_router
+from backend.cemplang_po_alignment_patch import install as install_cemplang_po_alignment_patch
 from backend.goods_receipt_visibility_api import router as goods_receipt_visibility_router
 from backend.po_cleanup_api import router as po_cleanup_router
 from backend.po_delivery_alerts_api import router as po_delivery_alerts_router
@@ -69,6 +70,7 @@ install_accountant_excel_fail_safe_patch()
 install_accountant_excel_polish_patch()
 install_accountant_excel_indonesia_format_patch()
 install_vendor_payment_duplicate_guard_patch()
+install_cemplang_po_alignment_patch()
 install_po_reminder_projection_cache_patch()
 install_po_delivery_receipt_reconcile_patch()
 
