@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Calculator, CheckCircle2, ClipboardCopy, MessageCircle, RefreshCw } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import VendorPaymentEvidenceModal from "./VendorPaymentEvidenceModal.jsx";
 
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 const qty = (v) => Number(v || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
@@ -46,6 +47,7 @@ export default function OperationsPayments({ fixedSite = "" }) {
   const [editingPayable, setEditingPayable] = useState(null);
   const [payableEdit, setPayableEdit] = useState(null);
   const [savingPayableEdit, setSavingPayableEdit] = useState(false);
+  const [paymentModalItem, setPaymentModalItem] = useState(null); // NATIVE_VENDOR_PAYMENT_EVIDENCE
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -213,6 +215,15 @@ export default function OperationsPayments({ fixedSite = "" }) {
 
   return (
     <div className="ops-domain-stack">
+      {paymentModalItem && <VendorPaymentEvidenceModal
+        item={paymentModalItem}
+        onClose={() => setPaymentModalItem(null)}
+        onSaved={async (result) => {
+          setPaymentModalItem(null);
+          setActionMessage(`Pembayaran tersimpan. Status tagihan: ${result.payableStatusAfter || result.reconciliationStatus || "PAID"}. Bukti sudah masuk Google Drive.`);
+          await load();
+        }}
+      />}
       <section className="ops-module">
         <div className="ops-module-header">
           <div>
@@ -345,7 +356,10 @@ export default function OperationsPayments({ fixedSite = "" }) {
                   <td><strong>{money(item.net_amount)}</strong></td>
                   <td>{item.due_date || "Belum ditetapkan"}</td>
                   <td>{Number(item.net_amount || 0) <= 0.01 ? "TIDAK ADA BAYAR" : (item.payable_status || "UNPAID")}</td>
-                  <td><button type="button" onClick={() => openPayableEdit(item)}>Koreksi</button></td>
+                  <td>
+                    {Number(item.net_amount || 0) > 0.01 && <button type="button" className="ops-button-primary" onClick={() => setPaymentModalItem(item)}>Bayar + Bukti</button>}
+                    <button type="button" onClick={() => openPayableEdit(item)} style={{ marginLeft: Number(item.net_amount || 0) > 0.01 ? 6 : 0 }}>Koreksi</button>
+                  </td>
                 </tr>
               ))}
               {!loading && outstanding.length + noPaymentRequired.length === 0 && <tr><td colSpan="11" className="ops-empty-cell">Tidak ada tagihan vendor outstanding.</td></tr>}
