@@ -20,6 +20,7 @@ from backend.auth_middleware import SppgAccessMiddleware
 from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_ai_runtime_patch import install as install_calculator_ai_patch
 from backend.finance_runtime_patch import install as install_finance_runtime_patch
+from backend.koperasi_transfer_export_api import router as koperasi_transfer_export_router
 from backend.vendor_payment_runtime_fail_safe_patch import install as install_vendor_payment_fail_safe
 from backend import po_operational_policy_patch as po_policy
 
@@ -109,6 +110,7 @@ SPA_HTML_HEADERS = {
 # Calculator AI must be served by Railway so provider keys stay in env vars and
 # never leak into the legacy browser/Firebase appConfig path.
 fastapi_app.include_router(calculator_ai_router)
+fastapi_app.include_router(koperasi_transfer_export_router)
 
 if ASSETS.is_dir():
     fastapi_app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="frontend-assets")
