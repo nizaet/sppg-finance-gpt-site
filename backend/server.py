@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app import app as fastapi_app
@@ -21,6 +21,7 @@ from backend.calculator_ai_api import router as calculator_ai_router
 from backend.calculator_ai_runtime_patch import install as install_calculator_ai_patch
 from backend.finance_runtime_patch import install as install_finance_runtime_patch
 from backend.koperasi_transfer_export_api import router as koperasi_transfer_export_router
+from backend.unified_action_schema_api import schema_v0188
 from backend.vendor_payment_runtime_fail_safe_patch import install as install_vendor_payment_fail_safe
 from backend import po_operational_policy_patch as po_policy
 
@@ -29,14 +30,31 @@ install_finance_runtime_patch()
 install_vendor_payment_fail_safe()
 po_policy.install()
 
+
+def _po_inventory_balances_v2(*args, **kwargs):
+    """Return one physical stock row per classified ingredient type.
+
+    raw_item_names are aliases for the same warehouse row, not separate stock
+    lots. The PO frontend uses aliases for exact-name matching and previously
+    also iterated them as stock entries, so a 1 kg Knorr row with four aliases
+    was counted as 4 kg. Classified rows already have a canonical stock type,
+    therefore aliases are not needed for quantity aggregation.
+    """
+    payload = po_policy._ORIGINAL_INVENTORY_BALANCES_V2(*args, **kwargs)
+    for item in payload.get("items") or []:
+        if str(item.get("stock_type_method") or "").upper() == "ITEM_TYPE_RULE":
+            item["raw_item_names"] = []
+    return payload
+
+
 # Gudang MAJA, CEMPLANG, and KOPERASI are separate physical locations. The PO
-# policy may consult another location explicitly, but the public inventory route
-# must never merge KOPERASI stock into a dapur balance.
-po_policy.inventory_projection.inventory_balances_v2 = po_policy._ORIGINAL_INVENTORY_BALANCES_V2
+# planner subtracts only the selected dapur stock from planning. Gudang Koperasi
+# is fetched separately and is informational for fulfillment/shortfall only.
+po_policy.inventory_projection.inventory_balances_v2 = _po_inventory_balances_v2
 po_policy._patch_route(
     po_policy.inventory_projection.router,
     "/inventory/balances-v2",
-    po_policy._ORIGINAL_INVENTORY_BALANCES_V2,
+    _po_inventory_balances_v2,
 )
 
 
@@ -75,12 +93,12 @@ po_policy.reminder._projection_lookup = _site_only_po_projection
 # backend.app has already copied nested APIRouter routes onto the live FastAPI
 # application before runtime patches are installed. Replace only the planning
 # snapshot callable so vendor/lead-time policy is refreshed. Inventory stays on
-# the original site-scoped endpoint above.
+# the site-scoped endpoint above, with alias quantities de-duplicated.
 for _route in fastapi_app.routes:
     _path = str(getattr(_route, "path", ""))
     _endpoint = None
     if _path.endswith("/inventory/balances-v2"):
-        _endpoint = po_policy._ORIGINAL_INVENTORY_BALANCES_V2
+        _endpoint = _po_inventory_balances_v2
     elif _path.endswith("/planning-snapshots/{snapshot_id}"):
         _endpoint = po_policy.get_planning_snapshot_with_vendor_policy
     if _endpoint is not None:
@@ -111,6 +129,15 @@ SPA_HTML_HEADERS = {
 # never leak into the legacy browser/Firebase appConfig path.
 fastapi_app.include_router(calculator_ai_router)
 fastapi_app.include_router(koperasi_transfer_export_router)
+
+
+# GPT Builder was instructed to import the /v1/schema URL, but backend.app only
+# exposed the compatibility /schema alias. Keep the canonical public URL live so
+# the custom GPT can re-import v0.18.8 without falling through to the SPA/404.
+@fastapi_app.get("/v1/schema/chatgpt-sppg-v0188.json", include_in_schema=False)
+def chatgpt_sppg_schema_v0188_canonical() -> JSONResponse:
+    return JSONResponse(schema_v0188())
+
 
 if ASSETS.is_dir():
     fastapi_app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="frontend-assets")
