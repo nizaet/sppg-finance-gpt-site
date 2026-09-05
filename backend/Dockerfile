@@ -4,8 +4,15 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js vite.runtime.config.js vite.delivery.config.js vite.flowviews.config.js vite.flowviews2.config.js vite.flowviews3.config.js vite.flowviews4.config.js vite.po-list-independent.config.js vite.finance-ui-placement.js ./
 COPY tests/assert-po-reminder-actions-build.mjs ./tests/assert-po-reminder-actions-build.mjs
+COPY scripts/apply-po-planner-fix.mjs ./scripts/apply-po-planner-fix.mjs
 COPY src ./src
 COPY public ./public
+
+# Keep the large PO planner source readable in the repo while applying two
+# narrowly-scoped production invariants before Vite compiles it:
+# 1) recommendation uses current actual dapur stock, not projected depletion;
+# 2) Tarik Data also loads saved PO coverage so already-ordered items are known.
+RUN node ./scripts/apply-po-planner-fix.mjs
 
 # Build one bundle per accountant database. The Operations/Calculator UI is the
 # same in both; only App.jsx accountant runtime defaults differ.
