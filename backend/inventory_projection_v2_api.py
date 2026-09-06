@@ -261,9 +261,11 @@ def inventory_balances_v2(
             "actual_balance": actual_balance,
             "projected_balance": projected,
             "balance": projected,
-            "available_for_po": round(max(actual_balance, 0), 4),
+            # PO must use the remaining stock after earlier cooking plans.
+            # Keep actual_balance separately for the physical-gudang display.
+            "available_for_po": round(max(projected, 0), 4),
             "projected_available_for_po": round(max(projected, 0), 4),
-            "po_stock_basis": "CURRENT_ACTUAL_DAPUR_STOCK",
+            "po_stock_basis": "PROJECTED_DAPUR_STOCK_AFTER_PRIOR_PLANS",
             "stock_basis": "TYPE_CLASSIFIED_SO_PLUS_FACTS_MINUS_USAGE_PLUS_COMMITTED_PO_SUPPLY",
         })
         if expected_supply > 0 and row.get("confidence") == "HIGH":
