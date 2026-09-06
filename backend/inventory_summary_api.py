@@ -143,22 +143,19 @@ def inventory_balances(
             """
             movement_params: list[Any] = [location, location, target_date, include_current_corrections, target_date]
             if stock_date:
-                # The SO is the physical baseline. Facts from later dates always
-                # apply. A manual correction made after that SO on the same date
-                # also applies; corrections from before the latest SO must not be
-                # replayed on top of the new physical count.
+                # SO is the physical balance at its recorded time. Any receipt,
+                # transfer, or correction later that same day must be included
+                # before calculating what remains for tomorrow's PO.
                 movement_sql += """
                   and (
                     date(coalesce(occurred_at,created_at)) > %s
                     or (
-                      %s
-                      and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
-                      and date(coalesce(occurred_at,created_at)) = %s
+                      date(coalesce(occurred_at,created_at)) = %s
                       and coalesce(occurred_at,created_at) > %s
                     )
                   )
                 """
-                movement_params.extend([stock_date, include_current_corrections, stock_date, latest_so["created_at"]])
+                movement_params.extend([stock_date, stock_date, latest_so["created_at"]])
             cur.execute(movement_sql, movement_params)
             actual_movement_dates: set[tuple[str, str, date]] = set()
             for movement in cur.fetchall():
@@ -181,7 +178,7 @@ def inventory_balances(
                     """
                     select au.item_name,au.actual_used_qty,au.unit,pc.distribution_date
                     from actual_usage au join production_cycles pc on pc.id=au.production_cycle_id
-                    where upper(pc.site)=%s and pc.distribution_date > %s and pc.distribution_date < %s
+                    where upper(pc.site)=%s and pc.distribution_date >= %s and pc.distribution_date < %s
                     """,
                     (location, stock_date, target_date),
                 )
@@ -206,7 +203,7 @@ def inventory_balances(
                       select distinct on (site,distribution_date) id,site,distribution_date
                       from planning_snapshots
                       where upper(site)=%s and status <> 'REJECTED'
-                        and distribution_date > %s and distribution_date < %s
+                        and distribution_date >= %s and distribution_date < %s
                       order by site,distribution_date,created_at desc,id desc
                     ) ps
                     join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
