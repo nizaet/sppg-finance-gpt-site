@@ -124,7 +124,7 @@ def inventory_balances_v2(
                     from inventory_movements
                     where upper(coalesce(from_location,''))=%s
                       and upper(coalesce(movement_type,''))='PRODUCTION_USAGE'
-                      and date(coalesce(occurred_at,created_at)) > %s
+                      and date(coalesce(occurred_at,created_at)) >= %s
                       and date(coalesce(occurred_at,created_at)) < %s
                     """,
                     (location, stock_date, target_date),
@@ -140,7 +140,7 @@ def inventory_balances_v2(
                         from actual_usage au
                         join production_cycles pc on pc.id=au.production_cycle_id
                         where upper(pc.site)=%s
-                          and pc.distribution_date > %s
+                          and pc.distribution_date >= %s
                           and pc.distribution_date < %s
                         """,
                         (location, stock_date, target_date),
@@ -158,7 +158,7 @@ def inventory_balances_v2(
                           select distinct on (site,distribution_date) id,site,distribution_date
                           from planning_snapshots
                           where upper(site)=%s and status <> 'REJECTED'
-                            and distribution_date > %s and distribution_date < %s
+                            and distribution_date >= %s and distribution_date < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps
                         join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
@@ -189,7 +189,7 @@ def inventory_balances_v2(
                       where upper(po.site)=%s
                         and upper(coalesce(po.status,''))=any(%s)
                         and coalesce(po.historical_import,false)=false
-                        and poc.distribution_date > %s and poc.distribution_date < %s
+                        and poc.distribution_date >= %s and poc.distribution_date < %s
                       union all
                       select po.id purchase_order_id,pc.distribution_date,poi.item_name,poi.po_qty,poi.unit
                       from purchase_orders po
@@ -198,7 +198,7 @@ def inventory_balances_v2(
                       where upper(po.site)=%s
                         and upper(coalesce(po.status,''))=any(%s)
                         and coalesce(po.historical_import,false)=false
-                        and pc.distribution_date > %s and pc.distribution_date < %s
+                        and pc.distribution_date >= %s and pc.distribution_date < %s
                         and not exists (
                           select 1 from purchase_order_coverage poc where poc.purchase_order_id=po.id
                         )
