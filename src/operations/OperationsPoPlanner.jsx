@@ -127,7 +127,9 @@ function buildStockLookup(items = []) {
     const names = Array.from(new Set([item.item_name, ...(item.raw_item_names || [])].map(normalize).filter(Boolean)));
     const unit = normalizeUnit(item.unit);
     const stock = {
-      balance: Math.max(0, Number(item.available_for_po ?? item.balance ?? 0)),
+      // PO must consume the projected remainder after plans before this
+      // cooking day.  actual_balance stays visible only as the physical stock.
+      balance: Math.max(0, Number(item.projected_available_for_po ?? item.projected_balance ?? item.available_for_po ?? item.balance ?? 0)),
       actualBalance: Number(item.actual_balance ?? item.balance ?? 0),
       projectedBalance: Number(item.projected_balance ?? item.balance ?? 0),
       plannedDepletion: Number(item.planned_depletion || 0),
