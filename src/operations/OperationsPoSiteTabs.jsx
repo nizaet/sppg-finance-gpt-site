@@ -1,8 +1,8 @@
 import React, { memo, useEffect, useState } from "react";
-import OperationsPoPlanner from "./OperationsPoPlanner.jsx";
+import PoPlanner from "./OperationsPoPlanner.jsx";
 
 const SITES = ["MAJA", "CEMPLANG"];
-const CachedPoPlanner = memo(OperationsPoPlanner);
+const OperationsPoPlanner = memo(PoPlanner);
 
 export default function OperationsPoSiteTabs({ routeSite = '', onSiteChange }) {
   const [site, setSite] = useState(routeSite || "MAJA");
@@ -43,7 +43,7 @@ export default function OperationsPoSiteTabs({ routeSite = '', onSiteChange }) {
           data-po-site-panel={site}
           hidden={activeSite !== site}
         >
-          <CachedPoPlanner fixedSite={site} />
+          <OperationsPoPlanner fixedSite={site} />
         </div>
       ) : null)}
     </div>
