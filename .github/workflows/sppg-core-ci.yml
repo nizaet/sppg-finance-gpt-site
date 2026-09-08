@@ -32,7 +32,7 @@ jobs:
       - run: pip install -r hermes_lab/requirements.txt
       - run: python -m compileall backend parser workflow
       - name: Test calculator Firebase session isolation and denied reads
-        run: python -m unittest -v tests.test_calculator_firebase_runtime
+        run: python -m unittest -v tests.test_calculator_firebase_runtime tests.test_maja_firebase_auth_runtime
       - name: Test Hermes approval boundary
         run: |
           python -m unittest -v tests.test_hermes_action_api

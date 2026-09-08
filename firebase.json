@@ -1,6 +1,10 @@
 {
   "firestore": [
     {
+      "database": "(default)",
+      "rules": "firestore.maja.rules"
+    },
+    {
       "database": "cemplang2",
       "rules": "firestore.cemplang2.rules"
     }

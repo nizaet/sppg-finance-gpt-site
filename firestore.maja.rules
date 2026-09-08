@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function majaUser() {
+      return request.auth != null
+        && request.auth.token.sppg_site == 'MAJA'
+        && request.auth.token.sppg_role in ['OWNER', 'MAJA'];
+    }
+
+    match /artifacts/sppg-maja-gpt-site/public/data/{document=**} {
+      allow read, write: if majaUser();
+    }
+
+    match /gpt_sites/sppg-maja-gpt-site/ledger/meta/{document=**} {
+      allow read, write: if majaUser()
+        && request.auth.token.sppg_role == 'OWNER';
+    }
+  }
+}

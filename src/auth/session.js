@@ -54,6 +54,9 @@ export const authApi = {
   firebaseCemplangToken: (token = readSessionToken()) => api("/v1/auth/firebase/cemplang-token", {
     headers: { Authorization: `Bearer ${token}` },
   }),
+  firebaseMajaToken: (token = readSessionToken()) => api("/v1/firebase/custom-token?site=MAJA", {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   logout: () => api("/v1/auth/logout", { method: "POST" }).catch(() => null),
 };
 

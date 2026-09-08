@@ -5,6 +5,7 @@ import { getAuth, signInWithCustomToken } from "firebase/auth";
 import AuthGate from "./auth/AuthGate.jsx";
 import CalculatorGateway from "./auth/CalculatorGateway.jsx";
 import { authApi, readSessionToken } from "./auth/session.js";
+import { authenticateMajaFirebase } from "./auth/maja-firebase.js";
 import { applyAppTheme } from "./theme.js";
 import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
 import { installInventoryUiEnhancements } from "./operations/inventory-ui-enhancements.js";
@@ -52,6 +53,23 @@ function CalculatorRedirect({ role }) {
     window.location.replace(`/dapur/${String(role).toLowerCase()}`);
   }, [role]);
   return <BootFallback text={`Membuka Kalkulator ${role}…`} />;
+}
+
+function MajaAccountantRoute() {
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    authenticateMajaFirebase(firebaseConfig).then(() => {
+      if (!cancelled) setReady(true);
+    }).catch(err => {
+      if (!cancelled) setError(err?.message || "Gagal autentikasi Firebase Maja");
+    });
+    return () => { cancelled = true; };
+  }, []);
+  if (error) return <BootFallback text={`Gagal autentikasi Akuntan Maja: ${error}`} />;
+  if (!ready) return <BootFallback text="Menyiapkan akses Firebase Akuntan Maja…" />;
+  return <AccountantApp accessRole="OWNER" />;
 }
 
 function CemplangAccountantRoute() {
@@ -105,7 +123,7 @@ function RoutedApp({ role, config }) {
         ? <OperationsApp accessRole="OWNER" />
         : isCemplangAccountantRoute
           ? <CemplangAccountantRoute />
-          : <AccountantApp accessRole="OWNER" />}
+          : <MajaAccountantRoute />}
     </Suspense>
   );
 }

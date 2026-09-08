@@ -4,7 +4,8 @@ from fastapi import HTTPException
 import backend.firebase_auth_api as firebase_auth_api
 
 
-def test_custom_token_scopes_owner_to_requested_site(monkeypatch):
+@pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
+def test_custom_token_scopes_owner_to_requested_site(monkeypatch, site):
     monkeypatch.setattr(firebase_auth_api, "session_role", lambda authorization: "OWNER")
     monkeypatch.setattr(
         firebase_auth_api,
@@ -12,12 +13,12 @@ def test_custom_token_scopes_owner_to_requested_site(monkeypatch):
         lambda uid, claims: f"token:{uid}:{claims['sppg_site']}",
     )
 
-    result = firebase_auth_api.firebase_custom_token("CEMPLANG", "Bearer session")
+    result = firebase_auth_api.firebase_custom_token(site, "Bearer session")
 
     assert result == {
-        "token": "token:sppg-owner-cemplang:CEMPLANG",
+        "token": f"token:sppg-owner-{site.lower()}:{site}",
         "role": "OWNER",
-        "site": "CEMPLANG",
+        "site": site,
     }
 
 
