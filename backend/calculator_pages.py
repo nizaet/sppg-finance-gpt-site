@@ -228,6 +228,22 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
     </style>
     """
     html = source.replace("<head>", f"<head>{boot}", 1)
+    # A default Auth instance persists across tabs on this origin. Signing into
+    # Cemplang (including its accountant page) can replace Maja's user after the
+    # claim check and invalidate active Firestore reads/listeners. Keep calculator
+    # Auth entirely in this page; Railway supplies a fresh token on every reload.
+    html = html.replace(
+        "            getAuth,",
+        "            getAuth, initializeAuth, inMemoryPersistence,",
+    )
+    html = html.replace(
+        "if (!app) app = initializeApp(firebaseConfig);",
+        f"if (!app) app = initializeApp(firebaseConfig, 'sppg-calculator-{unit}');",
+    )
+    html = html.replace(
+        "if (!auth) auth = getAuth(app);",
+        "if (!auth) auth = initializeAuth(app, { persistence: inMemoryPersistence });",
+    )
     html = html.replace(
         "const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1';",
         f"const FIREBASE_CONNECTION_STORAGE_KEY = 'spbg_firebase_connection_v1-{unit}';",
@@ -295,10 +311,8 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
                 throw new Error("Custom Token Railway tidak tersedia. Silakan keluar lalu masuk kembali.");
             }
 
-            // Firebase Auth is shared by both calculator pages because they use
-            // the same Firebase project. Always finish the requested-site sign-in
-            // before reading Firestore; an auth-state listener can otherwise
-            // resolve immediately with the previous kitchen's cached user.
+            // Finish sign-in on this page's isolated Auth instance before any
+            // reads. Never use a previously cached user to skip this claim check.
             logActivity("Mencoba login dengan Custom Token...");
             const credential = await signInWithCustomToken(auth, firebaseToken);
             const user = credential && credential.user;
@@ -323,6 +337,45 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
 
 """
     html = html[:auth_start] + secure_auth + html[auth_end:]
+    load_start = html.find("        async function loadAllData() {")
+    load_end = html.find("        function setupAllListeners() {", load_start)
+    if load_start < 0 or load_end < 0:
+        raise RuntimeError(f"legacy Firebase data loader was not found for {unit}")
+    diagnostic_loader = """        async function loadAllData() {
+            logActivity("Memuat data awal...");
+            const load = async (path, loader) => {
+                try {
+                    await loader();
+                } catch (error) {
+                    const databaseId = window.__firestoreDatabaseId || '(default)';
+                    const code = error.code || 'unknown';
+                    const location = `${firebaseConfig.projectId}/${databaseId}/artifacts/${appId}/public/data/${path}`;
+                    logActivity(`ERROR baca ${location} [${code}]: ${error.message}`, true);
+                    if (code === 'permission-denied' || code === 'firestore/permission-denied') {
+                        const denied = new Error(`Akses data ${path} ditolak di database ${databaseId}. Periksa aturan Firestore untuk dapur ${String(window.__legacyUnitId).toUpperCase()}.`);
+                        denied.code = code;
+                        throw denied;
+                    }
+                    throw error;
+                }
+            };
+            try {
+                await Promise.all([
+                    load('recipes', loadRecipes),
+                    load('masterData/priceList', loadMasterPriceList),
+                    load('customGramasi', loadCustomGramasi),
+                    load('dailyPlans', loadSavedPlans),
+                    load('bumbuList/default', loadBumbuList)
+                ]);
+                logActivity("Semua data awal berhasil dimuat.");
+            } catch (error) {
+                logActivity(`ERROR saat memuat data awal: ${error.message}`, true);
+                throw error;
+            }
+        }
+
+"""
+    html = html[:load_start] + diagnostic_loader + html[load_end:]
     html = html.replace(
         "if (!db) db = getFirestore(app);",
         "if (!db) db = (window.__firestoreDatabaseId && window.__firestoreDatabaseId !== '(default)') ? getFirestore(app, window.__firestoreDatabaseId) : getFirestore(app);",
