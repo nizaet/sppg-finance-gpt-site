@@ -1,31 +1,33 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MessageCircle, RefreshCw, Save } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import { useSiteState } from './useSiteState.js';
+import OperationsSiteSwitcher from './OperationsSiteSwitcher.jsx';
 
 function rowKey(item, idx) {
   return `${item.code}|${item.site_code || "GLOBAL"}|${item.category_code || "ALL"}|${idx}`;
 }
 
-export default function OperationsVendorMaster({ fixedSite = "" }) {
+export default function OperationsVendorMaster({ fixedSite = "", routeSite = '', onSiteChange }) {
   const [site, setSite] = useState(fixedSite || "");
-  const [items, setItems] = useState([]);
-  const [vendorCatalog, setVendorCatalog] = useState([]);
-  const [edits, setEdits] = useState({});
-  const [vendorEdits, setVendorEdits] = useState({});
-  const [phoneEdits, setPhoneEdits] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState("");
-  const [savingPhone, setSavingPhone] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-
-  useEffect(() => {
-    if (fixedSite && site !== fixedSite) setSite(fixedSite);
-  }, [fixedSite, site]);
-
-  const activeSite = fixedSite || site;
+  const activeSite = routeSite === 'ALL' ? '' : (routeSite || fixedSite || site);
+  const [loadedAt, setLoadedAt] = useSiteState(activeSite, null);
+  const loadRequests = useRef(new Map());
+  const [items, setItems] = useSiteState(activeSite, []);
+  const [vendorCatalog, setVendorCatalog] = useSiteState(activeSite, []);
+  const [edits, setEdits] = useSiteState(activeSite, {});
+  const [vendorEdits, setVendorEdits] = useSiteState(activeSite, {});
+  const [phoneEdits, setPhoneEdits] = useSiteState(activeSite, {});
+  const [loading, setLoading] = useSiteState(activeSite, false);
+  const [saving, setSaving] = useSiteState(activeSite, "");
+  const [savingPhone, setSavingPhone] = useSiteState(activeSite, "");
+  const [error, setError] = useSiteState(activeSite, "");
+  const [message, setMessage] = useSiteState(activeSite, "");
 
   const load = async () => {
+    const requestId = (loadRequests.current.get(activeSite) || 0) + 1;
+    loadRequests.current.set(activeSite, requestId);
+    const isLatest = () => loadRequests.current.get(activeSite) === requestId;
     setLoading(true);
     setError("");
     try {
@@ -33,6 +35,7 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
         operationsApi.getReferenceVendors(activeSite),
         activeSite ? operationsApi.getReferenceVendors("") : Promise.resolve(null),
       ]);
+      if (!isLatest()) return;
       const rows = data?.items || [];
       const catalogRows = catalogData?.items || rows;
       setItems(rows);
@@ -51,14 +54,15 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
       setEdits(next);
       setVendorEdits(nextVendors);
       setPhoneEdits(nextPhones);
+      setLoadedAt(new Date().toISOString());
     } catch (err) {
-      setError(err.message || "Gagal mengambil master vendor");
+      if (isLatest()) setError(err.message || "Gagal mengambil master vendor");
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [activeSite]);
+  useEffect(() => { if (!loadedAt) load(); }, [activeSite]);
 
   const vendorChoices = useMemo(() => {
     const map = new Map();
@@ -160,6 +164,10 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
 
   return (
     <section className="ops-module">
+      {!fixedSite && <OperationsSiteSwitcher title="Vendor & Lead Time" label="Pilih site vendor"
+        sites={[["ALL", "Semua"], ["MAJA", "Maja"], ["CEMPLANG", "Cemplang"]]}
+        activeSite={activeSite || 'ALL'} onChange={onSiteChange || (value => setSite(value === 'ALL' ? '' : value))} />}
+      {loadedAt && <p className="ops-data-freshness">Data terakhir ditarik: {new Date(loadedAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}. Refresh untuk pembaruan terbaru.</p>}
       <div className="ops-module-header">
         <div>
           <span className="ops-kicker">MASTER VERSIONED</span>
@@ -167,7 +175,6 @@ export default function OperationsVendorMaster({ fixedSite = "" }) {
           <p>Vendor per site/kategori dan lead time disimpan di database versioned. Perubahan baru berlaku mulai hari ini tanpa menimpa histori rule sebelumnya.</p>
         </div>
         <div className="ops-inline-controls">
-          <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => setSite(e.target.value)}><option value="">Semua site</option><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select>
           <button type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh</button>
         </div>
       </div>

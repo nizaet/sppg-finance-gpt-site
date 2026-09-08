@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React, { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Calculator,
   CalendarDays,
@@ -19,10 +19,11 @@ import {
   Warehouse,
 } from "lucide-react";
 import { useAppTheme } from "../theme.js";
-import OperationsControlTower from "./OperationsControlTower.jsx";
+import { readOperationsRoute, normalizeOperationsRoute, operationsUrl, operationsRouteKey, SITE_TABS } from "./navigation.js";
 import "./workspace.css";
 
 const OperationsPoSiteTabs = lazy(() => import("./OperationsPoSiteTabs.jsx"));
+const OperationsControlTower = lazy(() => import("./OperationsControlTower.jsx"));
 const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
 const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
@@ -50,6 +51,7 @@ const tabs = [
 ];
 
 const moduleComponents = {
+  today: OperationsControlTower,
   po: OperationsPoSiteTabs,
   receiving: OperationsReceiving,
   inventory: OperationsInventory,
@@ -63,19 +65,32 @@ const moduleComponents = {
   chat: OperationsChatIngest,
 };
 
+const ModulePanel = memo(function ModulePanel({ Component, routeSite, onSiteChange }) {
+  return <Component accessRole="OWNER" routeSite={routeSite} onSiteChange={onSiteChange} />;
+});
+
 function ModuleFallback() {
   return <section className="ops-module"><div className="ops-empty">Membuka modul…</div></section>;
 }
 
 export default function OperationsWorkspace({ accessRole = "OWNER" }) {
   const role = String(accessRole || "OWNER").toUpperCase();
-  const [tab, setTab] = useState("today");
-  const [visitedTabs, setVisitedTabs] = useState(() => new Set(["today"]));
+  const [route, setRoute] = useState(readOperationsRoute);
+  const tab = route.tab;
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([route.tab]));
+  const sitesByTab = useRef({ [route.tab]: route.site });
+  const scrollPositions = useRef(new Map());
+  const routeRef = useRef(route);
+  const workspaceRef = useRef(null);
+  const sidebarRef = useRef(null);
   const [theme, setTheme] = useAppTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    document.title = "Pusat Operasional | SPPG";
+    document.title = `${tabs.find(([id]) => id === tab)?.[1] || 'Pusat Operasional'} | SPPG`;
+  }, [tab]);
+
+  useEffect(() => {
     ["icon", "shortcut icon"].forEach((rel) => {
       let link = document.querySelector(`link[rel='${rel}']`);
       if (!link) {
@@ -88,26 +103,57 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
     });
   }, []);
 
+  const activateRoute = useCallback((next) => {
+    scrollPositions.current.set(operationsRouteKey(routeRef.current), window.scrollY);
+    routeRef.current = next;
+    sitesByTab.current[next.tab] = next.site;
+    setRoute(next);
+    setMobileMenuOpen(false);
+    setVisitedTabs(current => current.has(next.tab) ? current : new Set([...current, next.tab]));
+  }, []);
+
+  useEffect(() => {
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    const onPopState = () => activateRoute(readOperationsRoute());
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.history.scrollRestoration = previous;
+    };
+  }, [activateRoute]);
+
+  useLayoutEffect(() => {
+    window.scrollTo(0, scrollPositions.current.get(operationsRouteKey(route)) || 0);
+  }, [route.tab, route.site]);
+
+  useEffect(() => {
+    if (!sidebarRef.current || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      workspaceRef.current?.style.setProperty('--ops-header-height', `${entry.target.getBoundingClientRect().height}px`);
+    });
+    observer.observe(sidebarRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const navigate = useCallback((id, site) => {
+    const next = normalizeOperationsRoute(id, site ?? sitesByTab.current[id]);
+    const url = operationsUrl(next.tab, next.site);
+    if (window.location.pathname + window.location.search !== url) window.history.pushState(null, '', url);
+    activateRoute(next);
+  }, [activateRoute]);
+
+  const changeSite = useCallback(site => navigate(routeRef.current.tab, site), [navigate]);
+
   // Defense in depth: site roles should have been routed to /calculator by main.jsx.
   if (role !== "OWNER") {
     window.location.replace("/calculator");
     return null;
   }
 
-  const openTab = (id) => {
-    setTab(id);
-    setMobileMenuOpen(false);
-    setVisitedTabs((current) => {
-      if (current.has(id)) return current;
-      const next = new Set(current);
-      next.add(id);
-      return next;
-    });
-  };
-
   return (
-    <div className="ops-workspace">
-      <aside className={`ops-sidebar${mobileMenuOpen ? " mobile-open" : ""}`}>
+    <div className="ops-workspace" ref={workspaceRef}>
+      <aside ref={sidebarRef} className={`ops-sidebar${mobileMenuOpen ? " mobile-open" : ""}`}>
         <div className="ops-brand">
           <div>
             <span>SPPG</span>
@@ -124,15 +170,20 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
           <a href="/dapur/maja"><Calculator size={17} /> Kalkulator Maja</a>
           <a href="/dapur/cemplang"><Calculator size={17} /> Kalkulator Cemplang</a>
           {tabs.map(([id, label, Icon]) => (
-            <button
-              type="button"
+            <a
+              href={operationsUrl(id, sitesByTab.current[id])}
               key={id}
               className={tab === id ? "active" : ""}
-              onClick={() => openTab(id)}
+              aria-current={tab === id ? 'page' : undefined}
+              onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                navigate(id);
+              }}
             >
               <Icon size={17} />
               {label}
-            </button>
+            </a>
           ))}
         </nav>
 
@@ -147,19 +198,17 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
       </aside>
 
       <main className="ops-content">
-        <div hidden={tab !== "today"}>
-          <OperationsControlTower />
-        </div>
-
-        <Suspense fallback={<ModuleFallback />}>
           {Object.entries(moduleComponents).map(([id, Component]) => (
             visitedTabs.has(id) ? (
               <div key={id} hidden={tab !== id}>
-                <Component accessRole="OWNER" />
+                <Suspense fallback={<ModuleFallback />}>
+                  <ModulePanel Component={Component}
+                    routeSite={sitesByTab.current[id]}
+                    onSiteChange={SITE_TABS[id] ? changeSite : undefined} />
+                </Suspense>
               </div>
             ) : null
           ))}
-        </Suspense>
       </main>
     </div>
   );

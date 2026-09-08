@@ -75,6 +75,7 @@ body {
 }
 .ops-sidebar nav button:hover,
 .ops-sidebar nav button.active,
+.ops-sidebar nav a.active,
 .ops-sidebar nav a:hover {
   background: rgba(59, 130, 246, 0.13);
 }
@@ -514,6 +515,7 @@ html[data-app-theme="light"] .ops-workspace { background: var(--app-bg); color: 
 html[data-app-theme="light"] .ops-sidebar { background: var(--ops-surface); border-color: var(--ops-border); box-shadow: 1px 0 12px rgba(15, 23, 42, 0.04); }
 html[data-app-theme="light"] .ops-sidebar nav button:hover,
 html[data-app-theme="light"] .ops-sidebar nav button.active,
+html[data-app-theme="light"] .ops-sidebar nav a.active,
 html[data-app-theme="light"] .ops-sidebar nav a:hover { background: #eaf2ff; color: #1d4ed8; }
 html[data-app-theme="light"] .ops-module,
 html[data-app-theme="light"] .ops-draft-group,
@@ -790,4 +792,37 @@ html[data-app-theme="light"] .weekly-menu-metrics em { color: #64748b; }
   .ops-mobile-menu { width: 40px; padding: 0; }
   .ops-content { padding-inline: 9px; }
   .ops-module { border-radius: 12px; padding: 12px; }
+}
+
+/* Keep kitchen navigation reachable without scrolling long operational lists. */
+.ops-site-switcher {
+  position: sticky;
+  top: 10px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--ops-border, rgba(148, 163, 184, .24));
+  border-radius: 12px;
+  background: var(--ops-surface, #0b1627);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .12);
+}
+.ops-site-switcher h3 { font-size: 16px; margin: 0; }
+.ops-site-switcher .ops-switcher-note { font-size: 11px; max-width: 390px; }
+.ops-site-switcher .ops-po-site-tabs button { min-height: 40px; padding: 8px 12px; cursor: pointer; }
+.ops-data-freshness { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--ops-muted, #94a3b8); margin-block: 0 12px; }
+.ops-data-freshness button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--ops-border, #475569); border-radius: 8px; background: var(--ops-input, #0c1829); color: var(--ops-text, #e5edf7); cursor: pointer; }
+.ops-data-freshness button:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 1100px) {
+  .ops-site-switcher { top: calc(var(--ops-header-height, 65px) + 6px); }
+}
+@media (max-width: 700px) {
+  .ops-site-switcher { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px; }
+  .ops-site-switcher > strong, .ops-site-switcher h3 { font-size: 13px; }
+  .ops-site-switcher .ops-po-site-tabs { display: flex; width: auto; }
+  .ops-site-switcher .ops-po-site-tabs button { flex: 1; min-width: 0; min-height: 40px; }
+  .ops-site-switcher .ops-switcher-note { display: none; }
 }

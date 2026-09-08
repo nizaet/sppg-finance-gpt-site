@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ClipboardPaste, Eye, Pencil, Plus, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import { useSiteState } from './useSiteState.js';
+import OperationsSiteSwitcher from './OperationsSiteSwitcher.jsx';
 
 const qty = (value) => Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
 const signedQty = (value) => {
@@ -19,39 +21,32 @@ const transferMonthBounds = (month) => {
 };
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 
-export default function OperationsInventory({ fixedSite = "" }) {
+export default function OperationsInventory({ fixedSite = "", routeSite = '', onSiteChange }) {
   const [site, setSite] = useState(fixedSite || "MAJA");
-  const [search, setSearch] = useState("");
-  const [items, setItems] = useState([]);
-  const [balanceMeta, setBalanceMeta] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [soText, setSoText] = useState("");
-  const [stockDate, setStockDate] = useState("");
-  const [reporter, setReporter] = useState("");
-  const [preview, setPreview] = useState(null);
-  const [reviewedItems, setReviewedItems] = useState([]);
-  const [sourceExternalId, setSourceExternalId] = useState("");
-  const [masters, setMasters] = useState([]);
-  const [masterForm, setMasterForm] = useState({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
-  const [stockEdit, setStockEdit] = useState(null);
-  const [transfers, setTransfers] = useState([]);
-  const [transferMonth, setTransferMonth] = useState(todayMonth());
-  const [selectedTransferDate, setSelectedTransferDate] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const activeSite = routeSite || fixedSite || site;
+  const loadRequests = useRef(new Map());
+  const [loadedAt, setLoadedAt] = useSiteState(activeSite, null);
+  const [search, setSearch] = useSiteState(activeSite, "");
+  const [items, setItems] = useSiteState(activeSite, []);
+  const [balanceMeta, setBalanceMeta] = useSiteState(activeSite, null);
+  const [history, setHistory] = useSiteState(activeSite, []);
+  const [soText, setSoText] = useSiteState(activeSite, "");
+  const [stockDate, setStockDate] = useSiteState(activeSite, "");
+  const [reporter, setReporter] = useSiteState(activeSite, "");
+  const [preview, setPreview] = useSiteState(activeSite, null);
+  const [reviewedItems, setReviewedItems] = useSiteState(activeSite, []);
+  const [sourceExternalId, setSourceExternalId] = useSiteState(activeSite, "");
+  const [masters, setMasters] = useSiteState(activeSite, []);
+  const [masterForm, setMasterForm] = useSiteState(activeSite, { code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+  const [stockEdit, setStockEdit] = useSiteState(activeSite, null);
+  const [transfers, setTransfers] = useSiteState(activeSite, []);
+  const [transferMonth, setTransferMonth] = useSiteState(activeSite, todayMonth());
+  const [selectedTransferDate, setSelectedTransferDate] = useSiteState(activeSite, "");
+  const [loading, setLoading] = useSiteState(activeSite, false);
+  const [saving, setSaving] = useSiteState(activeSite, false);
+  const [error, setError] = useSiteState(activeSite, "");
+  const [message, setMessage] = useSiteState(activeSite, "");
 
-  useEffect(() => {
-    if (fixedSite && site !== fixedSite) {
-      setSite(fixedSite);
-      setSearch("");
-      setPreview(null);
-      setStockEdit(null);
-    }
-  }, [fixedSite, site]);
-
-  const activeSite = fixedSite || site;
   const currentBalanceByItem = useMemo(() => {
     const result = new Map();
     items.forEach((item) => {
@@ -77,6 +72,9 @@ export default function OperationsInventory({ fixedSite = "" }) {
   };
 
   const load = async (searchValue = search) => {
+    const requestId = (loadRequests.current.get(activeSite) || 0) + 1;
+    loadRequests.current.set(activeSite, requestId);
+    const isLatest = () => loadRequests.current.get(activeSite) === requestId;
     setLoading(true);
     setError("");
     try {
@@ -88,19 +86,21 @@ export default function OperationsInventory({ fixedSite = "" }) {
           ? operationsApi.getKoperasiTransfers(transferMonthBounds(transferMonth))
           : Promise.resolve({ items: [] }),
       ]);
+      if (!isLatest()) return;
       setItems(data?.items || []);
       setBalanceMeta(data || null);
       setHistory(opnameData?.items || []);
       setMasters(masterData?.items || []);
       setTransfers(transferData?.items || []);
+      setLoadedAt(new Date().toISOString());
     } catch (err) {
-      setError(err.message || "Gagal mengambil stok gudang");
+      if (isLatest()) setError(err.message || "Gagal mengambil stok gudang");
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   };
 
-  useEffect(() => { load(""); }, [activeSite]);
+  useEffect(() => { if (!loadedAt) load(""); }, [activeSite]);
 
   const loadTransfers = async (month = transferMonth) => {
     if (activeSite !== "KOPERASI") return;
@@ -377,15 +377,19 @@ export default function OperationsInventory({ fixedSite = "" }) {
 
   return (
     <div className="ops-domain-stack">
+      {!fixedSite && <OperationsSiteSwitcher title="Gudang" label="Pilih gudang"
+        sites={[["MAJA", "Maja"], ["CEMPLANG", "Cemplang"], ["KOPERASI", "Koperasi"]]}
+        activeSite={activeSite} onChange={onSiteChange || setSite} />}
+      <div className="ops-data-freshness" role="status">
+        <span>{loadedAt ? `Data terakhir ditarik: ${localDateTime(loadedAt)}. Refresh untuk pembaruan terbaru.` : 'Menyiapkan data gudang…'}</span>
+        <button type="button" onClick={() => load()} disabled={loading || saving}><RefreshCw size={14} /> {loading ? 'Memuat…' : 'Refresh gudang'}</button>
+      </div>
       <section className="ops-module" id="inventory-so-entry">
         <div className="ops-module-header">
           <div>
             <span className="ops-kicker">SO FISIK → STOK AKTUAL GUDANG</span>
             <h3>Masukkan Laporan Stok Gudang</h3>
             <p>SO adalah hitungan fisik terbaru. Setelah disimpan, angka ini menjadi stok aktual yang dipakai untuk PO — bukan ditambahkan ke SO lama.</p>
-          </div>
-          <div className="ops-inline-controls">
-            <select value={activeSite} disabled={Boolean(fixedSite)} onChange={(e) => { setSite(e.target.value); setSearch(""); setPreview(null); setStockEdit(null); }}><option value="MAJA">Gudang Dapur Maja</option><option value="CEMPLANG">Gudang Dapur Cemplang</option><option value="KOPERASI">Gudang Koperasi</option></select>
           </div>
         </div>
         {error && <div className="ops-error">{error}</div>}

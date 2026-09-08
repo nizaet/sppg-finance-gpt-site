@@ -16,6 +16,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Test operations routes and warehouse state isolation
+        run: node --test tests/operations-navigation.test.mjs
+      - name: Test operations navigation and cached views with React
+        run: |
+          npm install --prefix "$RUNNER_TEMP/sppg-ui-tests" --no-save --package-lock=false esbuild@0.21.5 react@18.3.1 react-test-renderer@18.3.1
+          SPPG_UI_TEST_MODULES="$RUNNER_TEMP/sppg-ui-tests/node_modules" node tests/operations-component-regression.cjs
       - run: npm run build
 
   backend:
