@@ -110,7 +110,7 @@ function deliveryApiClientCompatibility() {
         }
         plannerCode = plannerCode.replace(
           detailAnchor,
-          `        <PoOpsEnhancements mode="calendar" activeSite={activeSite} setReminders={setReminders} setPurchaseOrders={setPurchaseOrders} setPoListLoaded={setPoListLoaded} setDeliveryAlerts={setDeliveryAlerts} />\n${detailAnchor}`,
+          `        <PoOpsEnhancements mode="calendar" onEditPo={beginEditPo} activeSite={activeSite} setReminders={setReminders} setPurchaseOrders={setPurchaseOrders} setPoListLoaded={setPoListLoaded} setDeliveryAlerts={setDeliveryAlerts} />\n${detailAnchor}`,
         );
 
         // The red "barang belum datang" block is intentionally retired. Receiving
@@ -159,7 +159,7 @@ function deliveryApiClientCompatibility() {
         if (enhancementCode.includes(calendarOrdersAnchor) && !enhancementCode.includes(`data-calendar-po-receiving="v30"`)) {
           enhancementCode = enhancementCode.replace(
             calendarOrdersAnchor,
-            `            <div data-calendar-po-receiving="v30" style={{ marginTop: 12 }}><PoReceivingConfirm inline poId={calendarPo.id} poCode={calendarPo.po_code} status={calendarPo.status} onChanged={async () => { await refreshCalendar(); await refreshActualPo(); const detail = await operationsApi.getPurchaseOrder(calendarPo.id); setCalendarPo((current) => current ? { ...current, ...detail } : current); }} /></div>\n${calendarOrdersAnchor}`,
+            `            <div data-calendar-po-receiving="v30" style={{ marginTop: 12 }}><PoReceivingConfirm inline poId={calendarPo.id} poCode={calendarPo.po_code} status={calendarPo.status} onChanged={handleCalendarReceivingChanged} /></div>\n${calendarOrdersAnchor}`,
           );
         }
         return enhancementCode === code ? null : { code: enhancementCode, map: null };

@@ -389,9 +389,10 @@
   --app-text: #334155;
 }
 
+@media screen {
 html[data-app-theme="dark"] {
-  --app-bg: #08111f;
-  --app-text: #e5edf7;
+  --app-bg: #191d23;
+  --app-text: #e2e6eb;
 }
 
 html[data-app-theme="dark"] body,
@@ -411,9 +412,9 @@ html[data-app-theme="dark"] .modal,
 html[data-app-theme="dark"] .backup-row,
 html[data-app-theme="dark"] .debt-filterbar,
 html[data-app-theme="dark"] .filter-paybox {
-  background: #0f1b2d;
-  color: #e5edf7;
-  border-color: #26364d;
+  background: #22272f;
+  color: #e2e6eb;
+  border-color: #3b424d;
   box-shadow: none;
 }
 
@@ -424,7 +425,7 @@ html[data-app-theme="dark"] .history-title,
 html[data-app-theme="dark"] .modal-head h3,
 html[data-app-theme="dark"] .asset-box b,
 html[data-app-theme="dark"] .analysis b {
-  color: #f1f5f9;
+  color: #e2e6eb;
 }
 
 html[data-app-theme="dark"] .legacy-header p,
@@ -437,7 +438,7 @@ html[data-app-theme="dark"] .share-add label,
 html[data-app-theme="dark"] .two-cols label,
 html[data-app-theme="dark"] .edit-grid label,
 html[data-app-theme="dark"] .backup-row small {
-  color: #9fb0c7;
+  color: #b3bdca;
 }
 
 html[data-app-theme="dark"] .input,
@@ -446,39 +447,76 @@ html[data-app-theme="dark"] .textarea,
 html[data-app-theme="dark"] input,
 html[data-app-theme="dark"] select,
 html[data-app-theme="dark"] textarea {
-  background: #0b1627;
-  color: #e5edf7;
-  border-color: #334155;
+  background: #1c2128;
+  color: #e2e6eb;
+  border-color: #3b424d;
 }
 
 html[data-app-theme="dark"] .btn.outline,
 html[data-app-theme="dark"] .btn.ghost {
-  background: #13233a;
-  color: #e5edf7;
-  border-color: #334155;
+  background: #303741;
+  color: #e2e6eb;
+  border-color: #3b424d;
 }
 
-html[data-app-theme="dark"] .tabs-list button { color: #aebed2; }
-html[data-app-theme="dark"] .tabs-list button:hover { background: #13233a; }
-html[data-app-theme="dark"] .tabs-list button.active { background: #12362f; color: #6ee7b7; }
-html[data-app-theme="dark"] .table th { background: #13233a; color: #b8c6d9; border-color: #26364d; }
+html[data-app-theme="dark"] .tabs-list button { color: #b3bdca; }
+html[data-app-theme="dark"] .tabs-list button:hover { background: #303741; }
+html[data-app-theme="dark"] .tabs-list button.active { background: #293d35; color: #b8dec9; }
+html[data-app-theme="dark"] .table th { background: #303741; color: #c6ced8; border-color: #3b424d; }
 html[data-app-theme="dark"] .table td,
 html[data-app-theme="dark"] .mini-report div,
-html[data-app-theme="dark"] .modal-head { border-color: #26364d; }
-html[data-app-theme="dark"] .table tr:hover { background: #13233a; }
+html[data-app-theme="dark"] .modal-head { border-color: #3b424d; }
+html[data-app-theme="dark"] .table tr:hover { background: #303741; }
 html[data-app-theme="dark"] .wide-table,
-html[data-app-theme="dark"] .scroll-table { border-color: #26364d; }
+html[data-app-theme="dark"] .scroll-table { border-color: #3b424d; }
 html[data-app-theme="dark"] .asset-box,
 html[data-app-theme="dark"] .info-box,
 html[data-app-theme="dark"] .formula-box,
 html[data-app-theme="dark"] .audit-summary span,
-html[data-app-theme="dark"] .chart-empty { background: #0b1627; color: #aebed2; border-color: #334155; }
-html[data-app-theme="dark"] .subtotal td { background: #13233a; }
-html[data-app-theme="dark"] .blue-soft { background: #102b4e !important; color: #bfdbfe !important; border-color: #1e3a5f; }
-html[data-app-theme="dark"] .green-soft { background: #12362f !important; color: #bbf7d0 !important; }
-html[data-app-theme="dark"] .orange-soft { background: #422613 !important; color: #fed7aa !important; }
-html[data-app-theme="dark"] .purple-soft { background: #302050 !important; color: #e9d5ff !important; }
-html[data-app-theme="dark"] .emerald-soft { background: #12362f !important; color: #a7f3d0 !important; }
+html[data-app-theme="dark"] .chart-empty { background: #1c2128; color: #b3bdca; border-color: #3b424d; }
+html[data-app-theme="dark"] .subtotal td { background: #303741; }
+html[data-app-theme="dark"] .blue-soft { background: #2b3b50 !important; color: #bfdbfe !important; border-color: #1e3a5f; }
+html[data-app-theme="dark"] .green-soft { background: #293d35 !important; color: #bbf7d0 !important; }
+html[data-app-theme="dark"] .orange-soft { background: #40352b !important; color: #fed7aa !important; }
+html[data-app-theme="dark"] .purple-soft { background: #383148 !important; color: #e9d5ff !important; }
+html[data-app-theme="dark"] .emerald-soft { background: #293d35 !important; color: #a7f3d0 !important; }
+
+
+html[data-app-theme="dark"] .app-shell .recharts-cartesian-axis-tick-value { fill: #b3bdca; }
+html[data-app-theme="dark"] .app-shell .recharts-cartesian-grid line { stroke: #414a57; }
+html[data-app-theme="dark"] .app-shell .recharts-default-tooltip { background: #303741 !important; color: #e2e6eb !important; border-color: #566170 !important; }
+html[data-app-theme="dark"] .app-shell .recharts-tooltip-label { color: #e2e6eb; }
+/* Complete accountant states: no pale cards or dark text on dark surfaces. */
+html[data-app-theme="dark"] :is(.finance-card, .pool, .money-input, .detail-toolbar, .tracking-summary span, .hint, .card-content .hint) { background: #242c36; color: #d6dee8; border-color: #414a57; }
+html[data-app-theme="dark"] :is(.debt-summary, .orange-bg, .debt-total, .edit-debt-preview, .analysis) { background: #393128; color: #e7ccab; border-color: #66543e; }
+html[data-app-theme="dark"] :is(.debt-row, .audit-red, .analysis.bad, .deduct) { background: #3b2b2d; color: #edbec2; border-color: #70494f; }
+html[data-app-theme="dark"] .analysis.good { background: #293b33; color: #bbddc9; }
+html[data-app-theme="dark"] :is(.blue-panel, .badge.soft) { background: #2b3b50; color: #bdd4ee; }
+html[data-app-theme="dark"] :is(.blue-panel label, .blue-icon, .blue-text, .indigo-text) { color: #a9c8ed; }
+html[data-app-theme="dark"] :is(.green-icon, .green-text, .emerald-text) { color: #aad4b8; }
+html[data-app-theme="dark"] :is(.orange-text, .debt-summary .card-title, .orange-bg .card-title, .debt-filterbar label) { color: #e7c49d; }
+html[data-app-theme="dark"] :is(.purple-text, .pink-text) { color: #d2bde1; }
+html[data-app-theme="dark"] :is(.red-text, .danger-text) { color: #eeb5bc !important; }
+html[data-app-theme="dark"] :is(.vendor-list li, .analysis span, .asset-box span, .detail-summary, .tracking-selection-actions, .muted, .tracking-toolbar-wide label) { color: #b3bdca; }
+html[data-app-theme="dark"] .manual { background: #423a29 !important; color: #efdbad !important; border-color: #806c43 !important; }
+html[data-app-theme="dark"] .pending { background: #423a29; color: #efdbad; }
+html[data-app-theme="dark"] .paid { background: #293d35; color: #b8dec9; }
+html[data-app-theme="dark"] .tracking-table tr.selected-row { background: #2c3e56 !important; }
+html[data-app-theme="dark"] .tracking-table tr.selected-row.debt-row { background: #493339 !important; }
+html[data-app-theme="dark"] .footer-dark td { background: #303741 !important; color: #e2e6eb !important; }
+html[data-app-theme="dark"] :is(.btn, .subtab.active) { background: #354760; color: #e4edf9; border-color: #5b718c; }
+html[data-app-theme="dark"] :is(.btn.outline, .btn.ghost, .subtab, .row-actions button, .table button:not(.btn), .modal-head button) { background: #303741; color: #d8e1ec; border-color: #495360; }
+html[data-app-theme="dark"] .btn.green { background: #315543; color: #d3eddf; }
+html[data-app-theme="dark"] .btn.red { background: #663b43; color: #ffe1e5; }
+html[data-app-theme="dark"] .btn.blue { background: #304661; color: #d1e2f7; }
+html[data-app-theme="dark"] :is(.btn.indigo, .btn.violet) { background: #4b405e; color: #e6dcf4; }
+html[data-app-theme="dark"] .btn.cyan { background: #315159; color: #cae6ed; }
+html[data-app-theme="dark"] .app-shell :is(input, select, textarea)::placeholder { color: #a2adbd; opacity: 1; }
+html[data-app-theme="dark"] .app-shell :is(button, a, input, select, textarea):focus-visible { outline: 2px solid #a3c4eb; outline-offset: 3px; }
+html[data-app-theme="dark"] .sppg-session-bar { background: #22272f; color: #e2e6eb; border-color: #3b424d; }
+html[data-app-theme="dark"] .sppg-session-bar :is(a, button) { background: #303741; color: #d8e1ec; }
+
+}
 
 /* Fold / narrow tablet: keep accountant columns readable.  A dense ledger has
    more columns than a phone can show, so scroll it instead of shrinking text

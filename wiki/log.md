@@ -37,3 +37,11 @@
 - Calendar reads now follow the selected month, including adjacent weeks. Reminders load automatically for the visible kitchen. Both use bounded session-memory caching (60 seconds, up to 32 keys), deduplicate in-flight reads, retain prior data on error, and reject late responses for another period/site.
 - Successful operational writes invalidate the display cache. Hidden panels stop automatic polling. Explicit Calculator reconciliation remains an operator action; automatic display reads do not finalize or rewrite transactional records.
 - Updated the former manual-only enhancement build assertion to match the requested automatic-read behavior. Added production-transformed React regressions for month/site races, cache refresh and failures, alongside existing navigation and draft-retention checks.
+
+
+## 2026-09-09 — Calendar receipt/revision fixes and shared dark appearance
+- Reset receiving panels by PO identity, reject stale detail/status responses, and guard duplicate receipt clicks. A receipt saved on a previous PO cannot reopen its popup after selecting another PO.
+- Connect calendar revisions to the existing PO editor, reuse existing drafts, and serialize concurrent server revision requests with a source-row lock. Calendar cards group revisions while retaining access to previous versions; no historical PO or receipt is deleted.
+- Complete screen-only dark styling for both legacy calculators and accountant pages, including calendar cells, colored notices, modal content, table states, and form controls.
+- Production-transformed React tests cover receipt identity, async races, actual revision editor handoff, draft reuse and grouped cards. Backend tests check existing-draft reuse and calculator rendering/auth regressions.
+- Removed a receiving-badge MutationObserver feedback loop and prefer exact rendered PO status over shared-code matching, preventing a revision from inheriting another version's badge. Added an idempotent DOM-update regression.

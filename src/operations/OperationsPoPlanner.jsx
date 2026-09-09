@@ -406,6 +406,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [vendorLoading, setVendorLoading] = useState(false);
   const [vendorReferencesPulled, setVendorReferencesPulled] = useState(false);
   const [editingPo, setEditingPo] = useState(null);
+  const editingRequest = React.useRef(false);
   const [editVendor, setEditVendor] = useState("");
   const [editItems, setEditItems] = useState([]);
   const [rangeFrom, setRangeFrom] = useState(today());
@@ -946,6 +947,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const beginEditPo = async (po) => {
+    if (editingRequest.current) return;
+    editingRequest.current = true;
     setActionId(po.id);
     setError("");
     setMessage("");
@@ -961,9 +964,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setEditingPo(detail);
       setEditVendor(String(detail.vendor_code || ""));
       setEditItems((detail.items || []).map((item) => ({ ...item, po_qty: Number(item.po_qty || 0) })));
+      window.setTimeout(() => document.getElementById(`po-edit-panel-${activeSite}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     } catch (err) {
       setError(err.message || "Gagal membuka PO untuk diedit");
     } finally {
+      editingRequest.current = false;
       setActionId(null);
     }
   };
@@ -1481,7 +1486,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             </tbody></table></div>
           </details>)}</div>
         </div>}
-        {editingPo && <div className="ops-draft-group">
+        {editingPo && <div id={`po-edit-panel-${activeSite}`} className="ops-draft-group">
           <div className="ops-draft-group-head"><div><strong>Edit {editingPo.po_code} · Rev {editingPo.revision_no}</strong><span>PO ini tetap DRAFT sampai difinalkan kembali.</span></div><button type="button" onClick={() => { setEditingPo(null); setEditItems([]); }}><XCircle size={14} /> Tutup</button></div>
           <div className="ops-form-grid"><label>Vendor<select value={editVendor} onChange={(e) => setEditVendor(e.target.value)}>{vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}</select></label></div>
           <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Harga PO</th><th>Aksi</th></tr></thead><tbody>
@@ -1503,7 +1508,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                 const status = String(po.status || "").toUpperCase();
                 const isLatestRevision = Number(po.revision_no || 1) === Number(latestPoRevision.get(po.po_code) || 1);
                 const isHistory = ["CANCELLED", "SUPERSEDED"].includes(status);
-                return <tr key={po.id} className={poRowClass(status, isHistory)}>
+                return <tr key={po.id} data-po-id={po.id} data-po-status={status} className={poRowClass(status, isHistory)}>
                   <td><strong>{coverageLabel(po)}</strong>{coverageDatesFor(po).length > 1 && <div className="ops-muted">1 PO · {coverageDatesFor(po).length} hari</div>}</td>
                   <td><strong>{po.scheduled_order_date || "Lead time belum diatur"}</strong><div className="ops-muted">Masak: {po.cooking_date || "-"}</div></td>
                   <td><strong>{po.po_code}</strong><div className="ops-muted">{po.sent_at ? `Terkirim: ${compactTimestamp(po.sent_at)}` : "Belum ada bukti kirim"}</div></td>

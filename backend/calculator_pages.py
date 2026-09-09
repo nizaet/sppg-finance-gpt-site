@@ -75,6 +75,7 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
 
     calculator_favicon = "/favicon-calc-cemplang.svg?v=27" if unit == "cemplang" else "/favicon-calc-maja.svg?v=27"
     calculator_title = "Kalkulator Cemplang | SPPG" if unit == "cemplang" else "Kalkulator Maja | SPPG"
+    calculator_dark_styles = (LEGACY_DIR / "theme-dark.css").read_text(encoding="utf-8")
     boot = f"""
     <link rel="icon" type="image/svg+xml" href="{calculator_favicon}" />
     <link rel="shortcut icon" type="image/svg+xml" href="{calculator_favicon}" />
@@ -202,25 +203,7 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       .railway-app-control {{ min-height: 2.4rem; border: 1px solid rgba(255,255,255,.45); border-radius: .5rem; padding: .5rem .75rem; color: white; background: rgba(255,255,255,.12); display: inline-flex; align-items: center; justify-content: center; gap: .45rem; font-family: inherit; font-size: .875rem; line-height: 1.25rem; font-weight: 600; white-space: nowrap; cursor: pointer; }}
       .railway-app-control:hover {{ background: rgba(255,255,255,.22); }}
       .railway-app-control.railway-logout {{ border-color: #fca5a5; background: #dc2626; }}
-      html[data-app-theme="dark"] body {{ background: #08111f !important; color: #e5edf7 !important; }}
-      html[data-app-theme="dark"] .bg-white,
-      html[data-app-theme="dark"] .bg-gray-50,
-      html[data-app-theme="dark"] .bg-gray-100 {{ background-color: #0f1b2d !important; }}
-      html[data-app-theme="dark"] .desktop-wide-tabs {{ background: #08111f !important; }}
-      html[data-app-theme="dark"] .text-gray-900,
-      html[data-app-theme="dark"] .text-gray-800,
-      html[data-app-theme="dark"] .text-gray-700,
-      html[data-app-theme="dark"] .text-gray-600 {{ color: #dbe7f5 !important; }}
-      html[data-app-theme="dark"] .text-gray-500 {{ color: #9fb0c7 !important; }}
-      html[data-app-theme="dark"] .border-gray-100,
-      html[data-app-theme="dark"] .border-gray-200,
-      html[data-app-theme="dark"] .border-gray-300 {{ border-color: #334155 !important; }}
-      html[data-app-theme="dark"] input,
-      html[data-app-theme="dark"] select,
-      html[data-app-theme="dark"] textarea {{ background: #0b1627 !important; color: #e5edf7 !important; border-color: #475569 !important; }}
-      html[data-app-theme="dark"] table thead,
-      html[data-app-theme="dark"] table th {{ background: #13233a !important; color: #e5edf7 !important; }}
-      html[data-app-theme="dark"] table td {{ border-color: #26364d !important; }}
+      {calculator_dark_styles}
       @media (max-width: 639px) {{
         #railwayAppControls {{ width: 100%; margin: .65rem 0 0; justify-content: stretch; }}
         .railway-app-control {{ flex: 1 1 auto; min-height: 2.65rem; font-size: .8rem; }}

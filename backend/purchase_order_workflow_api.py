@@ -291,6 +291,9 @@ def revise_purchase_order(purchase_order_id: int) -> dict[str, Any]:
     require_db()
     with connection() as conn:
         with conn.cursor() as cur:
+            # Serialize concurrent revision requests for the same source PO.
+            # The second caller then sees and reuses the first caller's DRAFT.
+            cur.execute("select id from purchase_orders where id=%s for update", (purchase_order_id,))
             po = _load_po(cur, purchase_order_id)
             status = str(po.get("status") or "").upper()
             if status == "DRAFT":

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, RefreshCw, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
@@ -24,7 +24,7 @@ function compactTimestamp(value) {
 
 function coverageDatesFor(po) {
   const dates = Array.isArray(po?.coverage_dates) ? po.coverage_dates.filter(Boolean) : [];
-  if (dates.length) return dates.map(String).sort();
+  if (dates.length) return [...new Set(dates.map(String))].sort();
   return po?.distribution_date ? [String(po.distribution_date)] : [];
 }
 
@@ -111,6 +111,7 @@ export default function PoOpsEnhancements({
   setPurchaseOrders,
   setPoListLoaded,
   setDeliveryAlerts,
+  onEditPo,
 }) {
   const [progress, setProgress] = useState({ active: false, percent: 0, label: "Siap" });
   const [localError, setLocalError] = useState("");
@@ -130,6 +131,18 @@ export default function PoOpsEnhancements({
   }, [mode, activeSite, reminderRead.data, setReminders, setRemindersPulled]);
   const [calendarPo, setCalendarPo] = useState(null);
   const [calendarAction, setCalendarAction] = useState("");
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const detailVersion = useRef(0);
+  const selectedPoId = useRef(null);
+  const actionLock = useRef(false);
+  const closeCalendarPo = () => {
+    ++detailVersion.current;
+    selectedPoId.current = null;
+    setCalendarPo(null);
+    setCalendarLoading(false);
+  };
+  useEffect(() => { closeCalendarPo(); }, [activeSite, calendarMonth]);
+  useEffect(() => () => { ++detailVersion.current; selectedPoId.current = null; }, []);
 
   const refreshActualPo = async () => {
     const fromDate = shiftDate(today(), -31);
@@ -243,21 +256,49 @@ export default function PoOpsEnhancements({
       if (!mapped.has(key)) mapped.set(key, []);
       mapped.get(key).push(po);
     }));
+    mapped.forEach((rows, date) => {
+      const groups = new Map();
+      rows.forEach(po => {
+        const key = `${po.site || activeSite}:${po.po_code || po.id}`;
+        if (!groups.has(key)) groups.set(key, new Map());
+        groups.get(key).set(po.id, po);
+      });
+      mapped.set(date, Array.from(groups.values(), versions => Array.from(versions.values())
+        .sort((a, b) => Number(b.revision_no || 1) - Number(a.revision_no || 1))));
+    });
     return mapped;
-  }, [calendarPos]);
+  }, [calendarPos, activeSite]);
 
   const openCalendarPo = async (po) => {
+    const version = ++detailVersion.current;
+    selectedPoId.current = po.id;
+    setCalendarPo(null);
+    setCalendarLoading(true);
+    setLocalError("");
     try {
       const detail = await operationsApi.getPurchaseOrder(po.id);
-      setCalendarPo({ ...po, ...detail });
-    } catch (err) { setLocalError(err.message || "Gagal membuka PO dari kalender"); }
+      if (version === detailVersion.current) setCalendarPo({ ...po, ...detail });
+    } catch (err) {
+      if (version === detailVersion.current) setLocalError(err.message || "Gagal membuka PO dari kalender");
+    } finally {
+      if (version === detailVersion.current) setCalendarLoading(false);
+    }
   };
 
-  const refreshCurrentCalendarPo = async (poId = calendarPo?.id) => {
+  const refreshCurrentCalendarPo = async (poId = selectedPoId.current) => {
+    const version = detailVersion.current;
+    // A save started on another PO must never reopen that old popup.
+    if (poId && selectedPoId.current === poId) {
+      const detail = await operationsApi.getPurchaseOrder(poId);
+      if (version === detailVersion.current && selectedPoId.current === poId) setCalendarPo(detail);
+    }
     await refreshCalendar();
-    if (!poId) return;
-    try { setCalendarPo(await operationsApi.getPurchaseOrder(poId)); }
-    catch { setCalendarPo(null); }
+  };
+
+  const handleCalendarReceivingChanged = async (result, refreshed) => {
+    const poId = result?.purchaseOrderId ?? refreshed?.purchaseOrderId;
+    if (poId) await refreshCurrentCalendarPo(poId);
+    else await refreshCalendar();
   };
 
   const copyCalendarPo = async () => {
@@ -298,22 +339,24 @@ export default function PoOpsEnhancements({
   };
 
   const reviseCalendarPo = async () => {
-    if (!calendarPo || !window.confirm(`Buat revisi baru dari ${calendarPo.po_code}?`)) return;
+    if (!calendarPo || actionLock.current) return;
+    if (!onEditPo) { setLocalError("Form edit PO belum tersedia. Buka ulang halaman PO Vendor."); return; }
+    actionLock.current = true;
     setCalendarAction("revise"); setLocalError("");
+    const po = calendarPo;
+    closeCalendarPo();
     try {
-      const result = await operationsApi.revisePurchaseOrder(calendarPo.id);
+      // The existing editor reuses a DRAFT or creates one revision of a final PO.
+      await onEditPo(po);
       await refreshCalendar();
-      const nextId = result?.id || result?.purchase_order_id || result?.purchaseOrderId;
-      if (nextId) setCalendarPo(await operationsApi.getPurchaseOrder(nextId));
-      else await refreshCurrentCalendarPo(calendarPo.id);
-    } catch (err) { setLocalError(err.message || "Gagal membuat revisi PO"); }
-    finally { setCalendarAction(""); }
+    } catch (err) { setLocalError(err.message || "Gagal membuka revisi PO"); }
+    finally { actionLock.current = false; setCalendarAction(""); }
   };
 
   const cancelCalendarPo = async () => {
     if (!calendarPo || !window.confirm(`Batalkan ${calendarPo.po_code}?`)) return;
     setCalendarAction("cancel"); setLocalError("");
-    try { await operationsApi.cancelPurchaseOrder(calendarPo.id); setCalendarPo(null); await refreshCalendar(); }
+    try { await operationsApi.cancelPurchaseOrder(calendarPo.id); closeCalendarPo(); await refreshCalendar(); }
     catch (err) { setLocalError(err.message || "Gagal membatalkan PO"); }
     finally { setCalendarAction(""); }
   };
@@ -357,6 +400,7 @@ export default function PoOpsEnhancements({
       </div>
 
       {freshness}
+      {calendarLoading && <p role="status" className="ops-muted">Membuka detail PO…</p>}
       {progressUi}
       {localError && <div className="ops-error">{localError}</div>}
 
@@ -377,12 +421,19 @@ export default function PoOpsEnhancements({
                 <strong>{cell.day}</strong>
                 {!cell.inMonth && <span className="ops-muted" style={{ fontSize: 10 }}>{monthLabel}</span>}
               </div>
-              {dayPos.map((po) => (
-                <button key={`${po.id}-${dateValue}`} type="button" onClick={() => openCalendarPo(po)} style={{ display: "block", width: "100%", marginTop: 5, textAlign: "left", whiteSpace: "normal" }}>
-                  <strong>{po.vendor_code}</strong>
-                  <div className="ops-muted">{po.po_code}</div>
-                  <div className="ops-muted">PO dibuat {compactTimestamp(po.created_at).slice(0, 10)}</div>
-                </button>
+              {dayPos.map(([po, ...previous]) => (
+                <div key={`${po.id}-${dateValue}`} className="ops-calendar-po-family">
+                  <button type="button" data-po-id={po.id} data-po-status={po.status} onClick={() => openCalendarPo(po)} style={{ display: "block", width: "100%", marginTop: 5, textAlign: "left", whiteSpace: "normal" }}>
+                    <strong>{po.vendor_code}</strong>
+                    <div className="ops-muted">{po.po_code}</div>
+                    <div>Rev {po.revision_no || 1} · {po.status === "DRAFT" && previous.length ? "Draf revisi" : po.status}</div>
+                    <div className="ops-muted">PO dibuat {compactTimestamp(po.created_at).slice(0, 10)}</div>
+                  </button>
+                  {previous.length > 0 && <details>
+                    <summary>Versi sebelumnya ({previous.length})</summary>
+                    {previous.map(version => <button key={version.id} type="button" data-po-id={version.id} data-po-status={version.status} onClick={() => openCalendarPo(version)}>Rev {version.revision_no || 1} · {version.status}</button>)}
+                  </details>}
+                </div>
               ))}
             </div>
           );
@@ -392,11 +443,11 @@ export default function PoOpsEnhancements({
       </div>
 
       {calendarPo && (
-        <div data-po-calendar-popup="v25" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }} onClick={() => setCalendarPo(null)}>
+        <div data-po-calendar-popup="v25" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }} onClick={closeCalendarPo}>
           <div className="ops-module" style={{ width: "min(900px,96vw)", maxHeight: "88vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div className="ops-draft-group-head">
               <div><strong>{calendarPo.po_code} · Rev {calendarPo.revision_no}</strong><span>{calendarPo.vendor_code} · {calendarPo.status}</span></div>
-              <button type="button" onClick={() => setCalendarPo(null)}><XCircle size={14} /> Tutup</button>
+              <button type="button" onClick={closeCalendarPo}><XCircle size={14} /> Tutup</button>
             </div>
             <div className="ops-summary-strip">
               <span>PO dibuat <strong>{compactTimestamp(calendarPo.created_at) || "-"}</strong></span>
@@ -408,7 +459,7 @@ export default function PoOpsEnhancements({
             <div className="ops-row-actions" style={{ marginTop: 10, flexWrap: "wrap" }}>
               <button type="button" onClick={copyCalendarPo} disabled={Boolean(calendarAction)}>Copy PO</button>
               {WHATSAPP_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={openCalendarWhatsApp} disabled={Boolean(calendarAction)}>WhatsApp Vendor</button>}
-              {REVISABLE_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={reviseCalendarPo} disabled={Boolean(calendarAction)}>Buat Revisi</button>}
+              {(calendarStatus === "DRAFT" || REVISABLE_PO_STATUSES.has(calendarStatus)) && <button type="button" onClick={reviseCalendarPo} disabled={Boolean(calendarAction)}>{calendarStatus === "DRAFT" ? "Edit Draft" : "Revisi PO"}</button>}
               {calendarStatus === "FINALIZED" && <button type="button" onClick={markCalendarSent} disabled={Boolean(calendarAction)}>Tandai Terkirim</button>}
               {CANCELLABLE_PO_STATUSES.has(calendarStatus) && <button type="button" onClick={cancelCalendarPo} disabled={Boolean(calendarAction)}>Batalkan</button>}
             </div>

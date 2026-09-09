@@ -38,7 +38,7 @@ function visualForStatus(status) {
     return {
       background: "rgba(34,197,94,.16)",
       border: "#22c55e",
-      text: "#15803d",
+      text: document.documentElement.dataset.appTheme === "dark" ? "#b8dec9" : "#15803d",
       label: "✓ Barang diterima",
     };
   }
@@ -46,7 +46,7 @@ function visualForStatus(status) {
     return {
       background: "rgba(245,158,11,.14)",
       border: "#f59e0b",
-      text: "#b45309",
+      text: document.documentElement.dataset.appTheme === "dark" ? "#e7ccab" : "#b45309",
       label: "◐ Diterima sebagian",
     };
   }
@@ -61,13 +61,33 @@ function statusForText(text) {
   return "";
 }
 
+function statusForElement(element) {
+  // Different revisions share a PO code. Prefer this exact rendered record.
+  if (element.dataset.poStatus !== undefined) return element.dataset.poStatus;
+  const id = Number(element.dataset.poId || 0);
+  return id ? (poStateById.get(id) || "") : statusForText(element.textContent);
+}
+
+function renderRuntimeBadge(parent, type, tag, label, css) {
+  let badge = parent.querySelector(`[data-runtime-receiving-badge="${type}"]`);
+  if (!badge) {
+    badge = document.createElement(tag);
+    badge.dataset.runtimeReceivingBadge = type;
+    parent.appendChild(badge);
+  }
+  // Idempotent DOM updates: removing/re-appending triggered our MutationObserver
+  // again on every animation frame, even while the operator was idle.
+  if (badge.textContent !== label) badge.textContent = label;
+  if (badge.style.cssText !== css) badge.style.cssText = css;
+}
+
 function clearRuntimeBadge(parent) {
   parent?.querySelectorAll?.("[data-runtime-receiving-badge]").forEach((node) => node.remove());
 }
 
 function decoratePurchaseOrderList() {
   document.querySelectorAll("table.ops-table tbody tr").forEach((row) => {
-    const status = statusForText(row.textContent);
+    const status = statusForElement(row);
     if (!status) return;
     const visual = visualForStatus(status);
     row.dataset.runtimeReceivingState = status;
@@ -79,35 +99,28 @@ function decoratePurchaseOrderList() {
     row.style.background = visual.background;
     const stack = row.querySelector(".ops-status-stack");
     if (stack) {
-      clearRuntimeBadge(stack);
-      const badge = document.createElement("span");
-      badge.dataset.runtimeReceivingBadge = "list";
-      badge.textContent = visual.label;
-      badge.style.cssText = `display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;background:${visual.border};color:#fff;margin-top:3px;`;
-      stack.appendChild(badge);
+      renderRuntimeBadge(stack, "list", "span", visual.label,
+        `display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;background:${visual.border};color:#fff;margin-top:3px;`);
     }
   });
 }
 
 function decorateCalendar() {
   document.querySelectorAll("[data-po-actual-calendar] button").forEach((button) => {
-    const status = statusForText(button.textContent);
+    const status = statusForElement(button);
     if (!status) return;
     const visual = visualForStatus(status);
     button.dataset.runtimeReceivingState = status;
-    clearRuntimeBadge(button);
     if (!visual) {
+      clearRuntimeBadge(button);
       button.style.removeProperty("background");
       button.style.removeProperty("border-color");
       return;
     }
     button.style.background = visual.background;
     button.style.borderColor = visual.border;
-    const marker = document.createElement("div");
-    marker.dataset.runtimeReceivingBadge = "calendar";
-    marker.textContent = visual.label;
-    marker.style.cssText = `margin-top:3px;font-size:11px;font-weight:800;color:${visual.text};`;
-    button.appendChild(marker);
+    renderRuntimeBadge(button, "calendar", "div", visual.label,
+      `margin-top:3px;font-size:11px;font-weight:800;color:${visual.text};`);
   });
 }
 

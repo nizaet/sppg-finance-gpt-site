@@ -96,3 +96,44 @@ def test_purchase_order_coverage_migration_preserves_daily_breakdown():
     assert "create table if not exists purchase_order_coverage" in sql
     assert "unique(purchase_order_id, distribution_date)" in sql
     assert "create table if not exists purchase_order_coverage_items" in sql
+
+
+def test_revision_locks_source_and_reuses_existing_draft(monkeypatch):
+    from contextlib import contextmanager
+    from backend import purchase_order_workflow_api as module
+
+    statements = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params):
+            statements.append((sql, params))
+
+        def fetchone(self):
+            return {"id": 102, "po_code": "PO-101", "revision_no": 2}
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def connection():
+        yield Connection()
+
+    def load_po(cur, po_id):
+        assert statements[-1] == ("select id from purchase_orders where id=%s for update", (101,))
+        return {"id": po_id, "po_code": "PO-101", "revision_no": 1, "status": "SENT"}
+
+    monkeypatch.setattr(module, "require_db", lambda: None)
+    monkeypatch.setattr(module, "connection", connection)
+    monkeypatch.setattr(module, "_load_po", load_po)
+    monkeypatch.setattr(module, "_has_receiving", lambda *args: False)
+    result = module.revise_purchase_order(101)
+    assert result["purchaseOrderId"] == 102
+    assert result["changed"] is False
+    assert not any("insert into" in sql.lower() for sql, _ in statements)

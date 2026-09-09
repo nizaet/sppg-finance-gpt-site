@@ -101,3 +101,7 @@ html[data-app-theme="dark"] .ops-workspace .ops-status-info { background: #2d3c5
   .ops-workspace .ops-switcher-note { display: none; }
   html[data-app-theme] .ops-workspace .ops-sidebar nav a { min-height: 44px; }
 }
+
+.ops-calendar-po-family { margin-top: 5px; }
+.ops-calendar-po-family summary { font-size: 11px; padding: 5px 2px; cursor: pointer; color: var(--ops-muted); }
+.ops-calendar-po-family details button { width: 100%; margin: 3px 0; }
