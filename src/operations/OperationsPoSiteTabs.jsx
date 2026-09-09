@@ -1,10 +1,13 @@
-import React, { memo, useEffect, useState } from "react";
+import React, { memo, useContext, useEffect, useState } from "react";
 import PoPlanner from "./OperationsPoPlanner.jsx";
+
+import { OperationsActiveContext } from "./useAutoRead.js";
 
 const SITES = ["MAJA", "CEMPLANG"];
 const OperationsPoPlanner = memo(PoPlanner);
 
 export default function OperationsPoSiteTabs({ routeSite = '', onSiteChange }) {
+  const workspaceActive = useContext(OperationsActiveContext);
   const [site, setSite] = useState(routeSite || "MAJA");
   const activeSite = routeSite || site;
   const [visitedSites, setVisitedSites] = useState(() => new Set([activeSite]));
@@ -43,7 +46,9 @@ export default function OperationsPoSiteTabs({ routeSite = '', onSiteChange }) {
           data-po-site-panel={site}
           hidden={activeSite !== site}
         >
+          <OperationsActiveContext.Provider value={workspaceActive && activeSite === site}>
           <OperationsPoPlanner fixedSite={site} />
+          </OperationsActiveContext.Provider>
         </div>
       ) : null)}
     </div>

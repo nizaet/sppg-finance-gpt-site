@@ -104,7 +104,7 @@ function CemplangAccountantRoute() {
   return <CemplangAccountantApp accessRole="OWNER" />;
 }
 
-function RoutedApp({ role, config }) {
+function RoutedApp({ role, config, onLogout }) {
   const normalizedRole = String(role || "OWNER").toUpperCase();
 
   // MAJA/CEMPLANG are calculator-only. This routing rule applies regardless of
@@ -120,7 +120,7 @@ function RoutedApp({ role, config }) {
   return (
     <Suspense fallback={<BootFallback />}>
       {isOperationsRoute
-        ? <OperationsApp accessRole="OWNER" />
+        ? <OperationsApp accessRole="OWNER" config={config} onLogout={onLogout} />
         : isCemplangAccountantRoute
           ? <CemplangAccountantRoute />
           : <MajaAccountantRoute />}
@@ -131,7 +131,7 @@ function RoutedApp({ role, config }) {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <AuthGate>
-      {({ role, config }) => <RoutedApp role={role} config={config} />}
+      {({ role, config, onLogout }) => <RoutedApp role={role} config={config} onLogout={onLogout} />}
     </AuthGate>
   </React.StrictMode>
 );

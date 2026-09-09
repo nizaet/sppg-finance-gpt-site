@@ -30,3 +30,10 @@
 - Confirmed Tempe Maja vendor Koperasi with H-4 lead time, separated from Tahu. Tahu Maja preserves the prior H-2 rule after the legacy combined rule is retired.
 - Confirmed Tempe Cemplang vendor Koperasi. Its dedicated lead time remains intentionally unset until configured; it must not borrow Tahu or generic Koperasi lead time.
 - Added regression tests covering wrong-date SENT POs, insufficient quantities, finalized/draft states, Tempe site rules, and zero projected stock.
+
+
+## 2026-09-08 — Operations navigation and automatic PO reads
+- Moved owner account navigation into the Operations sidebar, including Maja/Cemplang accountant links and logout, to prevent overlap with kitchen selectors. Scoped neutral dark surfaces, consistent controls, and responsive navigation to Operations.
+- Calendar reads now follow the selected month, including adjacent weeks. Reminders load automatically for the visible kitchen. Both use bounded session-memory caching (60 seconds, up to 32 keys), deduplicate in-flight reads, retain prior data on error, and reject late responses for another period/site.
+- Successful operational writes invalidate the display cache. Hidden panels stop automatic polling. Explicit Calculator reconciliation remains an operator action; automatic display reads do not finalize or rewrite transactional records.
+- Updated the former manual-only enhancement build assertion to match the requested automatic-read behavior. Added production-transformed React regressions for month/site races, cache refresh and failures, alongside existing navigation and draft-retention checks.

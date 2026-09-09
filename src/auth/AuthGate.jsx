@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Calculator, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, WalletCards, Workflow } from "lucide-react";
 import { authApi, clearSession, readSessionRole, readSessionToken, storeSession } from "./session.js";
 import "./auth.css";
+import { invalidateReads } from "../operations/readCache.js";
 
 const ALL_ROLES = ["OWNER", "MAJA", "CEMPLANG"];
 const ROLE_LABELS = { OWNER: "YAYASAN", MAJA: "MAJA", CEMPLANG: "CEMPLANG" };
@@ -163,12 +164,13 @@ export default function AuthGate({ children }) {
     await authApi.logout();
     clearSession();
     setRole("");
+    invalidateReads();
   };
 
   return (
     <>
-      <SessionBar role={role} config={config} onLogout={logout} />
-      {children({ role, authEnabled: true, config })}
+      {!/^\/operations(?:\/|$)/.test(window.location.pathname) && <SessionBar role={role} config={config} onLogout={logout} />}
+      {children({ role, authEnabled: true, config, onLogout: logout })}
     </>
   );
 }

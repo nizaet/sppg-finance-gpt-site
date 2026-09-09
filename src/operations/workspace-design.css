@@ -1,0 +1,103 @@
+/* Shared operations surfaces; deliberately scoped away from accountant apps. */
+html[data-app-theme] .ops-workspace {
+  --ops-canvas: #f3f5f7;
+  --ops-surface: #ffffff;
+  --ops-card: #ffffff;
+  --ops-input: #f6f8fa;
+  --ops-border: #d8dfe7;
+  --ops-text: #243143;
+  --ops-muted: #59687a;
+  --ops-accent: #315d91;
+  --ops-selected: #e8eff8;
+  --ops-button: #edf1f5;
+  background: var(--ops-canvas);
+  color: var(--ops-text);
+  grid-template-columns: 248px minmax(0, 1fr);
+  font-size: 14px;
+  line-height: 1.55;
+}
+html[data-app-theme="dark"] .ops-workspace {
+  --ops-canvas: #191d23;
+  --ops-surface: #22272f;
+  --ops-card: #22272f;
+  --ops-input: #1c2128;
+  --ops-border: #3b424d;
+  --ops-text: #e2e6eb;
+  --ops-muted: #b3bdca;
+  --ops-accent: #a3c4eb;
+  --ops-selected: #2e4058;
+  --ops-button: #303741;
+}
+html[data-app-theme] .ops-workspace :is(.ops-sidebar, .ops-module, .ops-site, .ops-draft-group, .ops-site-switcher) {
+  background: var(--ops-surface);
+  color: var(--ops-text);
+  border-color: var(--ops-border);
+  box-shadow: none;
+}
+html[data-app-theme] .ops-workspace .ops-sidebar { padding: 14px 12px; z-index: 80; }
+.ops-workspace .ops-brand > div { display: grid; gap: 3px; }
+.ops-workspace .ops-brand { padding: 6px 10px 18px; }
+.ops-workspace .ops-brand strong { font-size: 17px; line-height: 1.3; }
+.ops-workspace .ops-brand small { font-size: 10px; opacity: 1; color: var(--ops-muted); }
+.ops-workspace .ops-brand > div > span { color: var(--ops-accent); opacity: 1; font-weight: 700; }
+.ops-workspace .ops-mobile-menu { display: none; }
+.ops-workspace .ops-sidebar nav { flex: 1; gap: 3px; scrollbar-width: thin; scrollbar-color: var(--ops-border) transparent; }
+.ops-workspace .ops-nav-label { padding: 13px 11px 6px; color: var(--ops-muted); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+html[data-app-theme] .ops-workspace .ops-sidebar nav a { min-height: 42px; padding: 9px 11px; font-size: 13px; line-height: 1.4; color: var(--ops-text); }
+.ops-workspace .ops-sidebar nav a svg { flex-shrink: 0; }
+html[data-app-theme] .ops-workspace .ops-sidebar nav a:is(:hover, .active) { background: var(--ops-selected); color: var(--ops-accent); }
+html[data-app-theme] .ops-workspace .ops-sidebar nav a.active { box-shadow: inset 3px 0 var(--ops-accent); font-weight: 650; }
+html[data-app-theme] .ops-workspace :is(.ops-theme-toggle, .ops-logout) { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; margin-top: 8px; padding: 10px; flex-shrink: 0; font-size: 12px; }
+html[data-app-theme] .ops-workspace .ops-content { padding: 24px clamp(16px, 2.2vw, 36px) 40px; }
+html[data-app-theme] .ops-workspace .ops-module { padding: 22px; border-radius: 14px; }
+.ops-workspace .ops-module-header { gap: 16px; }
+.ops-workspace :is(h2, h3, h4) { letter-spacing: -.025em; line-height: 1.3; }
+.ops-workspace .ops-module h3 { font-size: clamp(19px, 1.7vw, 24px); }
+html[data-app-theme] .ops-workspace :is(.ops-kicker, .ops-muted, .ops-empty, .ops-data-freshness, .ops-switcher-note, .ops-auto-status) { color: var(--ops-muted); opacity: 1; }
+html[data-app-theme] .ops-workspace :is(.ops-module-header p, .ops-draft-group-head span, .ops-metric span, .ops-site-title span, .ops-list-item div span, .ops-lane header span) { color: var(--ops-muted); }
+html[data-app-theme] .ops-workspace :is(input, select, textarea) { background: var(--ops-input); color: var(--ops-text); border: 1px solid var(--ops-border); border-radius: 9px; font: inherit; min-height: 42px; box-sizing: border-box; }
+html[data-app-theme] .ops-workspace :is(input, textarea)::placeholder { color: var(--ops-muted); opacity: .85; }
+html[data-app-theme] .ops-workspace :is(input[type="checkbox"], input[type="radio"]) { min-height: 18px; accent-color: var(--ops-accent); }
+html[data-app-theme] .ops-workspace button { background: var(--ops-button); color: var(--ops-text); border: 1px solid var(--ops-border); border-radius: 9px; min-height: 40px; padding: 8px 12px; font: inherit; font-size: 13px; line-height: 1.4; cursor: pointer; }
+html[data-app-theme] .ops-workspace button:not(:disabled):hover { border-color: var(--ops-accent); }
+html[data-app-theme] .ops-workspace button:disabled { opacity: .5; cursor: not-allowed; }
+html[data-app-theme] .ops-workspace :is(button.ops-button-primary, .ops-po-site-tabs button.active) { background: var(--ops-selected); color: var(--ops-accent); border-color: var(--ops-accent); font-weight: 650; }
+html[data-app-theme] .ops-workspace :is(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--ops-accent); outline-offset: 3px; }
+html[data-app-theme] .ops-workspace :is(.ops-metric, .ops-lane header, .ops-summary-strip span, .ops-table th, .ops-stock-history) { background: var(--ops-input); color: var(--ops-text); border-color: var(--ops-border); }
+html[data-app-theme] .ops-workspace :is(.ops-lane, .ops-list-item, .ops-table-wrap, .ops-table td) { border-color: var(--ops-border); }
+html[data-app-theme] .ops-workspace .ops-site-switcher { top: 12px; padding: 12px 16px; border-radius: 12px; box-shadow: 0 3px 12px #00000012; }
+html[data-app-theme] .ops-workspace .ops-po-site-tabs { display: flex; gap: 6px; padding: 4px; background: var(--ops-input); border: 1px solid var(--ops-border); border-radius: 11px; }
+html[data-app-theme] .ops-workspace .ops-po-site-tabs button { min-width: 92px; box-shadow: none; }
+.ops-workspace .ops-auto-status { font-size: 12px; margin: 10px 0; }
+.ops-workspace .ops-auto-status .ops-error { display: block; margin-top: 8px; }
+.ops-workspace .ops-calendar-scroll { overflow-x: auto; max-width: 100%; padding-bottom: 8px; }
+.ops-workspace .ops-calendar-grid { min-width: 680px; }
+.ops-workspace .ops-calendar-grid button { overflow-wrap: anywhere; }
+html[data-app-theme="dark"] .ops-workspace .ops-notice { background: #2b3440; color: #c7d9ee; border-color: #475b73; }
+html[data-app-theme="dark"] .ops-workspace .ops-error { background: #3b2d27; color: #ffd0a8; border-color: #765239; }
+html[data-app-theme="dark"] .ops-workspace .ops-success { background: #263b33; color: #b5e2cc; border-color: #476958; }
+html[data-app-theme="dark"] .ops-workspace .ops-status-success { background: #2a4035; color: #c1e7cd; }
+html[data-app-theme="dark"] .ops-workspace .ops-status-warning { background: #45382c; color: #f2d09e; }
+html[data-app-theme="dark"] .ops-workspace .ops-status-info { background: #2d3c53; color: #c2d7f1; }
+@media (max-width: 1100px) {
+  html[data-app-theme] .ops-workspace { display: block; }
+  html[data-app-theme] .ops-workspace .ops-sidebar { padding: 10px 14px; z-index: 800; height: auto; }
+  .ops-workspace .ops-brand { padding: 0; }
+  html[data-app-theme] .ops-workspace .ops-mobile-menu { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; }
+  .ops-workspace .ops-mobile-menu span { font-size: 12px; letter-spacing: 0; opacity: 1; }
+  html[data-app-theme] .ops-workspace .ops-sidebar:not(.mobile-open) :is(nav, .ops-theme-toggle, .ops-logout) { display: none; }
+  .ops-workspace .ops-nav-label { grid-column: 1 / -1; }
+  .ops-workspace .ops-sidebar.mobile-open nav { max-height: calc(100dvh - 210px); overscroll-behavior: contain; }
+  html[data-app-theme] .ops-workspace .ops-content { padding: 14px 14px calc(24px + env(safe-area-inset-bottom)); }
+  html[data-app-theme] .ops-workspace .ops-site-switcher { top: calc(var(--ops-header-height, 64px) + 6px); }
+}
+@media (max-width: 600px) {
+  html[data-app-theme] .ops-workspace .ops-module { padding: 16px; border-radius: 12px; }
+  html[data-app-theme] .ops-workspace .ops-content { padding-left: 10px; padding-right: 10px; }
+  html[data-app-theme] .ops-workspace button { min-height: 44px; }
+  html[data-app-theme] .ops-workspace :is(input, select, textarea) { font-size: 16px; min-height: 44px; }
+  html[data-app-theme] .ops-workspace .ops-po-site-tabs { width: 100%; box-sizing: border-box; }
+  html[data-app-theme] .ops-workspace .ops-po-site-tabs button { min-width: 0; flex: 1; padding: 8px; }
+  .ops-workspace .ops-switcher-note { display: none; }
+  html[data-app-theme] .ops-workspace .ops-sidebar nav a { min-height: 44px; }
+}

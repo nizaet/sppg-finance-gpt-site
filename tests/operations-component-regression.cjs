@@ -71,6 +71,8 @@ export { default as Workspace } from '${root}/src/operations/OperationsWorkspace
  api.calls=[];api.pending=[];
  await act(async()=>{view=Renderer.create(h(Workspace));});
  assert.equal(api.calls.filter(x=>x.name==='getControlTower').length,0);
+ assert.ok(view.root.findAllByType('a').some(x=>x.props.href==='/accountant/maja'));
+ assert.ok(view.root.findAllByType('a').some(x=>x.props.href==='/accountant/cemplang'));
  await act(async()=>api.pending[0].resolve({items:[]}));
  const nav=(name)=>view.root.findAllByType('a').find(x=>Array.isArray(x.props.children)&&x.props.children.includes(name));
  const click={button:0,preventDefault(){}};

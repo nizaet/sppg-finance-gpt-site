@@ -566,9 +566,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setMessage(`Hasil tarikan ${vendor} dibersihkan dari layar. PO vendor yang sudah tersimpan tetap aman.`);
   };
 
-  // Membuka tab atau mengganti site tidak boleh memanggil API. Operator memilih
-  // sendiri apakah ingin menarik planning/stok, pengingat, kontak, list, atau
-  // kalender PO melalui tombol manual masing-masing.
+  // Planning/stok tetap ditarik lewat tindakan operator. Panel pengingat dan
+  // kalender membaca data otomatis pada dapur yang sedang aktif.
   useEffect(() => {
     setPurchaseOrders([]);
     setPoListLoaded(false);
@@ -1223,7 +1222,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>
 
         <div className="ops-notice" data-po-manual-load="v31">
-          Tab PO Vendor tidak menarik data otomatis. Pilih sendiri tombol untuk menarik planning + stok, kontak vendor, pengingat, list PO, atau kalender PO.
+          Kalender dan pengingat dimuat otomatis saat dapur ini aktif. Gunakan Tarik Data Kalkulator + Stok untuk menyusun PO, atau Tarik / Sinkron Pengingat setelah merevisi planning di kalkulator.
         </div>
 
         <div className="ops-draft-group">

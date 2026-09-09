@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Calculator,
+  LogOut,
   CalendarDays,
   FileSpreadsheet,
   FolderUp,
@@ -21,6 +22,8 @@ import {
 import { useAppTheme } from "../theme.js";
 import { readOperationsRoute, normalizeOperationsRoute, operationsUrl, operationsRouteKey, SITE_TABS } from "./navigation.js";
 import "./workspace.css";
+import "./workspace-design.css";
+import { OperationsActiveContext } from "./useAutoRead.js";
 
 const OperationsPoSiteTabs = lazy(() => import("./OperationsPoSiteTabs.jsx"));
 const OperationsControlTower = lazy(() => import("./OperationsControlTower.jsx"));
@@ -73,7 +76,7 @@ function ModuleFallback() {
   return <section className="ops-module"><div className="ops-empty">Membuka modul…</div></section>;
 }
 
-export default function OperationsWorkspace({ accessRole = "OWNER" }) {
+export default function OperationsWorkspace({ accessRole = "OWNER", config, onLogout }) {
   const role = String(accessRole || "OWNER").toUpperCase();
   const [route, setRoute] = useState(readOperationsRoute);
   const tab = route.tab;
@@ -166,9 +169,13 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
           </button>
         </div>
 
-        <nav id="ops-primary-navigation">
-          <a href="/dapur/maja"><Calculator size={17} /> Kalkulator Maja</a>
-          <a href="/dapur/cemplang"><Calculator size={17} /> Kalkulator Cemplang</a>
+        <nav id="ops-primary-navigation" aria-label="Navigasi utama">
+          <span className="ops-nav-label">Dapur & Akuntan</span>
+          <a href={config?.calculatorUrls?.MAJA || "/dapur/maja"}><Calculator size={17} /> Kalkulator Maja</a>
+          <a href={config?.calculatorUrls?.CEMPLANG || "/dapur/cemplang"}><Calculator size={17} /> Kalkulator Cemplang</a>
+          <a href={config?.accountantUrls?.MAJA || "/accountant/maja"}><WalletCards size={17} /> Akuntan Maja</a>
+          <a href={config?.accountantUrls?.CEMPLANG || "/accountant/cemplang"}><WalletCards size={17} /> Akuntan Cemplang</a>
+          <span className="ops-nav-label">Operasional</span>
           {tabs.map(([id, label, Icon]) => (
             <a
               href={operationsUrl(id, sitesByTab.current[id])}
@@ -192,20 +199,21 @@ export default function OperationsWorkspace({ accessRole = "OWNER" }) {
           {theme === "dark" ? "Gunakan Tema Terang" : "Gunakan Tema Gelap"}
         </button>
 
-        <div className="ops-sidebar-note">
-          <strong>Alur:</strong> Kalkulator → planning → kurangi stok gudang → PO editable → invoice vendor → pembayaran → Excel akuntan → maker/approval BGN.
-        </div>
+        {onLogout && <button className="ops-logout" type="button" onClick={onLogout}><LogOut size={17} /> Keluar</button>}
+
       </aside>
 
       <main className="ops-content">
           {Object.entries(moduleComponents).map(([id, Component]) => (
             visitedTabs.has(id) ? (
               <div key={id} hidden={tab !== id}>
+                <OperationsActiveContext.Provider value={tab === id}>
                 <Suspense fallback={<ModuleFallback />}>
                   <ModulePanel Component={Component}
                     routeSite={sitesByTab.current[id]}
                     onSiteChange={SITE_TABS[id] ? changeSite : undefined} />
                 </Suspense>
+                </OperationsActiveContext.Provider>
               </div>
             ) : null
           ))}

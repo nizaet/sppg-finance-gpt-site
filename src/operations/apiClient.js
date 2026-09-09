@@ -1,5 +1,7 @@
 import { readSessionToken } from "../auth/session.js";
 
+import { invalidateReads } from "./readCache.js";
+
 const DEFAULT_BASE_URL = import.meta.env.VITE_SPPG_CORE_API_URL || "https://sppg-finance-gpt-site-production-5b7d.up.railway.app";
 const inflightGets = new Map();
 const REQUEST_TIMEOUT_MS = 20000;
@@ -29,11 +31,15 @@ async function doRequest(path, options = {}) {
 
 function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
-  if (method !== "GET") return doRequest(path, options);
+  if (method !== "GET") return doRequest(path, options).then(result => {
+    inflightGets.clear();
+    invalidateReads();
+    return result;
+  });
   const key = `${DEFAULT_BASE_URL}${path}`;
   const existing = inflightGets.get(key);
   if (existing) return existing;
-  const pending = doRequest(path, options).finally(() => inflightGets.delete(key));
+  const pending = doRequest(path, options).finally(() => { if (inflightGets.get(key) === pending) inflightGets.delete(key); });
   inflightGets.set(key, pending);
   return pending;
 }

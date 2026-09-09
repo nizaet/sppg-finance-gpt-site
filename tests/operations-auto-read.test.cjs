@@ -1,0 +1,93 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = path.resolve(__dirname, '..');
+const deps = process.env.SPPG_UI_TEST_MODULES || path.join(root, 'node_modules');
+const React = require(deps + '/react');
+const { act, create } = require(deps + '/react-test-renderer');
+const esbuild = require(deps + '/esbuild');
+const temp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'sppg-auto-read-'));
+const output = path.join(temp, 'test.cjs');
+const configs = new Map();
+function loadConfig(file) {
+  if (configs.has(file)) return configs.get(file);
+  let code = fs.readFileSync(path.join(root, file), 'utf8');
+  const env = { console, process, defineConfig: x => x, react: () => ({ name: 'react' }) };
+  code = code.replace(/^import\s+(\w+)\s+from\s+["'](\.\/[^"']+)["'];?\s*$/gm, (_, name, dep) => { env[name] = loadConfig(dep.slice(2)); return ''; });
+  code = code.replace(/^import .*;\s*$/gm, '').replace(/export default /g, 'result = ');
+  vm.createContext(env); vm.runInContext(code, env, { filename: file });
+  configs.set(file, env.result); return env.result;
+}
+const plugins = loadConfig('vite.po-list-independent.config.js').plugins.flat().filter(Boolean);
+const ordered = [...plugins.filter(p => p.enforce === 'pre'), ...plugins.filter(p => p.enforce !== 'pre')];
+const calls = [], pending = [];
+global.__AUTO_API = new Proxy({}, { get: (_, name) => arg => {
+  calls.push({ name, arg });
+  if (name === 'getPurchaseOrders') return new Promise((resolve, reject) => pending.push({ arg, resolve, reject }));
+  return Promise.resolve({ items: [{ site: arg?.site, id: 'reminder-fixture' }] });
+} });
+const listeners = new Map();
+global.window = { addEventListener(name, fn) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); }, removeEventListener(name, fn) { listeners.get(name)?.delete(fn); } };
+global.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+(async () => {
+  await esbuild.build({ stdin: { contents: `export {default as Enhancements} from './src/operations/PoOpsEnhancements.jsx'; export {OperationsActiveContext} from './src/operations/useAutoRead.js'; export * from './src/operations/readCache.js';`, resolveDir: root }, bundle: true, platform: 'node', format: 'cjs', outfile: output, plugins: [{ name: 'production-and-fixtures', setup(build) {
+    build.onResolve({ filter: /^react$/ }, () => ({ path: require.resolve(deps + '/react'), external: true }));
+    build.onResolve({ filter: /^\.\/apiClient(?:\.js)?$/ }, () => ({ path: 'api', namespace: 'fixture' }));
+    build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const operationsApi=global.__AUTO_API;', loader: 'js' }));
+    build.onLoad({ filter: /src\/.*\.(jsx|js)$/ }, args => {
+      let code = fs.readFileSync(args.path, 'utf8');
+      for (const plugin of ordered) { const result = plugin.transform?.(code, args.path); if (result) code = typeof result === 'string' ? result : result.code; }
+      return { contents: code, loader: args.path.endsWith('.jsx') ? 'jsx' : 'js' };
+    });
+  } }] });
+  const { Enhancements, OperationsActiveContext: Context, cachedRead, invalidateReads } = require(output);
+  const h = React.createElement;
+  let view;
+  const render = (site = 'MAJA', active = true, mode = 'calendar', extra = {}) => h(Context.Provider, { value: active }, h(Enhancements, { activeSite: site, mode, ...extra }));
+  await act(async () => { view = create(render()); });
+  assert.equal(pending.length, 1, 'calendar fetches on first open');
+  await act(async () => pending[0].resolve({ items: [] }));
+  const month = () => view.root.findByProps({ type: 'month' });
+  await act(async () => month().props.onChange({ target: { value: '2026-10' } }));
+  assert.equal(pending[1].arg.fromDate, '2026-09-28', 'include adjoining week');
+  await act(async () => month().props.onChange({ target: { value: '2026-11' } }));
+  await act(async () => pending[2].resolve({ items: [{ id: 2, vendor_code: 'NOVEMBER', distribution_date: '2026-11-02' }] }));
+  await act(async () => pending[1].resolve({ items: [{ id: 1, vendor_code: 'STALE-OCTOBER', distribution_date: '2026-11-02' }] }));
+  assert.ok(JSON.stringify(view.toJSON()).includes('NOVEMBER'));
+  assert.ok(!JSON.stringify(view.toJSON()).includes('STALE-OCTOBER'));
+  await act(async () => view.update(render('MAJA', false)));
+  assert.equal(listeners.get('focus')?.size, 0, 'hidden panel stops listeners and polling');
+  await act(async () => view.update(render()));
+  assert.equal(pending.length, 3, 'fresh cache used on return');
+  const calendarButton = view.root.findAllByType('button').find(b =>
+    React.Children.toArray(b.props.children).some(child => typeof child === 'string' && child.includes('Refresh Kalender')));
+  await act(async () => { calendarButton.props.onClick(); });
+  assert.equal(pending.length, 4, 'manual refresh bypasses TTL');
+  await act(async () => pending[3].reject(new Error('fixture offline')));
+  assert.ok(JSON.stringify(view.toJSON()).includes('NOVEMBER'), 'retain data after failure');
+  assert.ok(JSON.stringify(view.toJSON()).includes('fixture offline'));
+  await act(async () => view.update(render('CEMPLANG')));
+  assert.equal(pending[4].arg.site, 'CEMPLANG');
+  assert.ok(!JSON.stringify(view.toJSON()).includes('NOVEMBER'), 'site isolation while loading');
+  await act(async () => pending[4].resolve({ items: [] }));
+  act(() => view.unmount());
+  let reminders;
+  await act(async () => { view = create(render('MAJA', true, 'reminder', { setReminders: rows => { reminders = rows; } })); });
+  assert.equal(reminders[0].id, 'reminder-fixture');
+  assert.equal(calls.filter(c => c.name === 'syncCalculatorPlanning').length, 0, 'automatic display reads do not rewrite planning');
+  act(() => view.unmount());
+  invalidateReads();
+  let count = 0, finish;
+  const fetcher = () => { count++; return new Promise(resolve => { finish = resolve; }); };
+  const first = cachedRead('dedupe', fetcher), second = cachedRead('dedupe', fetcher);
+  await Promise.resolve(); assert.equal(count, 1); finish({ items: [] }); await Promise.all([first, second]);
+  await cachedRead('dedupe', fetcher); assert.equal(count, 1);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 61_000;
+  const expired = cachedRead('dedupe', fetcher); await Promise.resolve(); assert.equal(count, 2); finish({ items: [] }); await expired;
+  Date.now = realNow;
+  invalidateReads();
+  const third = cachedRead('dedupe', fetcher); await Promise.resolve(); assert.equal(count, 3); finish({ items: [] }); await third;
+  console.log('PASS production calendar auto-load, cross-month fetch, stale response, cache return, hidden tabs, manual refresh, errors, site isolation, reminder reads, dedupe and invalidation');
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => fs.rmSync(temp, { recursive: true, force: true }));

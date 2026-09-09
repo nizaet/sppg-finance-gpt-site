@@ -1,8 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, RefreshCw, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
 
-const today = () => new Date().toISOString().slice(0, 10);
+import { useAutoRead } from "./useAutoRead.js";
+import { invalidateReads } from "./readCache.js";
+
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const qty = (v) => Number(v || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
 const WHATSAPP_PO_STATUSES = new Set(["FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"]);
 const REVISABLE_PO_STATUSES = new Set(["FINALIZED", "SENT", "ACKNOWLEDGED"]);
@@ -112,7 +115,19 @@ export default function PoOpsEnhancements({
   const [progress, setProgress] = useState({ active: false, percent: 0, label: "Siap" });
   const [localError, setLocalError] = useState("");
   const [calendarMonth, setCalendarMonth] = useState(today().slice(0, 7));
-  const [calendarPos, setCalendarPos] = useState([]);
+  const calendarRead = useAutoRead(`calendar:${activeSite}:${calendarMonth}`, () => {
+    const bounds = calendarGridBounds(calendarMonth);
+    return operationsApi.getPurchaseOrders({ site: activeSite, includeArchived: true,
+      fromDate: bounds.firstVisible, toDate: bounds.lastVisible, limit: 500 });
+  }, mode !== "reminder");
+  const reminderRead = useAutoRead(`reminders:${activeSite}:${today()}`, (refresh) =>
+    operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2, refresh }), mode === "reminder");
+  const calendarPos = calendarRead.data?.items || [];
+  useEffect(() => {
+    if (mode !== "reminder" || !reminderRead.data) return;
+    setReminders?.((reminderRead.data.items || []).filter(row => !row.site || String(row.site).toUpperCase() === activeSite));
+    setRemindersPulled?.(true);
+  }, [mode, activeSite, reminderRead.data, setReminders, setRemindersPulled]);
   const [calendarPo, setCalendarPo] = useState(null);
   const [calendarAction, setCalendarAction] = useState("");
 
@@ -164,6 +179,7 @@ export default function PoOpsEnhancements({
       const rows = (result?.items || []).filter((row) => !row?.site || String(row.site).toUpperCase() === String(activeSite).toUpperCase());
       setReminders?.(rows);
       setRemindersPulled?.(true);
+      invalidateReads();
       setProgress({ active: false, percent: 100, label: "Pengingat lengkap tersinkron" });
     } catch (err) {
       setProgress({ active: false, percent: 100, label: "Sinkron pengingat gagal" });
@@ -192,18 +208,18 @@ export default function PoOpsEnhancements({
     if (failures.length) setLocalError(failures.join("; "));
   };
 
-  const refreshCalendar = async () => {
-    const bounds = calendarGridBounds(calendarMonth);
-    const result = await operationsApi.getPurchaseOrders({
-      site: activeSite,
-      includeArchived: true,
-      fromDate: bounds.firstVisible,
-      toDate: bounds.lastVisible,
-      limit: 500,
-    });
-    const rows = result?.items || [];
-    setCalendarPos(rows);
+  const refreshCalendar = () => calendarRead.refresh(true);
+  const runRead = (action) => async () => {
+    setLocalError("");
+    try { await action(); } catch (error) { setLocalError(error.message || "Gagal memuat data"); }
   };
+  const readStatus = mode === "reminder" ? reminderRead : calendarRead;
+  const freshness = <p className="ops-auto-status" role="status">
+    {readStatus.loading ? "Memperbarui data…" : readStatus.updatedAt
+      ? `Diperbarui ${new Date(readStatus.updatedAt).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" })} WIB · otomatis saat aktif`
+      : "Memuat data otomatis…"}
+    {readStatus.error && <span className="ops-error">{readStatus.data ? "Data terakhir tetap ditampilkan. " : "Data belum termuat. "}{readStatus.error}</span>}
+  </p>;
 
   const calendarCells = useMemo(() => {
     const bounds = calendarGridBounds(calendarMonth);
@@ -316,8 +332,9 @@ export default function PoOpsEnhancements({
       <div data-po-staged-sync="v25" style={{ marginTop: 10 }}>
         <div className="ops-row-actions">
           <button className="ops-button-primary" type="button" onClick={syncReminderStages} disabled={progress.active}><RefreshCw size={14} /> Tarik / Sinkron Pengingat</button>
-          <button type="button" onClick={refreshDelivery} disabled={progress.active}><RefreshCw size={14} /> Refresh Barang Datang</button>
+          <button type="button" onClick={runRead(refreshDelivery)} disabled={progress.active}><RefreshCw size={14} /> Refresh Barang Datang</button>
         </div>
+        {freshness}
         {progressUi}
         {localError && <div className="ops-error">{localError}</div>}
       </div>
@@ -334,20 +351,21 @@ export default function PoOpsEnhancements({
           <span>PO aktual pada tanggal distribusi. Kalender menampilkan sisa minggu dari bulan sebelum/sesudah agar PO lintas bulan tidak tersembunyi.</span>
         </div>
         <div className="ops-row-actions" data-po-actual-refresh="v26">
-          <button type="button" onClick={refreshActualPo} disabled={progress.active}><RefreshCw size={14} /> Refresh PO Aktual</button>
+          <button type="button" onClick={runRead(refreshActualPo)} disabled={progress.active}><RefreshCw size={14} /> Refresh PO Aktual</button>
           <button className="ops-button-primary" type="button" onClick={syncAllBlocks} disabled={progress.active}><RefreshCw size={14} /> Sinkron Semua Blok</button>
         </div>
       </div>
 
+      {freshness}
       {progressUi}
       {localError && <div className="ops-error">{localError}</div>}
 
       <div className="ops-row-actions" style={{ marginTop: 10 }}>
-        <label>Bulan <input type="month" value={calendarMonth} onChange={(e) => setCalendarMonth(e.target.value)} /></label>
-        <button type="button" onClick={refreshCalendar}><CalendarDays size={14} /> Refresh Kalender</button>
+        <label>Bulan <input type="month" value={calendarMonth} onChange={(e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setCalendarMonth(e.target.value); }} /></label>
+        <button type="button" onClick={runRead(refreshCalendar)} disabled={calendarRead.loading}><CalendarDays size={14} /> Refresh Kalender</button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6, marginTop: 10 }}>
+      <div className="ops-calendar-scroll" role="region" aria-label="Kalender PO per tanggal" tabIndex={0}><div className="ops-calendar-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6, marginTop: 10 }}>
         {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((day) => <strong key={day} className="ops-muted" style={{ textAlign: "center" }}>{day}</strong>)}
         {calendarCells.map((cell) => {
           const dateValue = cell.date;
@@ -369,6 +387,8 @@ export default function PoOpsEnhancements({
             </div>
           );
         })}
+      </div>
+
       </div>
 
       {calendarPo && (

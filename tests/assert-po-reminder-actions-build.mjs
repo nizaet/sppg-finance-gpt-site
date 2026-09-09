@@ -64,8 +64,8 @@ const reminderEnhancementSource = fs.readFileSync(
   "utf8",
 );
 const reminderRequestCount = (reminderEnhancementSource.match(/operationsApi\.getPoReminders\(/g) || []).length;
-if (reminderRequestCount !== 2) {
-  throw new Error(`Expected one fresh reminder request plus one empty-state discovery request, found ${reminderRequestCount} source calls`);
+if (reminderRequestCount !== 3) {
+  throw new Error(`Expected cached automatic read, explicit fresh sync, and empty-state discovery, found ${reminderRequestCount} source calls`);
 }
 if (!reminderEnhancementSource.includes("date: today(), horizonDays: 2")) {
   throw new Error("Atomic reminder sync must request overdue + today + tomorrow in one horizonDays=2 snapshot");
@@ -79,8 +79,8 @@ if (!reminderEnhancementSource.includes("deactivateMissing: true")) {
 if (!reminderEnhancementSource.includes("refresh: true")) {
   throw new Error("Reminder sync must bypass the short v4 cache after refreshing Calculator planning");
 }
-if (reminderEnhancementSource.includes("useEffect(() =>")) {
-  throw new Error("PO enhancement must not fetch calendar or reminder data automatically on tab mount");
+if (!reminderEnhancementSource.includes("useAutoRead(`calendar:") || !reminderEnhancementSource.includes("useAutoRead(`reminders:")) {
+  throw new Error("Calendar and reminder automatic reads must use the scoped, bounded cache");
 }
 if (!/const syncAllBlocks = async \(\) => \{[\s\S]*?await refreshCalendar\(\);[\s\S]*?const refreshCalendar/.test(reminderEnhancementSource)) {
   throw new Error("Sinkron Semua Blok must explicitly populate the selected-month PO calendar");
