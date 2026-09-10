@@ -11,7 +11,7 @@ from datetime import date as Date
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.accountant_status_api import mark_accountant_submission_sent
 from backend.calculator_planning_bridge_api import CalculatorPlanningSyncIn, sync_calculator_planning
@@ -230,13 +230,19 @@ class AccountantSubmissionCommandIn(BaseModel):
 
 def _preview(operation: str, model: BaseModel) -> dict[str, Any]:
     """Validate first without creating a second, divergent preview business flow."""
-    return {
+    result = {
         "committed": False,
         "canCommit": True,
         "operation": operation,
         "normalizedPayload": model.model_dump(mode="json", exclude_none=True),
         "message": "Validated preview. No application record was changed.",
     }
+    if operation == "CREATE_SETTLEMENT":
+        result["message"] = (
+            "Preview transfer antar rekening (INTER_ACCOUNT_SETTLEMENT). "
+            "Commit hanya mencatat transfer; tidak mengurangi hutang Akuntan/vendor atau menyimpan kasbon dividen."
+        )
+    return result
 
 
 @router.post("/operations/execute", dependencies=[Depends(require_gpt_auth)])
@@ -270,7 +276,33 @@ def preview_or_execute_application_operation(payload: GptOperationWriteIn) -> di
         "CREATE_SETTLEMENT": SettlementIn,
     }
     model_type = model_types.get(operation)
-    validated = model_type.model_validate(data) if model_type else None
+    try:
+        validated = model_type.model_validate(data) if model_type else None
+    except ValidationError as exc:
+        detail: dict[str, Any] = {
+            "committed": False,
+            "canCommit": False,
+            "operation": operation,
+            "code": "INVALID_OPERATION_PAYLOAD",
+            "message": "Payload tidak sesuai operasi. Perbaiki sesuai field yang didukung sebelum preview ulang.",
+            # Do not echo transaction contents or non-JSON validator contexts.
+            "errors": [
+                {"loc": ["payload", *error["loc"]], "type": error["type"], "msg": error["msg"]}
+                for error in exc.errors(include_url=False, include_context=False, include_input=False)
+            ],
+        }
+        if operation == "CREATE_SETTLEMENT":
+            detail.update({
+                "classification": "INTER_ACCOUNT_SETTLEMENT",
+                "supportedFields": list(SettlementIn.model_fields),
+                "message": (
+                    "CREATE_SETTLEMENT hanya untuk transfer antar rekening Yayasan/Koperasi/operasional. "
+                    "Operasi ini tidak melunasi hutang Akuntan, membagi pembayaran vendor, atau menyimpan kasbon dividen. "
+                    "Jangan menghapus field vendor/alokasi atau mengarang rekening agar validasi lolos. "
+                    "Kasbon dividen dengan sisa kredit otomatis belum didukung oleh operasi ini."
+                ),
+            })
+        raise HTTPException(status_code=422, detail=detail) from exc
     if not payload.commit:
         if validated:
             return _preview(operation, validated)

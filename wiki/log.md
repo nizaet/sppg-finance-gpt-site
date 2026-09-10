@@ -45,3 +45,10 @@
 - Complete screen-only dark styling for both legacy calculators and accountant pages, including calendar cells, colored notices, modal content, table states, and form controls.
 - Production-transformed React tests cover receipt identity, async races, actual revision editor handoff, draft reuse and grouped cards. Backend tests check existing-draft reuse and calculator rendering/auth regressions.
 - Removed a receiving-badge MutationObserver feedback loop and prefer exact rendered PO status over shared-code matching, preventing a revision from inheriting another version's badge. Added an idempotent DOM-update regression.
+
+## 2026-09-10 — GPT settlement validation and dividend-advance boundary
+- Railway runtime traces at 10:54 and 10:55 UTC show `SettlementIn` rejecting a GPT vendor/dividend payload missing `from_account_type`; the uncaught validation error returned HTTP 500 before the domain write.
+- Invalid operational command payloads now return HTTP 422 with `canCommit=false` and field errors without echoing transaction data. Settlement rejects unknown allocation fields and nonpositive/nonfinite amounts; valid inter-account transfer behavior is retained.
+- Action descriptions and GPT instructions explicitly distinguish inter-account transfers from accountant debt payments. Automatic dividend advance/credit allocation is not implemented by `CREATE_SETTLEMENT`; no financial record or balance was changed by this maintenance.
+- Accountant UI debt edits write Firestore, whereas the finance Action list reads PostgreSQL. Conflicting payment status requires reconciliation of the same IDs rather than overwriting manual edits from stale copies.
+- Added HTTP regressions for preview/commit validation, wrong-domain payloads, valid transfer dispatch and other invalid commands. Kept GPT instructions within the existing 8,000-byte gate and restored the stock-opname no-splitting description required by its regression.

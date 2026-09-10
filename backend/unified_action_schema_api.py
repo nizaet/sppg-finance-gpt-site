@@ -402,7 +402,7 @@ def _stock_opname_operation() -> dict[str, Any]:
         "post": {
             "operationId": "previewOrRecordSppgStockOpnameFromWhatsApp",
             "summary": "Preview or record a warehouse stock opname report",
-            "description": "One WhatsApp SO is one baseline: preview then commit once. reviewed_items only needs qty; names/keys are taken from the original text when omitted. If no date is written, omit stock_date so Jakarta current date is used.",
+            "description": "One WhatsApp SO is one baseline: preview then commit once. Never split. reviewed_items only needs qty; names/keys are taken from the original text when omitted. If no date is written, omit stock_date so Jakarta current date is used.",
             "x-openai-isConsequential": True,
             "requestBody": {
                 "required": True,
@@ -786,7 +786,7 @@ def _application_operations_gateway() -> dict[str, Any]:
             "post": {
                 "operationId": "previewOrExecuteSppgOperationalApplication",
                 "summary": "Preview or send an approved operational command to the application",
-                "description": "Use commit=false first. With commit=true, validates and runs the named allow-listed application operation using the same backend workflow as the Operations screen. Never use for login, webhooks, or arbitrary routes.",
+                "description": "Preview with commit=false; commit only an approved valid payload. CREATE_SETTLEMENT is an inter-account transfer requiring from_account_type and amount; it cannot pay accountant/vendor debts or record dividend advances. Never invent accounts or drop allocation fields to make it pass.",
                 "x-openai-isConsequential": True,
                 "requestBody": {"required": True, "content": {"application/json": {"schema": write_schema}}},
                 "responses": {"200": {"description": "Preview or committed application operation", "content": {"application/json": {"schema": write_response}}}},

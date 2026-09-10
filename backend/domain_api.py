@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.db import connection, database_ready
 from backend.inventory_api import commit_receipt_stock
@@ -347,9 +347,13 @@ def create_bgn_receipt(payload: BgnReceiptIn) -> dict[str, Any]:
 
 
 class SettlementIn(BaseModel):
-    from_account_type: str
+    # This is an inter-account transfer, not an accountant debt allocation.
+    # Never silently discard vendor/transaction allocation fields from an Action.
+    model_config = ConfigDict(extra="forbid")
+
+    from_account_type: str = Field(min_length=1)
     to_account_type: str = "BCA_OPERATIONAL"
-    amount: float
+    amount: float = Field(gt=0, allow_inf_nan=False)
     settled_at: datetime | None = None
     evidence_uri: str | None = None
     production_cycle_id: int | None = None
