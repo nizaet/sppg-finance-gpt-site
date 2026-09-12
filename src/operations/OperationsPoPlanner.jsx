@@ -36,7 +36,7 @@ function normalize(value) {
 
 function normalizeUnit(value) {
   const unit = normalize(value);
-  const aliases = { kilogram: "kg", kilograms: "kg", gram: "gr", liter: "liter", litre: "liter", pieces: "pcs", piece: "pcs", pc: "pcs" };
+  const aliases = { kilogram: "kg", kilograms: "kg", kgs: "kg", gram: "gr", g: "gr", l: "liter", lt: "liter", ltr: "liter", liter: "liter", litre: "liter", pieces: "pcs", piece: "pcs", pc: "pcs" };
   return aliases[unit] || unit;
 }
 
@@ -92,6 +92,18 @@ function stockTypeCode(value) {
     ["SAUS_TOMAT", /\b(saus|saos) tomat\b/],
     ["SAUS_SAMBAL", /\b(saus|saos) sambal\b/],
     ["GULA_PASIR", /\b(gula pasir|gula putih)\b/],
+    ["BAWANG_PUTIH_BUBUK", /\bbawang putih bubuk\b/],
+    ["KUNYIT_BUBUK", /\bkunyit bubuk\b/],
+    ["BAWANG_BOMBAY", /\b(bawang )?bombay\b/],
+    ["BAWANG_PUTIH", /\bbawang putih\b/],
+    ["BAWANG_MERAH", /\bbawang merah\b/],
+    ["CABAI_RAWIT", /\b(cabai|cabe) rawit\b/],
+    ["CABAI_MERAH", /\b(cabai|cabe) merah\b/],
+    ["GARAM", /\bgaram\b/],
+    ["KETUMBAR", /\bketumbar\b/],
+    ["CUKA", /\bcuka\b/],
+    ["LADA_PUTIH", /\b(lada|merica) (bubuk )?putih\b/],
+    ["LADA_HITAM", /\b(lada|merica) (bubuk )?hitam\b/],
     ["TELUR", /\b(telur|eggs?)\b/],
     ["TEMPE", /\btempe\b/],
     ["TAHU", /\b(tahu|tofu)\b/],
@@ -106,6 +118,8 @@ function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
   const from = normalizeUnit(fromUnit);
   const to = normalizeUnit(toUnit);
   if (from === to) return amount;
+  if (from === "gr" && to === "kg") return amount / 1000;
+  if (from === "kg" && to === "gr") return amount * 1000;
   if (typeCode === "MINYAK_GORENG") {
     const litres = from === "liter" ? amount : from === "pcs" ? amount * 2 : from === "dus" ? amount * 12 : null;
     if (litres == null) return null;
@@ -120,75 +134,42 @@ function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
 }
 
 function buildStockLookup(items = []) {
-  const exact = new Map();
-  const byName = new Map();
-  const entries = [];
-  items.forEach((item) => {
-    const names = Array.from(new Set([item.item_name, ...(item.raw_item_names || [])].map(normalize).filter(Boolean)));
-    const unit = normalizeUnit(item.unit);
-    const stock = {
-      // PO must consume the projected remainder after plans before this
-      // cooking day.  actual_balance stays visible only as the physical stock.
-      balance: Math.max(0, Number(item.projected_available_for_po ?? item.projected_balance ?? item.available_for_po ?? item.balance ?? 0)),
-      actualBalance: Number(item.actual_balance ?? item.balance ?? 0),
-      projectedBalance: Number(item.projected_balance ?? item.balance ?? 0),
-      plannedDepletion: Number(item.planned_depletion || 0),
-      stockAsOf: item.stock_as_of || null,
-      basis: item.stock_basis || "LEDGER_ONLY",
-      confidence: item.confidence || "LOW",
-      typeCode: item.stock_type_code || stockTypeCode(item.item_name),
-      unit,
-    };
-    names.forEach((name) => {
-      exact.set(`${name}|${unit}`, stock);
-      if (!byName.has(name)) byName.set(name, []);
-      byName.get(name).push({ unit, ...stock });
-      entries.push({ name, unit, stock });
-    });
-  });
-  return { exact, byName, entries };
+  // Exactly one entry per physical row: aliases are names, not extra stock.
+  return items.map((item) => ({
+    names: Array.from(new Set([item.item_name, ...(item.raw_item_names || [])].map(normalize).filter(Boolean))),
+    unit: normalizeUnit(item.unit),
+    typeCode: item.stock_type_code || stockTypeCode(item.item_name),
+    balance: Math.max(0, Number(item.available_for_po ?? item.projected_available_for_po ?? item.projected_balance ?? item.balance ?? 0)),
+    actualBalance: Number(item.actual_balance ?? item.balance ?? 0),
+    projectedBalance: Number(item.projected_balance ?? item.balance ?? 0),
+    plannedDepletion: Number(item.planned_depletion || 0),
+    expectedSupply: Number(item.expected_po_supply || 0),
+    stockAsOf: item.stock_as_of || null,
+    lastStockCheckAt: item.last_stock_check_at || null,
+    confidence: item.confidence || "LOW",
+  }));
 }
 
 function stockForItem(item, lookup) {
   const name = normalize(item.item_name);
   const unit = normalizeUnit(item.unit);
   const typeCode = stockTypeCode(item.item_name);
-  // Koperasi stock may be recorded as a brand or package while the calculator
-  // uses the ingredient name.  The API classifies the physical stock by type;
-  // sum only identical confirmed types and only when the units are identical
-  // or have an explicit operational conversion.  This deliberately does not
-  // use fuzzy name matching or central Koperasi stock.
-  if (typeCode) {
-    const matched = (lookup.entries || []).filter((candidate) => candidate.stock.typeCode === typeCode);
-    const converted = matched.map((candidate) => convertKnownStockQty(candidate.stock.balance, candidate.unit, unit, typeCode));
-    if (converted.length && converted.every((value) => value != null)) {
-      const actual = matched.map((candidate) => convertKnownStockQty(candidate.stock.actualBalance, candidate.unit, unit, typeCode));
-      const projected = matched.map((candidate) => convertKnownStockQty(candidate.stock.projectedBalance, candidate.unit, unit, typeCode));
-      const planned = matched.map((candidate) => convertKnownStockQty(candidate.stock.plannedDepletion, candidate.unit, unit, typeCode));
-      if ([actual, projected, planned].every((values) => values.every((value) => value != null))) {
-        const sum = (values) => Number(values.reduce((total, value) => total + Number(value || 0), 0).toFixed(4));
-        return {
-          balance: sum(converted),
-          actualBalance: sum(actual),
-          projectedBalance: sum(projected),
-          plannedDepletion: sum(planned),
-          stockAsOf: matched.map((candidate) => candidate.stock.stockAsOf).filter(Boolean).sort().at(-1) || null,
-          basis: "CONFIRMED_ITEM_TYPE_STOCK_MATCH",
-          confidence: matched.some((candidate) => candidate.stock.confidence === "LOW") ? "LOW" : "HIGH",
-        };
-      }
-    }
-  }
-  const exact = lookup.exact.get(`${name}|${unit}`);
-  if (exact != null) return exact;
-  const contained = (lookup.entries || []).filter((candidate) => candidate.unit === unit && candidate.name.length >= 4 && (` ${name} `.includes(` ${candidate.name} `) || ` ${candidate.name} `.includes(` ${name} `)));
-  if (contained.length) {
-    const longest = Math.max(...contained.map((candidate) => candidate.name.length));
-    const best = contained.filter((candidate) => candidate.name.length === longest);
-    if (best.length === 1) return best[0].stock;
-  }
-  const candidates = lookup.byName.get(name) || [];
-  return candidates.length === 1 ? candidates[0] : { balance: 0, actualBalance: 0, projectedBalance: 0, plannedDepletion: 0, stockAsOf: null, basis: "NO_MATCHING_STOCK", confidence: "LOW" };
+  const candidates = lookup.filter(row => typeCode
+    ? row.typeCode === typeCode
+    : row.names.includes(name));
+  const matched = candidates.filter(row => convertKnownStockQty(row.balance, row.unit, unit, typeCode) != null);
+  const sum = field => Number(matched.reduce((total, row) => total + convertKnownStockQty(row[field], row.unit, unit, typeCode), 0).toFixed(4));
+  return {
+    balance: sum("balance"), actualBalance: sum("actualBalance"),
+    projectedBalance: sum("projectedBalance"), plannedDepletion: sum("plannedDepletion"),
+    expectedSupply: sum("expectedSupply"),
+    stockAsOf: matched.map(row => row.stockAsOf).filter(Boolean).sort().at(-1) || null,
+    lastStockCheckAt: matched.map(row => row.lastStockCheckAt).filter(Boolean).sort().at(-1) || null,
+    basis: matched.length ? "CONFIRMED_NAME_TYPE_AND_UNIT" : "NO_MATCHING_STOCK",
+    confidence: matched.length && matched.every(row => row.confidence !== "LOW") ? "HIGH" : "LOW",
+    unitWarning: candidates.some(row => !matched.includes(row))
+      ? `Stok ${[...new Set(candidates.filter(row => !matched.includes(row)).map(row => row.unit))].join(", ")} belum dikonversi ke ${unit}.` : "",
+  };
 }
 
 function dateRange(from, to, maxDays = 7) {
@@ -228,6 +209,9 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       actual_stock_qty: stock.actualBalance,
       projected_stock_qty: stock.projectedBalance,
       planned_depletion_qty: stock.plannedDepletion,
+      expected_supply_qty: stock.expectedSupply,
+      stock_checked_at: stock.lastStockCheckAt,
+      stock_unit_warning: stock.unitWarning,
       stock_as_of: stock.stockAsOf,
       stock_basis: stock.basis,
       stock_confidence: stock.confidence,
@@ -1322,6 +1306,9 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                               {Number(item.stock_qty || 0) > 0 && <div><span className={`ops-stock-badge ${Number(item.recommended_po_qty || 0) <= 0 ? "ops-stock-covered" : "ops-stock-partial"}`}>{Number(item.recommended_po_qty || 0) <= 0 ? "✓ CUKUP DARI GUDANG" : "✓ ADA STOK"}</span></div>}
                               <div className="ops-muted">Aktual terhitung {qty(item.actual_stock_qty)} · SO {item.stock_as_of || "belum ada"}</div>
                               {item.planned_depletion_qty > 0 && <div className="ops-muted">− rencana sebelumnya {qty(item.planned_depletion_qty)}</div>}
+                              {item.stock_checked_at && <div className="ops-muted">Koreksi fisik {compactTimestamp(item.stock_checked_at)}</div>}
+                              {item.expected_supply_qty > 0 && <div className="ops-muted">+ PO belum diterima {qty(item.expected_supply_qty)} (proyeksi)</div>}
+                              {item.stock_unit_warning && <div className="ops-muted">{item.stock_unit_warning}</div>}
                               <div className="ops-muted">Keyakinan {item.stock_confidence}</div>
                               {item.cooperative_stock_qty != null && <div className="ops-muted">Koperasi {qty(item.cooperative_stock_qty)}{item.cooperative_shortfall_qty > 0 ? ` · kurang ${qty(item.cooperative_shortfall_qty)}` : ""}</div>}
                             </td>

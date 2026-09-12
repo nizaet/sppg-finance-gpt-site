@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
@@ -46,6 +47,7 @@ def _empty_row(label: str, unit: str, type_code: str, method: str) -> dict[str, 
         "stock_type_code": type_code,
         "stock_type_method": method,
         "last_movement_at": None,
+        "last_stock_check_at": None,
         "confidence": "LOW",
         "stock_as_of": None,
         "stock_age_days": None,
@@ -61,6 +63,9 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
         for field in ("so_qty", "movement_delta", "actual_usage_depletion"):
             row[field] += float(item.get(field) or 0)
         row["stock_as_of"] = item.get("stock_as_of") or row.get("stock_as_of")
+        checked = item.get("last_stock_check_at")
+        if checked and (row["last_stock_check_at"] is None or checked > row["last_stock_check_at"]):
+            row["last_stock_check_at"] = checked
         age = item.get("stock_age_days")
         if age is not None:
             row["stock_age_days"] = max(int(age), int(row.get("stock_age_days") or 0))
@@ -83,6 +88,11 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
     return grouped
 
 
+def _before_physical_check(row: dict[str, Any], distribution_date: date) -> bool:
+    checked = row.get("last_stock_check_at")
+    return bool(checked and distribution_date < checked.astimezone(ZoneInfo("Asia/Jakarta")).date())
+
+
 @router.get("/inventory/balances-v2")
 def inventory_balances_v2(
     site: str = Query(min_length=1),
@@ -99,9 +109,9 @@ def inventory_balances_v2(
 
     ``actual_balance`` is the current physical dapur balance. ``projected_balance``
     remains the forward projection after older plans/PO supply. PO drafting uses
-    ``available_for_po`` and must subtract the current physical dapur stock, not
-    silently zero that stock because a prior planning row is still waiting to be
-    posted as actual usage. This keeps MAJA and CEMPLANG on the same stock rule.
+    ``available_for_po`` after prior plans. A later per-item physical correction
+    supersedes estimates from before its date; same-day/subsequent plans remain.
+    MAJA and CEMPLANG use the same rule.
     """
     base = inventory_balances(site=site, search="", limit=1000, for_date=for_date)
     stock_date = base.get("latestStockOpnameDate")
@@ -173,6 +183,8 @@ def inventory_balances_v2(
                             continue
                         key = (type_code, unit)
                         row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
+                        if _before_physical_check(row, plan["distribution_date"]):
+                            continue
                         row["planned_depletion"] += float(plan.get("planned_qty") or 0)
                         if plan.get("item_name") and plan["item_name"] not in row["raw_item_names"]:
                             row["raw_item_names"].append(plan["item_name"])
@@ -236,6 +248,8 @@ def inventory_balances_v2(
                     if (int(po_row["purchase_order_id"]), type_code, unit) in received_types:
                         continue
                     key = (type_code, unit)
+                    if _before_physical_check(grouped.get(key, {}), po_row["distribution_date"]):
+                        continue
                     expected[key] = expected.get(key, 0.0) + float(po_row.get("po_qty") or 0)
                     row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
                     if po_row.get("item_name") and po_row["item_name"] not in row["raw_item_names"]:
@@ -279,7 +293,7 @@ def inventory_balances_v2(
     base["items"] = items[:limit]
     base["count"] = len(base["items"])
     base["projectionModel"] = "TYPE_CLASSIFIED: latest SO + facts - actual/planned usage + provisional committed PO supply"
-    base["poAvailabilityModel"] = "CURRENT_ACTUAL_DAPUR_STOCK"
+    base["poAvailabilityModel"] = "PROJECTED_DAPUR_STOCK_AFTER_PRIOR_PLANS"
     base["classificationModel"] = "ingredient_type_not_brand_or_variety"
     base["provisionalPoSupply"] = round(sum(expected.values()), 4)
     return base

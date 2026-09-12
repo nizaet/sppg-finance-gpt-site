@@ -42,6 +42,7 @@ _STOCK_TYPE_PATTERNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("KETUMBAR", "Ketumbar", (r"\bketumbar\b",)),
     ("KUNYIT_BUBUK", "Kunyit Bubuk", (r"\bkunyit\s+bubuk\b",)),
     ("BAWANG_PUTIH_BUBUK", "Bawang Putih Bubuk", (r"\bbawang\s+putih\s+bubuk\b",)),
+    ("BAWANG_BOMBAY", "Bawang Bombay", (r"\b(bawang\s+)?bombay\b",)),
     ("ANGGUR", "Anggur", (r"\banggur\b", r"\bgrapes?\b")),
     ("BAWANG_MERAH", "Bawang Merah", (r"\bbawang\s+merah\b",)),
     ("BAWANG_PUTIH", "Bawang Putih", (r"\bbawang\s+putih\b",)),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -39,6 +40,7 @@ def _new_row(name: str, unit: str, match: dict[str, Any]) -> dict[str, Any]:
         "actual_usage_depletion": 0.0,
         "planned_depletion": 0.0,
         "last_movement_at": None,
+        "last_stock_check_at": None,
     }
 
 
@@ -131,7 +133,7 @@ def inventory_balances(
 
             stock_date = latest_so["stock_date"] if latest_so else None
             movement_sql = """
-                select item_name,qty,unit,from_location,to_location,movement_type,
+                select item_name,qty,unit,from_location,to_location,movement_type,source_type,notes,
                        coalesce(occurred_at,created_at) as occurred_at
                 from inventory_movements
                 where (upper(coalesce(to_location,''))=%s or upper(coalesce(from_location,''))=%s)
@@ -168,6 +170,19 @@ def inventory_balances(
                 if str(movement["from_location"] or "").upper() == location:
                     row["movement_delta"] -= qty
                 occurred = movement["occurred_at"]
+                # A physical recount confirms this item's balance. Earlier
+                # estimated plans must not deplete that confirmed balance again.
+                # Ordinary receipts and arbitrary adjustments are not recounts.
+                if str(movement.get("source_type") or "") == "MANUAL_STOCK_EDIT":
+                    try:
+                        notes = movement.get("notes") or {}
+                        notes = json.loads(notes) if isinstance(notes, str) else notes
+                        if isinstance(notes, dict) and "target_balance" in notes:
+                            checked = row["last_stock_check_at"]
+                            if checked is None or occurred > checked:
+                                row["last_stock_check_at"] = occurred
+                    except (ValueError, TypeError):
+                        pass
                 if row["last_movement_at"] is None or occurred > row["last_movement_at"]:
                     row["last_movement_at"] = occurred
                 if str(movement["movement_type"] or "").upper() == "PRODUCTION_USAGE":
@@ -217,6 +232,9 @@ def inventory_balances(
                         continue
                     key = (normalized, unit)
                     if key not in rows:
+                        continue
+                    checked = rows[key].get("last_stock_check_at")
+                    if checked and plan["distribution_date"] < checked.astimezone(jakarta).date():
                         continue
                     rows[key]["planned_depletion"] += float(plan["planned_qty"] or 0)
 

@@ -52,3 +52,9 @@
 - Action descriptions and GPT instructions explicitly distinguish inter-account transfers from accountant debt payments. Automatic dividend advance/credit allocation is not implemented by `CREATE_SETTLEMENT`; no financial record or balance was changed by this maintenance.
 - Accountant UI debt edits write Firestore, whereas the finance Action list reads PostgreSQL. Conflicting payment status requires reconciliation of the same IDs rather than overwriting manual edits from stale copies.
 - Added HTTP regressions for preview/commit validation, wrong-domain payloads, valid transfer dispatch and other invalid commands. Kept GPT instructions within the existing 8,000-byte gate and restored the stock-opname no-splitting description required by its regression.
+
+## 2026-09-12 — Cemplang PO stock matching and physical correction anchors
+- Operator-provided warehouse/PO excerpts show Cemplang SO #57 dated September 4 and snapshot #138 for September 14. The PO reads current balances but depletes earlier plans; garlic powder incorrectly borrowed fresh garlic stock, and coriander pcs was treated as kg. Bombay appears in the supplied warehouse table but not in the supplied PO lines.
+- Both kitchens now use exact/confirmed ingredient identity and known unit conversions, counting each stock row once regardless of alias count. Unknown package-to-weight conversions are disclosed rather than assumed.
+- Explicit MANUAL_STOCK_EDIT facts with target_balance provide a per-item physical check date. Plans and provisional PO supply before that local date no longer adjust the newly confirmed stock again; same-day and later plans remain, and ordinary receiving does not reset the planning baseline.
+- Warehouse/PO views disclose provisional incoming PO supply and the physical correction date. Existing SO, PO, receipt and financial records are unchanged. Added production-transformed JavaScript and Python regressions for both kitchens.

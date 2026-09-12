@@ -17,7 +17,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test operations routes and warehouse state isolation
-        run: node --test tests/operations-navigation.test.mjs
+        run: |
+          node --test tests/operations-navigation.test.mjs
+          node tests/po-stock-matching.test.cjs
       - name: Test operations navigation and cached views with React
         run: |
           npm install --prefix "$RUNNER_TEMP/sppg-ui-tests" --no-save --package-lock=false esbuild@0.21.5 react@18.3.1 react-test-renderer@18.3.1
@@ -43,6 +45,7 @@ jobs:
         run: |
           pip install pytest
           python -m pytest -q tests/test_gpt_operation_validation.py tests/test_unified_action_schema.py tests/test_operations_action_schema.py
+          python -m pytest -q tests/test_inventory_physical_projection.py tests/test_inventory_manual_route.py tests/test_item_taxonomy_vendor_sync.py
       - run: python -m compileall backend parser workflow
       - name: Test calculator Firebase session isolation and denied reads
         run: python -m unittest -v tests.test_calculator_firebase_runtime tests.test_maja_firebase_auth_runtime

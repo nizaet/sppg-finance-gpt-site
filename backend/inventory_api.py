@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.item_taxonomy import stock_type
 from backend.stock_opname_parser import canonical_unit, normalize_name, parse_stock_opname_text
 
 router = APIRouter(prefix="/v1", tags=["inventory"])
@@ -134,6 +135,7 @@ def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
 
 def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
     normalized = normalize_name(raw_name)
+    raw_type = stock_type(raw_name)
     exact: list[tuple[dict[str, Any], str, str]] = []
     contained: list[tuple[int, dict[str, Any], str, str]] = []
     for master in masters:
@@ -148,6 +150,11 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
                 str(master.get("source_type") or "") != "GRAMASI"
                 and len(candidate) >= 4
                 and re.search(rf"(?:^| ){re.escape(candidate)}(?: |$)", normalized)
+                and not (
+                    raw_type["method"] == "ITEM_TYPE_RULE"
+                    and stock_type(master.get("canonical_name") or candidate)["method"] == "ITEM_TYPE_RULE"
+                    and raw_type["code"] != stock_type(master.get("canonical_name") or candidate)["code"]
+                )
             ):
                 contained.append((len(candidate), master, "TYPE_IN_RAW_NAME", candidate))
 
