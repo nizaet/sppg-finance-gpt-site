@@ -56,58 +56,71 @@ def _source_key(reminder_key: str, type_code: str, unit: str, current_qty: float
     return "po-reminder-stock:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
 
 
-def _upsert_stock_confirmation_override(cur: Any, site: str, reminder_key: str, note: str | None, prepared: list[dict[str, Any]]) -> None:
-    """Close the operational reminder after an explicit stock confirmation.
+def _clear_legacy_stock_confirmation_override(cur: Any, reminder_key: str) -> None:
+    """Remove only the old auto-close override created by stock confirmation.
 
-    The inventory movements above remain the auditable stock correction. This
-    override only removes the same reminder from the PO action queue so the row
-    does not keep reappearing as a PO shortage after the operator has confirmed
-    stock is sufficient.
+    Stock confirmation is a physical recount, not a manual instruction to force a
+    reminder DONE. After the recount, the normal reminder engine must recompute
+    the shortage from physical stock + running planning + saved PO coverage.
+    Explicit MANUAL_PO/CHECKED/SUFFICIENT overrides created by the operator are
+    deliberately left untouched.
     """
-    vendor = "UNKNOWN"
-    metadata = {
-        "source": "PO_REMINDER_STOCK_CONFIRMATION",
-        "items": prepared,
-    }
     cur.execute(
         """
-        insert into po_reminder_overrides(
-          reminder_key,site,vendor_code,resolution,note,metadata,active
-        ) values (%s,%s,%s,'SUFFICIENT',%s,%s::jsonb,true)
-        on conflict (reminder_key) where active=true
-        do update set
-          site=excluded.site,
-          resolution=excluded.resolution,
-          note=excluded.note,
-          metadata=excluded.metadata,
-          updated_at=now()
+        update po_reminder_overrides
+        set active=false, updated_at=now()
+        where reminder_key=%s
+          and active=true
+          and coalesce(metadata->>'source','')='PO_REMINDER_STOCK_CONFIRMATION'
         """,
-        (
-            reminder_key,
-            site,
-            vendor,
-            note or "Stok gudang dikonfirmasi cukup dari tombol reminder PO.",
-            json.dumps(metadata, ensure_ascii=False, default=str),
-        ),
+        (reminder_key,),
+    )
+
+
+def _audit_notes(payload: ShortageStockConfirmIn, item: dict[str, Any]) -> str:
+    """Structured recount metadata understood by the inventory projection.
+
+    `target_balance` intentionally makes this movement a new per-item physical
+    stock anchor. Plans before this check are estimates that have already been
+    absorbed by the human count; plans on/after the check remain available for
+    the normal PO projection.
+    """
+    return json.dumps(
+        {
+            "source": "PO_REMINDER_STOCK_CONFIRMATION",
+            "reminder_key": payload.reminder_key,
+            "target_balance": item["target_actual_qty"],
+            "previous_balance": item["current_actual_qty"],
+            "stock_type_code": item["stock_type_code"],
+            "operator_note": payload.note or None,
+        },
+        ensure_ascii=False,
+        default=str,
     )
 
 
 @router.post("/po-reminders/stock-confirmation")
 def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]:
-    """Set checked kitchen stock through auditable inventory movements.
+    """Record a physical kitchen recount and let the PO reminder recalculate.
 
-    The operator supplies the physical quantity currently seen in the kitchen.
-    We compare it with the current *actual* ledger balance (not projected stock)
-    and post only the delta. The latest physical SO remains untouched.
+    The operator enters the total physical quantity currently seen in the selected
+    kitchen. We post only the delta against the current actual ledger balance, but
+    the confirmation itself becomes a fresh physical-stock anchor even when the
+    delta is zero. The current/future cooking plan and any saved PO remain separate
+    layers and are applied by the projection after this physical check.
+
+    Therefore, if the operator confirms more stock than the running requirement,
+    only the surplus remains available for later PO. If the stock is equal to the
+    requirement, the projected surplus is zero. If it is lower, the reminder stays
+    open for the remaining shortage. The same rule is used for MAJA and CEMPLANG.
     """
     require_db()
     site = normalize_site(payload.site)
     jakarta = ZoneInfo("Asia/Jakarta")
     target_for_balance = datetime.now(jakarta).date() + timedelta(days=1)
 
-    # Read current actual balance before opening the write transaction. Using
-    # tomorrow as forDate includes all movements from today in actual_balance,
-    # while planned depletion remains separate and is deliberately ignored here.
+    # Tomorrow includes all movements posted today in actual_balance while the
+    # running/future planning depletion stays separate for reminder recalculation.
     balances = inventory_balances_v2(site=site, search="", limit=1000, for_date=target_for_balance)
     lookup = _actual_balance_lookup(balances.get("items") or [])
 
@@ -134,16 +147,17 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
         })
 
     inserted = 0
+    changed = 0
     unchanged = 0
     duplicates = 0
+    legacy_overrides_cleared = 0
     with connection() as conn:
         with conn.cursor() as cur:
+            _clear_legacy_stock_confirmation_override(cur, payload.reminder_key)
+            legacy_overrides_cleared = max(0, int(getattr(cur, "rowcount", 0) or 0))
+
             for item in prepared:
                 delta = float(item["delta"])
-                if abs(delta) < 0.0001:
-                    item["movement_status"] = "UNCHANGED"
-                    unchanged += 1
-                    continue
 
                 cur.execute("select id from inventory_movements where source_key=%s", (item["source_key"],))
                 existing = cur.fetchone()
@@ -153,14 +167,20 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
                     duplicates += 1
                     continue
 
-                from_location, to_location = _correction_direction(site, delta)
-                note_parts = [
-                    f"Koreksi stok dari cek kekurangan PO {payload.reminder_key}",
-                    f"stok_aktual_sebelum={item['current_actual_qty']}",
-                    f"stok_fisik_dikonfirmasi={item['target_actual_qty']}",
-                ]
-                if payload.note:
-                    note_parts.append(payload.note.strip())
+                # Even an unchanged physical count is meaningful: it establishes
+                # that this exact item was physically checked now. A zero-qty
+                # same-location audit movement has no quantity effect but gives
+                # the projection a deterministic recount boundary.
+                if abs(delta) < 0.0001:
+                    movement_qty = 0.0
+                    from_location = site
+                    to_location = site
+                    unchanged += 1
+                else:
+                    movement_qty = abs(delta)
+                    from_location, to_location = _correction_direction(site, delta)
+                    changed += 1
+
                 cur.execute(
                     """
                     insert into inventory_movements(
@@ -168,36 +188,38 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
                       occurred_at,source_type,source_key,source_ref,notes
                     ) values (
                       'MANUAL_STOCK_CORRECTION',%s,%s,%s,%s,%s,%s,now(),
-                      'PO_REMINDER_STOCK_CHECK',%s,%s,%s
+                      'MANUAL_STOCK_EDIT',%s,%s,%s
                     ) returning id
                     """,
                     (
-                        item["item_code"], item["item_name"], abs(delta), item["unit"],
-                        from_location, to_location, item["source_key"], payload.reminder_key,
-                        " | ".join(note_parts),
+                        item["item_code"], item["item_name"], movement_qty, item["unit"],
+                        from_location, to_location, item["source_key"],
+                        f"PO_REMINDER_STOCK_CHECK:{payload.reminder_key}",
+                        _audit_notes(payload, item),
                     ),
                 )
                 item["movement_id"] = cur.fetchone()["id"]
-                item["movement_status"] = "INSERTED"
+                item["movement_status"] = "PHYSICAL_CHECK_RECORDED" if abs(delta) < 0.0001 else "INSERTED"
                 item["from_location"] = from_location
                 item["to_location"] = to_location
                 inserted += 1
 
-            _upsert_stock_confirmation_override(cur, site, payload.reminder_key, payload.note, prepared)
         conn.commit()
 
     return {
         "site": site,
         "reminderKey": payload.reminder_key,
         "updated": inserted > 0,
+        "stockChanged": changed > 0,
         "inserted": inserted,
+        "changed": changed,
         "unchanged": unchanged,
         "duplicates": duplicates,
-        "overrideSaved": True,
+        "legacyOverridesCleared": legacy_overrides_cleared,
+        "overrideSaved": False,
+        "reminderRecalculation": "PHYSICAL_STOCK_MINUS_RUNNING_PLAN_AND_PO_COVERAGE",
         "items": prepared,
         "message": (
-            "Stok fisik dapur dicatat sebagai koreksi gudang dan reminder PO ditutup."
-            if inserted
-            else "Stok yang dikonfirmasi sudah sama dengan saldo aktual; reminder PO tetap ditutup sebagai cukup."
+            "Stok fisik dapur disimpan sebagai patokan terbaru. Reminder dihitung ulang dari stok, planning, dan PO berjalan: jika cukup akan selesai, jika masih kurang sisa kekurangan tetap terbuka; kelebihan tetap menjadi stok gudang."
         ),
     }
