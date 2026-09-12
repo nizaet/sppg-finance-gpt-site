@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from backend.po_shortage_stock_api import _actual_balance_lookup, _correction_direction, _source_key
+from backend.po_shortage_stock_api import (
+    _actual_balance_lookup,
+    _correction_direction,
+    _fresh_requirement_lookup,
+    _source_key,
+)
 
 
 class PoShortageStockHelperTests(unittest.TestCase):
@@ -29,6 +34,70 @@ class PoShortageStockHelperTests(unittest.TestCase):
         later = _source_key("POREM-12345678", "TEMPE", "kg", 7.0, 10.0)
         self.assertEqual(first, retry)
         self.assertNotEqual(first, later)
+
+    def test_fresh_requirement_uses_remaining_after_existing_po_coverage(self):
+        lookup = _fresh_requirement_lookup({
+            "po_code": "PO-MAJA-20260914-HOLIL",
+            "requirement_details": [
+                {
+                    "distribution_date": "2026-09-14",
+                    "item_names": ["Bawang Putih"],
+                    "stock_type_code": "BAWANG_PUTIH",
+                    "unit": "kg",
+                    "recommended_po_qty": 6,
+                    "covered_po_qty": 4,
+                    "remaining_po_qty": 2,
+                }
+            ],
+        })
+        row = lookup[("BAWANG_PUTIH", "kg")]
+        self.assertEqual(6.0, row["recommended_po_qty"])
+        self.assertEqual(4.0, row["covered_po_qty"])
+        self.assertEqual(2.0, row["remaining_po_qty"])
+        self.assertIn("PO-MAJA-20260914-HOLIL", row["po_codes"])
+
+    def test_fully_covered_requirement_has_zero_remaining(self):
+        lookup = _fresh_requirement_lookup({
+            "partial_po_codes": ["PO-CEMPLANG-20260914-HOLIL"],
+            "requirement_details": [
+                {
+                    "distribution_date": "2026-09-14",
+                    "item_names": ["Bawang Putih"],
+                    "stock_type_code": "BAWANG_PUTIH",
+                    "unit": "kg",
+                    "recommended_po_qty": 6,
+                    "covered_po_qty": 6,
+                    "remaining_po_qty": 0,
+                }
+            ],
+        })
+        self.assertEqual(0.0, lookup[("BAWANG_PUTIH", "kg")]["remaining_po_qty"])
+
+    def test_garlic_powder_never_merges_with_fresh_garlic(self):
+        lookup = _fresh_requirement_lookup({
+            "requirement_details": [
+                {
+                    "distribution_date": "2026-09-14",
+                    "item_names": ["Bawang Putih"],
+                    "stock_type_code": "BAWANG_PUTIH",
+                    "unit": "kg",
+                    "recommended_po_qty": 6,
+                    "covered_po_qty": 2,
+                    "remaining_po_qty": 4,
+                },
+                {
+                    "distribution_date": "2026-09-14",
+                    "item_names": ["Bawang Putih Bubuk"],
+                    "stock_type_code": "BAWANG_PUTIH_BUBUK",
+                    "unit": "kg",
+                    "recommended_po_qty": 3,
+                    "covered_po_qty": 3,
+                    "remaining_po_qty": 0,
+                },
+            ],
+        })
+        self.assertEqual(4.0, lookup[("BAWANG_PUTIH", "kg")]["remaining_po_qty"])
+        self.assertEqual(0.0, lookup[("BAWANG_PUTIH_BUBUK", "kg")]["remaining_po_qty"])
 
 
 if __name__ == "__main__":
