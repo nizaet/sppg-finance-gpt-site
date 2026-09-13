@@ -182,19 +182,8 @@ def _warehouse_projection_lookup(distribution_date: date) -> tuple[dict[tuple[st
 
 
 def _projection_lookup(site: str, distribution_date: date) -> tuple[dict[tuple[str, str], float], str]:
-    """Use stock at the dapur plus stock still available in Gudang Koperasi."""
-    site_lookup, site_basis = _ORIGINAL_PROJECTION_LOOKUP(site, distribution_date)
-    warehouse_lookup, warehouse_basis = _warehouse_projection_lookup(distribution_date)
-
-    if not warehouse_lookup:
-        return site_lookup, site_basis
-    if not site_lookup:
-        return warehouse_lookup, f"{site_basis}+{warehouse_basis}"
-
-    merged = dict(site_lookup)
-    for key, amount in warehouse_lookup.items():
-        merged[key] = max(0.0, float(merged.get(key, 0.0))) + max(0.0, float(amount or 0.0))
-    return merged, f"{site_basis}+{warehouse_basis}"
+    """PO stock is scoped to the warehouse of the selected kitchen only."""
+    return _ORIGINAL_PROJECTION_LOOKUP(site, distribution_date)
 
 
 def _merge_stock_rows(site_items: list[dict[str, Any]], warehouse_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -490,10 +479,8 @@ def install() -> None:
     reminder._resolve_procurement_rule = _resolve_procurement_rule
     reminder._projection_lookup = _projection_lookup
 
-    # The manual PO planner reads these API routes directly. Patching only the
-    # reminder backend would leave stale vendor and warehouse stock in the UI.
-    inventory_projection.inventory_balances_v2 = inventory_balances_v2_with_warehouse
-    _patch_route(inventory_projection.router, "/inventory/balances-v2", inventory_balances_v2_with_warehouse)
+    # Do not combine Koperasi with a dapur here. A transfer is a real movement;
+    # until it is recorded, MAJA and CEMPLANG must each use their own warehouse.
 
     planning.get_planning_snapshot = get_planning_snapshot_with_vendor_policy
     _patch_route(planning.router, "/planning-snapshots/{snapshot_id}", get_planning_snapshot_with_vendor_policy)

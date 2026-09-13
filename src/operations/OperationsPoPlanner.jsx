@@ -400,6 +400,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [rangeLoading, setRangeLoading] = useState(false);
   const [viewingPo, setViewingPo] = useState(null);
   const [reminderActionKey, setReminderActionKey] = useState("");
+  const [stockCheckDialog, setStockCheckDialog] = useState(null);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -795,40 +796,77 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     }
   };
 
-  const confirmShortageStock = async (item) => {
+  const openShortageStockCheck = (item) => {
     if (!item.reminder_key) return;
     const details = (item.requirement_details || []).filter((detail) => Number(detail.remaining_po_qty || 0) > 0);
     if (!details.length) {
       setError("Tidak ada item kekurangan yang dapat dikoreksi stoknya.");
       return;
     }
-    const updates = [];
-    for (const detail of details) {
+    setStockCheckDialog({
+      item,
+      lines: details.map((detail, index) => {
       const names = (detail.item_names || []).filter(Boolean);
-      const itemName = names[0] || detail.stock_type_code || "Item";
-      const unit = detail.unit || "";
-      const answer = window.prompt(
-        `Stok fisik AKTUAL dapur untuk ${itemName}${unit ? ` (${unit})` : ""} sekarang berapa?\n\nIsi jumlah yang benar-benar ada saat ini, bukan selisih. Kosongkan jika item ini tidak perlu dikoreksi.`,
-        ""
-      );
-      if (answer === null) return;
-      if (!String(answer).trim()) continue;
-      const value = Number(String(answer).replace(",", "."));
-      if (!Number.isFinite(value) || value < 0) {
-        setError(`Stok ${itemName} tidak valid.`);
-        return;
-      }
-      if (!unit) {
-        setError(`Satuan ${itemName} belum tersedia; koreksi stok dibatalkan agar tidak salah unit.`);
-        return;
-      }
-      updates.push({ item_name: itemName, unit, actual_stock_qty: value });
+      const candidates = detail.warehouse_stock_check?.candidates || [];
+      const exactIndex = candidates.findIndex((candidate) => candidate.is_exact_match);
+      const selectedIndex = exactIndex >= 0 ? String(exactIndex) : "";
+      const selected = exactIndex >= 0 ? candidates[exactIndex] : null;
+      return {
+        id: `${detail.distribution_date || "date"}-${detail.stock_type_code || index}-${index}`,
+        requirement_name: names[0] || detail.stock_type_code || "Item",
+        requirement_unit: detail.unit || "",
+        required_qty: Number(detail.remaining_po_qty || 0),
+        candidates,
+        selected_index: selectedIndex,
+        item_name: selected?.item_name || names[0] || detail.stock_type_code || "",
+        unit: selected?.unit || detail.unit || "",
+        actual_stock_qty: selected ? String(selected.actual_balance ?? "") : "",
+      };
+    }),
+    });
+  };
+
+  const updateStockCheckLine = (lineId, patch) => {
+    setStockCheckDialog((current) => current ? {
+      ...current,
+      lines: current.lines.map((line) => line.id === lineId ? { ...line, ...patch } : line),
+    } : current);
+  };
+
+  const chooseStockReference = (lineId, selectedIndex) => {
+    setStockCheckDialog((current) => current ? {
+      ...current,
+      lines: current.lines.map((line) => {
+        if (line.id !== lineId) return line;
+        const candidate = selectedIndex === "" ? null : line.candidates[Number(selectedIndex)];
+        return {
+          ...line,
+          selected_index: selectedIndex,
+          item_name: candidate?.item_name || line.requirement_name,
+          unit: candidate?.unit || line.requirement_unit,
+          actual_stock_qty: candidate ? String(candidate.actual_balance ?? "") : line.actual_stock_qty,
+        };
+      }),
+    } : current);
+  };
+
+  const confirmShortageStock = async () => {
+    const dialog = stockCheckDialog;
+    const item = dialog?.item;
+    if (!item?.reminder_key) return;
+    const updates = [];
+    for (const line of dialog.lines || []) {
+      if (String(line.actual_stock_qty).trim() === "") continue;
+      const value = Number(String(line.actual_stock_qty).replace(",", "."));
+      if (!Number.isFinite(value) || value < 0) return setError(`Stok ${line.item_name || line.requirement_name} tidak valid.`);
+      if (!String(line.unit || "").trim()) return setError(`Satuan ${line.item_name || line.requirement_name} belum tersedia; koreksi tidak disimpan.`);
+      updates.push({ item_name: String(line.item_name || line.requirement_name).trim(), unit: String(line.unit).trim(), actual_stock_qty: value });
     }
     if (!updates.length) {
-      setMessage("Tidak ada stok yang diubah. Gunakan ‘Sudah dicek / biarkan’ jika selisih memang disengaja.");
+      setError("Isi minimal satu stok fisik yang sudah Anda hitung.");
       return;
     }
-    if (!window.confirm(`Catat ${updates.length} stok fisik dapur sebagai koreksi gudang ${activeSite}?\n\nSistem hanya mencatat SELISIH terhadap saldo aktual sekarang. SO terakhir tidak diubah.`)) return;
+    if (!window.confirm(`Catat ${updates.length} stok fisik dapur sebagai koreksi gudang ${activeSite}?\n\nSistem hanya mencatat selisih terhadap stok aktual. Reminder tidak akan dipaksa ditutup; ia dihitung ulang dari stok baru.`)) return;
     setReminderActionKey(item.reminder_key);
     setError("");
     setMessage("");
@@ -839,6 +877,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         items: updates,
         note: `Koreksi dari review kekurangan ${item.po_code || item.vendor_code}`,
       });
+      setStockCheckDialog(null);
       await refreshReminders();
       if (dailyPulled) await pullDailyData();
       setMessage(result?.message || "Stok dapur dikoreksi dan reminder dihitung ulang.");
@@ -1410,7 +1449,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                 {item.reminder_override ? <button type="button" onClick={() => clearReminderOverride(item)} disabled={reminderActionKey === item.reminder_key}><RotateCcw size={13} /> Batalkan Override</button> : <>
                   {canCreatePo && <button className="ops-button-primary" type="button" onClick={() => createReminderShortagePo(item)} disabled={reminderActionKey === item.reminder_key}><ShoppingCart size={13} /> {residualReview ? "Buat PO Tambahan" : "Buat PO"}</button>}
                   {canConfirmManualPo && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "MANUAL_PO")} disabled={reminderActionKey === item.reminder_key}><Send size={13} /> PO sudah dilakukan</button>}
-                  {canConfirmStock && item.reminder_key && <button type="button" onClick={() => confirmShortageStock(item)} disabled={reminderActionKey === item.reminder_key}><Save size={13} /> Konfirmasi stok gudang</button>}
+                  {canConfirmStock && item.reminder_key && <button type="button" onClick={() => openShortageStockCheck(item)} disabled={reminderActionKey === item.reminder_key}><Save size={13} /> Cek stok gudang</button>}
                   {residualReview && item.reminder_key && <button className="ops-button-success" type="button" onClick={() => saveReminderOverride(item, "CHECKED")} disabled={reminderActionKey === item.reminder_key}><CheckCircle2 size={13} /> Sudah dicek / biarkan</button>}
                 </>}
               </div></td>
@@ -1419,6 +1458,21 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           {!loading && reminders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
         </tbody></table></div>
       </section>
+
+      {stockCheckDialog && <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !saving && setStockCheckDialog(null)}>
+        <div role="dialog" aria-modal="true" className="modal wide">
+          <div className="modal-head"><div><h3>Cek Stok Gudang {activeSite}</h3><p className="ops-muted">Referensi di bawah hanya stok dari Gudang Dapur {activeSite}. Nama yang mirip tidak dianggap sama otomatis.</p></div><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}><XCircle size={18} /></button></div>
+          <div className="ops-notice"><strong>Isi stok fisik setelah dihitung.</strong> Jika ada tambahan, masukkan jumlah total terbaru. Sistem hanya mencatat selisih dan menghitung ulang reminder; ia tidak akan menutup reminder bila stok belum cukup.</div>
+          <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kebutuhan PO</th><th>Referensi stok gudang</th><th>Stok fisik setelah cek</th></tr></thead><tbody>
+            {stockCheckDialog.lines.map((line) => <tr key={line.id}>
+              <td><strong>{line.requirement_name}</strong><div className="ops-muted">Sisa PO: {qty(line.required_qty)} {line.requirement_unit || ""}</div></td>
+              <td><select value={line.selected_index} onChange={(event) => chooseStockReference(line.id, event.target.value)}><option value="">Gunakan nama kebutuhan / tidak ada referensi tepat</option>{line.candidates.map((candidate, index) => <option key={`${candidate.item_name}-${candidate.unit}-${index}`} value={String(index)}>{candidate.item_name} · stok aktual {qty(candidate.actual_balance)} {candidate.unit || "-"} · sisa PO {qty(candidate.available_for_po)} {candidate.unit || "-"}{candidate.is_exact_match ? " · cocok tepat" : " · nama mirip"}</option>)}</select>{line.candidates.length > 0 && <div className="ops-muted">{line.candidates.some((candidate) => candidate.is_exact_match) ? "Kecocokan tepat bisa dipakai sistem setelah stok dihitung ulang." : "Pilih hanya bila ini memang barang yang Anda hitung; nama mirip bukan pengganti otomatis."}</div>}</td>
+              <td><div className="ops-form-grid"><label>Barang<input value={line.item_name} onChange={(event) => updateStockCheckLine(line.id, { item_name: event.target.value, selected_index: "" })} /></label><label>Unit<input value={line.unit} onChange={(event) => updateStockCheckLine(line.id, { unit: event.target.value, selected_index: "" })} /></label><label>Jumlah fisik<input className="ops-qty-input" type="number" min="0" step="0.0001" value={line.actual_stock_qty} onChange={(event) => updateStockCheckLine(line.id, { actual_stock_qty: event.target.value })} placeholder="isi setelah hitung" /></label></div></td>
+            </tr>)}
+          </tbody></table></div>
+          <div className="ops-row-actions"><button type="button" onClick={confirmShortageStock} disabled={saving || reminderActionKey === stockCheckDialog.item.reminder_key}><Save size={14} /> Simpan hasil cek stok</button><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}>Batal</button></div>
+        </div>
+      </div>}
 
       <section className="ops-module">
         <div className="ops-module-header">

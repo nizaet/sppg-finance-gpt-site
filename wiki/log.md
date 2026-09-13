@@ -58,3 +58,9 @@
 - Both kitchens now use exact/confirmed ingredient identity and known unit conversions, counting each stock row once regardless of alias count. Unknown package-to-weight conversions are disclosed rather than assumed.
 - Explicit MANUAL_STOCK_EDIT facts with target_balance provide a per-item physical check date. Plans and provisional PO supply before that local date no longer adjust the newly confirmed stock again; same-day and later plans remain, and ordinary receiving does not reset the planning baseline.
 - Warehouse/PO views disclose provisional incoming PO supply and the physical correction date. Existing SO, PO, receipt and financial records are unchanged. Added production-transformed JavaScript and Python regressions for both kitchens.
+
+## 2026-09-12 — Same-kitchen PO reminder stock check and direct warehouse additions
+- PO reminders for MAJA and CEMPLANG now scope available stock to the selected kitchen. Koperasi inventory remains separate until an auditable internal transfer reaches the destination kitchen.
+- A fresh reminder check may close only exact, unit-compatible stock that was not already included in the original projection. Similar names are returned as operator references with their balance, never silently treated as the same item.
+- Saving a stock check records a manual inventory correction and recalculates the queue. It no longer saves a `SUFFICIENT` override that could hide an insufficient requirement.
+- The Gudang screen supports adding stock from an existing master item or a new item. Categories offer the existing list while allowing a new category; master creation and stock movement are auditable and do not rewrite SO history.

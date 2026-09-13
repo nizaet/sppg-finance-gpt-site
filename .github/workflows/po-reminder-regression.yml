@@ -46,6 +46,7 @@ jobs:
           python -m unittest -v tests.test_po_reminder_legacy_po_reconcile
           python -m unittest -v tests.test_po_reminder_tools
           python -m unittest -v tests.test_po_shortage_stock
+          python -m unittest -v tests.test_po_reminder_warehouse_check
           python -m unittest -v tests.test_item_taxonomy_vendor_sync
           python -m unittest -v tests.test_control_tower_po_sync
           python -m unittest -v tests.test_po_performance_receiving_regression

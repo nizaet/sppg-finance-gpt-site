@@ -13,6 +13,7 @@ const localDateTime = (value) => value ? new Date(value).toLocaleString("id-ID",
   timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
 }) : "-";
 const stockKey = (name, unit) => `${String(name || "").toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim()}|${String(unit || "").toLocaleLowerCase("id-ID").trim()}`;
+const normalizedName = (value) => String(value || "").toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim();
 const todayMonth = () => new Date().toISOString().slice(0, 7);
 const transferMonthBounds = (month) => {
   const first = new Date(`${month}-01T12:00:00`);
@@ -38,6 +39,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
   const [sourceExternalId, setSourceExternalId] = useSiteState(activeSite, "");
   const [masters, setMasters] = useSiteState(activeSite, []);
   const [masterForm, setMasterForm] = useSiteState(activeSite, { code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+  const [addStockForm, setAddStockForm] = useSiteState(activeSite, { item_name: "", inventory_item_code: "", category_code: "", unit: "kg", qty_to_add: "", reason: "Tambah stok gudang" });
   const [stockEdit, setStockEdit] = useSiteState(activeSite, null);
   const [transfers, setTransfers] = useSiteState(activeSite, []);
   const [transferMonth, setTransferMonth] = useSiteState(activeSite, todayMonth());
@@ -58,6 +60,19 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
     });
     return result;
   }, [items]);
+
+  const categoryOptions = useMemo(() => Array.from(new Set(masters.map((item) => String(item.category_code || "").trim()).filter(Boolean))).sort(), [masters]);
+  const addStockCurrentBalance = useMemo(() => {
+    const code = String(addStockForm.inventory_item_code || "");
+    const name = normalizedName(addStockForm.item_name);
+    const unit = String(addStockForm.unit || "").trim().toLowerCase();
+    const matched = items.filter((item) => {
+      if (code && String(item.inventory_item_code || "") === code) return true;
+      if (!name || String(item.unit || "").trim().toLowerCase() !== unit) return false;
+      return [item.item_name, ...(item.raw_item_names || [])].some((value) => normalizedName(value) === name);
+    });
+    return matched.reduce((total, item) => total + Number(item.actual_balance ?? item.balance ?? 0), 0);
+  }, [addStockForm.inventory_item_code, addStockForm.item_name, addStockForm.unit, items]);
 
   const addStockComparison = (item) => {
     let before = null;
@@ -351,6 +366,67 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
     }
   };
 
+  const chooseAddStockItem = (value) => {
+    const typed = String(value || "");
+    const normalized = normalizedName(typed);
+    const matched = masters.find((master) => normalized && [master.canonical_name, ...(master.aliases || [])].some((name) => normalizedName(name) === normalized));
+    setAddStockForm((current) => ({
+      ...current,
+      item_name: typed,
+      inventory_item_code: matched?.code || "",
+      category_code: matched?.category_code || current.category_code,
+      unit: matched?.base_unit || current.unit,
+    }));
+  };
+
+  const addWarehouseStock = async () => {
+    const itemName = String(addStockForm.item_name || "").trim();
+    const quantity = Number(String(addStockForm.qty_to_add || "").replace(",", "."));
+    if (!itemName) return setError("Pilih barang dari daftar atau masukkan nama barang baru.");
+    if (!String(addStockForm.unit || "").trim()) return setError("Satuan wajib diisi.");
+    if (!Number.isFinite(quantity) || quantity <= 0) return setError("Jumlah tambahan harus lebih dari 0.");
+    const selectedMaster = masters.find((master) => String(master.code || "") === String(addStockForm.inventory_item_code || ""));
+    const isNew = !selectedMaster;
+    if (!window.confirm(
+      `${isNew ? `Buat Master Barang baru “${itemName}” lalu ` : ""}tambahkan ${qty(quantity)} ${addStockForm.unit} ke Gudang ${activeSite}?\n\n` +
+      `Stok aktual akan berubah dari ${qty(addStockCurrentBalance)} menjadi ${qty(addStockCurrentBalance + quantity)} ${addStockForm.unit}. Riwayat SO tidak diubah.`
+    )) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      let inventoryItemCode = selectedMaster?.code || null;
+      let canonicalName = selectedMaster?.canonical_name || itemName;
+      if (isNew) {
+        const master = await operationsApi.saveInventoryItem({
+          canonical_name: itemName,
+          category_code: String(addStockForm.category_code || "LAINNYA").trim().toUpperCase(),
+          base_unit: String(addStockForm.unit).trim(),
+          aliases: [],
+        }, true);
+        inventoryItemCode = master.code;
+        canonicalName = master.canonicalName || itemName;
+      }
+      const result = await operationsApi.manualStockAdjustment({
+        location: activeSite,
+        item_name: canonicalName,
+        inventory_item_code: inventoryItemCode,
+        unit: String(addStockForm.unit).trim(),
+        current_balance: addStockCurrentBalance,
+        target_balance: addStockCurrentBalance + quantity,
+        reason: addStockForm.reason || "Tambah stok gudang",
+        actor: "operator",
+      }, true);
+      setAddStockForm({ item_name: "", inventory_item_code: "", category_code: "", unit: "kg", qty_to_add: "", reason: "Tambah stok gudang" });
+      setMessage(`${result.itemName}: stok bertambah ${qty(result.adjustmentQty)} ${result.unit || ""}. Movement audit #${result.movementId} tersimpan.`);
+      await load(search);
+    } catch (err) {
+      setError(err.message || "Gagal menambah stok gudang");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const editMaster = (master) => {
     setMasterForm({
       code: master.code || "", canonical_name: master.canonical_name || "", category_code: master.category_code || "",
@@ -424,6 +500,19 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
         </div>}
       </section>
 
+      <section className="ops-module" id="inventory-add-stock">
+        <div className="ops-module-header"><div><span className="ops-kicker">TAMBAH BARANG / STOK</span><h3>Tambahkan Stok Gudang</h3><p>Pilih barang dari Master Barang, atau ketik barang baru. Barang baru dibuatkan master terlebih dahulu agar PO berikutnya mengenali nama dan kategorinya.</p></div></div>
+        <div className="ops-form-grid">
+          <label>Barang<input list="inventory-master-options" value={addStockForm.item_name} onChange={(event) => chooseAddStockItem(event.target.value)} placeholder="Pilih atau ketik barang baru" /><datalist id="inventory-master-options">{masters.map((master) => <option key={master.code} value={master.canonical_name}>{master.category_code || "-"} · {master.base_unit || "-"}</option>)}</datalist></label>
+          <label>Kategori<input list="inventory-category-options" value={addStockForm.category_code} onChange={(event) => setAddStockForm((current) => ({ ...current, category_code: event.target.value.toUpperCase() }))} placeholder="Pilih atau ketik kategori baru" /><datalist id="inventory-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist></label>
+          <label>Satuan<input list="inventory-unit-options" value={addStockForm.unit} onChange={(event) => setAddStockForm((current) => ({ ...current, unit: event.target.value }))} placeholder="kg / gr / pcs / liter" /><datalist id="inventory-unit-options">{["kg", "gr", "pcs", "liter", "ikat", "dus", "karung", "botol", "pack"].map((unit) => <option key={unit} value={unit} />)}</datalist></label>
+          <label>Tambah stok<input className="ops-qty-input" type="number" min="0.0001" step="0.0001" value={addStockForm.qty_to_add} onChange={(event) => setAddStockForm((current) => ({ ...current, qty_to_add: event.target.value }))} placeholder="Jumlah yang ditambahkan" /></label>
+          <label>Alasan<input value={addStockForm.reason} onChange={(event) => setAddStockForm((current) => ({ ...current, reason: event.target.value }))} placeholder="contoh: stok ditemukan di rak" /></label>
+          <label>Stok saat ini<div className="ops-inline-controls"><strong>{qty(addStockCurrentBalance)} {addStockForm.unit || ""}</strong><button type="button" onClick={addWarehouseStock} disabled={saving}><Plus size={14} /> Tambah stok</button></div></label>
+        </div>
+        <div className="ops-muted">Untuk barang Master yang dipilih, kategori dan satuan terisi otomatis. Kategori baru boleh langsung diketik; tidak ada SO lama yang ditimpa.</div>
+      </section>
+
       {activeSite === "KOPERASI" && <section className="ops-module">
         <div className="ops-module-header">
           <div>
@@ -464,7 +553,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
         <div className="ops-form-grid">
           <label>Kode (opsional)<input value={masterForm.code} onChange={(e) => setMasterForm((current) => ({ ...current, code: e.target.value.toUpperCase() }))} placeholder="MI_TELUR_AYAM" /></label>
           <label>Nama kanonik<input value={masterForm.canonical_name} onChange={(e) => setMasterForm((current) => ({ ...current, canonical_name: e.target.value }))} placeholder="Mi telur ayam" /></label>
-          <label>Kategori<input value={masterForm.category_code} onChange={(e) => setMasterForm((current) => ({ ...current, category_code: e.target.value.toUpperCase() }))} placeholder="BAHAN_KERING" /></label>
+          <label>Kategori<input list="inventory-category-options" value={masterForm.category_code} onChange={(e) => setMasterForm((current) => ({ ...current, category_code: e.target.value.toUpperCase() }))} placeholder="Pilih atau ketik kategori baru" /></label>
           <label>Satuan dasar<input value={masterForm.base_unit} onChange={(e) => setMasterForm((current) => ({ ...current, base_unit: e.target.value }))} placeholder="dus / pcs / kg" /></label>
           <label>Alias dipisah koma<input value={masterForm.aliases} onChange={(e) => setMasterForm((current) => ({ ...current, aliases: e.target.value }))} placeholder="mi telur, mie telur ayam" /></label>
           <label>Aksi<div className="ops-row-actions"><button type="button" onClick={saveMaster} disabled={saving || !masterForm.canonical_name.trim()}><Save size={14} /> Simpan Master</button></div></label>

@@ -17,6 +17,7 @@
 
 ## Inventory
 - [Koperasi Dry-Goods Flow](inventory/koperasi-flow.md)
+- [PO Reminder and Kitchen Warehouse Scope](inventory/po-reminder-stock-scope.md)
 
 ## People
 - [People & Roles](people/index.md)
