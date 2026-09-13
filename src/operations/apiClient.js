@@ -13,10 +13,11 @@ function requestHeaders(options = {}) {
 }
 
 async function doRequest(path, options = {}) {
+  const { readOnly: _readOnly, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, { ...options, signal: controller.signal, headers: requestHeaders(options) });
+    const res = await fetch(`${DEFAULT_BASE_URL}${path}`, { ...fetchOptions, signal: controller.signal, headers: requestHeaders(fetchOptions) });
     if (!res.ok) {
       let detail = "";
       try { detail = await res.text(); } catch {}
@@ -32,8 +33,10 @@ async function doRequest(path, options = {}) {
 function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (method !== "GET") return doRequest(path, options).then(result => {
-    inflightGets.clear();
-    invalidateReads();
+    if (!options.readOnly) {
+      inflightGets.clear();
+      invalidateReads();
+    }
     return result;
   });
   const key = `${DEFAULT_BASE_URL}${path}`;
@@ -61,6 +64,7 @@ export const operationsApi = {
   overridePoReminder: (payload) => request("/v1/po-reminders/override", { method: "POST", body: JSON.stringify(payload) }),
   clearPoReminderOverride: (reminderKey) => request(`/v1/po-reminders/override/${encodeURIComponent(reminderKey)}`, { method: "DELETE" }),
   confirmPoShortageStock: (payload) => request("/v1/po-reminders/stock-confirmation", { method: "POST", body: JSON.stringify(payload) }),
+  getPoShortageStockReferences: (payload) => request("/v1/po-reminders/stock-references", { method: "POST", body: JSON.stringify(payload), readOnly: true }),
   getReferenceSites: () => request("/v1/reference/sites"),
   getReferenceVendors: (site = "") => { const q = new URLSearchParams(); if (site) q.set("site", site); return request(`/v1/reference/vendors${q.toString() ? `?${q}` : ""}`); },
   updateVendorLeadTime: (payload) => request("/v1/reference/vendor-rules/lead-time", { method: "POST", body: JSON.stringify(payload) }),

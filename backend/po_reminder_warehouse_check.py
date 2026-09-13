@@ -106,6 +106,14 @@ def _candidates(detail: dict[str, Any], balance_items: list[dict[str, Any]]) -> 
     return rows[:5]
 
 
+def warehouse_stock_candidates(
+    detail: dict[str, Any],
+    balance_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Public, read-only candidate builder for the on-demand stock dialog."""
+    return _candidates(detail, balance_items)
+
+
 def apply_warehouse_stock_check(payload: dict[str, Any], requested_site: str) -> dict[str, Any]:
     """Add same-kitchen stock references and safely auto-cover exact stock only."""
     items = payload.get("items") or []

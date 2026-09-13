@@ -582,3 +582,100 @@ html[data-app-theme="dark"] .sppg-session-bar :is(a, button) { background: #3037
   .card-content { padding: 12px 14px 16px; }
   .btn { min-height: 42px; }
 }
+
+/* Fold and phone reliability for every Accountant/BGN module. Wide ledgers
+   remain readable inside an explicit touch scroller; cards, filters and action
+   rows themselves never extend beyond the viewport. */
+@media (max-width: 1100px) {
+  .app-shell,
+  .page,
+  .space,
+  .legacy-header,
+  .card,
+  .card-header,
+  .card-content,
+  .finance-grid,
+  .grid-two,
+  .grid-three,
+  .input-workspace,
+  .input-panel-grid,
+  .paste-stack {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :is(.tracking-table-wide, .scroll-table, .wide-table, .boxed-table, .detail-scroll, .dividend-history) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    scrollbar-width: thin;
+    scrollbar-color: #64748b #e2e8f0;
+  }
+
+  :is(.tracking-table-wide, .scroll-table, .wide-table, .boxed-table, .detail-scroll, .dividend-history)::-webkit-scrollbar {
+    height: 7px;
+  }
+
+  :is(.tracking-table-wide, .scroll-table, .wide-table, .boxed-table, .detail-scroll, .dividend-history)::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #64748b;
+  }
+
+  :is(.header-actions, .row-actions, .modal-actions, .periods, .date-range, .audit-toolbar, .tracking-selection-actions) {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  :is(.header-actions, .row-actions, .modal-actions, .periods, .date-range, .audit-toolbar, .tracking-selection-actions) > :is(button, a, label, input, select) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .modal-backdrop {
+    box-sizing: border-box;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    overflow: hidden;
+  }
+
+  .modal,
+  .modal.wide {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: min(100%, 980px);
+    max-height: calc(100dvh - 20px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sppg-session-bar {
+    touch-action: pan-x;
+    scrollbar-width: thin;
+    scrollbar-color: #64748b transparent;
+  }
+  .sppg-session-bar::-webkit-scrollbar { display: block; height: 4px; }
+  .sppg-session-bar::-webkit-scrollbar-thumb { border-radius: 999px; background: #64748b; }
+}
+
+@media (max-width: 560px) {
+  .filterbar,
+  .between,
+  .backup-row,
+  .edit-debt-preview,
+  .vendor-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  :is(.header-actions, .modal-actions) > :is(button, a) { flex: 1 1 100%; width: 100%; }
+  .modal,
+  .modal.wide { padding: 14px; }
+}

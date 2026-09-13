@@ -204,9 +204,25 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
       .railway-app-control:hover {{ background: rgba(255,255,255,.22); }}
       .railway-app-control.railway-logout {{ border-color: #fca5a5; background: #dc2626; }}
       {calculator_dark_styles}
+      @media (max-width: 1100px) {{
+        #railwayAppControls {{
+          box-sizing: border-box;
+          width: 100%;
+          max-width: 100%;
+          margin: .65rem 0 0;
+          justify-content: flex-start;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+          touch-action: pan-x;
+          scrollbar-width: thin;
+        }}
+        .railway-app-control {{ flex: 0 0 auto; min-height: 2.65rem; }}
+      }}
       @media (max-width: 639px) {{
-        #railwayAppControls {{ width: 100%; margin: .65rem 0 0; justify-content: stretch; }}
-        .railway-app-control {{ flex: 1 1 auto; min-height: 2.65rem; font-size: .8rem; }}
+        #railwayAppControls {{ padding-bottom: .25rem; }}
+        .railway-app-control {{ font-size: .8rem; }}
       }}
     </style>
     """

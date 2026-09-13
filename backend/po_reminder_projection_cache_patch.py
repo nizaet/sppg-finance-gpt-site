@@ -71,6 +71,21 @@ def projection_lookup(site: str, distribution_date: date) -> tuple[dict[tuple[st
         return _copy_result(result)
 
 
+def configure_projection_source(source) -> None:
+    """Keep the runtime site/date projection behind the single-flight cache.
+
+    ``backend.server`` replaces the default projection with the cooking-day,
+    selected-kitchen calculation.  Previously that direct assignment silently
+    disabled this cache, so every reminder refresh repeated all inventory SQL.
+    """
+    global _ORIGINAL_PROJECTION_LOOKUP
+    with _LOCK:
+        _ORIGINAL_PROJECTION_LOOKUP = source
+        _CACHE.clear()
+        _KEY_LOCKS.clear()
+    _v4._projection_lookup = projection_lookup
+
+
 def _as_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value

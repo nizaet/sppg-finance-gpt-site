@@ -7,7 +7,15 @@ Rules:
 - An exact, unit-compatible stock identity can reduce a PO need. A current warehouse balance already included in the planning projection is never deducted a second time.
 - A similar name is only a reference for the operator. It does not hide a PO reminder automatically.
 - The stock-check dialog shows the closest same-kitchen references, their actual balance, and their projected availability. The operator may select one to count it or enter a new physical total.
+- The normal reminder queue does not run a second warehouse projection merely to prepare those references. References are loaded once, on demand, when the operator opens **Cek stok gudang**. The queue remains authoritative because its first projection has already deducted selected-kitchen stock.
 - Saving a stock check writes only an auditable inventory correction. The reminder is recalculated and closes only if the resulting stock actually covers the requirement; it is not closed by an override merely because a check was entered.
+- Immediately before a stock correction is saved, current exact PO coverage is checked again. An item already covered by a saved PO cannot change warehouse stock from a stale browser dialog.
 - Adding warehouse stock first resolves or creates an inventory master item. The operator can select an existing master/category or type a new item/category. This does not rewrite a stock-opname, PO, receiving, or financial history.
+
+Operational performance:
+
+- The action queue covers overdue items from the previous seven days, today, and tomorrow; it is not a 21-day forecast.
+- Projection reads use a short, per-site/per-date single-flight cache. The production site-only cooking-day projection must remain behind this cache when the server starts.
+- A reminder refresh preserves MAJA/CEMPLANG isolation and never borrows stock from the other kitchen.
 
 Related: [Koperasi Dry-Goods Flow](koperasi-flow.md), [SPPG Maja](../sites/maja.md), [SPPG Cemplang](../sites/cemplang.md).

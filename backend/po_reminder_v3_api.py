@@ -15,7 +15,6 @@ from backend.po_reminder_operational_reconcile import reconcile_operational_po_r
 from backend.po_reminder_override_fallback import apply_fallback_reminder_overrides
 from backend.po_reminder_tools_api import apply_reminder_overrides
 from backend.po_reminder_v4_api import po_reminders_v4
-from backend.po_reminder_warehouse_check import apply_warehouse_stock_check
 
 router = APIRouter(tags=["po-reminder-v3"])
 
@@ -242,10 +241,11 @@ def po_reminders_v3(
     payload = reconcile_operational_po_reminders(payload, site, target)
     payload = reconcile_legacy_completed_pos(payload, site, target)
     payload = enrich_completed_po_shortages(payload, site)
-    # Recheck the physical warehouse of the same kitchen immediately before
-    # exposing an action row.  Similar item names are shown as references only;
-    # they never suppress a PO without an exact, unit-compatible match.
-    payload = apply_warehouse_stock_check(payload, site)
+    # v4 has already projected stock for the selected kitchen and the latest-plan
+    # reconciliation above uses that result. Candidate/reference rows for a
+    # manual physical check are intentionally loaded only after the operator
+    # opens "Cek stok gudang"; recomputing them here doubled the expensive
+    # inventory work and made CEMPLANG requests exceed Railway's timeout.
     # Apply the MAJA KOPERASI tahu H-1 timing last. Tempe keeps its own
     # effective-dated rule from vendor_rules.
     payload = _fix_maja_koperasi_tofu_h1(payload, target)

@@ -102,6 +102,125 @@ html[data-app-theme="dark"] .ops-workspace .ops-status-info { background: #2d3c5
   html[data-app-theme] .ops-workspace .ops-sidebar nav a { min-height: 44px; }
 }
 
+/* Galaxy Fold and narrow-tablet reliability.  Keep the application shell
+   inside the viewport, then give only genuinely wide data surfaces their own
+   touch scroller.  This block intentionally comes last so older 701-1100px
+   rules cannot force forms back to two columns. */
+@media (max-width: 1100px) {
+  html[data-app-theme] .ops-workspace,
+  html[data-app-theme] .ops-workspace .ops-content,
+  html[data-app-theme] .ops-workspace .ops-domain-stack,
+  html[data-app-theme] .ops-workspace .ops-module,
+  html[data-app-theme] .ops-workspace .ops-site,
+  html[data-app-theme] .ops-workspace .ops-draft-group,
+  html[data-app-theme] .ops-workspace .ops-module-header > *,
+  html[data-app-theme] .ops-workspace .ops-draft-group-head > * {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  html[data-app-theme] .ops-workspace .ops-content {
+    width: 100%;
+    overflow-x: clip;
+  }
+
+  html[data-app-theme] .ops-workspace :is(.ops-table-wrap, .ops-calendar-scroll) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto !important;
+    overflow-y: visible;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    scrollbar-width: thin;
+    scrollbar-color: var(--ops-accent) var(--ops-input);
+  }
+
+  html[data-app-theme] .ops-workspace .ops-table-wrap::-webkit-scrollbar,
+  html[data-app-theme] .ops-workspace .ops-calendar-scroll::-webkit-scrollbar {
+    height: 7px;
+  }
+
+  html[data-app-theme] .ops-workspace .ops-table-wrap::-webkit-scrollbar-thumb,
+  html[data-app-theme] .ops-workspace .ops-calendar-scroll::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--ops-accent);
+  }
+
+  html[data-app-theme] .ops-workspace .ops-table {
+    width: 100%;
+    min-width: 820px;
+  }
+
+  html[data-app-theme] .ops-workspace :is(.ops-row-actions, .ops-chat-actions, .ops-inline-controls, .ops-summary-strip) {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  html[data-app-theme] .ops-workspace :is(.ops-row-actions, .ops-chat-actions, .ops-inline-controls) > :is(button, a, label) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  html[data-app-theme] .ops-workspace .modal-backdrop {
+    box-sizing: border-box;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    overflow: hidden;
+  }
+
+  html[data-app-theme] .ops-workspace .modal,
+  html[data-app-theme] .ops-workspace .modal.wide {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: min(100%, 980px);
+    max-height: calc(100dvh - 20px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 900px) {
+  html[data-app-theme] .ops-workspace .ops-form-grid,
+  html[data-app-theme] .ops-workspace .ops-coverage-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html[data-app-theme] .ops-workspace :is(.ops-module-header, .ops-draft-group-head) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  html[data-app-theme] .ops-workspace :is(.ops-module-header, .ops-draft-group-head) > .ops-row-actions,
+  html[data-app-theme] .ops-workspace > .ops-row-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  html[data-app-theme] .ops-workspace .ops-content { padding-inline: 8px; }
+  html[data-app-theme] .ops-workspace .ops-module { padding: 12px; }
+  html[data-app-theme] .ops-workspace :is(.ops-row-actions, .ops-chat-actions, .ops-inline-controls) > :is(button, a) {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  html[data-app-theme] .ops-workspace .ops-table { min-width: 720px; }
+  html[data-app-theme] .ops-workspace .ops-calendar-grid { min-width: 620px; }
+  html[data-app-theme] .ops-workspace .modal,
+  html[data-app-theme] .ops-workspace .modal.wide { padding: 14px; }
+  html[data-app-theme] .ops-workspace .modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  html[data-app-theme] .ops-workspace .modal-actions button { width: 100%; }
+}
+
 .ops-calendar-po-family { margin-top: 5px; }
 .ops-calendar-po-family summary { font-size: 11px; padding: 5px 2px; cursor: pointer; color: var(--ops-muted); }
 .ops-calendar-po-family details button { width: 100%; margin: 3px 0; }

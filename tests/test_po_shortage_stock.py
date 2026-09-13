@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from backend.po_shortage_stock_api import (
+    StockReferenceRequestIn,
     _actual_balance_lookup,
     _correction_direction,
     _fresh_requirement_lookup,
     _source_key,
+    po_shortage_stock_references,
 )
 
 
@@ -98,6 +101,28 @@ class PoShortageStockHelperTests(unittest.TestCase):
         })
         self.assertEqual(4.0, lookup[("BAWANG_PUTIH", "kg")]["remaining_po_qty"])
         self.assertEqual(0.0, lookup[("BAWANG_PUTIH_BUBUK", "kg")]["remaining_po_qty"])
+
+    def test_stock_references_are_loaded_once_for_all_dialog_lines(self):
+        payload = StockReferenceRequestIn(
+            site="CEMPLANG",
+            requirements=[
+                {"client_key": "bombay", "item_names": ["Bawang Bombay"], "stock_type_code": "BAWANG_BOMBAY", "unit": "kg"},
+                {"client_key": "putih", "item_names": ["Bawang Putih"], "stock_type_code": "BAWANG_PUTIH", "unit": "kg"},
+            ],
+        )
+        balances = {"items": [
+            {"item_name": "Bawang Bombay", "stock_type_code": "BAWANG_BOMBAY", "unit": "kg", "actual_balance": 7, "available_for_po": 5},
+            {"item_name": "Bawang Putih", "stock_type_code": "BAWANG_PUTIH", "unit": "kg", "actual_balance": 3, "available_for_po": 2},
+        ]}
+        with patch("backend.po_shortage_stock_api.require_db"), patch(
+            "backend.po_shortage_stock_api.inventory_balances_v2", return_value=balances
+        ) as inventory:
+            result = po_shortage_stock_references(payload)
+
+        self.assertEqual(result["scope"], "DAPUR_SAME_SITE_ONLY")
+        self.assertEqual([row["client_key"] for row in result["items"]], ["bombay", "putih"])
+        self.assertEqual(inventory.call_count, 1)
+        self.assertEqual(inventory.call_args.kwargs["site"], "CEMPLANG")
 
 
 if __name__ == "__main__":

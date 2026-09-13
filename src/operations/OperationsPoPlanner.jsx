@@ -423,7 +423,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   );
 
   const refreshReminders = async () => {
-    const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
+    const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
     setReminders(reminderData?.items || []);
     setRemindersPulled(true);
   };
@@ -467,7 +467,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       const [poData, vendorsData, reminderData] = await Promise.all([
         operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 }),
         operationsApi.getReferenceVendors(activeSite),
-        operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 }),
+        operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 }),
       ]);
       setPurchaseOrders(poData?.items || []);
       setReminders(reminderData?.items || []);
@@ -796,34 +796,76 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     }
   };
 
-  const openShortageStockCheck = (item) => {
+  const openShortageStockCheck = async (item) => {
     if (!item.reminder_key) return;
     const details = (item.requirement_details || []).filter((detail) => Number(detail.remaining_po_qty || 0) > 0);
     if (!details.length) {
       setError("Tidak ada item kekurangan yang dapat dikoreksi stoknya.");
       return;
     }
-    setStockCheckDialog({
-      item,
-      lines: details.map((detail, index) => {
+    const lines = details.map((detail, index) => {
       const names = (detail.item_names || []).filter(Boolean);
-      const candidates = detail.warehouse_stock_check?.candidates || [];
-      const exactIndex = candidates.findIndex((candidate) => candidate.is_exact_match);
-      const selectedIndex = exactIndex >= 0 ? String(exactIndex) : "";
-      const selected = exactIndex >= 0 ? candidates[exactIndex] : null;
       return {
         id: `${detail.distribution_date || "date"}-${detail.stock_type_code || index}-${index}`,
+        item_names: names,
+        stock_type_code: detail.stock_type_code || "",
         requirement_name: names[0] || detail.stock_type_code || "Item",
         requirement_unit: detail.unit || "",
         required_qty: Number(detail.remaining_po_qty || 0),
-        candidates,
-        selected_index: selectedIndex,
-        item_name: selected?.item_name || names[0] || detail.stock_type_code || "",
-        unit: selected?.unit || detail.unit || "",
-        actual_stock_qty: selected ? String(selected.actual_balance ?? "") : "",
+        candidates: [],
+        selected_index: "",
+        item_name: names[0] || detail.stock_type_code || "",
+        unit: detail.unit || "",
+        actual_stock_qty: "",
       };
-    }),
     });
+    setError("");
+    setStockCheckDialog({
+      item,
+      lines,
+      loadingReferences: true,
+    });
+    setReminderActionKey(item.reminder_key);
+    try {
+      const result = await operationsApi.getPoShortageStockReferences({
+        site: activeSite,
+        requirements: lines.map((line) => ({
+          client_key: line.id,
+          item_names: line.item_names.length ? line.item_names : [line.requirement_name],
+          stock_type_code: line.stock_type_code || null,
+          unit: line.requirement_unit || null,
+        })),
+      });
+      const byKey = new Map((result?.items || []).map((row) => [row.client_key, row.candidates || []]));
+      setStockCheckDialog((current) => {
+        if (!current || current.item.reminder_key !== item.reminder_key) return current;
+        return {
+          ...current,
+          loadingReferences: false,
+          observedForDate: result?.observedForDate || "",
+          lines: current.lines.map((line) => {
+            const candidates = byKey.get(line.id) || [];
+            const exactIndex = candidates.findIndex((candidate) => candidate.is_exact_match);
+            const selected = exactIndex >= 0 ? candidates[exactIndex] : null;
+            return {
+              ...line,
+              candidates,
+              selected_index: exactIndex >= 0 ? String(exactIndex) : "",
+              item_name: selected?.item_name || line.item_name,
+              unit: selected?.unit || line.unit,
+              actual_stock_qty: selected ? String(selected.actual_balance ?? "") : line.actual_stock_qty,
+            };
+          }),
+        };
+      });
+    } catch (err) {
+      setStockCheckDialog((current) => current && current.item.reminder_key === item.reminder_key
+        ? { ...current, loadingReferences: false }
+        : current);
+      setError(`Referensi stok belum termuat. Anda tetap dapat mengisi hasil hitung manual. ${err.message || ""}`.trim());
+    } finally {
+      setReminderActionKey("");
+    }
   };
 
   const updateStockCheckLine = (lineId, patch) => {
@@ -1164,7 +1206,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         return;
       }
       await refreshPurchaseOrders();
-      const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 21 });
+      const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
       setReminders(reminderData?.items || []);
       setRemindersPulled(true);
       setMessage(`1 DRAFT PO gabungan ${result.poCode} berhasil dibuat. Cakupan ${candidates.length} hari: ${candidates.map((row) => row.date).join(", ")}.`);
@@ -1417,7 +1459,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <span>Perlu tindakan <strong>{reminders.filter((item) => ["DUE_TODAY", "OVERDUE", "DRAFT_NEEDS_FINAL", "READY_TO_SEND"].includes(item.reminder_status)).length}</strong></span>
           <span className="ops-summary-green">Selesai <strong>{reminders.filter((item) => item.reminder_status === "DONE").length}</strong></span>
           <span>Perlu cek kekurangan <strong>{reminders.filter((item) => item.reminder_status === "SHORTAGE_REVIEW").length}</strong></span>
-          <span>Cakupan <strong>21 hari</strong></span>
+          <span>Cakupan <strong>terlambat 7 hari + hari ini + besok</strong></span>
         </div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Status</th><th>Tanggal Pesan</th><th>Vendor</th><th>Masak</th><th>Distribusi</th><th>Item / Sisa</th><th>PO</th><th>Aksi</th></tr></thead><tbody>
           {reminders.map((item, index) => {
@@ -1455,7 +1497,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
               </div></td>
             </tr>;
           })}
-          {!loading && reminders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Belum ada planning aktif dalam 21 hari ke depan.</td></tr>}
+          {!loading && reminders.length === 0 && <tr><td colSpan="8" className="ops-empty-cell">Tidak ada PO terlambat, jatuh tempo hari ini, atau untuk besok.</td></tr>}
         </tbody></table></div>
       </section>
 
@@ -1463,6 +1505,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         <div role="dialog" aria-modal="true" className="modal wide">
           <div className="modal-head"><div><h3>Cek Stok Gudang {activeSite}</h3><p className="ops-muted">Referensi di bawah hanya stok dari Gudang Dapur {activeSite}. Nama yang mirip tidak dianggap sama otomatis.</p></div><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}><XCircle size={18} /></button></div>
           <div className="ops-notice"><strong>Isi stok fisik setelah dihitung.</strong> Jika ada tambahan, masukkan jumlah total terbaru. Sistem hanya mencatat selisih dan menghitung ulang reminder; ia tidak akan menutup reminder bila stok belum cukup.</div>
+          {stockCheckDialog.loadingReferences && <div className="ops-notice" role="status"><RefreshCw className="ops-spin" size={14} /> Memuat referensi stok Gudang Dapur {activeSite}… Form tetap dapat diisi manual.</div>}
+          {!stockCheckDialog.loadingReferences && stockCheckDialog.observedForDate && <div className="ops-muted">Referensi stok aktual diperiksa untuk {stockCheckDialog.observedForDate}.</div>}
           <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kebutuhan PO</th><th>Referensi stok gudang</th><th>Stok fisik setelah cek</th></tr></thead><tbody>
             {stockCheckDialog.lines.map((line) => <tr key={line.id}>
               <td><strong>{line.requirement_name}</strong><div className="ops-muted">Sisa PO: {qty(line.required_qty)} {line.requirement_unit || ""}</div></td>

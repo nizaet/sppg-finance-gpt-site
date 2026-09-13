@@ -25,6 +25,7 @@ from backend.koperasi_transfer_export_api import router as koperasi_transfer_exp
 from backend.unified_action_schema_api import schema_v0188
 from backend.vendor_payment_runtime_fail_safe_patch import install as install_vendor_payment_fail_safe
 from backend import po_operational_policy_patch as po_policy
+from backend import po_reminder_projection_cache_patch as po_projection_cache
 
 install_calculator_ai_patch()
 install_finance_runtime_patch()
@@ -93,7 +94,11 @@ def _site_only_po_projection(site, distribution_date):
 
 # Reminder reads only the selected dapur stock. Gudang Koperasi remains a
 # separate source and is shown/handled separately by the PO planner.
-po_policy.reminder._projection_lookup = _site_only_po_projection
+# Keep the production cooking-day/site-only projection behind the shared
+# single-flight cache. A direct assignment here used to disable that cache
+# after import, causing concurrent reminder requests to repeat the same heavy
+# inventory projection work.
+po_projection_cache.configure_projection_source(_site_only_po_projection)
 
 # backend.app has already copied nested APIRouter routes onto the live FastAPI
 # application before runtime patches are installed. Replace only the planning

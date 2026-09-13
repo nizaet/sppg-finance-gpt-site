@@ -89,6 +89,26 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
 
         self.assertEqual(calls, [("MAJA", target)])
 
+    def test_runtime_projection_source_stays_behind_cache(self):
+        calls = []
+
+        def runtime_lookup(site, distribution_date):
+            calls.append((site, distribution_date))
+            return {("TEST", "kg"): 4.0}, "RUNTIME"
+
+        previous = projection_patch._ORIGINAL_PROJECTION_LOOKUP
+        target = date(2026, 9, 13)
+        try:
+            projection_patch.configure_projection_source(runtime_lookup)
+            first = projection_patch._v4._projection_lookup("CEMPLANG", target)
+            second = projection_patch._v4._projection_lookup("CEMPLANG", target)
+        finally:
+            projection_patch.configure_projection_source(previous)
+
+        self.assertEqual(calls, [("CEMPLANG", target)])
+        self.assertEqual(first, second)
+        self.assertEqual(first[1], "RUNTIME")
+
 
 class DeliveryAlertReconciliationRegressionTests(unittest.TestCase):
     def _alert_payload(self, accepted_qty: float = 0.0):

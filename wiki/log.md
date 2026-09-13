@@ -64,3 +64,11 @@
 - A fresh reminder check may close only exact, unit-compatible stock that was not already included in the original projection. Similar names are returned as operator references with their balance, never silently treated as the same item.
 - Saving a stock check records a manual inventory correction and recalculates the queue. It no longer saves a `SUFFICIENT` override that could hide an insufficient requirement.
 - The Gudang screen supports adding stock from an existing master item or a new item. Categories offer the existing list while allowing a new category; master creation and stock movement are auditable and do not rewrite SO history.
+
+## 2026-09-13 — PO reminder timeout and Fold/mobile reliability
+- Railway timing evidence showed CEMPLANG reminder requests reaching 48–60 seconds. The queue was repeating the full inventory projection to prebuild stock-reference choices, and the production cooking-day projection assignment bypassed the previously installed single-flight cache.
+- The main reminder request now performs only its authoritative selected-kitchen projection. Closest warehouse references are loaded once and only when **Cek stok gudang** is opened; similar names remain informational and never suppress a PO automatically.
+- Restored the live exact-PO-coverage guard before any physical stock correction, which had been overwritten in the latest production tree. A stale dialog cannot change stock for an item already covered by a saved PO.
+- The PO action scope is now described consistently as overdue seven days plus today and tomorrow. The UI no longer advertises or requests a misleading 21-day action horizon.
+- Operations, PO Vendor, Gudang, Accountant/BGN, and legacy Calculator layouts received Fold/mobile containment rules: one-column forms, wrapping actions, viewport-safe modals, and explicit touch scrolling for wide tables, calendars, tabs, and navigation controls.
+- No planning, PO, receipt, stock, or financial transaction was changed by this maintenance.
