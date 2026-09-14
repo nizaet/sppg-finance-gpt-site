@@ -8,7 +8,9 @@ from backend.item_taxonomy import vendor_for_item
 from backend.po_reminder_v4_api import (
     _coverage_stage,
     _group_stage,
+    _is_pending_cooking,
     _projection_lookup,
+    _reminder_group_key,
     _resolve_procurement_rule,
     _strict_cemplang_tempe_rule,
 )
@@ -86,6 +88,23 @@ class StrictCoverageRegressionTests(unittest.TestCase):
             _group_stage(["OPEN"], date(2026, 8, 17), date(2026, 8, 16)),
             "UPCOMING",
         )
+
+    def test_yesterdays_finished_cooking_is_not_an_overdue_po_task(self):
+        target = date(2026, 9, 14)
+        self.assertFalse(_is_pending_cooking({"cooking_date": date(2026, 9, 13)}, target))
+        self.assertTrue(_is_pending_cooking({"cooking_date": target}, target))
+        self.assertTrue(_is_pending_cooking({"cooking_date": date(2026, 9, 15)}, target))
+
+    def test_same_vendor_and_po_date_do_not_merge_distribution_dates(self):
+        base = {
+            "site": "MAJA",
+            "vendor_code": "KOPERASI",
+            "po_date": date(2026, 9, 14),
+            "procurement_bucket": "DEFAULT",
+        }
+        first = _reminder_group_key({**base, "distribution_date": date(2026, 9, 15)})
+        second = _reminder_group_key({**base, "distribution_date": date(2026, 9, 16)})
+        self.assertNotEqual(first, second)
 
 
 class TempeProcurementRegressionTests(unittest.TestCase):

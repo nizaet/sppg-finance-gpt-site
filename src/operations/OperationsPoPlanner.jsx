@@ -811,6 +811,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         stock_type_code: detail.stock_type_code || "",
         requirement_name: names[0] || detail.stock_type_code || "Item",
         requirement_unit: detail.unit || "",
+        distribution_date: detail.distribution_date || item.distribution_date || "",
         required_qty: Number(detail.remaining_po_qty || 0),
         candidates: [],
         selected_index: "",
@@ -834,9 +835,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           item_names: line.item_names.length ? line.item_names : [line.requirement_name],
           stock_type_code: line.stock_type_code || null,
           unit: line.requirement_unit || null,
+          distribution_date: line.distribution_date || null,
         })),
       });
-      const byKey = new Map((result?.items || []).map((row) => [row.client_key, row.candidates || []]));
+      const referenceByKey = new Map((result?.items || []).map((row) => [row.client_key, row]));
       setStockCheckDialog((current) => {
         if (!current || current.item.reminder_key !== item.reminder_key) return current;
         return {
@@ -844,7 +846,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           loadingReferences: false,
           observedForDate: result?.observedForDate || "",
           lines: current.lines.map((line) => {
-            const candidates = byKey.get(line.id) || [];
+            const reference = referenceByKey.get(line.id) || {};
+            const candidates = reference.candidates || [];
             const exactIndex = candidates.findIndex((candidate) => candidate.is_exact_match);
             const selected = exactIndex >= 0 ? candidates[exactIndex] : null;
             return {
@@ -854,6 +857,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
               item_name: selected?.item_name || line.item_name,
               unit: selected?.unit || line.unit,
               actual_stock_qty: selected ? String(selected.actual_balance ?? "") : line.actual_stock_qty,
+              observed_for_date: reference.observed_for_date || "",
             };
           }),
         };
@@ -1509,7 +1513,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           {!stockCheckDialog.loadingReferences && stockCheckDialog.observedForDate && <div className="ops-muted">Referensi stok aktual diperiksa untuk {stockCheckDialog.observedForDate}.</div>}
           <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kebutuhan PO</th><th>Referensi stok gudang</th><th>Stok fisik setelah cek</th></tr></thead><tbody>
             {stockCheckDialog.lines.map((line) => <tr key={line.id}>
-              <td><strong>{line.requirement_name}</strong><div className="ops-muted">Sisa PO: {qty(line.required_qty)} {line.requirement_unit || ""}</div></td>
+              <td><strong>{line.requirement_name}</strong><div className="ops-muted">Distribusi {line.distribution_date || "-"} · sisa PO: {qty(line.required_qty)} {line.requirement_unit || ""}</div>{line.observed_for_date && <div className="ops-muted">Stok diproyeksi sampai {line.observed_for_date}</div>}</td>
               <td><select value={line.selected_index} onChange={(event) => chooseStockReference(line.id, event.target.value)}><option value="">Gunakan nama kebutuhan / tidak ada referensi tepat</option>{line.candidates.map((candidate, index) => <option key={`${candidate.item_name}-${candidate.unit}-${index}`} value={String(index)}>{candidate.item_name} · stok aktual {qty(candidate.actual_balance)} {candidate.unit || "-"} · sisa PO {qty(candidate.available_for_po)} {candidate.unit || "-"}{candidate.is_exact_match ? " · cocok tepat" : " · nama mirip"}</option>)}</select>{line.candidates.length > 0 && <div className="ops-muted">{line.candidates.some((candidate) => candidate.is_exact_match) ? "Kecocokan tepat bisa dipakai sistem setelah stok dihitung ulang." : "Pilih hanya bila ini memang barang yang Anda hitung; nama mirip bukan pengganti otomatis."}</div>}</td>
               <td><div className="ops-form-grid"><label>Barang<input value={line.item_name} onChange={(event) => updateStockCheckLine(line.id, { item_name: event.target.value, selected_index: "" })} /></label><label>Unit<input value={line.unit} onChange={(event) => updateStockCheckLine(line.id, { unit: event.target.value, selected_index: "" })} /></label><label>Jumlah fisik<input className="ops-qty-input" type="number" min="0" step="0.0001" value={line.actual_stock_qty} onChange={(event) => updateStockCheckLine(line.id, { actual_stock_qty: event.target.value })} placeholder="isi setelah hitung" /></label></div></td>
             </tr>)}

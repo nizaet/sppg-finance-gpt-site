@@ -232,6 +232,23 @@ def _group_stage(requirement_stages: list[str], po_date: date, target: date) -> 
     return "DONE"
 
 
+def _is_pending_cooking(row: dict[str, Any], target: date) -> bool:
+    """Only retain requirements whose cooking work has not already finished."""
+    cooking_date = row.get("cooking_date")
+    return not cooking_date or cooking_date >= target
+
+
+def _reminder_group_key(req: dict[str, Any]) -> tuple[str, str, date, str, date]:
+    """Keep one reminder row tied to one exact distribution date."""
+    return (
+        req["site"],
+        req["vendor_code"],
+        req["po_date"],
+        req["procurement_bucket"],
+        req["distribution_date"],
+    )
+
+
 @router.get("/po-reminders-v4")
 def po_reminders_v4(
     site: str = "",
@@ -356,6 +373,11 @@ def po_reminders_v4(
 
     for raw_row in plans:
         row = dict(raw_row)
+        # This queue is for ingredients that are still going to be cooked. Once
+        # the distribution day arrives, yesterday's cooking work is finished and
+        # must not stay visible as an overdue PO task.
+        if not _is_pending_cooking(row, target):
+            continue
         vendor, rule, bucket = _resolve_procurement_rule(rules, vendor_names, row)
         if not vendor:
             continue
@@ -469,12 +491,10 @@ def po_reminders_v4(
         exact_qty[key] = round(exact_qty.get(key, 0.0) + float(item.get("po_qty") or 0), 4)
 
     active_pos = [po for po in pos if str(po.get("status") or "").upper() not in INACTIVE_STATUSES]
-    grouped: dict[tuple[str, str, date, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str, date, str, date], dict[str, Any]] = {}
 
     for req in requirements.values():
-        group_key = (
-            req["site"], req["vendor_code"], req["po_date"], req["procurement_bucket"],
-        )
+        group_key = _reminder_group_key(req)
         group = grouped.setdefault(group_key, {
             "site": req["site"],
             "vendor_code": req["vendor_code"],

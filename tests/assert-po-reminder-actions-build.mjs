@@ -96,6 +96,13 @@ if (plannerSource.includes("useEffect(() => { loadBase(); }, [activeSite])")) {
 if (!plannerSource.includes('data-po-manual-load="v31"')) {
   throw new Error("PO Vendor manual-load notice is missing");
 }
+if (!plannerSource.includes("const openShortageStockCheck = async (item)")) {
+  throw new Error("Warehouse confirmation must open the stock-reference dialog first");
+}
+const runtimeTransform = fs.readFileSync(path.resolve("vite.runtime.config.js"), "utf8");
+if (!runtimeTransform.includes('helperBlock.replace(\n        "confirmShortageStock(item)",\n        "openShortageStockCheck(item)"')) {
+  throw new Error("Production PO actions still bypass the warehouse stock-reference dialog");
+}
 
 const siteTabsSource = fs.readFileSync(
   path.resolve("src/operations/OperationsPoSiteTabs.jsx"),

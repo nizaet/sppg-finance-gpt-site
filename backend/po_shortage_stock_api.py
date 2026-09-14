@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -39,6 +39,7 @@ class StockReferenceRequirementIn(BaseModel):
     item_names: list[str] = Field(min_length=1, max_length=20)
     stock_type_code: str | None = Field(default=None, max_length=160)
     unit: str | None = Field(default=None, max_length=40)
+    distribution_date: date | None = None
 
 
 class StockReferenceRequestIn(BaseModel):
@@ -188,26 +189,42 @@ def po_shortage_stock_references(payload: StockReferenceRequestIn) -> dict[str, 
     require_db()
     site = normalize_site(payload.site)
     jakarta = ZoneInfo("Asia/Jakarta")
-    target_for_balance = datetime.now(jakarta).date() + timedelta(days=1)
-    balances = inventory_balances_v2(site=site, search="", limit=1000, for_date=target_for_balance)
-    balance_items = balances.get("items") or []
+    today_jakarta = datetime.now(jakarta).date()
+    balance_cache: dict[date, list[dict[str, Any]]] = {}
     items = []
     for requirement in payload.requirements:
+        distribution_date = requirement.distribution_date or (today_jakarta + timedelta(days=1))
+        # Match the exact ``for_date`` used by the reminder engine. The inventory
+        # projection itself consumes plans strictly before this distribution date,
+        # so the current requirement is not subtracted twice.
+        observed_for_date = distribution_date
+        if observed_for_date not in balance_cache:
+            balances = inventory_balances_v2(
+                site=site,
+                search="",
+                limit=1000,
+                for_date=observed_for_date,
+            )
+            balance_cache[observed_for_date] = balances.get("items") or []
         items.append({
             "client_key": requirement.client_key,
+            "distribution_date": distribution_date,
+            "observed_for_date": observed_for_date,
             "candidates": warehouse_stock_candidates(
                 {
                     "item_names": requirement.item_names,
                     "stock_type_code": requirement.stock_type_code,
                     "unit": requirement.unit,
                 },
-                balance_items,
+                balance_cache[observed_for_date],
             ),
         })
+    observed_dates = sorted(balance_cache)
     return {
         "site": site,
         "scope": "DAPUR_SAME_SITE_ONLY",
-        "observedForDate": target_for_balance,
+        "observedForDate": observed_dates[0] if len(observed_dates) == 1 else None,
+        "observedForDates": observed_dates,
         "items": items,
     }
 
