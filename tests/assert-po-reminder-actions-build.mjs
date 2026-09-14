@@ -125,3 +125,10 @@ if (forbidden.length) {
 }
 
 console.log("PO reminder/action + receiving UI is present in the built bundle:", requiredMarkers.join(", "));
+
+if (!plannerSource.includes("createPortal(") || !plannerSource.includes('className="ops-stock-dialog-backdrop"')) {
+  throw new Error("Warehouse confirmation must stay in a same-page portal popup");
+}
+if (!plannerSource.includes('value="__NEW__"') || !plannerSource.includes("Barang tidak ada — input barang baru")) {
+  throw new Error("Warehouse confirmation popup must allow a new item when no stored item matches");
+}

@@ -224,3 +224,54 @@ html[data-app-theme="dark"] .ops-workspace .ops-status-info { background: #2d3c5
 .ops-calendar-po-family { margin-top: 5px; }
 .ops-calendar-po-family summary { font-size: 11px; padding: 5px 2px; cursor: pointer; color: var(--ops-muted); }
 .ops-calendar-po-family details button { width: 100%; margin: 3px 0; }
+
+/* Stock confirmation is portalled to <body>, outside the wide PO tables and
+   workspace overflow containers. This keeps it a real same-page popup on
+   phones/Fold devices and prevents the old blank/full-page-looking state. */
+.ops-stock-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 30000; display: grid; place-items: center;
+  box-sizing: border-box;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  overflow: hidden; background: rgb(15 23 42 / 68%); backdrop-filter: blur(4px);
+}
+.ops-stock-dialog {
+  --stock-bg: #ffffff; --stock-soft: #f3f6f9; --stock-border: #d7dfe8; --stock-text: #243143; --stock-muted: #59687a; --stock-accent: #315d91;
+  box-sizing: border-box; width: min(920px, 100%); max-height: calc(100dvh - 24px); overflow: auto; overscroll-behavior: contain;
+  padding: 20px; border: 1px solid var(--stock-border); border-radius: 16px; background: var(--stock-bg); color: var(--stock-text);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%); font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+html[data-app-theme="dark"] .ops-stock-dialog { --stock-bg: #22272f; --stock-soft: #1c2128; --stock-border: #3b424d; --stock-text: #e2e6eb; --stock-muted: #b3bdca; --stock-accent: #a3c4eb; }
+.ops-stock-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--stock-border); }
+.ops-stock-dialog-head span { color: var(--stock-accent); font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+.ops-stock-dialog-head h3 { margin: 3px 0 4px; color: var(--stock-text); font-size: clamp(20px, 3vw, 27px); line-height: 1.25; }
+.ops-stock-dialog-head p { margin: 0; color: var(--stock-muted); }
+.ops-stock-dialog-head button { flex: 0 0 auto; min-width: 42px; min-height: 42px; display: grid; place-items: center; padding: 0; border: 1px solid var(--stock-border); border-radius: 10px; background: var(--stock-soft); color: var(--stock-text); cursor: pointer; }
+.ops-stock-dialog-notice, .ops-stock-dialog-status, .ops-stock-dialog-error { margin-top: 14px; padding: 11px 13px; border: 1px solid var(--stock-border); border-radius: 10px; background: var(--stock-soft); }
+.ops-stock-dialog-status { display: flex; align-items: center; gap: 8px; color: var(--stock-accent); }
+.ops-stock-dialog-error { border-color: #b45309; background: #fff7ed; color: #9a3412; }
+html[data-app-theme="dark"] .ops-stock-dialog-error { background: #3b2d27; color: #ffd0a8; border-color: #765239; }
+.ops-stock-dialog-meta { margin-top: 9px; color: var(--stock-muted); font-size: 12px; }
+.ops-stock-dialog-list { display: grid; gap: 12px; margin-top: 14px; }
+.ops-stock-dialog-item { min-width: 0; padding: 14px; border: 1px solid var(--stock-border); border-radius: 12px; background: var(--stock-soft); }
+.ops-stock-dialog-requirement { display: grid; gap: 2px; margin-bottom: 11px; }
+.ops-stock-dialog-requirement strong { font-size: 16px; }
+.ops-stock-dialog-requirement span, .ops-stock-dialog-hint { color: var(--stock-muted); font-size: 12px; }
+.ops-stock-dialog-fields { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(100px, .65fr) minmax(140px, .8fr); gap: 10px; margin-top: 10px; }
+.ops-stock-dialog-field { display: grid; min-width: 0; gap: 5px; color: var(--stock-text); font-size: 12px; font-weight: 700; }
+.ops-stock-dialog-field :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 9px 10px; border: 1px solid var(--stock-border); border-radius: 9px; background: var(--stock-bg); color: var(--stock-text); font: inherit; font-size: 16px; }
+.ops-stock-dialog-field input[readonly] { color: var(--stock-muted); background: var(--stock-soft); }
+.ops-stock-dialog-field :is(input, select):focus-visible, .ops-stock-dialog button:focus-visible { outline: 2px solid var(--stock-accent); outline-offset: 2px; }
+.ops-stock-dialog-hint { margin-top: 6px; }
+.ops-stock-dialog-actions { position: sticky; bottom: -20px; display: flex; justify-content: flex-end; gap: 9px; margin: 16px -20px -20px; padding: 14px 20px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--stock-border); background: var(--stock-bg); }
+.ops-stock-dialog-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 9px 14px; border: 1px solid var(--stock-border); border-radius: 9px; background: var(--stock-soft); color: var(--stock-text); font: inherit; font-weight: 700; cursor: pointer; }
+.ops-stock-dialog-actions button.primary { border-color: var(--stock-accent); background: var(--stock-accent); color: #fff; }
+html[data-app-theme="dark"] .ops-stock-dialog-actions button.primary { color: #172231; }
+.ops-stock-dialog button:disabled, .ops-stock-dialog :is(input, select):disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 700px) {
+  .ops-stock-dialog-backdrop { padding: 8px; place-items: stretch; }
+  .ops-stock-dialog { align-self: center; width: 100%; max-height: calc(100dvh - 16px); padding: 14px; border-radius: 13px; }
+  .ops-stock-dialog-head { gap: 8px; } .ops-stock-dialog-head p { font-size: 12px; }
+  .ops-stock-dialog-fields { grid-template-columns: minmax(0, 1fr); }
+  .ops-stock-dialog-actions { bottom: -14px; flex-direction: column; margin: 14px -14px -14px; padding: 12px 14px max(12px, env(safe-area-inset-bottom)); }
+  .ops-stock-dialog-actions button { width: 100%; }
+}
