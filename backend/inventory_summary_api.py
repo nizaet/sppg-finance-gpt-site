@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.db import connection, database_ready
 from backend.inventory_api import classify_item, load_item_matchers, normalize_location
+from backend.inventory_unit_conversion import convert_inventory_quantity
+from backend.item_taxonomy import stock_type
 from backend.stock_opname_parser import canonical_unit, normalize_name
 
 router = APIRouter(tags=["inventory-summary"])
@@ -20,7 +22,7 @@ def require_db() -> None:
 
 
 def _key(name: str, unit: str | None, masters: list[dict[str, Any]]) -> tuple[str, str, dict[str, Any]]:
-    match = classify_item(name, masters)
+    match = {**classify_item(name, masters), "stockTypeCode": stock_type(name)["code"]}
     canonical_name = match["canonicalItemName"]
     return normalize_name(canonical_name), canonical_unit(unit), match
 
@@ -41,7 +43,17 @@ def _new_row(name: str, unit: str, match: dict[str, Any]) -> dict[str, Any]:
         "planned_depletion": 0.0,
         "last_movement_at": None,
         "last_stock_check_at": None,
+        "unit_conversion_notes": [],
     }
+
+
+def _converted_quantity(value: Any, source_unit: Any, match: dict[str, Any]) -> tuple[float, str, str | None]:
+    return convert_inventory_quantity(value, source_unit, match)
+
+
+def _remember_conversion(row: dict[str, Any], label: str | None) -> None:
+    if label and label not in row["unit_conversion_notes"]:
+        row["unit_conversion_notes"].append(label)
 
 
 def _confidence(has_so: bool, stock_age_days: int | None, planned_depletion: float, classification_status: str) -> str:
@@ -122,10 +134,12 @@ def inventory_balances(
                     # the baseline. Reclassifying only the raw WhatsApp label can
                     # turn “Mama Lemon” back into fruit or “mi telur” into egg.
                     baseline_name = item["canonical_item_name"] or item["raw_item_name"]
-                    normalized, unit, match = _key(baseline_name, item["unit"], masters)
+                    normalized, _, match = _key(baseline_name, item["unit"], masters)
+                    converted_qty, unit, conversion_label = _converted_quantity(item["qty"], item["unit"], match)
                     key = (normalized, unit)
                     row = rows.setdefault(key, _new_row(baseline_name, unit, match))
-                    row["so_qty"] += float(item["qty"] or 0)
+                    row["so_qty"] += converted_qty
+                    _remember_conversion(row, conversion_label)
                     if item["area_code"] and item["area_code"] not in row["area_codes"]:
                         row["area_codes"].append(item["area_code"])
                     if item["raw_item_name"] not in row["raw_item_names"]:
@@ -161,10 +175,11 @@ def inventory_balances(
             cur.execute(movement_sql, movement_params)
             actual_movement_dates: set[tuple[str, str, date]] = set()
             for movement in cur.fetchall():
-                normalized, unit, match = _key(movement["item_name"], movement["unit"], masters)
+                normalized, _, match = _key(movement["item_name"], movement["unit"], masters)
+                qty, unit, conversion_label = _converted_quantity(movement["qty"], movement["unit"], match)
                 key = (normalized, unit)
                 row = rows.setdefault(key, _new_row(movement["item_name"], unit, match))
-                qty = float(movement["qty"] or 0)
+                _remember_conversion(row, conversion_label)
                 if str(movement["to_location"] or "").upper() == location:
                     row["movement_delta"] += qty
                 if str(movement["from_location"] or "").upper() == location:
@@ -199,14 +214,16 @@ def inventory_balances(
                 )
                 actual_usage_dates: set[tuple[str, str, date]] = set()
                 for usage in cur.fetchall():
-                    normalized, unit, match = _key(usage["item_name"], usage["unit"], masters)
+                    normalized, _, match = _key(usage["item_name"], usage["unit"], masters)
+                    used_qty, unit, conversion_label = _converted_quantity(usage["actual_used_qty"], usage["unit"], match)
                     key = (normalized, unit)
                     usage_date = usage["distribution_date"]
                     actual_usage_dates.add((normalized, unit, usage_date))
                     if (normalized, unit, usage_date) in actual_movement_dates:
                         continue
                     row = rows.setdefault(key, _new_row(usage["item_name"], unit, match))
-                    row["actual_usage_depletion"] += float(usage["actual_used_qty"] or 0)
+                    row["actual_usage_depletion"] += used_qty
+                    _remember_conversion(row, conversion_label)
 
                 cur.execute(
                     """
@@ -226,7 +243,8 @@ def inventory_balances(
                     (location, stock_date, target_date),
                 )
                 for plan in cur.fetchall():
-                    normalized, unit, _ = _key(plan["item_name"], plan["unit"], masters)
+                    normalized, _, match = _key(plan["item_name"], plan["unit"], masters)
+                    planned_qty, unit, conversion_label = _converted_quantity(plan["planned_qty"], plan["unit"], match)
                     usage_key = (normalized, unit, plan["distribution_date"])
                     if usage_key in actual_usage_dates or usage_key in actual_movement_dates:
                         continue
@@ -236,7 +254,8 @@ def inventory_balances(
                     checked = rows[key].get("last_stock_check_at")
                     if checked and plan["distribution_date"] < checked.astimezone(jakarta).date():
                         continue
-                    rows[key]["planned_depletion"] += float(plan["planned_qty"] or 0)
+                    rows[key]["planned_depletion"] += planned_qty
+                    _remember_conversion(rows[key], conversion_label)
 
     items: list[dict[str, Any]] = []
     for row in rows.values():

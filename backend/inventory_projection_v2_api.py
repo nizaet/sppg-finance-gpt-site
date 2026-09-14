@@ -51,6 +51,7 @@ def _empty_row(label: str, unit: str, type_code: str, method: str) -> dict[str, 
         "confidence": "LOW",
         "stock_as_of": None,
         "stock_age_days": None,
+        "unit_conversion_notes": [],
     }
 
 
@@ -77,6 +78,9 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
         for area in item.get("area_codes") or []:
             if area and area not in row["area_codes"]:
                 row["area_codes"].append(area)
+        for note in item.get("unit_conversion_notes") or []:
+            if note and note not in row["unit_conversion_notes"]:
+                row["unit_conversion_notes"].append(note)
         if row.get("inventory_item_code") is None and item.get("inventory_item_code"):
             row["inventory_item_code"] = item["inventory_item_code"]
         current_conf = str(row.get("confidence") or "LOW").upper()

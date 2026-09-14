@@ -13,10 +13,16 @@ from backend.po_reminder_v4_api import (
     _reminder_group_key,
     _resolve_procurement_rule,
     _strict_cemplang_tempe_rule,
+    _stock_key,
 )
 
 
 class StrictCoverageRegressionTests(unittest.TestCase):
+    def test_confirmed_ladaku_and_saori_units_share_kilogram_stock_key(self):
+        self.assertEqual(_stock_key("Lada Putih Ladaku", "pcs"), ("LADA_PUTIH", "kg"))
+        self.assertEqual(_stock_key("Saus tiram Saori", "botol"), ("SAUS_TIRAM", "kg"))
+        self.assertEqual(_stock_key("Saus tiram Saori", "liter"), ("SAUS_TIRAM", "kg"))
+
     def _po(self, po_id: int, status: str, code: str | None = None):
         return {
             "id": po_id,

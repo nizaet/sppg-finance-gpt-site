@@ -21,6 +21,7 @@ const transferMonthBounds = (month) => {
   return { fromDate: `${month}-01`, toDate: `${month}-${String(last.getDate()).padStart(2, "0")}`, first, last };
 };
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+const blankMasterForm = () => ({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "", package_unit: "", package_factor: "", metadata: {} });
 
 export default function OperationsInventory({ fixedSite = "", routeSite = '', onSiteChange }) {
   const [site, setSite] = useState(fixedSite || "MAJA");
@@ -38,7 +39,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
   const [reviewedItems, setReviewedItems] = useSiteState(activeSite, []);
   const [sourceExternalId, setSourceExternalId] = useSiteState(activeSite, "");
   const [masters, setMasters] = useSiteState(activeSite, []);
-  const [masterForm, setMasterForm] = useSiteState(activeSite, { code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+  const [masterForm, setMasterForm] = useSiteState(activeSite, blankMasterForm());
   const [addStockForm, setAddStockForm] = useSiteState(activeSite, { item_name: "", inventory_item_code: "", category_code: "", unit: "kg", qty_to_add: "", reason: "Tambah stok gudang" });
   const [stockEdit, setStockEdit] = useSiteState(activeSite, null);
   const [transfers, setTransfers] = useSiteState(activeSite, []);
@@ -345,19 +346,28 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
 
   const saveMaster = async () => {
     if (!masterForm.canonical_name.trim()) return setError("Nama kanonik Master Barang wajib diisi.");
+    const packageUnit = String(masterForm.package_unit || "").trim().toLowerCase();
+    const packageFactor = Number(String(masterForm.package_factor || "").replace(",", "."));
+    if ((packageUnit && (!Number.isFinite(packageFactor) || packageFactor <= 0)) || (!packageUnit && String(masterForm.package_factor || "").trim())) {
+      return setError("Konversi kemasan belum lengkap. Isi satuan kemasan dan nilai isi yang lebih dari 0.");
+    }
     if (!window.confirm(`Simpan Master Barang “${masterForm.canonical_name}” beserta aliasnya?`)) return;
     setSaving(true);
     setError("");
     setMessage("");
     try {
+      const existingMetadata = masterForm.metadata && typeof masterForm.metadata === "object" ? masterForm.metadata : {};
+      const unitConversions = { ...(existingMetadata.unit_conversions || {}) };
+      if (packageUnit) unitConversions[packageUnit] = packageFactor;
       const result = await operationsApi.saveInventoryItem({
         code: masterForm.code.trim() || null, canonical_name: masterForm.canonical_name.trim(),
         category_code: masterForm.category_code.trim() || null, base_unit: masterForm.base_unit.trim() || null,
         aliases: masterForm.aliases.split(",").map((value) => value.trim()).filter(Boolean),
+        metadata: { ...existingMetadata, unit_conversions: unitConversions },
       }, true);
       const masterData = await operationsApi.getInventoryItems("");
       setMasters(masterData?.items || []);
-      setMasterForm({ code: "", canonical_name: "", category_code: "", base_unit: "kg", aliases: "" });
+      setMasterForm(blankMasterForm());
       setMessage(`Master Barang ${result.canonicalName} (${result.code}) tersimpan. Laporan berikutnya dapat dikenali otomatis.`);
     } catch (err) {
       setError(err.message || "Gagal menyimpan Master Barang");
@@ -428,9 +438,12 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
   };
 
   const editMaster = (master) => {
+    const conversions = master?.metadata?.unit_conversions || {};
+    const [packageUnit = "", packageFactor = ""] = Object.entries(conversions)[0] || [];
     setMasterForm({
       code: master.code || "", canonical_name: master.canonical_name || "", category_code: master.category_code || "",
       base_unit: master.base_unit || "", aliases: (master.aliases || []).join(", "),
+      package_unit: packageUnit, package_factor: packageFactor, metadata: master.metadata || {},
     });
     setMessage(`Master ${master.canonical_name} dibuka untuk diedit.`);
   };
@@ -555,11 +568,14 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
           <label>Nama kanonik<input value={masterForm.canonical_name} onChange={(e) => setMasterForm((current) => ({ ...current, canonical_name: e.target.value }))} placeholder="Mi telur ayam" /></label>
           <label>Kategori<input list="inventory-category-options" value={masterForm.category_code} onChange={(e) => setMasterForm((current) => ({ ...current, category_code: e.target.value.toUpperCase() }))} placeholder="Pilih atau ketik kategori baru" /></label>
           <label>Satuan dasar<input value={masterForm.base_unit} onChange={(e) => setMasterForm((current) => ({ ...current, base_unit: e.target.value }))} placeholder="dus / pcs / kg" /></label>
+          <label>Satuan kemasan<input list="inventory-unit-options" value={masterForm.package_unit} onChange={(e) => setMasterForm((current) => ({ ...current, package_unit: e.target.value }))} placeholder="contoh: botol / pcs" /></label>
+          <label>Isi per kemasan<input className="ops-qty-input" type="number" min="0.0001" step="0.0001" value={masterForm.package_factor} onChange={(e) => setMasterForm((current) => ({ ...current, package_factor: e.target.value }))} placeholder={`dalam ${masterForm.base_unit || "satuan dasar"}`} /></label>
           <label>Alias dipisah koma<input value={masterForm.aliases} onChange={(e) => setMasterForm((current) => ({ ...current, aliases: e.target.value }))} placeholder="mi telur, mie telur ayam" /></label>
           <label>Aksi<div className="ops-row-actions"><button type="button" onClick={saveMaster} disabled={saving || !masterForm.canonical_name.trim()}><Save size={14} /> Simpan Master</button></div></label>
         </div>
+        <div className="ops-muted">Konversi bersifat global untuk MAJA dan CEMPLANG. Contoh: bila 1 botol berisi 0,135 liter, isi kemasan <strong>botol</strong> dan nilai <strong>0,135</strong>. Jangan isi 1 kecuali kemasannya memang satu unit dasar penuh.</div>
         <div className="ops-summary-strip"><span>Master aktif <strong>{masters.length}</strong></span></div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kode</th><th>Nama Master</th><th>Kategori</th><th>Satuan</th><th>Alias</th><th>Aksi</th></tr></thead><tbody>{masters.map((master) => <tr key={master.code}><td>{master.code}</td><td><strong>{master.canonical_name}</strong></td><td>{master.category_code || "-"}</td><td>{master.base_unit || "-"}</td><td>{(master.aliases || []).join(" · ") || "-"}</td><td><button type="button" onClick={() => editMaster(master)}><Pencil size={14} /> Edit Master</button></td></tr>)}</tbody></table></div>
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kode</th><th>Nama Master</th><th>Kategori</th><th>Satuan</th><th>Konversi</th><th>Alias</th><th>Aksi</th></tr></thead><tbody>{masters.map((master) => <tr key={master.code}><td>{master.code}</td><td><strong>{master.canonical_name}</strong></td><td>{master.category_code || "-"}</td><td>{master.base_unit || "-"}</td><td>{Object.entries(master?.metadata?.unit_conversions || {}).map(([unit, factor]) => `1 ${unit} = ${factor} ${master.base_unit || ""}`).join(" · ") || "-"}</td><td>{(master.aliases || []).join(" · ") || "-"}</td><td><button type="button" onClick={() => editMaster(master)}><Pencil size={14} /> Edit Master</button></td></tr>)}</tbody></table></div>
       </section>
 
       <section className="ops-module">
@@ -583,7 +599,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
           <div className="ops-muted">Yang disimpan adalah selisih dari stok tercatat ke stok baru. Riwayat SO, PO, dan penerimaan tetap ada untuk audit.</div>
         </div>}
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>SO fisik terakhir</th><th>Barang masuk / keluar sesudah SO</th><th>Pemakaian aktual</th><th>Stok aktual sekarang</th><th>Dikurangi planning</th><th>PO belum diterima (proyeksi)</th><th>Sisa untuk PO</th><th>Unit</th><th>Status data</th><th>Aksi</th></tr></thead><tbody>
-          {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td>+{qty(item.expected_po_supply || 0)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div>{item.last_stock_check_at && <div className="ops-muted">Koreksi fisik {new Date(item.last_stock_check_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}</td><td><button type="button" onClick={() => openManualStockEdit(item)} disabled={saving}><Pencil size={14} /> Edit Stok</button></td></tr>)}
+          {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td>+{qty(item.expected_po_supply || 0)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}{item.unit_conversion_notes?.map((note) => <div className="ops-muted" key={note}>{note}</div>)}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div>{item.last_stock_check_at && <div className="ops-muted">Koreksi fisik {new Date(item.last_stock_check_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}</td><td><button type="button" onClick={() => openManualStockEdit(item)} disabled={saving}><Pencil size={14} /> Edit Stok</button></td></tr>)}
           {!loading && items.length === 0 && <tr><td colSpan="11" className="ops-empty-cell">Belum ada SO aktif atau pergerakan stok untuk lokasi/filter ini.</td></tr>}
         </tbody></table></div>
       </section>

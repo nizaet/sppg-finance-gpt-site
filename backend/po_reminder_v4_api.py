@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from backend.db import connection, database_ready
+from backend.inventory_unit_conversion import convert_inventory_quantity
 from backend.inventory_projection_v2_api import inventory_balances_v2
 from backend.item_taxonomy import item_family, stock_type, vendor_for_item
 from backend.po_reminder_v2_api import _norm, _rule_for_item
@@ -25,7 +26,12 @@ EPSILON = 0.0001
 
 def _stock_key(name: Any, unit: Any) -> tuple[str, str]:
     typed = stock_type(name)
-    return typed["code"], canonical_unit(unit) or ""
+    _, operational_unit, _ = convert_inventory_quantity(
+        1,
+        unit,
+        {"stockTypeCode": typed["code"]},
+    )
+    return typed["code"], operational_unit or canonical_unit(unit) or ""
 
 
 def _latest_po(pos: list[dict[str, Any]]) -> dict[str, Any] | None:

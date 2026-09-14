@@ -22,6 +22,8 @@ const env = {}; vm.createContext(env);
 vm.runInContext(source.slice(source.indexOf('function normalize('), source.indexOf('function dateRange(')), env);
 const stock = (item, rows) => env.stockForItem(item, env.buildStockLookup(rows));
 const row = (name, unit, amount, extra = {}) => ({ item_name: name, unit, available_for_po: amount, actual_balance: amount, projected_balance: amount, ...extra });
+assert.equal(env.operationalPlanningUnit({item_name:'Lada Putih Ladaku',unit:'pcs'}),'kg');
+assert.equal(env.operationalPlanningUnit({item_name:'Saus tiram Saori',unit:'liter'}),'kg');
 assert.equal(stock({item_name:'Bawang Putih Bubuk',unit:'kg'}, [row('Bawang Putih','kg',10.9)]).balance,0);
 assert.equal(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).balance,0);
 assert.match(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).unitWarning,/pcs/);
@@ -31,6 +33,9 @@ assert.equal(stock({item_name:'Bombay',unit:'kg'}, [row('bawang bombay','kg',2,{
 assert.equal(stock({item_name:'Bombay',unit:'kg'}, [row('bawang bombay','kg',0,{actual_balance:7,projected_balance:0})]).balance,0,'zero remainder must not fall back to physical stock');
 assert.equal(stock({item_name:'Bawang Putih',unit:'kg'}, [row('Bawang Putih','gr',500)]).balance,0.5);
 assert.equal(stock({item_name:'Minyak Goreng',unit:'liter'}, [row('Minyak Goreng','dus',1)]).balance,12);
+assert.equal(stock({item_name:'Saus tiram Saori',unit:'liter'}, [row('Saus Tiram','liter',2)]).balance,2);
+assert.equal(stock({item_name:'Saus tiram Saori',unit:'kg'}, [row('Saus Tiram','botol',2)]).balance,2);
+assert.equal(stock({item_name:'Lada Putih Ladaku',unit:'kg'}, [row('Lada Putih','pcs',1)]).balance,1);
 assert.equal(stock({item_name:'Daun Salam',unit:'ikat'}, [row('Daun Salam','kg',0.3),row('Daun Salam','ikat',1)]).balance,1);
 assert.equal(stock({item_name:'Beras Putih',unit:'kg'}, [row('Beras','kg',7,{available_for_po:0})]).balance,0);
 console.log('PASS production PO stock matching: identity, units, aliases and zero remainder');

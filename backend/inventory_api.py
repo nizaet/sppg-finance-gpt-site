@@ -49,7 +49,7 @@ SOURCE_PRIORITY = {
 def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
     cur.execute(
         """
-        select m.code,m.canonical_name,m.normalized_canonical_name,m.category_code,m.base_unit,
+        select m.code,m.canonical_name,m.normalized_canonical_name,m.category_code,m.base_unit,m.metadata,
                coalesce(json_agg(a.normalized_alias) filter (where a.id is not null),'[]'::json) as aliases
         from inventory_item_master m
         left join inventory_item_aliases a on a.inventory_item_code=m.code
@@ -193,6 +193,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "knownAliases": master.get("aliases") or [],
             "categoryCode": master.get("category_code"),
             "baseUnit": master.get("base_unit"),
+            "metadata": master.get("metadata") or {},
             "classificationStatus": "MATCHED",
             "classificationMethod": method if source_type == "INVENTORY_MASTER" else f"{source_type}_{method}",
             "classificationConfidence": 1.0 if exact else 0.9,
@@ -205,6 +206,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "knownAliases": [],
             "categoryCode": None,
             "baseUnit": None,
+            "metadata": {},
             "classificationStatus": "AMBIGUOUS",
             "classificationMethod": "MULTIPLE_TYPE_MATCHES",
             "classificationConfidence": 0.0,
@@ -216,6 +218,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
         "knownAliases": [],
         "categoryCode": None,
         "baseUnit": None,
+        "metadata": {},
         "classificationStatus": "UNMAPPED",
         "classificationMethod": "RAW_NAME_FALLBACK",
         "classificationConfidence": 0.5,

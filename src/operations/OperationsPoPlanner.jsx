@@ -91,6 +91,7 @@ function stockTypeCode(value) {
     ["KECAP_INGGRIS", /\b(kecap inggris|worcestershire)\b/],
     ["SAUS_TOMAT", /\b(saus|saos) tomat\b/],
     ["SAUS_SAMBAL", /\b(saus|saos) sambal\b/],
+    ["SAUS_TIRAM", /\b((saus|saos)( saori)? tiram|saori.*tiram)\b/],
     ["GULA_PASIR", /\b(gula pasir|gula putih)\b/],
     ["BAWANG_PUTIH_BUBUK", /\bbawang putih bubuk\b/],
     ["KUNYIT_BUBUK", /\bkunyit bubuk\b/],
@@ -120,6 +121,16 @@ function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
   if (from === to) return amount;
   if (from === "gr" && to === "kg") return amount / 1000;
   if (from === "kg" && to === "gr") return amount * 1000;
+  if (typeCode === "LADA_PUTIH") {
+    const kilograms = from === "kg" || from === "pcs" ? amount : null;
+    if (kilograms == null) return null;
+    return to === "kg" || to === "pcs" ? kilograms : null;
+  }
+  if (typeCode === "SAUS_TIRAM") {
+    const kilograms = ["kg", "botol", "liter"].includes(from) ? amount : null;
+    if (kilograms == null) return null;
+    return ["kg", "botol", "liter"].includes(to) ? kilograms : null;
+  }
   if (typeCode === "MINYAK_GORENG") {
     const litres = from === "liter" ? amount : from === "pcs" ? amount * 2 : from === "dus" ? amount * 12 : null;
     if (litres == null) return null;
@@ -131,6 +142,11 @@ function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
     return to === "kg" ? kilograms : to === "karung" ? kilograms / 25 : null;
   }
   return null;
+}
+
+function operationalPlanningUnit(item) {
+  const typeCode = stockTypeCode(item?.item_name);
+  return ["LADA_PUTIH", "SAUS_TIRAM"].includes(typeCode) ? "kg" : (item?.unit || "");
 }
 
 function buildStockLookup(items = []) {
@@ -194,10 +210,11 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
   const stockLookup = buildStockLookup(inventoryItems);
   const cooperativeLookup = buildStockLookup(cooperativeItems);
   return (snapshot?.items || []).map((item) => {
+    const operationalItem = { ...item, unit: operationalPlanningUnit(item) };
     const assignment = safeVendorForPlanningItem(item, site);
     const planned = item.planned_qty == null ? 0 : Number(item.planned_qty);
-    const stock = stockForItem(item, stockLookup);
-    const cooperativeStock = assignment.vendor === "KOPERASI" ? stockForItem(item, cooperativeLookup) : null;
+    const stock = stockForItem(operationalItem, stockLookup);
+    const cooperativeStock = assignment.vendor === "KOPERASI" ? stockForItem(operationalItem, cooperativeLookup) : null;
     const recommended = Math.max(0, Number((planned - stock.balance).toFixed(4)));
     return {
       planning_snapshot_item_id: item.id,
@@ -219,7 +236,7 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       cooperative_shortfall_qty: cooperativeStock ? Math.max(0, Number((recommended - cooperativeStock.balance).toFixed(4))) : null,
       recommended_po_qty: recommended,
       po_qty: recommended,
-      unit: item.unit || "",
+      unit: operationalItem.unit,
       planning_price: item.planning_price == null ? null : Number(item.planning_price),
       vendor_code: assignment.vendor,
       assignment_method: assignment.method,
@@ -307,7 +324,8 @@ function poCoversItem(po, item, forDate) {
       return String(item.planning_snapshot_item_id) === String(ref.planning_snapshot_item_id);
     }
     if (item.item_code && ref.item_code) return normalize(item.item_code) === normalize(ref.item_code);
-    return normalize(item.item_name) === normalize(ref.item_name) && normalizeUnit(item.unit) === normalizeUnit(ref.unit);
+    return normalize(item.item_name) === normalize(ref.item_name)
+      && normalizeUnit(operationalPlanningUnit(item)) === normalizeUnit(operationalPlanningUnit(ref));
   });
 }
 
