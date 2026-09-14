@@ -208,7 +208,7 @@ def inventory_balances(
                     """
                     select au.item_name,au.actual_used_qty,au.unit,pc.distribution_date
                     from actual_usage au join production_cycles pc on pc.id=au.production_cycle_id
-                    where upper(pc.site)=%s and pc.distribution_date >= %s and pc.distribution_date < %s
+                    where upper(pc.site)=%s and pc.distribution_date > %s and pc.distribution_date < %s
                     """,
                     (location, stock_date, target_date),
                 )
@@ -235,7 +235,7 @@ def inventory_balances(
                       select distinct on (site,distribution_date) id,site,distribution_date
                       from planning_snapshots
                       where upper(site)=%s and status <> 'REJECTED'
-                        and distribution_date >= %s and distribution_date < %s
+                        and distribution_date > %s and distribution_date < %s
                       order by site,distribution_date,created_at desc,id desc
                     ) ps
                     join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
@@ -243,6 +243,11 @@ def inventory_balances(
                     (location, stock_date, target_date),
                 )
                 for plan in cur.fetchall():
+                    # The latest SO is already the physical result through its
+                    # own date. Never consume that date's plan a second time,
+                    # even if a database/mock returns it at the range boundary.
+                    if plan["distribution_date"] <= stock_date:
+                        continue
                     normalized, _, match = _key(plan["item_name"], plan["unit"], masters)
                     planned_qty, unit, conversion_label = _converted_quantity(plan["planned_qty"], plan["unit"], match)
                     usage_key = (normalized, unit, plan["distribution_date"])
@@ -252,7 +257,7 @@ def inventory_balances(
                     if key not in rows:
                         continue
                     checked = rows[key].get("last_stock_check_at")
-                    if checked and plan["distribution_date"] < checked.astimezone(jakarta).date():
+                    if checked and plan["distribution_date"] <= checked.astimezone(jakarta).date():
                         continue
                     rows[key]["planned_depletion"] += planned_qty
                     _remember_conversion(rows[key], conversion_label)

@@ -19,11 +19,15 @@ const file = path.join(root, 'src/operations/OperationsPoPlanner.jsx');
 let source = fs.readFileSync(file, 'utf8');
 for (const plugin of ordered) { const result = plugin.transform?.(source, file); if (result) source = typeof result === 'string' ? result : result.code; }
 const env = {}; vm.createContext(env);
-vm.runInContext(source.slice(source.indexOf('function normalize('), source.indexOf('function dateRange(')), env);
+vm.runInContext(source.slice(source.indexOf('function normalize('), source.indexOf('export default function OperationsPoPlanner')), env);
 const stock = (item, rows) => env.stockForItem(item, env.buildStockLookup(rows));
 const row = (name, unit, amount, extra = {}) => ({ item_name: name, unit, available_for_po: amount, actual_balance: amount, projected_balance: amount, ...extra });
 assert.equal(env.operationalPlanningUnit({item_name:'Lada Putih Ladaku',unit:'pcs'}),'kg');
 assert.equal(env.operationalPlanningUnit({item_name:'Saus tiram Saori',unit:'liter'}),'kg');
+assert.equal(env.safeVendorForPlanningItem({item_name:'Tempe',category_code:'TEMPE_TAHU'},'MAJA').vendor,'KOPERASI');
+assert.equal(env.safeVendorForPlanningItem({item_name:'Tempe',category_code:'TEMPE_TAHU'},'CEMPLANG').vendor,'KOPERASI');
+assert.equal(env.poCoversItem({status:'SENT',coverage_dates:['2026-09-15'],item_refs:[{item_name:'tempe',unit:'papan'}]},{item_name:'Tempe',unit:'papan'},'2026-09-15'),true);
+assert.equal(env.poCoversItem({status:'SENT',coverage_dates:['2026-09-14'],item_refs:[{item_name:'tempe',unit:'papan'}]},{item_name:'Tempe',unit:'papan'},'2026-09-15'),false);
 assert.equal(stock({item_name:'Bawang Putih Bubuk',unit:'kg'}, [row('Bawang Putih','kg',10.9)]).balance,0);
 assert.equal(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).balance,0);
 assert.match(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).unitWarning,/pcs/);

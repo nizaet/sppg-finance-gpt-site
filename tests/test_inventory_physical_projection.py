@@ -58,8 +58,8 @@ def test_corrections_replace_old_plan_estimates_but_keep_later_cooking(site, phy
     result = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 14))
     row = result["items"][0]
     assert row["actual_balance"] == 7
-    assert row["planned_depletion"] == (5 if physical_check else 13)
-    assert row["available_for_po"] == (2 if physical_check else 0)
+    assert row["planned_depletion"] == (3 if physical_check else 13)
+    assert row["available_for_po"] == (4 if physical_check else 0)
     assert row["stock_type_code"] == "BAWANG_BOMBAY"
 
 
@@ -77,6 +77,26 @@ def test_only_explicit_physical_recount_creates_new_estimate_anchor(source_type,
     assert row["actual_balance"] == 7
     assert row["last_stock_check_at"] == (checked if source_type == "MANUAL_STOCK_EDIT" else None)
     assert row["planned_depletion"] == (0 if source_type == "MANUAL_STOCK_EDIT" else 8)
+
+
+@pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
+def test_same_day_so_is_not_depleted_again_by_same_day_plan(site, monkeypatch):
+    base = {"latestStockOpnameDate": date(2026, 9, 14), "forDate": date(2026, 9, 15), "items": [{
+        "item_name": "Lada Putih", "unit": "kg", "so_qty": 1,
+        "movement_delta": 0, "actual_usage_depletion": 0, "last_stock_check_at": None,
+    }]}
+    monkeypatch.setattr(projection, "inventory_balances", lambda **kwargs: base)
+    monkeypatch.setattr(projection, "load_item_matchers", lambda *args: [])
+    same_day_plan = [{
+        "item_name": "Lada Putih Ladaku", "unit": "kg", "planned_qty": 1,
+        "distribution_date": date(2026, 9, 14),
+    }]
+    monkeypatch.setattr(projection, "connection", connection_for([[], [], same_day_plan, []]))
+    result = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 15))
+    row = result["items"][0]
+    assert row["actual_balance"] == 1
+    assert row["planned_depletion"] == 0
+    assert row["available_for_po"] == 1
 
 
 def test_powder_cannot_inherit_fresh_garlic_master_by_substring():

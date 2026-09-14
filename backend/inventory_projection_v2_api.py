@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 
 from backend.db import connection
 from backend.inventory_api import classify_item, load_item_matchers, normalize_location
+from backend.inventory_unit_conversion import convert_inventory_quantity
 from backend.inventory_summary_api import inventory_balances
 from backend.item_taxonomy import stock_type
 from backend.stock_opname_parser import canonical_unit
@@ -27,7 +28,28 @@ def _type_key(name: Any, unit: Any, masters: list[dict[str, Any]]) -> tuple[str,
         raw_typed = stock_type(raw_name)
         if raw_typed["method"] != "RAW_FALLBACK":
             typed = raw_typed
-    return typed["code"], canonical_unit(unit), typed["label"], typed["method"]
+    _, operational_unit, _ = convert_inventory_quantity(
+        1,
+        unit,
+        {**match, "stockTypeCode": typed["code"]},
+    )
+    return typed["code"], operational_unit or canonical_unit(unit), typed["label"], typed["method"]
+
+
+def _operational_quantity(
+    name: Any,
+    quantity: Any,
+    unit: Any,
+    masters: list[dict[str, Any]],
+) -> float:
+    match = classify_item(str(name or "").strip(), masters)
+    type_code = stock_type(name)["code"]
+    converted, _, _ = convert_inventory_quantity(
+        quantity,
+        unit,
+        {**match, "stockTypeCode": type_code},
+    )
+    return converted
 
 
 def _empty_row(label: str, unit: str, type_code: str, method: str) -> dict[str, Any]:
@@ -94,7 +116,7 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
 
 def _before_physical_check(row: dict[str, Any], distribution_date: date) -> bool:
     checked = row.get("last_stock_check_at")
-    return bool(checked and distribution_date < checked.astimezone(ZoneInfo("Asia/Jakarta")).date())
+    return bool(checked and distribution_date <= checked.astimezone(ZoneInfo("Asia/Jakarta")).date())
 
 
 @router.get("/inventory/balances-v2")
@@ -114,7 +136,7 @@ def inventory_balances_v2(
     ``actual_balance`` is the current physical dapur balance. ``projected_balance``
     remains the forward projection after older plans/PO supply. PO drafting uses
     ``available_for_po`` after prior plans. A later per-item physical correction
-    supersedes estimates from before its date; same-day/subsequent plans remain.
+    supersedes estimates through its date; only later plans remain.
     MAJA and CEMPLANG use the same rule.
     """
     base = inventory_balances(site=site, search="", limit=1000, for_date=for_date)
@@ -154,7 +176,7 @@ def inventory_balances_v2(
                         from actual_usage au
                         join production_cycles pc on pc.id=au.production_cycle_id
                         where upper(pc.site)=%s
-                          and pc.distribution_date >= %s
+                          and pc.distribution_date > %s
                           and pc.distribution_date < %s
                         """,
                         (location, stock_date, target_date),
@@ -172,7 +194,7 @@ def inventory_balances_v2(
                           select distinct on (site,distribution_date) id,site,distribution_date
                           from planning_snapshots
                           where upper(site)=%s and status <> 'REJECTED'
-                            and distribution_date >= %s and distribution_date < %s
+                            and distribution_date > %s and distribution_date < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps
                         join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
@@ -181,6 +203,11 @@ def inventory_balances_v2(
                         (location, stock_date, target_date),
                     )
                     for plan in cur.fetchall():
+                        # SO is a physical anchor through stock_date. This guard
+                        # prevents same-day double depletion independently of
+                        # the SQL boundary above.
+                        if plan["distribution_date"] <= stock_date:
+                            continue
                         type_code, unit, label, method = _type_key(plan.get("item_name"), plan.get("unit"), masters)
                         usage_key = (type_code, unit, plan["distribution_date"])
                         if usage_key in actual_usage_dates or usage_key in production_usage_dates:
@@ -189,7 +216,9 @@ def inventory_balances_v2(
                         row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
                         if _before_physical_check(row, plan["distribution_date"]):
                             continue
-                        row["planned_depletion"] += float(plan.get("planned_qty") or 0)
+                        row["planned_depletion"] += _operational_quantity(
+                            plan.get("item_name"), plan.get("planned_qty"), plan.get("unit"), masters
+                        )
                         if plan.get("item_name") and plan["item_name"] not in row["raw_item_names"]:
                             row["raw_item_names"].append(plan["item_name"])
 
@@ -254,7 +283,9 @@ def inventory_balances_v2(
                     key = (type_code, unit)
                     if _before_physical_check(grouped.get(key, {}), po_row["distribution_date"]):
                         continue
-                    expected[key] = expected.get(key, 0.0) + float(po_row.get("po_qty") or 0)
+                    expected[key] = expected.get(key, 0.0) + _operational_quantity(
+                        po_row.get("item_name"), po_row.get("po_qty"), po_row.get("unit"), masters
+                    )
                     row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
                     if po_row.get("item_name") and po_row["item_name"] not in row["raw_item_names"]:
                         row["raw_item_names"].append(po_row["item_name"])

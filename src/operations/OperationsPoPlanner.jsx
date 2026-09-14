@@ -53,15 +53,15 @@ function safeVendorForPlanningItem(item, site) {
   if (/\b(gas|lpg)\b/.test(text)) return { vendor: "HERU", method: "item_rule" };
   if (/\bberas\b/.test(text)) return { vendor: "DEDE", method: "item_rule" };
   if (/\btelur\b/.test(text)) return { vendor: "KOPERASI", method: "confirmed_internal_rule" };
+  // TEMPE_TAHU is a shared category label. Resolve the exact item name first
+  // so CEMPLANG Tempe cannot fall through to the Haji Badri Tahu rule.
+  if (/\btempe\b/.test(name)) {
+    return { vendor: "KOPERASI", method: "confirmed_site_rule" };
+  }
   if (/\btahu\b/.test(text)) {
     return site === "CEMPLANG"
       ? { vendor: "HAJI_BADRI", method: "confirmed_site_rule" }
       : { vendor: "KOPERASI", method: "confirmed_internal_rule" };
-  }
-  if (/\btempe\b/.test(text)) {
-    return site === "MAJA"
-      ? { vendor: "KOPERASI", method: "confirmed_internal_rule" }
-      : { vendor: "", method: "unassigned" };
   }
   // The calculator often labels pantry items simply as "BAHAN BAKU".  Do
   // not make those items disappear from the Koperasi draft merely because the
@@ -532,12 +532,18 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       }
       planningReady = true;
 
-      const [scheduleData, inventoryData, cooperativeData] = await Promise.all([
+      const [scheduleData, inventoryData, cooperativeData, poData] = await Promise.all([
         operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
         operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
         operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
+        // A daily pull must re-read saved POs too. Otherwise a Tempe PO made
+        // from another tab/device remains invisible and the row offers a
+        // duplicate until the whole page is reloaded.
+        operationsApi.getPurchaseOrders({ site: activeSite, limit: 100 }),
       ]);
       setSchedule(scheduleData?.items || []);
+      setPurchaseOrders(poData?.items || []);
+      setPoListLoaded(true);
       applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
       setMessage(`Planning + stok ${activeSite} untuk distribusi ${distributionDate} berhasil ditarik. Data ini hanya working set PO dan boleh dibersihkan tanpa menghapus PO tersimpan.`);
     } catch (planningError) {
@@ -580,6 +586,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setVendorOptions(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
     setVendorPhones({});
     setVendorReferencesPulled(false);
+    setStockCheckDialog(null);
     setMessage("");
     setError("");
   }, [activeSite]);
@@ -838,16 +845,21 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         actual_stock_qty: "",
       };
     });
+    const dialogSite = ["MAJA", "CEMPLANG"].includes(String(item.site || "").toUpperCase())
+      ? String(item.site).toUpperCase()
+      : activeSite;
     setError("");
     setStockCheckDialog({
       item,
+      site: dialogSite,
       lines,
       loadingReferences: true,
+      referenceError: "",
     });
     setReminderActionKey(item.reminder_key);
     try {
       const result = await operationsApi.getPoShortageStockReferences({
-        site: activeSite,
+        site: dialogSite,
         requirements: lines.map((line) => ({
           client_key: line.id,
           item_names: line.item_names.length ? line.item_names : [line.requirement_name],
@@ -858,7 +870,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       });
       const referenceByKey = new Map((result?.items || []).map((row) => [row.client_key, row]));
       setStockCheckDialog((current) => {
-        if (!current || current.item.reminder_key !== item.reminder_key) return current;
+        if (!current || current.item.reminder_key !== item.reminder_key || current.site !== dialogSite) return current;
         return {
           ...current,
           loadingReferences: false,
@@ -881,8 +893,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         };
       });
     } catch (err) {
-      setStockCheckDialog((current) => current && current.item.reminder_key === item.reminder_key
-        ? { ...current, loadingReferences: false }
+      setStockCheckDialog((current) => current && current.item.reminder_key === item.reminder_key && current.site === dialogSite
+        ? { ...current, loadingReferences: false, referenceError: err.message || "Referensi stok tidak dapat dimuat." }
         : current);
       setError(`Referensi stok belum termuat. Anda tetap dapat mengisi hasil hitung manual. ${err.message || ""}`.trim());
     } finally {
@@ -918,6 +930,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     const dialog = stockCheckDialog;
     const item = dialog?.item;
     if (!item?.reminder_key) return;
+    if (dialog.loadingReferences) return setError("Tunggu referensi stok selesai dimuat.");
     const updates = [];
     for (const line of dialog.lines || []) {
       if (String(line.actual_stock_qty).trim() === "") continue;
@@ -930,13 +943,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setError("Isi minimal satu stok fisik yang sudah Anda hitung.");
       return;
     }
-    if (!window.confirm(`Catat ${updates.length} stok fisik dapur sebagai koreksi gudang ${activeSite}?\n\nSistem hanya mencatat selisih terhadap stok aktual. Reminder tidak akan dipaksa ditutup; ia dihitung ulang dari stok baru.`)) return;
+    const dialogSite = dialog.site || activeSite;
+    if (!window.confirm(`Catat ${updates.length} stok fisik dapur sebagai koreksi gudang ${dialogSite}?\n\nSistem hanya mencatat selisih terhadap stok aktual. Reminder tidak akan dipaksa ditutup; ia dihitung ulang dari stok baru.`)) return;
     setReminderActionKey(item.reminder_key);
     setError("");
     setMessage("");
     try {
       const result = await operationsApi.confirmPoShortageStock({
-        site: activeSite,
+        site: dialogSite,
         reminder_key: item.reminder_key,
         items: updates,
         note: `Koreksi dari review kekurangan ${item.po_code || item.vendor_code}`,
@@ -1391,7 +1405,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                           <tr key={item.planning_snapshot_item_id} className={coveredByStock ? "ops-row-covered" : hasStock ? "ops-row-has-stock" : ""}>
                             <td>
                               {splitPo ? <>
-                                <span className="ops-stock-badge ops-stock-covered">✓ PO sendiri</span>
+                                <span className="ops-stock-badge ops-stock-covered">✓ SUDAH PO</span>
                                 <div className="ops-muted">{splitPo.po_code}</div>
                                 <button type="button" onClick={() => viewPoDetail(splitPo)}><Eye size={13} /> Lihat</button>
                               </> : <>
@@ -1525,9 +1539,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       {stockCheckDialog && <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !saving && setStockCheckDialog(null)}>
         <div role="dialog" aria-modal="true" className="modal wide">
-          <div className="modal-head"><div><h3>Cek Stok Gudang {activeSite}</h3><p className="ops-muted">Referensi di bawah hanya stok dari Gudang Dapur {activeSite}. Nama yang mirip tidak dianggap sama otomatis.</p></div><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}><XCircle size={18} /></button></div>
+          <div className="modal-head"><div><h3>Cek Stok Gudang {stockCheckDialog.site}</h3><p className="ops-muted">Referensi di bawah hanya stok dari Gudang Dapur {stockCheckDialog.site}. Nama yang mirip tidak dianggap sama otomatis.</p></div><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}><XCircle size={18} /></button></div>
           <div className="ops-notice"><strong>Isi stok fisik setelah dihitung.</strong> Jika ada tambahan, masukkan jumlah total terbaru. Sistem hanya mencatat selisih dan menghitung ulang reminder; ia tidak akan menutup reminder bila stok belum cukup.</div>
-          {stockCheckDialog.loadingReferences && <div className="ops-notice" role="status"><RefreshCw className="ops-spin" size={14} /> Memuat referensi stok Gudang Dapur {activeSite}… Form tetap dapat diisi manual.</div>}
+          {stockCheckDialog.loadingReferences && <div className="ops-notice" role="status"><RefreshCw className="ops-spin" size={14} /> Memuat referensi stok Gudang Dapur {stockCheckDialog.site}…</div>}
+          {!stockCheckDialog.loadingReferences && stockCheckDialog.referenceError && <div className="ops-error">{stockCheckDialog.referenceError} Isi nama, unit, dan jumlah fisik secara manual.</div>}
           {!stockCheckDialog.loadingReferences && stockCheckDialog.observedForDate && <div className="ops-muted">Referensi stok aktual diperiksa untuk {stockCheckDialog.observedForDate}.</div>}
           <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Kebutuhan PO</th><th>Referensi stok gudang</th><th>Stok fisik setelah cek</th></tr></thead><tbody>
             {stockCheckDialog.lines.map((line) => <tr key={line.id}>
@@ -1536,7 +1551,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
               <td><div className="ops-form-grid"><label>Barang<input value={line.item_name} onChange={(event) => updateStockCheckLine(line.id, { item_name: event.target.value, selected_index: "" })} /></label><label>Unit<input value={line.unit} onChange={(event) => updateStockCheckLine(line.id, { unit: event.target.value, selected_index: "" })} /></label><label>Jumlah fisik<input className="ops-qty-input" type="number" min="0" step="0.0001" value={line.actual_stock_qty} onChange={(event) => updateStockCheckLine(line.id, { actual_stock_qty: event.target.value })} placeholder="isi setelah hitung" /></label></div></td>
             </tr>)}
           </tbody></table></div>
-          <div className="ops-row-actions"><button type="button" onClick={confirmShortageStock} disabled={saving || reminderActionKey === stockCheckDialog.item.reminder_key}><Save size={14} /> Simpan hasil cek stok</button><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}>Batal</button></div>
+          <div className="ops-row-actions"><button type="button" onClick={confirmShortageStock} disabled={saving || stockCheckDialog.loadingReferences}><Save size={14} /> {stockCheckDialog.loadingReferences ? "Memuat stok…" : "Simpan hasil cek stok"}</button><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}>Batal</button></div>
         </div>
       </div>}
 

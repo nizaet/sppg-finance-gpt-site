@@ -8,7 +8,6 @@ All /v1 routes remain API endpoints and are protected by SPPG role middleware.
 """
 
 from copy import deepcopy
-from datetime import timedelta
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -67,17 +66,16 @@ po_policy._patch_route(
 def _site_only_po_projection(site, distribution_date):
     """Stock available immediately before the cooking day for a distribution.
 
-    Inventory consumption happens on the cooking day. The reminder therefore
-    projects to D-1 (the normal cooking date), rather than subtracting the plan
-    for the prior distribution a second time from a same-day physical SO.
+    A physical SO already includes all distribution plans through its own date.
+    Project to the requested distribution date so later PO requirements still
+    subtract intervening cooking, without subtracting the SO date twice.
     """
-    stock_before_date = distribution_date - timedelta(days=1)
     try:
         payload = po_policy._ORIGINAL_INVENTORY_BALANCES_V2(
             site=site,
             search="",
             limit=1000,
-            for_date=stock_before_date,
+            for_date=distribution_date,
         )
     except Exception:
         return {}, "PROJECTION_UNAVAILABLE"
