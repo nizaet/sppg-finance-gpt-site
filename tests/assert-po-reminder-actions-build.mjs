@@ -132,3 +132,7 @@ if (!plannerSource.includes("createPortal(") || !plannerSource.includes('classNa
 if (!plannerSource.includes('value="__NEW__"') || !plannerSource.includes("Barang tidak ada — input barang baru")) {
   throw new Error("Warehouse confirmation popup must allow a new item when no stored item matches");
 }
+
+if (!plannerSource.includes("const stockCheckSaving = Boolean(") || /\\[stockCheckDialog, saving\\]/.test(plannerSource)) {
+  throw new Error("Warehouse confirmation popup must use its defined request state and never crash PO Vendor at render");
+}

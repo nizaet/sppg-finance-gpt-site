@@ -420,12 +420,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [viewingPo, setViewingPo] = useState(null);
   const [reminderActionKey, setReminderActionKey] = useState("");
   const [stockCheckDialog, setStockCheckDialog] = useState(null);
+  const stockCheckSaving = Boolean(stockCheckDialog?.item?.reminder_key)
+    && reminderActionKey === stockCheckDialog.item.reminder_key;
 
   useEffect(() => {
     if (!stockCheckDialog || typeof document === "undefined") return undefined;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event) => {
-      if (event.key === "Escape" && !saving) setStockCheckDialog(null);
+      if (event.key === "Escape" && !stockCheckSaving) setStockCheckDialog(null);
     };
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", closeOnEscape);
@@ -433,7 +435,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [stockCheckDialog, saving]);
+  }, [stockCheckDialog, stockCheckSaving]);
 
   useEffect(() => {
     if (fixedSite && site !== fixedSite) setSite(fixedSite);
@@ -1553,11 +1555,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       </section>
 
       {stockCheckDialog && typeof document !== "undefined" && createPortal(
-        <div role="presentation" className="ops-stock-dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !saving && setStockCheckDialog(null)}>
+        <div role="presentation" className="ops-stock-dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !stockCheckSaving && setStockCheckDialog(null)}>
           <div role="dialog" aria-modal="true" aria-labelledby="ops-stock-dialog-title" className="ops-stock-dialog">
             <div className="ops-stock-dialog-head">
               <div><span>GUDANG DAPUR {stockCheckDialog.site}</span><h3 id="ops-stock-dialog-title">Konfirmasi stok gudang</h3><p>Tetap di halaman PO ini. Pilih barang yang sudah ada, atau input barang baru bila belum tersedia.</p></div>
-              <button type="button" aria-label="Tutup popup" onClick={() => setStockCheckDialog(null)} disabled={saving}><XCircle size={20} /></button>
+              <button type="button" aria-label="Tutup popup" onClick={() => setStockCheckDialog(null)} disabled={stockCheckSaving}><XCircle size={20} /></button>
             </div>
             <div className="ops-stock-dialog-notice"><strong>Masukkan jumlah stok fisik total terbaru.</strong> Sistem mencatat selisihnya lalu menghitung ulang kebutuhan PO untuk {stockCheckDialog.site}.</div>
             {stockCheckDialog.loadingReferences && <div className="ops-stock-dialog-status" role="status"><RefreshCw className="ops-spin" size={15} /> Memuat pilihan barang Gudang {stockCheckDialog.site}…</div>}
@@ -1589,7 +1591,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                 </section>;
               })}
             </div>
-            <div className="ops-stock-dialog-actions"><button type="button" className="primary" onClick={confirmShortageStock} disabled={saving || stockCheckDialog.loadingReferences}><Save size={15} /> {stockCheckDialog.loadingReferences ? "Memuat pilihan…" : saving ? "Menyimpan…" : "Simpan & hitung ulang PO"}</button><button type="button" onClick={() => setStockCheckDialog(null)} disabled={saving}>Batal</button></div>
+            <div className="ops-stock-dialog-actions"><button type="button" className="primary" onClick={confirmShortageStock} disabled={stockCheckSaving || stockCheckDialog.loadingReferences}><Save size={15} /> {stockCheckDialog.loadingReferences ? "Memuat pilihan…" : stockCheckSaving ? "Menyimpan…" : "Simpan & hitung ulang PO"}</button><button type="button" onClick={() => setStockCheckDialog(null)} disabled={stockCheckSaving}>Batal</button></div>
           </div>
         </div>,
         document.body,
