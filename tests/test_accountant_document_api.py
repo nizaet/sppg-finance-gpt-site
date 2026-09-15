@@ -73,6 +73,20 @@ def test_date_range_uses_period_end_as_invoice_date_without_false_fallback_warni
     assert result["warnings"] == []
 
 
+def test_invoice_confidence_accepts_ai_labels_and_malformed_values() -> None:
+    fallback = api._fallback_invoice("")
+    base = {
+        "invoice_number": "INV-001",
+        "invoice_date": "2026-09-15",
+        "invoice_amount": 1_000_000,
+        "lines": [],
+    }
+    assert api._normalize_invoice({**base, "confidence": "high"}, fallback, "MAJA", "BAHAN_BAKU")["confidence"] == 0.9
+    assert api._normalize_invoice({**base, "confidence": "85%"}, fallback, "MAJA", "BAHAN_BAKU")["confidence"] == 0.85
+    assert api._normalize_invoice({**base, "confidence": "tidak diketahui"}, fallback, "MAJA", "BAHAN_BAKU")["confidence"] == 0.5
+    assert api._normalize_invoice({**base, "confidence": 3}, fallback, "MAJA", "BAHAN_BAKU")["confidence"] == 1.0
+
+
 def test_direct_invoice_never_creates_maker_by_default() -> None:
     payload = api.DirectInvoiceIn(
         file_name="invoice.jpg",
