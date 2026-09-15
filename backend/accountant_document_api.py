@@ -130,6 +130,41 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _confidence(value: Any, default: float = 0.5) -> float:
+    """Normalize confidence values returned by document AI without failing a request.
+
+    Providers occasionally return labels such as ``high`` even when the prompt
+    asks for a number.  Confidence is advisory metadata, so a malformed value
+    must never turn an otherwise readable invoice into HTTP 500.
+    """
+    if value in (None, "") or isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    else:
+        raw = str(value).strip().lower()
+        labels = {
+            "very high": 0.95,
+            "sangat tinggi": 0.95,
+            "high": 0.9,
+            "tinggi": 0.9,
+            "medium": 0.6,
+            "moderate": 0.6,
+            "sedang": 0.6,
+            "low": 0.3,
+            "rendah": 0.3,
+            "very low": 0.15,
+            "sangat rendah": 0.15,
+        }
+        if raw in labels:
+            return labels[raw]
+        parsed_value = _number(raw)
+        if parsed_value is None:
+            return default
+        parsed = parsed_value / 100 if "%" in raw or 1 < parsed_value <= 100 else parsed_value
+    return min(max(parsed, 0.0), 1.0)
+
+
 def _iso_date(value: Any) -> str | None:
     raw = str(value or "").strip()
     if not raw:
@@ -290,6 +325,7 @@ def _fallback_invoice(text: str) -> dict[str, Any]:
 INVOICE_PROMPT = """Baca invoice Indonesia ini dan keluarkan SATU JSON valid saja.
 Schema: {site, category, invoice_number, invoice_date, period_start, period_end, invoice_amount,
 lines:[{item_name,quantity,unit,unit_price,line_total}], confidence, warnings}.
+confidence WAJIB angka desimal 0 sampai 1 (contoh 0.9), jangan gunakan teks high/medium/low.
 Tanggal wajib ISO YYYY-MM-DD. invoice_date adalah tanggal tunggal; bila tertulis rentang, isi period_start dan period_end.
 invoice_amount angka rupiah tanpa pemisah. site hanya MAJA atau CEMPLANG bila terbukti dari dokumen.
 category hanya: SEWA_MITRA, TOKEN_LISTRIK, GAJI_RELAWAN, SEWA_MOBIL, UPAH, BAHAN_BAKU, OPERASIONAL_LAIN.
@@ -327,7 +363,7 @@ def _normalize_invoice(parsed: dict[str, Any], fallback: dict[str, Any], request
         "dateDerivedFromPeriod": date_derived_from_period,
         "invoiceAmount": _number(merged.get("invoice_amount")),
         "lines": lines,
-        "confidence": min(max(float(merged.get("confidence") or 0.5), 0), 1),
+        "confidence": _confidence(merged.get("confidence")),
         "warnings": [str(x) for x in (warnings_source or []) if str(x).strip()],
     }
 
