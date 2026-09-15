@@ -133,6 +133,6 @@ if (!plannerSource.includes('value="__NEW__"') || !plannerSource.includes("Baran
   throw new Error("Warehouse confirmation popup must allow a new item when no stored item matches");
 }
 
-if (!plannerSource.includes("const stockCheckSaving = Boolean(") || /\\[stockCheckDialog, saving\\]/.test(plannerSource)) {
+if (!plannerSource.includes("const stockCheckSaving = Boolean(") || plannerSource.includes("[stockCheckDialog, saving]")) {
   throw new Error("Warehouse confirmation popup must use its defined request state and never crash PO Vendor at render");
 }
