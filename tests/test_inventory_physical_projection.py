@@ -90,6 +90,17 @@ def test_late_same_day_receipt_does_not_resurrect_stock_after_so(monkeypatch):
     assert result["items"][0]["actual_balance"] == 0
 
 
+def test_same_day_manual_added_stock_is_visible_after_so(monkeypatch):
+    so = {"id": 61, "stock_date": date(2026, 9, 16), "created_at": datetime(2026, 9, 16, 1, tzinfo=timezone.utc)}
+    items = [{"area_code": None, "raw_item_name": "Minyak Goreng", "canonical_item_name": "Minyak Goreng", "inventory_item_code": None, "qty": 0, "unit": "liter"}]
+    adjustment = [{"item_name": "Minyak Goreng", "qty": 5, "unit": "liter", "from_location": "MANUAL_ADJUSTMENT", "to_location": "CEMPLANG", "movement_type": "MANUAL_ADJUSTMENT", "source_type": "MANUAL_STOCK_EDIT", "notes": '{"target_balance":5}', "occurred_at": datetime(2026, 9, 16, 8, tzinfo=timezone.utc)}]
+    monkeypatch.setattr(summary, "require_db", lambda: None)
+    monkeypatch.setattr(summary, "load_item_matchers", lambda *args: [])
+    monkeypatch.setattr(summary, "connection", connection_for([[so], [so], items, adjustment, [], []]))
+    result = summary.inventory_balances(site="CEMPLANG", limit=1000, for_date=date(2026, 9, 17))
+    assert result["items"][0]["actual_balance"] == 5
+
+
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
 def test_same_day_so_is_not_depleted_again_by_same_day_plan(site, monkeypatch):
     base = {"latestStockOpnameDate": date(2026, 9, 14), "forDate": date(2026, 9, 15), "items": [{
