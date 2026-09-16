@@ -14,6 +14,7 @@ from backend.inventory_projection_v2_api import inventory_balances_v2
 from backend.item_taxonomy import stock_type
 from backend.operational_api import normalize_site, require_db
 from backend.po_reminder_warehouse_check import warehouse_stock_candidates
+from backend.po_reminder_projection_cache_patch import invalidate_projection_cache
 from backend.po_reminder_v3_api import po_reminders_v3
 from backend.stock_opname_parser import canonical_unit
 
@@ -411,6 +412,12 @@ def confirm_po_shortage_stock(payload: ShortageStockConfirmIn) -> dict[str, Any]
                 inserted += 1
 
         conn.commit()
+
+    # The reminder response cache is bypassed by ``refresh=True`` below, but
+    # stock projections have their own longer-lived cache.  Clear this site's
+    # projections after the transaction commits so the immediate recalculation
+    # sees the physical count just written.
+    invalidate_projection_cache(site)
 
     # Recalculate once more after the stock write so the response tells the UI the
     # resulting shortage, not merely the pre-write estimate.
