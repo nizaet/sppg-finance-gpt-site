@@ -462,10 +462,16 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     || findActiveItemSplitPo(item, forDate)
   );
 
-  const refreshReminders = async () => {
-    const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
+  const refreshReminders = async (forceRefresh = false) => {
+    const reminderData = await operationsApi.getPoReminders({
+      site: activeSite,
+      date: today(),
+      horizonDays: 2,
+      refresh: forceRefresh,
+    });
     setReminders(reminderData?.items || []);
     setRemindersPulled(true);
+    return reminderData;
   };
 
   const refreshVendorReferences = async () => {
@@ -978,9 +984,16 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         note: `Koreksi dari review kekurangan ${item.po_code || item.vendor_code}`,
       });
       setStockCheckDialog(null);
-      await refreshReminders();
       if (dailyPulled) await pullDailyData();
-      setMessage(result?.message || "Stok dapur dikoreksi dan reminder dihitung ulang.");
+      // Run this last and bypass every reminder response cache. A daily working
+      // set refresh must never put the pre-confirmation queue back on screen.
+      const freshReminderData = await refreshReminders(true);
+      const reminderStillVisible = (freshReminderData?.items || []).some(
+        (row) => String(row?.reminder_key || "") === String(item.reminder_key),
+      );
+      setMessage(reminderStillVisible
+        ? "Stok tersimpan dan pengingat sudah dihitung ulang. Hanya kekurangan yang masih tersisa yang ditampilkan."
+        : "Stok sudah mencukupi. Pengingat berhasil dihitung ulang dan dihapus dari daftar tindakan.");
     } catch (err) {
       setError(err.message || "Gagal mencatat koreksi stok dapur");
     } finally {
