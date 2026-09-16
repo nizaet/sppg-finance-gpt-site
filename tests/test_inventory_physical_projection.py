@@ -104,12 +104,13 @@ def test_same_day_manual_added_stock_is_visible_after_so(monkeypatch):
 def test_same_day_po_stock_confirmation_is_visible_after_so(monkeypatch):
     so = {"id": 62, "stock_date": date(2026, 9, 16), "created_at": datetime(2026, 9, 16, 1, tzinfo=timezone.utc)}
     items = [{"area_code": None, "raw_item_name": "Bawang Bombay", "canonical_item_name": "Bawang Bombay", "inventory_item_code": None, "qty": 6.35, "unit": "kg"}]
-    correction = [{"item_name": "Bawang Bombay", "qty": 5, "unit": "kg", "from_location": "MAJA", "to_location": "MANUAL_CORRECTION", "movement_type": "MANUAL_STOCK_CORRECTION", "source_type": "MANUAL_STOCK_EDIT", "notes": '{"target_balance":1.35}', "occurred_at": datetime(2026, 9, 16, 8, tzinfo=timezone.utc)}]
+    correction = [{"item_name": "Bawang Bombay", "qty": 5, "unit": "kg", "from_location": "MAJA", "to_location": "MANUAL_CORRECTION", "movement_type": "MANUAL_STOCK_CORRECTION", "source_type": "MANUAL_STOCK_EDIT", "notes": '{"source":"PO_REMINDER_STOCK_CONFIRMATION","target_balance":1.35}', "occurred_at": datetime(2026, 9, 16, 8, tzinfo=timezone.utc)}]
     monkeypatch.setattr(summary, "require_db", lambda: None)
     monkeypatch.setattr(summary, "load_item_matchers", lambda *args: [])
     monkeypatch.setattr(summary, "connection", connection_for([[so], [so], items, correction, [], []]))
     result = summary.inventory_balances(site="MAJA", limit=1000, for_date=date(2026, 9, 17))
     assert result["items"][0]["actual_balance"] == 1.35
+    assert result["items"][0]["last_stock_check_at"] is None
 
 
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
