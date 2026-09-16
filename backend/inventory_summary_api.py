@@ -153,7 +153,7 @@ def inventory_balances(
                 where (upper(coalesce(to_location,''))=%s or upper(coalesce(from_location,''))=%s)
                   and (
                     date(coalesce(occurred_at,created_at)) < %s
-                    or (%s and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
+                    or (%s and upper(coalesce(movement_type,'')) in ('MANUAL_ADJUSTMENT','MANUAL_STOCK_CORRECTION')
                         and date(coalesce(occurred_at,created_at)) = %s)
                   )
             """
@@ -167,7 +167,7 @@ def inventory_balances(
                   and (
                     date(coalesce(occurred_at,created_at)) > %s
                     or (%s
-                        and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
+                        and upper(coalesce(movement_type,'')) in ('MANUAL_ADJUSTMENT','MANUAL_STOCK_CORRECTION')
                         and date(coalesce(occurred_at,created_at)) = %s)
                   )
                 """
@@ -188,7 +188,7 @@ def inventory_balances(
                     stock_date
                     and include_current_corrections
                     and occurred.date() == stock_date
-                    and str(movement["movement_type"] or "").upper() == "MANUAL_ADJUSTMENT"
+                    and str(movement["movement_type"] or "").upper() in {"MANUAL_ADJUSTMENT", "MANUAL_STOCK_CORRECTION"}
                 )
                 if stock_date and occurred.date() <= stock_date and not same_day_manual_correction:
                     continue
