@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -145,6 +145,13 @@ def inventory_balances_v2(
     location = normalize_location(site)
     if not target_date:
         return base
+    # When the PO is being prepared for today's cooking, today's production
+    # plan has already consumed the morning stock and must reduce availability.
+    # For a future cooking day, keep the target day's plan as the requirement
+    # being covered by the PO and only deplete prior cooking days.
+    today_jakarta = datetime.now(ZoneInfo("Asia/Jakarta")).date()
+    target_cooking_date = target_date - timedelta(days=1)
+    usage_end = target_cooking_date + timedelta(days=1) if target_cooking_date <= today_jakarta else target_cooking_date
 
     with connection() as conn:
         with conn.cursor() as cur:
@@ -179,7 +186,7 @@ def inventory_balances_v2(
                           and pc.distribution_date > %s
                           and pc.distribution_date < %s
                         """,
-                        (location, stock_date, target_date),
+                        (location, stock_date, usage_end),
                     )
                     for row in cur.fetchall():
                         type_code, unit, _, _ = _type_key(row.get("item_name"), row.get("unit"), masters)
@@ -191,16 +198,17 @@ def inventory_balances_v2(
                         from (
                           -- Do not restore stock simply because a completed
                           -- daily plan was later superseded by a newer snapshot.
-                          select distinct on (site,distribution_date) id,site,distribution_date
+                          select distinct on (site,distribution_date) id,site,distribution_date,cooking_at
                           from planning_snapshots
                           where upper(site)=%s and status <> 'REJECTED'
-                            and distribution_date > %s and distribution_date < %s
+                            and coalesce(date(cooking_at), distribution_date - 1) > %s
+                            and coalesce(date(cooking_at), distribution_date - 1) < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps
                         join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
                         where coalesce(psi.planned_qty,0)>0
                         """,
-                        (location, stock_date, target_date),
+                        (location, stock_date, usage_end),
                     )
                     for plan in cur.fetchall():
                         # SO is a physical anchor through stock_date. This guard
