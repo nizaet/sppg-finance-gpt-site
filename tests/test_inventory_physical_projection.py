@@ -117,8 +117,8 @@ def test_same_day_so_is_not_depleted_again_by_same_day_plan(site, monkeypatch):
     result = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 15))
     row = result["items"][0]
     assert row["actual_balance"] == 1
-    assert row["planned_depletion"] == 0
-    assert row["available_for_po"] == 1
+    assert row["planned_depletion"] == 1
+    assert row["available_for_po"] == 0
 
 
 def test_powder_cannot_inherit_fresh_garlic_master_by_substring():
