@@ -109,6 +109,26 @@ class ProjectionCacheRegressionTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first[1], "RUNTIME")
 
+    def test_inventory_mutation_invalidates_only_selected_site(self):
+        calls = []
+
+        def fake_lookup(site, distribution_date):
+            calls.append((site, distribution_date))
+            return {("TEST", "kg"): float(len(calls))}, "TEST"
+
+        target = date(2026, 9, 17)
+        with patch.object(projection_patch, "_ORIGINAL_PROJECTION_LOOKUP", side_effect=fake_lookup):
+            projection_patch.projection_lookup("MAJA", target)
+            projection_patch.projection_lookup("CEMPLANG", target)
+            removed = projection_patch.invalidate_projection_cache("maja")
+            maja_after_write = projection_patch.projection_lookup("MAJA", target)
+            cemplang_after_write = projection_patch.projection_lookup("CEMPLANG", target)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(maja_after_write[0][("TEST", "kg")], 3.0)
+        self.assertEqual(cemplang_after_write[0][("TEST", "kg")], 2.0)
+
 
 class DeliveryAlertReconciliationRegressionTests(unittest.TestCase):
     def _alert_payload(self, accepted_qty: float = 0.0):
