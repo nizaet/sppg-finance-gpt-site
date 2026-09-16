@@ -179,7 +179,13 @@ def inventory_balances(
                 # Keep the rule at the Python boundary too. This protects the
                 # projection when a legacy query/mock returns a same-day row:
                 # the latest SO already includes that day's physical result.
-                if stock_date and occurred.date() <= stock_date:
+                same_day_manual_correction = bool(
+                    stock_date
+                    and include_current_corrections
+                    and occurred.date() == stock_date
+                    and str(movement["movement_type"] or "").upper() == "MANUAL_ADJUSTMENT"
+                )
+                if stock_date and occurred.date() <= stock_date and not same_day_manual_correction:
                     continue
                 if str(movement["to_location"] or "").upper() == location:
                     row["movement_delta"] += qty
