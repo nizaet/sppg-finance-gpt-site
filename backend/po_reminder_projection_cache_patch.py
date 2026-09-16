@@ -86,6 +86,30 @@ def configure_projection_source(source) -> None:
     _v4._projection_lookup = projection_lookup
 
 
+def invalidate_projection_cache(site: str | None = None) -> int:
+    """Discard cached stock projections after an inventory mutation.
+
+    A forced reminder refresh bypasses the short v3 response cache, but its
+    underlying inventory projection has a longer TTL.  Without invalidating
+    this layer, a physical recount can be committed successfully while the
+    freshly requested reminder is still calculated from the old stock.
+    """
+    normalized_site = str(site or "").upper().strip()
+    removed = 0
+    with _LOCK:
+        keys = [
+            key for key in _CACHE
+            if not normalized_site or key[0] == normalized_site
+        ]
+        for key in keys:
+            _CACHE.pop(key, None)
+            removed += 1
+            key_lock = _KEY_LOCKS.get(key)
+            if key_lock is not None and not key_lock.locked():
+                _KEY_LOCKS.pop(key, None)
+    return removed
+
+
 def _as_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
