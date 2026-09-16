@@ -159,19 +159,14 @@ def inventory_balances(
             """
             movement_params: list[Any] = [location, location, target_date, include_current_corrections, target_date]
             if stock_date:
-                # SO is the physical balance at its recorded time. Any receipt,
-                # transfer, or correction later that same day must be included
-                # before calculating what remains for tomorrow's PO.
+                # SO is the latest physical truth. Receiving/transfer messages
+                # are often entered late even though goods arrived the previous
+                # night and were already consumed. Do not resurrect stock with
+                # a movement recorded on the SO date; only later dates can add.
                 movement_sql += """
-                  and (
-                    date(coalesce(occurred_at,created_at)) > %s
-                    or (
-                      date(coalesce(occurred_at,created_at)) = %s
-                      and coalesce(occurred_at,created_at) > %s
-                    )
-                  )
+                  and date(coalesce(occurred_at,created_at)) > %s
                 """
-                movement_params.extend([stock_date, stock_date, latest_so["created_at"]])
+                movement_params.append(stock_date)
             cur.execute(movement_sql, movement_params)
             actual_movement_dates: set[tuple[str, str, date]] = set()
             for movement in cur.fetchall():
@@ -180,11 +175,16 @@ def inventory_balances(
                 key = (normalized, unit)
                 row = rows.setdefault(key, _new_row(movement["item_name"], unit, match))
                 _remember_conversion(row, conversion_label)
+                occurred = movement["occurred_at"]
+                # Keep the rule at the Python boundary too. This protects the
+                # projection when a legacy query/mock returns a same-day row:
+                # the latest SO already includes that day's physical result.
+                if stock_date and occurred.date() <= stock_date:
+                    continue
                 if str(movement["to_location"] or "").upper() == location:
                     row["movement_delta"] += qty
                 if str(movement["from_location"] or "").upper() == location:
                     row["movement_delta"] -= qty
-                occurred = movement["occurred_at"]
                 # A physical recount confirms this item's balance. Earlier
                 # estimated plans must not deplete that confirmed balance again.
                 # Ordinary receipts and arbitrary adjustments are not recounts.
