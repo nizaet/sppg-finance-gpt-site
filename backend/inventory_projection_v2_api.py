@@ -223,7 +223,14 @@ def inventory_balances_v2(
                             continue
                         key = (type_code, unit)
                         row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
-                        if _before_physical_check(row, plan["distribution_date"]):
+                        # A recount is compared with the cooking day, not the
+                        # following distribution day. Stock confirmed after
+                        # today's cooking already reflects today's consumption.
+                        # Only later cooking plans may deplete it again.
+                        if _before_physical_check(
+                            row,
+                            plan.get("cooking_date") or plan["distribution_date"],
+                        ):
                             continue
                         row["planned_depletion"] += _operational_quantity(
                             plan.get("item_name"), plan.get("planned_qty"), plan.get("unit"), masters
