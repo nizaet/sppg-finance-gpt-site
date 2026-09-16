@@ -110,7 +110,35 @@ def test_same_day_po_stock_confirmation_is_visible_after_so(monkeypatch):
     monkeypatch.setattr(summary, "connection", connection_for([[so], [so], items, correction, [], []]))
     result = summary.inventory_balances(site="MAJA", limit=1000, for_date=date(2026, 9, 17))
     assert result["items"][0]["actual_balance"] == 1.35
-    assert result["items"][0]["last_stock_check_at"] is None
+    assert result["items"][0]["last_stock_check_at"] == datetime(2026, 9, 16, 8, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
+def test_po_popup_recount_skips_same_cooking_day_but_keeps_later_plan(site, monkeypatch):
+    checked = datetime(2026, 9, 16, 8, tzinfo=timezone.utc)  # Sept 16 Jakarta
+    base = {"latestStockOpnameDate": date(2026, 9, 16), "forDate": date(2026, 9, 18), "items": [{
+        "item_name": "Garam", "unit": "kg", "so_qty": 0,
+        "movement_delta": 8, "actual_usage_depletion": 0, "last_stock_check_at": checked,
+    }]}
+    monkeypatch.setattr(projection, "inventory_balances", lambda **kwargs: base)
+    monkeypatch.setattr(projection, "load_item_matchers", lambda *args: [])
+    plans = [
+        {
+            "item_name": "Garam", "unit": "kg", "planned_qty": 5,
+            "cooking_date": date(2026, 9, 16), "distribution_date": date(2026, 9, 17),
+        },
+        {
+            "item_name": "Garam", "unit": "kg", "planned_qty": 3,
+            "cooking_date": date(2026, 9, 17), "distribution_date": date(2026, 9, 18),
+        },
+    ]
+    monkeypatch.setattr(projection, "connection", connection_for([[], [], plans, []]))
+
+    row = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 18))["items"][0]
+
+    assert row["actual_balance"] == 8
+    assert row["planned_depletion"] == 3
+    assert row["available_for_po"] == 5
 
 
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
