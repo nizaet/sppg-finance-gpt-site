@@ -203,7 +203,15 @@ def inventory_balances(
                     try:
                         notes = movement.get("notes") or {}
                         notes = json.loads(notes) if isinstance(notes, str) else notes
-                        if isinstance(notes, dict) and "target_balance" in notes:
+                        # The PO popup records the stock available *before*
+                        # today's cooking. It is a correction to the opening
+                        # balance, not proof that today's plan was consumed.
+                        # Do not turn it into a planning-depletion boundary.
+                        is_pre_cooking_po_check = (
+                            isinstance(notes, dict)
+                            and notes.get("source") == "PO_REMINDER_STOCK_CONFIRMATION"
+                        )
+                        if isinstance(notes, dict) and "target_balance" in notes and not is_pre_cooking_po_check:
                             checked = row["last_stock_check_at"]
                             if checked is None or occurred > checked:
                                 row["last_stock_check_at"] = occurred
