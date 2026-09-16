@@ -194,14 +194,15 @@ def inventory_balances_v2(
 
                     cur.execute(
                         """
-                        select psi.item_name,psi.planned_qty,psi.unit,ps.distribution_date
+                        select psi.item_name,psi.planned_qty,psi.unit,ps.distribution_date,ps.cooking_date
                         from (
                           -- Do not restore stock simply because a completed
                           -- daily plan was later superseded by a newer snapshot.
-                          select distinct on (site,distribution_date) id,site,distribution_date,cooking_at
+                          select distinct on (site,distribution_date) id,site,distribution_date,
+                                 coalesce(date(cooking_at), distribution_date - 1) as cooking_date
                           from planning_snapshots
                           where upper(site)=%s and status <> 'REJECTED'
-                            and coalesce(date(cooking_at), distribution_date - 1) > %s
+                            and coalesce(date(cooking_at), distribution_date - 1) >= %s
                             and coalesce(date(cooking_at), distribution_date - 1) < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps
@@ -214,7 +215,7 @@ def inventory_balances_v2(
                         # SO is a physical anchor through stock_date. This guard
                         # prevents same-day double depletion independently of
                         # the SQL boundary above.
-                        if plan["distribution_date"] <= stock_date:
+                        if plan.get("cooking_date", plan["distribution_date"]) < stock_date:
                             continue
                         type_code, unit, label, method = _type_key(plan.get("item_name"), plan.get("unit"), masters)
                         usage_key = (type_code, unit, plan["distribution_date"])
