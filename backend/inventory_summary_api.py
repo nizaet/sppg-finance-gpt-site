@@ -164,9 +164,14 @@ def inventory_balances(
                 # night and were already consumed. Do not resurrect stock with
                 # a movement recorded on the SO date; only later dates can add.
                 movement_sql += """
-                  and date(coalesce(occurred_at,created_at)) > %s
+                  and (
+                    date(coalesce(occurred_at,created_at)) > %s
+                    or (%s
+                        and upper(coalesce(movement_type,''))='MANUAL_ADJUSTMENT'
+                        and date(coalesce(occurred_at,created_at)) = %s)
+                  )
                 """
-                movement_params.append(stock_date)
+                movement_params.extend([stock_date, include_current_corrections, stock_date])
             cur.execute(movement_sql, movement_params)
             actual_movement_dates: set[tuple[str, str, date]] = set()
             for movement in cur.fetchall():
