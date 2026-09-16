@@ -99,9 +99,23 @@ if (!plannerSource.includes('data-po-manual-load="v31"')) {
 if (!plannerSource.includes("const openShortageStockCheck = async (item)")) {
   throw new Error("Warehouse confirmation must open the stock-reference dialog first");
 }
+if (!plannerSource.includes("createPortal(") || !plannerSource.includes('className="ops-stock-dialog-backdrop"')) {
+  throw new Error("Warehouse confirmation must stay in a same-page portal popup");
+}
+if (!plannerSource.includes('value="__NEW__"') || !plannerSource.includes("Barang tidak ada — input barang baru")) {
+  throw new Error("Warehouse confirmation popup must allow a new item when no stored item matches");
+}
+if (!plannerSource.includes("const stockCheckSaving = Boolean(") || /\[stockCheckDialog, saving\]/.test(plannerSource)) {
+  throw new Error("Warehouse confirmation popup must use its defined request state and never crash PO Vendor at render");
+}
 const runtimeTransform = fs.readFileSync(path.resolve("vite.runtime.config.js"), "utf8");
 if (!runtimeTransform.includes('helperBlock.replace(\n        "confirmShortageStock(item)",\n        "openShortageStockCheck(item)"')) {
   throw new Error("Production PO actions still bypass the warehouse stock-reference dialog");
+}
+if (!runtimeTransform.includes("MANUAL_UI_STOCK_OVERRIDE_MINUS_PRIOR_COOKING") ||
+    !runtimeTransform.includes("stockQty - plannedDepletion + expectedSupply") ||
+    !runtimeTransform.includes("Sisa setelah masak hari ini")) {
+  throw new Error("Editable PO stock must subtract today's cooking plan before recalculating recommendation");
 }
 
 const siteTabsSource = fs.readFileSync(
@@ -125,14 +139,3 @@ if (forbidden.length) {
 }
 
 console.log("PO reminder/action + receiving UI is present in the built bundle:", requiredMarkers.join(", "));
-
-if (!plannerSource.includes("createPortal(") || !plannerSource.includes('className="ops-stock-dialog-backdrop"')) {
-  throw new Error("Warehouse confirmation must stay in a same-page portal popup");
-}
-if (!plannerSource.includes('value="__NEW__"') || !plannerSource.includes("Barang tidak ada — input barang baru")) {
-  throw new Error("Warehouse confirmation popup must allow a new item when no stored item matches");
-}
-
-if (!plannerSource.includes("const stockCheckSaving = Boolean(") || plannerSource.includes("[stockCheckDialog, saving]")) {
-  throw new Error("Warehouse confirmation popup must use its defined request state and never crash PO Vendor at render");
-}
