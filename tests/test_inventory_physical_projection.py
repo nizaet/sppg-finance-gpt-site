@@ -79,6 +79,17 @@ def test_only_explicit_physical_recount_creates_new_estimate_anchor(source_type,
     assert row["planned_depletion"] == (0 if source_type == "MANUAL_STOCK_EDIT" else 8)
 
 
+def test_late_same_day_receipt_does_not_resurrect_stock_after_so(monkeypatch):
+    so = {"id": 60, "stock_date": date(2026, 9, 16), "created_at": datetime(2026, 9, 16, 1, tzinfo=timezone.utc)}
+    items = [{"area_code": None, "raw_item_name": "Knorr Chicken Powder", "canonical_item_name": "Knorr Chicken Powder", "inventory_item_code": None, "qty": 0, "unit": "kg"}]
+    late_receipt = [{"item_name": "Knorr Chicken Powder", "qty": 2, "unit": "kg", "from_location": "KOPERASI", "to_location": "CEMPLANG", "movement_type": "KOPERASI_STOCK_TRANSFER", "source_type": "GOODS_RECEIPT", "notes": None, "occurred_at": datetime(2026, 9, 16, 5, tzinfo=timezone.utc)}]
+    monkeypatch.setattr(summary, "require_db", lambda: None)
+    monkeypatch.setattr(summary, "load_item_matchers", lambda *args: [])
+    monkeypatch.setattr(summary, "connection", connection_for([[so], [so], items, late_receipt, [], []]))
+    result = summary.inventory_balances(site="CEMPLANG", limit=1000, for_date=date(2026, 9, 17))
+    assert result["items"][0]["actual_balance"] == 0
+
+
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
 def test_same_day_so_is_not_depleted_again_by_same_day_plan(site, monkeypatch):
     base = {"latestStockOpnameDate": date(2026, 9, 14), "forDate": date(2026, 9, 15), "items": [{
