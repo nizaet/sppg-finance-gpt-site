@@ -223,7 +223,12 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       item_name: item.item_name,
       category_code: item.category_code || "",
       planned_qty: planned,
-      stock_qty: stock.balance,
+      // The table's "Stok Gudang" must be physical stock only.  The
+      // projected balance (which may include an unreceived PO) remains a
+      // separate calculation input so an outstanding PO is never shown as
+      // goods already sitting in the warehouse.
+      stock_qty: stock.actualBalance,
+      po_stock_qty: stock.balance,
       actual_stock_qty: stock.actualBalance,
       projected_stock_qty: stock.projectedBalance,
       planned_depletion_qty: stock.plannedDepletion,
@@ -668,7 +673,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           planning_price: item.planning_price,
           po_price: null,
           aliases: [],
-          notes: [item.notes, `stok_proyeksi_saat_draft=${item.stock_qty}`, `stok_aktual_terhitung=${item.actual_stock_qty}`, `so_terakhir=${item.stock_as_of || "tidak_ada"}`, `dasar_stok=${item.stock_basis}`, `keyakinan_stok=${item.stock_confidence}`, `rekomendasi_po=${item.recommended_po_qty}`, item.cooperative_stock_qty != null ? `stok_koperasi=${item.cooperative_stock_qty}` : ""].filter(Boolean).join(" | ") || null,
+          notes: [item.notes, `stok_proyeksi_saat_draft=${item.po_stock_qty}`, `stok_aktual_terhitung=${item.actual_stock_qty}`, `so_terakhir=${item.stock_as_of || "tidak_ada"}`, `dasar_stok=${item.stock_basis}`, `keyakinan_stok=${item.stock_confidence}`, `rekomendasi_po=${item.recommended_po_qty}`, item.cooperative_stock_qty != null ? `stok_koperasi=${item.cooperative_stock_qty}` : ""].filter(Boolean).join(" | ") || null,
         })),
       });
       if (result?.alreadyExists) {
@@ -1417,7 +1422,9 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                         const isManual = Number(item.po_qty) !== Number(item.recommended_po_qty);
                         const splitPo = findActivePoForItem(item, distributionDate);
                         const hasStock = Number(item.stock_qty || 0) > 0;
+                        const hasExpectedSupply = Number(item.expected_supply_qty || 0) > 0;
                         const coveredByStock = hasStock && Number(item.recommended_po_qty || 0) <= 0;
+                        const coveredByExpectedPo = !hasStock && hasExpectedSupply && Number(item.recommended_po_qty || 0) <= 0;
                         return (
                           <tr key={item.planning_snapshot_item_id} className={coveredByStock ? "ops-row-covered" : hasStock ? "ops-row-has-stock" : ""}>
                             <td>
@@ -1437,7 +1444,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                             <td>{qty(item.planned_qty)}</td>
                             <td>
                               <strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>
-                              {Number(item.stock_qty || 0) > 0 && <div><span className={`ops-stock-badge ${Number(item.recommended_po_qty || 0) <= 0 ? "ops-stock-covered" : "ops-stock-partial"}`}>{Number(item.recommended_po_qty || 0) <= 0 ? "✓ CUKUP DARI GUDANG" : "✓ ADA STOK"}</span></div>}
+                              {hasStock && <div><span className={`ops-stock-badge ${coveredByStock ? "ops-stock-covered" : "ops-stock-partial"}`}>{coveredByStock ? "✓ CUKUP DARI GUDANG" : "✓ ADA STOK"}</span></div>}
+                              {coveredByExpectedPo && <div><span className="ops-stock-badge ops-stock-partial">✓ TERTUTUP PO BELUM DITERIMA</span></div>}
                               <div className="ops-muted">Aktual terhitung {qty(item.actual_stock_qty)} · SO {item.stock_as_of || "belum ada"}</div>
                               {item.planned_depletion_qty > 0 && <div className="ops-muted">− rencana sebelumnya {qty(item.planned_depletion_qty)}</div>}
                               {item.stock_checked_at && <div className="ops-muted">Koreksi fisik {compactTimestamp(item.stock_checked_at)}</div>}
