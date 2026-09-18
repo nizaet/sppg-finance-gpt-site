@@ -335,7 +335,7 @@ def cancel_unpaid_vendor_payable(invoice_id: int, payload: VendorPayableCancelIn
             cur.execute(
                 """update vendor_invoices
                      set payable_status='CANCELLED',
-                         correction_note=concat_ws(E'\n', nullif(correction_note,''), %s),
+                         correction_note=coalesce(nullif(correction_note,'' ) || E'\n', '') || %s::text,
                          updated_at=now()
                    where id=%s
                    returning id as vendor_invoice_id,payable_status,correction_note""",
