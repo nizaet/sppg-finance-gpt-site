@@ -865,6 +865,17 @@ def schema_v0188() -> dict[str, Any]:
         "reconcileRecordedSppgVendorPayment", "confirmSppgBgnMakerApproved", "confirmSppgBgnMakerPaid",
         "previewOrExecuteSppgOperationalApplication",
     }
+    payload["paths"]["/v1/vendor-payables/{invoice_id}/cancel"] = {
+        "post": {
+            "operationId": "cancelSppgVendorPayable",
+            "summary": "Cancel a wrongly-entered unpaid vendor invoice",
+            "description": "Use only when the user explicitly identifies an erroneous invoice. This cancels the unpaid invoice from active payables while preserving its PO, goods receipt, invoice lines, and audit note. Never use for PAID/RECONCILED invoices or invoices with payment evidence.",
+            "parameters": [{"in": "path", "name": "invoice_id", "required": True, "schema": {"type": "integer"}}],
+            "requestBody": {"required": True, "content": {"application/json": {"schema": obj({"reason": {"type": "string", "minLength": 3, "maxLength": 1000}}, ["reason"])}}},
+            "responses": {"200": {"description": "Invoice cancelled without deleting PO/receipt", "content": {"application/json": {"schema": obj({"cancelled": {"type": "boolean"}, "alreadyCancelled": {"type": "boolean"}, "vendorInvoiceId": {"type": ["integer", "null"]}, "poReceiptPreserved": {"type": "boolean"}})}}}},
+        }
+    }
+    write_operation_ids.add("cancelSppgVendorPayable")
     for methods in payload["paths"].values():
         for operation in methods.values():
             if isinstance(operation, dict) and operation.get("operationId"):
