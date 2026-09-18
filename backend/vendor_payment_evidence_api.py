@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.accountant_drive import AccountantDriveUploadError, upload_accountant_artifact
-from backend.calculator_ai_api import _gemini_key, _gemini_model, _post_json
+from backend.calculator_ai_api import _gemini_key, _gemini_model, _openai_key, _openai_model, _post_json
 from backend.db import connection, database_ready
 from backend.vendor_payment_override_api import VendorPaymentEvidenceIn, record_vendor_payment_evidence
 
@@ -270,6 +270,69 @@ Untuk angka rupiah, contoh 'IDR 4,887,000.00' berarti 4887000. Jangan mencampur 
     return parsed
 
 
+def _inspect_with_openai(data: bytes, mime: str, invoice: dict[str, Any]) -> dict[str, Any]:
+    key = _openai_key()
+    if not key:
+        raise HTTPException(503, "OPENAI_API_KEY belum dikonfigurasi")
+    prompt = f"""Baca bukti transfer bank Indonesia ini sebagai bukti pembayaran vendor SPPG.
+Konteks invoice yang diklik: site={invoice.get('site')}, vendor={invoice.get('vendor_code')}, nilai invoice={invoice.get('net_amount')}, invoice={invoice.get('invoice_number') or '-'}, PO={invoice.get('po_code') or '-'}.
+Satu transfer BOLEH membayar beberapa invoice vendor sekaligus. Tugas Anda hanya membaca bukti bank, bukan menentukan invoice mana yang dibayar.
+Ekstrak data yang benar-benar terlihat. Jangan menebak digit yang tidak terlihat.
+Kembalikan JSON SAJA dengan field: amount (number atau null), paid_at (ISO 8601 +07:00 atau null), beneficiary_name (string/null), beneficiary_account (string/null), source_account (string/null, boleh masked), reference_number (string/null), remarks (string/null), bank (string/null), channel_detected (string/null), confidence (0 sampai 1).
+Untuk angka rupiah, contoh 'IDR 4,887,000.00' berarti 4887000. Jangan mencampur nomor rekening dengan nomor referensi."""
+    response = _post_json(
+        "https://api.openai.com/v1/chat/completions",
+        {
+            "model": _openai_model(None),
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}",
+                    "detail": "high",
+                }},
+            ]}],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        },
+        {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        timeout=75,
+    )
+    text = response.get("choices", [{}])[0].get("message", {}).get("content")
+    if not text:
+        raise HTTPException(502, "OpenAI tidak mengembalikan hasil pembacaan bukti transfer")
+    parsed = _clean_json_text(str(text))
+    parsed["provider"] = "openai"
+    parsed["model"] = _openai_model(None)
+    return parsed
+
+
+def _inspect_with_ai(data: bytes, mime: str, invoice: dict[str, Any]) -> dict[str, Any]:
+    """Read urgent payment evidence without making the operator retry a busy AI."""
+    errors: list[HTTPException] = []
+    # Gemini has been returning intermittent 503 high-demand errors. Use the
+    # configured OpenAI vision path first and retain Gemini as a live fallback.
+    if _openai_key():
+        try:
+            return _inspect_with_openai(data, mime, invoice)
+        except HTTPException as exc:
+            errors.append(exc)
+    if _gemini_key():
+        try:
+            parsed = _inspect_with_gemini(data, mime, invoice)
+            parsed["warning"] = "Pembacaan dialihkan ke Gemini karena pembaca utama sedang tidak tersedia."
+            return parsed
+        except HTTPException as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[-1]
+    return {
+        "amount": None, "paid_at": None, "beneficiary_name": None,
+        "beneficiary_account": None, "source_account": None,
+        "reference_number": None, "remarks": None, "confidence": 0,
+        "warning": "AI pembaca bukti belum dikonfigurasi; isi data transfer secara manual.",
+    }
+
+
 def _inspect_result(invoice: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
     site = str(invoice.get("site") or "").upper()
     source = PAYMENT_SOURCE_BY_SITE.get(site, "BCA")
@@ -327,7 +390,7 @@ def _inspect_result(invoice: dict[str, Any], parsed: dict[str, Any]) -> dict[str
 def inspect_vendor_payment_evidence(payload: EvidenceInspectIn) -> dict[str, Any]:
     invoice = _invoice_context(payload.vendor_invoice_id)
     data, mime = _decode_file(payload.content_base64, payload.mime_type)
-    parsed = _inspect_with_gemini(data, mime, invoice)
+    parsed = _inspect_with_ai(data, mime, invoice)
     return _inspect_result(invoice, parsed)
 
 
