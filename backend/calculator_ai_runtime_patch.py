@@ -76,12 +76,12 @@ def _patch_legacy_ai(html: str) -> str:
         html = html.replace(marker, _AI_PROXY_SCRIPT + "\n" + marker, 1)
 
     gemini_head = (
-        "        async function callGeminiDirect(prompt, systemPrompt = null, apiKey = '', modelName = 'gemini-2.5-flash', abortSignal = null, timeoutMs = 35000) {\n"
+        "        async function callGeminiDirect(prompt, systemPrompt = null, apiKey = '', modelName = 'gemini-3.6-flash', abortSignal = null, timeoutMs = 35000) {\n"
         "            const key = String(apiKey || '').trim();\n"
         "            if (!key) throw new Error(\"Gemini API Key belum diisi.\");"
     )
     gemini_repl = (
-        "        async function callGeminiDirect(prompt, systemPrompt = null, apiKey = '', modelName = 'gemini-2.5-flash', abortSignal = null, timeoutMs = 35000) {\n"
+        "        async function callGeminiDirect(prompt, systemPrompt = null, apiKey = '', modelName = 'gemini-3.6-flash', abortSignal = null, timeoutMs = 35000) {\n"
         "            if (window.__calculatorAIUseBackend && typeof callRailwayCalculatorAI === 'function') {\n"
         "                return await callRailwayCalculatorAI('gemini', prompt, systemPrompt, modelName, abortSignal, timeoutMs);\n"
         "            }\n"
