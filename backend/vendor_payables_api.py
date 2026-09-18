@@ -51,6 +51,12 @@ class VendorPayableCorrectionIn(BaseModel):
     correction_note: str = Field(min_length=3, max_length=1000)
 
 
+class VendorPayableCancelIn(BaseModel):
+    """Audit-safe manual removal for an invoice that was entered in error."""
+
+    reason: str = Field(default="Dibatalkan manual oleh operator", min_length=3, max_length=1000)
+
+
 def payable_source_key(payload: VendorPayableFromReceiptIn, vendor_code: str) -> str:
     canonical = {
         "site": payload.site,
@@ -297,6 +303,47 @@ def delete_unpaid_vendor_payable(invoice_id: int) -> dict[str, Any]:
             cur.execute("delete from vendor_invoices where id=%s", (invoice_id,))
             conn.commit()
     return {"deleted": True, "vendorInvoiceId": invoice_id, "poReceiptPreserved": True}
+
+
+@router.post("/vendor-payables/{invoice_id}/cancel")
+def cancel_unpaid_vendor_payable(invoice_id: int, payload: VendorPayableCancelIn) -> dict[str, Any]:
+    """Remove a wrongly-entered unpaid invoice from active payables without erasing its audit trail.
+
+    PO, receipt, invoice lines, and any historical evidence are deliberately retained. A
+    payable with a recorded payment is never eligible: it must be handled through a
+    payment correction/reversal instead.
+    """
+    require_db()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,payable_status from vendor_invoices where id=%s", (invoice_id,))
+            invoice = cur.fetchone()
+            if not invoice:
+                raise HTTPException(404, "tagihan vendor tidak ditemukan")
+
+            status = str(invoice.get("payable_status") or "UNPAID").upper()
+            if status in {"PAID", "RECONCILED", "CLOSED"}:
+                raise HTTPException(409, "tagihan yang sudah dibayar/ditutup tidak dapat dihapus manual")
+            if status in {"CANCELLED", "CANCELED"}:
+                return {"cancelled": True, "alreadyCancelled": True, "vendorInvoiceId": invoice_id, "poReceiptPreserved": True}
+
+            cur.execute("select count(*) as count from vendor_payments where vendor_invoice_id=%s", (invoice_id,))
+            if int(cur.fetchone()["count"] or 0) > 0:
+                raise HTTPException(409, "tagihan tidak dapat dihapus manual karena sudah memiliki bukti pembayaran")
+
+            note = f"DIBATALKAN MANUAL: {payload.reason.strip()}"
+            cur.execute(
+                """update vendor_invoices
+                     set payable_status='CANCELLED',
+                         correction_note=concat_ws(E'\n', nullif(correction_note,''), %s),
+                         updated_at=now()
+                   where id=%s
+                   returning id as vendor_invoice_id,payable_status,correction_note""",
+                (note, invoice_id),
+            )
+            row = dict(cur.fetchone())
+            conn.commit()
+    return {"cancelled": True, "alreadyCancelled": False, "poReceiptPreserved": True, "item": row}
 
 
 @router.get("/vendor-payables")
