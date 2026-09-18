@@ -224,6 +224,19 @@ export default function OperationsPayments({ fixedSite = "" }) {
     finally { setSavingPayableEdit(false); }
   };
 
+  const cancelPayable = async (item) => {
+    const invoiceLabel = item.invoice_number || item.po_code || `#${item.vendor_invoice_id}`;
+    if (!window.confirm(`Hapus tagihan ${item.vendor_code} · ${invoiceLabel} dari daftar aktif?\n\nIni membatalkan invoice yang salah input. PO dan penerimaan barang tetap tersimpan sebagai jejak audit. Tagihan yang sudah dibayar tidak dapat dihapus.`)) return;
+    setSavingPayableEdit(true); setError("");
+    try {
+      await operationsApi.cancelVendorPayable(item.vendor_invoice_id, "Dihapus manual oleh operator dari daftar tagihan");
+      setActionMessage("Tagihan dibatalkan dan hilang dari daftar aktif. PO serta penerimaan barang tetap tersimpan.");
+      if (editingPayable?.vendor_invoice_id === item.vendor_invoice_id) { setEditingPayable(null); setPayableEdit(null); }
+      await load();
+    } catch (err) { setError(err.message || "Gagal membatalkan tagihan vendor"); }
+    finally { setSavingPayableEdit(false); }
+  };
+
   return (
     <div className="ops-domain-stack">
       {paymentModalItem && <VendorPaymentEvidenceModal
@@ -370,7 +383,9 @@ export default function OperationsPayments({ fixedSite = "" }) {
                   <td>
                     {Number(item.net_amount || 0) > 0.01 && <button type="button" className="ops-button-primary" onClick={() => setPaymentModalItem(item)}>Bayar + Bukti</button>}
                     <button type="button" onClick={() => openPayableEdit(item)} style={{ marginLeft: Number(item.net_amount || 0) > 0.01 ? 6 : 0 }}>Koreksi</button>
-                    {Number(item.net_amount || 0) <= 0.01 && <button type="button" className="danger" onClick={() => deleteRejectedPayable(item)} disabled={savingPayableEdit} style={{ marginLeft: 6 }}>Hapus</button>}
+                    {Number(item.net_amount || 0) <= 0.01
+                      ? <button type="button" className="danger" onClick={() => deleteRejectedPayable(item)} disabled={savingPayableEdit} style={{ marginLeft: 6 }}>Hapus</button>
+                      : <button type="button" className="danger" onClick={() => cancelPayable(item)} disabled={savingPayableEdit} style={{ marginLeft: 6 }}>Hapus</button>}
                   </td>
                 </tr>
               ))}
