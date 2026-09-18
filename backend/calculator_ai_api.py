@@ -64,7 +64,14 @@ def _openai_key() -> str:
 
 
 def _gemini_model(requested: str | None) -> str:
-    return (requested or os.getenv("GEMINI_MODEL") or os.getenv("AI_MENU_MODEL") or "gemini-2.5-flash").strip()
+    model = (requested or os.getenv("GEMINI_MODEL") or os.getenv("AI_MENU_MODEL") or "gemini-3.6-flash").strip()
+    # Gemini 2.5 Flash was retired for this API project.  Legacy calculator
+    # settings can still submit that model explicitly, so do not let an old
+    # browser configuration bring document/payment OCR down again.
+    normalized = model.removeprefix("models/").lower()
+    if normalized.startswith("gemini-2.5-flash"):
+        return "gemini-3.6-flash"
+    return model
 
 
 def _openai_model(requested: str | None) -> str:
