@@ -119,6 +119,21 @@ def _before_physical_check(row: dict[str, Any], distribution_date: date) -> bool
     return bool(checked and distribution_date <= checked.astimezone(ZoneInfo("Asia/Jakarta")).date())
 
 
+def _available_for_next_po(
+    actual_balance: float,
+    planned_depletion: float,
+    expected_po_supply: float,
+) -> float:
+    """Availability for a future PO after today's cooking is funded first.
+
+    An unreceived PO may cover a later distribution, but it cannot retroactively
+    make today's physical cooking possible. Clamp the physical balance after
+    prior cooking before adding eligible unreceived PO supply.
+    """
+    physical_after_prior_cooking = max(0.0, float(actual_balance) - float(planned_depletion))
+    return round(physical_after_prior_cooking + max(0.0, float(expected_po_supply)), 4)
+
+
 @router.get("/inventory/balances-v2")
 def inventory_balances_v2(
     site: str = Query(min_length=1),
@@ -315,7 +330,7 @@ def inventory_balances_v2(
         actual_usage = round(float(row.get("actual_usage_depletion") or 0), 4)
         planned = round(float(row.get("planned_depletion") or 0), 4)
         actual_balance = round(so_qty + movement_delta - actual_usage, 4)
-        projected = round(actual_balance - planned + expected_supply, 4)
+        projected = _available_for_next_po(actual_balance, planned, expected_supply)
         row.update({
             "so_qty": so_qty,
             "movement_delta": movement_delta,
@@ -328,8 +343,8 @@ def inventory_balances_v2(
             "balance": projected,
             # PO must use the remaining stock after earlier cooking plans.
             # Keep actual_balance separately for the physical-gudang display.
-            "available_for_po": round(max(projected, 0), 4),
-            "projected_available_for_po": round(max(projected, 0), 4),
+            "available_for_po": projected,
+            "projected_available_for_po": projected,
             "po_stock_basis": "PROJECTED_DAPUR_STOCK_AFTER_PRIOR_PLANS",
             "stock_basis": "TYPE_CLASSIFIED_SO_PLUS_FACTS_MINUS_USAGE_PLUS_COMMITTED_PO_SUPPLY",
         })
