@@ -66,7 +66,11 @@ function poReminderActionsVisible() {
     const current = draftItems.find((row) => row.planning_snapshot_item_id === planningItemId);
     const plannedDepletion = Math.max(0, Number(current?.planned_depletion_qty || 0));
     const expectedSupply = Math.max(0, Number(current?.expected_supply_qty || 0));
-    const availableAfterPlanning = Math.max(0, Number((stockQty - plannedDepletion + expectedSupply).toFixed(4)));
+    // Today's physical cooking is paid from physical stock first. An
+    // unreceived PO can cover a later target, but must never erase a negative
+    // physical balance from today's cooking (4 - 6 + 5 is 5, not 3), instead
+    // of the old stockQty - plannedDepletion + expectedSupply calculation.
+    const availableAfterPlanning = Number((Math.max(0, stockQty - plannedDepletion) + expectedSupply).toFixed(4));
     const recommended = Math.max(0, Number((Number(plannedQty || 0) - availableAfterPlanning).toFixed(4)));
     const wasAuto = !current || Number(current.po_qty || 0) === Number(current.recommended_po_qty || 0);
     updateDraftItem(planningItemId, {
