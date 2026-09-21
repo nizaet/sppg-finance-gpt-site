@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -140,6 +140,7 @@ def inventory_balances_v2(
     search: str = "",
     limit: int = Query(default=300, ge=1, le=1000),
     for_date: date | None = Query(default=None, alias="forDate"),
+    cooking_date: date | None = Query(default=None, alias="cookingDate"),
 ) -> dict[str, Any]:
     """Taxonomy-aware warehouse projection.
 
@@ -160,13 +161,16 @@ def inventory_balances_v2(
     location = normalize_location(site)
     if not target_date:
         return base
-    # When the PO is being prepared for today's cooking, today's production
-    # plan has already consumed the morning stock and must reduce availability.
-    # For a future cooking day, keep the target day's plan as the requirement
-    # being covered by the PO and only deplete prior cooking days.
-    today_jakarta = datetime.now(ZoneInfo("Asia/Jakarta")).date()
-    target_cooking_date = target_date - timedelta(days=1)
-    usage_end = target_cooking_date + timedelta(days=1) if target_cooking_date <= today_jakarta else target_cooking_date
+    # The target cooking plan is the demand this PO is meant to fulfil; it is
+    # never a "previous plan" to deduct first. Only cooking before the selected
+    # cooking date may consume the displayed warehouse stock. The UI supplies
+    # cookingDate so a manually selected cooking day and its stock calculation
+    # cannot silently disagree.
+    # Direct Python callers receive FastAPI's Query object as the default,
+    # whereas HTTP requests receive a date/None.
+    selected_cooking_date = cooking_date if isinstance(cooking_date, date) else None
+    target_cooking_date = selected_cooking_date or (target_date - timedelta(days=1))
+    usage_end = target_cooking_date
 
     with connection() as conn:
         with conn.cursor() as cur:
@@ -227,10 +231,16 @@ def inventory_balances_v2(
                         (location, stock_date, usage_end),
                     )
                     for plan in cur.fetchall():
+                        plan_cooking_date = plan.get("cooking_date") or plan["distribution_date"]
+                        # Keep this guard even though the query has the same
+                        # boundary: imported/mock rows must never make the PO
+                        # consume the planning it is being created to fulfil.
+                        if plan_cooking_date >= target_cooking_date:
+                            continue
                         # SO is a physical anchor through stock_date. This guard
                         # prevents same-day double depletion independently of
                         # the SQL boundary above.
-                        if plan.get("cooking_date", plan["distribution_date"]) < stock_date:
+                        if plan_cooking_date < stock_date:
                             continue
                         type_code, unit, label, method = _type_key(plan.get("item_name"), plan.get("unit"), masters)
                         usage_key = (type_code, unit, plan["distribution_date"])
@@ -244,7 +254,7 @@ def inventory_balances_v2(
                         # Only later cooking plans may deplete it again.
                         if _before_physical_check(
                             row,
-                            plan.get("cooking_date") or plan["distribution_date"],
+                            plan_cooking_date,
                         ):
                             continue
                         row["planned_depletion"] += _operational_quantity(
