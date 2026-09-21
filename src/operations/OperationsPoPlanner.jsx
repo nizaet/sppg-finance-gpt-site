@@ -42,12 +42,23 @@ function normalizeUnit(value) {
 }
 
 function safeVendorForPlanningItem(item, site) {
-  const preferred = String(item.preferred_vendor_code || "").trim().toUpperCase();
-  if (preferred) return { vendor: preferred, method: "preferred_vendor" };
-
+  const normalizedSite = String(site || "").trim().toUpperCase();
   const category = normalize(item.category_code);
   const name = normalize(item.item_name);
   const text = `${category} ${name}`;
+
+  // These are operational assignments, not suggestions from an old planning
+  // snapshot.  They must win over a stale preferred_vendor_code left by a
+  // calculator row (the former source of Tahu returning to Koperasi).
+  if (/\btahu\b/.test(name) && normalizedSite === "CEMPLANG") {
+    return { vendor: "HAJI_BADRI", method: "fixed_operational_rule" };
+  }
+  if (/\bgula\s+merah\b/.test(text)) {
+    return { vendor: "HOLIL", method: "fixed_operational_rule" };
+  }
+
+  const preferred = String(item.preferred_vendor_code || "").trim().toUpperCase();
+  if (preferred) return { vendor: preferred, method: "preferred_vendor" };
 
   if (/\b(ayam|chicken)\b/.test(text)) return { vendor: "WIKIAN", method: "item_rule" };
   if (/\b(dori|ikan|fish)\b/.test(text)) return { vendor: "RUMAH_DUTA_PANGAN", method: "item_rule" };
@@ -60,7 +71,7 @@ function safeVendorForPlanningItem(item, site) {
     return { vendor: "KOPERASI", method: "confirmed_site_rule" };
   }
   if (/\btahu\b/.test(text)) {
-    return site === "CEMPLANG"
+    return normalizedSite === "CEMPLANG"
       ? { vendor: "HAJI_BADRI", method: "confirmed_site_rule" }
       : { vendor: "KOPERASI", method: "confirmed_internal_rule" };
   }
