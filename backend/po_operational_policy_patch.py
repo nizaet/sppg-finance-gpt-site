@@ -52,6 +52,66 @@ def _intrinsic_family(row: dict[str, Any]) -> str:
     return item_family(row.get("item_name"), row.get("category_code"))
 
 
+def _is_named_item(row: dict[str, Any], expression: str) -> bool:
+    return re.search(expression, normalize_item_text(row.get("item_name"))) is not None
+
+
+def _fixed_operational_vendor_rule(
+    rules: list[dict[str, Any]],
+    vendor_names: dict[str, str],
+    row: dict[str, Any],
+    family: str,
+) -> tuple[str, dict[str, Any], str] | None:
+    """Return non-negotiable item/vendor policies before broad category scoring.
+
+    Vendor rules remain editable for normal ingredients.  These three rules
+    deliberately override stale calculator preferences and historical broad
+    categories because they are established operational workflows:
+
+    * CEMPLANG Tahu -> Haji Badri, ordered H-1 from cooking;
+    * Gula Merah -> Haji Holil (never Koperasi).
+    """
+    site = str(row.get("site") or "").upper().strip()
+    cook = row.get("cooking_date")
+    if not isinstance(cook, date):
+        return None
+
+    if family == "TOFU" and site == "CEMPLANG":
+        rule = reminder._rule_for_item(rules, "HAJI_BADRI", site, "TAHU", row.get("item_name"), cook)
+        rule = dict(rule or {})
+        # A legacy H-4 Badri row must never make tomorrow's tofu look overdue.
+        rule.update({
+            "vendor_code": "HAJI_BADRI",
+            "vendor_name": rule.get("vendor_name") or vendor_names.get("HAJI_BADRI", "Haji Badri"),
+            "category_code": "TAHU",
+            "lead_time_days_before_cooking": 1,
+            "lead_time_source": "FIXED_CEMPLANG_TAHU_H1",
+        })
+        return "HAJI_BADRI", rule, "TOFU"
+
+    if _is_named_item(row, r"\bgula\s+merah\b"):
+        # Gula merah is supplied and invoiced by Haji Holil.  Use Holil's
+        # normal produce lead-time rule, rather than the Koperasi dry-goods
+        # category copied by older calculator snapshots.
+        rule = reminder._rule_for_item(rules, "HOLIL", site, "SAYUR_BUAH", row.get("item_name"), cook)
+        if rule is None:
+            rule = next((candidate for candidate in rules if str(candidate.get("vendor_code") or "").upper() == "HOLIL"), None)
+        rule = dict(rule or {})
+        rule.update({
+            "vendor_code": "HOLIL",
+            "vendor_name": rule.get("vendor_name") or vendor_names.get("HOLIL", "Haji Holil"),
+            "category_code": rule.get("category_code") or "SAYUR_BUAH",
+        })
+        # Haji Holil's regular operational cadence is H-1.  This fallback only
+        # applies when the rule table has no usable lead yet.
+        if rule.get("lead_time_days_before_cooking") is None:
+            rule["lead_time_days_before_cooking"] = 1
+            rule["lead_time_source"] = "FIXED_GULA_MERAH_HOLIL_H1_FALLBACK"
+        return "HOLIL", rule, "DEFAULT"
+
+    return None
+
+
 def _rule_category_score(rule_category: Any, family: str) -> int | None:
     category = reminder._norm(rule_category)
     if not category:
@@ -117,6 +177,10 @@ def _resolve_procurement_rule(
     site = str(row.get("site") or "").upper().strip()
     family = _intrinsic_family(row)
     cook = row.get("cooking_date")
+
+    fixed = _fixed_operational_vendor_rule(rules, vendor_names, row, family)
+    if fixed is not None:
+        return fixed
 
     fallback_vendor = vendor_for_item(
         row.get("item_name"),
