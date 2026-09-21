@@ -107,6 +107,15 @@ def _latest_exact_item_rule(
 
 def _item_rule(rules: list[dict[str, Any]], vendor: str, site: str, item_name: str, cook: date) -> dict[str, Any] | None:
     family = item_family(item_name)
+    # CEMPLANG tofu is handled by Haji Badri on an H-1 cadence.  Saved PO
+    # scheduling must use the same fixed policy as the planner/reminder; a
+    # legacy H-4 database row must not mark it overdue four days too early.
+    if vendor == "HAJI_BADRI" and site == "CEMPLANG" and family == "TOFU":
+        rule = _rule_for_item(rules, vendor, site, "TAHU", item_name, cook)
+        rule = dict(rule or {})
+        rule["lead_time_days_before_cooking"] = 1
+        rule["category_code"] = "TAHU"
+        return rule
     if vendor == "KOPERASI" and site == "CEMPLANG" and family == "TEMPE":
         return _dedicated_cemplang_tempe_rule(rules, cook)
 
