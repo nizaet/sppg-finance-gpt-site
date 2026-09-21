@@ -58,8 +58,10 @@ def test_corrections_replace_old_plan_estimates_but_keep_later_cooking(site, phy
     result = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 14))
     row = result["items"][0]
     assert row["actual_balance"] == 7
-    assert row["planned_depletion"] == (3 if physical_check else 13)
-    assert row["available_for_po"] == (4 if physical_check else 0)
+    # The 13 Sept cooking plan is the target that its PO fulfils, not a prior
+    # depletion. Only 10 and 12 Sept can consume stock first.
+    assert row["planned_depletion"] == (0 if physical_check else 10)
+    assert row["available_for_po"] == (7 if physical_check else 0)
     assert row["stock_type_code"] == "BAWANG_BOMBAY"
 
 
@@ -114,7 +116,7 @@ def test_same_day_po_stock_confirmation_is_visible_after_so(monkeypatch):
 
 
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
-def test_po_popup_recount_skips_same_cooking_day_but_keeps_later_plan(site, monkeypatch):
+def test_po_target_cooking_is_not_deducted_before_its_own_po(site, monkeypatch):
     checked = datetime(2026, 9, 16, 8, tzinfo=timezone.utc)  # Sept 16 Jakarta
     base = {"latestStockOpnameDate": date(2026, 9, 16), "forDate": date(2026, 9, 18), "items": [{
         "item_name": "Garam", "unit": "kg", "so_qty": 0,
@@ -137,8 +139,8 @@ def test_po_popup_recount_skips_same_cooking_day_but_keeps_later_plan(site, monk
     row = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 18))["items"][0]
 
     assert row["actual_balance"] == 8
-    assert row["planned_depletion"] == 3
-    assert row["available_for_po"] == 5
+    assert row["planned_depletion"] == 0
+    assert row["available_for_po"] == 8
 
 
 @pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
@@ -157,8 +159,8 @@ def test_same_day_so_is_not_depleted_again_by_same_day_plan(site, monkeypatch):
     result = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 15))
     row = result["items"][0]
     assert row["actual_balance"] == 1
-    assert row["planned_depletion"] == 1
-    assert row["available_for_po"] == 0
+    assert row["planned_depletion"] == 0
+    assert row["available_for_po"] == 1
 
 
 def test_powder_cannot_inherit_fresh_garlic_master_by_substring():
