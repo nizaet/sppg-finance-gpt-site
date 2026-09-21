@@ -562,8 +562,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
       const [scheduleData, inventoryData, cooperativeData, poData] = await Promise.all([
         operationsApi.previewPoSchedule({ distributionDate, cookingDate, site: activeSite }),
-        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate }),
-        operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate }),
+        operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate, cookingDate }),
+        operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate, cookingDate }),
         // A daily pull must re-read saved POs too. Otherwise a Tempe PO made
         // from another tab/device remains invisible and the row offers a
         // duplicate until the whole page is reloaded.
