@@ -149,6 +149,58 @@ def _fix_maja_koperasi_tofu_h1(payload: dict[str, Any], target: date) -> dict[st
     return result
 
 
+def _fix_cemplang_badri_tofu_h1(payload: dict[str, Any], target: date) -> dict[str, Any]:
+    """Final timing guard for CEMPLANG Tahu Putih supplied by Haji Badri.
+
+    This deliberately runs after all reminder reconciliation passes.  Older
+    rows can carry a legacy H-4 vendor rule and otherwise turn tomorrow's tofu
+    into an overdue order again after v4 has selected the right vendor.
+    """
+    items = payload.get("items") or []
+    if not items:
+        return payload
+
+    changed = False
+    adjusted: list[dict[str, Any]] = []
+    for original in items:
+        item = dict(original)
+        site = str(item.get("site") or "").upper().strip()
+        vendor = str(item.get("vendor_code") or "").upper().strip()
+        names = [*(item.get("item_names") or [])]
+        for detail in item.get("requirement_details") or []:
+            names.extend(detail.get("item_names") or [])
+        has_tofu = any(item_family(name) == "TOFU" for name in names)
+        if site == "CEMPLANG" and vendor == "HAJI_BADRI" and has_tofu:
+            cook = _as_date(item.get("cooking_date"))
+            if cook is None:
+                cooks = [_as_date(value) for value in (item.get("cooking_dates") or [])]
+                cook = min([value for value in cooks if value is not None], default=None)
+            if cook is not None:
+                correct_po_date = cook - timedelta(days=1)
+                if (
+                    _as_date(item.get("po_date")) != correct_po_date
+                    or int(item.get("lead_time_days_before_cooking") or -1) != 1
+                ):
+                    item["po_date"] = correct_po_date
+                    item["lead_time_days_before_cooking"] = 1
+                    item["reminder_timing_override"] = "CEMPLANG_HAJI_BADRI_TAHU_H1"
+                    if correct_po_date < target:
+                        item["reminder_status"] = "OVERDUE"
+                    elif correct_po_date == target:
+                        item["reminder_status"] = "DUE_TODAY"
+                    else:
+                        item["reminder_status"] = "UPCOMING"
+                    changed = True
+        adjusted.append(item)
+
+    if not changed:
+        return payload
+    result = dict(payload)
+    result["items"] = adjusted
+    result["cemplangBadriTofuH1Fix"] = True
+    return result
+
+
 def _hide_resolved_rows(payload: dict[str, Any], target: date) -> dict[str, Any]:
     """Return only rows that still require an operator action.
 
@@ -249,6 +301,9 @@ def po_reminders_v3(
     # Apply the MAJA KOPERASI tahu H-1 timing last. Tempe keeps its own
     # effective-dated rule from vendor_rules.
     payload = _fix_maja_koperasi_tofu_h1(payload, target)
+    # CEMPLANG Tahu is a separate Haji Badri workflow, also H-1 from cooking.
+    # Keep this after all legacy reconciliation so an old H-4 row cannot return.
+    payload = _fix_cemplang_badri_tofu_h1(payload, target)
 
     payload["requestedHorizonDays"] = horizon_days
     payload["effectiveHorizonDays"] = effective_horizon_days
