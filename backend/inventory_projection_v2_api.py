@@ -15,6 +15,9 @@ from backend.stock_opname_parser import canonical_unit
 
 router = APIRouter(tags=["inventory-projection-v2"])
 
+# A saved PO is a procurement commitment, not physical warehouse stock. Only a
+# recorded receipt/movement may increase a dapur balance.
+COUNT_UNRECEIVED_PO_AS_STOCK = False
 COMMITTED_PO_STATUSES = ("FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED")
 _CONFIDENCE_RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
@@ -124,14 +127,15 @@ def _available_for_next_po(
     planned_depletion: float,
     expected_po_supply: float,
 ) -> float:
-    """Availability for a future PO after today's cooking is funded first.
+    """Strict physical availability for PO drafting.
 
-    An unreceived PO may cover a later distribution, but it cannot retroactively
-    make today's physical cooking possible. Clamp the physical balance after
-    prior cooking before adding eligible unreceived PO supply.
+    A PO that has not been received is not warehouse stock. Keep the argument
+    for API compatibility, but never let expected/unreceived supply reduce a
+    purchase recommendation. Receipt movements are already included in the
+    actual balance.
     """
-    physical_after_prior_cooking = max(0.0, float(actual_balance) - float(planned_depletion))
-    return round(physical_after_prior_cooking + max(0.0, float(expected_po_supply)), 4)
+    del expected_po_supply
+    return round(max(0.0, float(actual_balance) - float(planned_depletion)), 4)
 
 
 @router.get("/inventory/balances-v2")
@@ -240,7 +244,7 @@ def inventory_balances_v2(
                         # SO is a physical anchor through stock_date. This guard
                         # prevents same-day double depletion independently of
                         # the SQL boundary above.
-                        if plan_cooking_date < stock_date:
+                        if plan_cooking_date <= stock_date:
                             continue
                         type_code, unit, label, method = _type_key(plan.get("item_name"), plan.get("unit"), masters)
                         usage_key = (type_code, unit, plan["distribution_date"])
@@ -264,7 +268,10 @@ def inventory_balances_v2(
                             row["raw_item_names"].append(plan["item_name"])
 
             expected: dict[tuple[str, str], float] = {}
-            if stock_date:
+            # Outstanding PO lines are deliberately excluded from stock. A
+            # positive receipt is recorded as an inventory movement and is the
+            # only evidence that may increase physical availability.
+            if stock_date and COUNT_UNRECEIVED_PO_AS_STOCK:
                 cur.execute(
                     """
                     with coverage_rows as (
@@ -356,7 +363,7 @@ def inventory_balances_v2(
             "available_for_po": projected,
             "projected_available_for_po": projected,
             "po_stock_basis": "PROJECTED_DAPUR_STOCK_AFTER_PRIOR_PLANS",
-            "stock_basis": "TYPE_CLASSIFIED_SO_PLUS_FACTS_MINUS_USAGE_PLUS_COMMITTED_PO_SUPPLY",
+            "stock_basis": "TYPE_CLASSIFIED_SO_PLUS_FACTS_MINUS_USAGE;_UNRECEIVED_PO_EXCLUDED",
         })
         if expected_supply > 0 and row.get("confidence") == "HIGH":
             row["confidence"] = "MEDIUM"
@@ -368,8 +375,8 @@ def inventory_balances_v2(
     items.sort(key=lambda item: str(item.get("item_name") or "").lower())
     base["items"] = items[:limit]
     base["count"] = len(base["items"])
-    base["projectionModel"] = "TYPE_CLASSIFIED: latest SO + facts - actual/planned usage + provisional committed PO supply"
-    base["poAvailabilityModel"] = "PROJECTED_DAPUR_STOCK_AFTER_PRIOR_PLANS"
+    base["projectionModel"] = "TYPE_CLASSIFIED: latest SO + facts - actual/planned usage; unreceived PO excluded"
+    base["poAvailabilityModel"] = "PHYSICAL_DAPUR_STOCK_AFTER_PRIOR_PLANS"
     base["classificationModel"] = "ingredient_type_not_brand_or_variety"
     base["provisionalPoSupply"] = round(sum(expected.values()), 4)
     return base
