@@ -168,3 +168,27 @@ def test_powder_cannot_inherit_fresh_garlic_master_by_substring():
     result = classify_item("Bawang Putih Bubuk", [master])
     assert result["canonicalItemName"] == "Bawang Putih Bubuk"
     assert result["inventoryItemCode"] is None
+
+
+@pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
+def test_so_closes_previous_cooking_day_before_same_day_po(site, monkeypatch):
+    # SO on Sept 23 is the physical result after Sept 23 cooking. When
+    # drafting a PO for Sept 24 cooking, the prior 20 L plan must not be
+    # deducted again: 36 L on hand against 50 L needed => order 14 L.
+    base = {"latestStockOpnameDate": date(2026, 9, 23), "forDate": date(2026, 9, 25), "items": [{
+        "item_name": "Minyak Goreng", "unit": "liter", "so_qty": 36,
+        "movement_delta": 0, "actual_usage_depletion": 0, "last_stock_check_at": None,
+    }]}
+    monkeypatch.setattr(projection, "inventory_balances", lambda **kwargs: base)
+    monkeypatch.setattr(projection, "load_item_matchers", lambda *args: [])
+    plans = [
+        {"item_name": "Minyak Goreng", "unit": "liter", "planned_qty": 20,
+         "cooking_date": date(2026, 9, 23), "distribution_date": date(2026, 9, 24)},
+        {"item_name": "Minyak Goreng", "unit": "liter", "planned_qty": 50,
+         "cooking_date": date(2026, 9, 24), "distribution_date": date(2026, 9, 25)},
+    ]
+    monkeypatch.setattr(projection, "connection", connection_for([[], [], plans, []]))
+    row = projection.inventory_balances_v2(site=site, limit=1000, for_date=date(2026, 9, 25), cooking_date=date(2026, 9, 24))["items"][0]
+    assert row["actual_balance"] == 36
+    assert row["planned_depletion"] == 0
+    assert row["available_for_po"] == 36
