@@ -65,10 +65,11 @@ const PLAN_GROUPS = [
 function planGroup(item) {
   const code = String(item.categoryCode || "").toUpperCase();
   const name = String(item.itemName || "").toLocaleLowerCase("id-ID");
-  if (/apel|anggur|alpukat|belimbing|durian|duren|jambu|jeruk|kiwi|mangga|melon|nanas|nangka|pear|pepaya|pisang|salak|semangka|sirsak|stroberi|strawberry/.test(name)) return "fruit";
+  if (/buah|apel|anggur|alpukat|belimbing|durian|duren|duku|jambu|jeruk|kiwi|kelengkeng|lengkeng|leci|longan|mangga|manggis|markisa|melon|nanas|nangka|pear|pepaya|pisang|rambutan|salak|sawo|semangka|sirsak|stroberi|strawberry|kurma|naga/.test(name)) return "fruit";
   if (/TEMPE|TAHU|PROTEIN_NABATI|KACANG/.test(code) || /tempe|tahu|oncom|kacang hijau|kacang merah|kacang tanah|edamame/.test(name)) return "plant";
-  if (/AYAM|IKAN|TELUR|PROTEIN_HEWANI|DAGING/.test(code) || /ayam|ikan|telur|dori|lele|bandeng|tuna|tongkol|udang|cumi|sapi|daging|hati ayam|bakso|sosis|nugget|kornet/.test(name)) return "animal";
-  if (/BERAS|KARBO|KARBOHIDRAT/.test(code) || /beras|nasi|mie|mi |bihun|soun|pasta|makaroni|kentang|singkong|ubi |ubi$|jagung|tepung|sagu|talas|roti|oat/.test(name)) return "carb";
+  if (/AYAM|IKAN|TELUR|PROTEIN_HEWANI|DAGING/.test(code) || /ayam|ikan|telur|dori|lele|bandeng|tuna|tongkol|udang|cumi|sapi|daging|hati ayam|bakso|sosis|nugget|kornet|susu|keju|yogurt|yoghurt/.test(name)) return "animal";
+  if (/putren|jagung muda/.test(name)) return "vegetable";
+  if (/BERAS|KARBO|KARBOHIDRAT/.test(code) || /beras|nasi|mie|mi |bihun|soun|pasta|makaroni|kentang|singkong|ubi |ubi$|ketela|jagung|tepung|sagu|talas|roti|oat|gula/.test(name)) return "carb";
   return "vegetable";
 }
 
@@ -203,7 +204,7 @@ function SiteDay({ site, day }) {
     </header>
 
     <div className="ct-stage-grid">
-      <section className="ct-stage">
+      <section className="ct-stage ct-stage-plan">
         <div className="ct-stage-title"><ClipboardList size={15} /><strong>Planning</strong></div>
         {planReady
           ? <><b>{plan.itemCount} bahan direncanakan</b><PlanBreakdown plan={plan} />{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
