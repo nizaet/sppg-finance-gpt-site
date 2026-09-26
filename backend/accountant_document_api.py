@@ -73,6 +73,7 @@ class ApprovalEvidenceIn(DocumentFileIn):
 
 class AccountantLedgerSyncIn(BaseModel):
     site: Site | None = None
+    maker_ids: list[int] | None = None
 
 
 def require_db() -> None:
@@ -626,14 +627,10 @@ def list_all_accountant_invoices(site: str = "") -> dict[str, Any]:
 
 @router.post("/accountant-ledger/sync")
 def sync_accountant_ledger(payload: AccountantLedgerSyncIn) -> dict[str, Any]:
-    """Backfill/reconcile all approved-and-paid Makers into the site accountant ledger.
-
-    Re-running is safe: every ledger document uses the Maker id as its stable
-    Firestore id, so it updates rather than creating a duplicate transaction.
-    """
+    """Create missing PAID transactions; leave existing accountant edits intact."""
     require_db()
     try:
-        result = sync_paid_makers_to_accountant_ledger(payload.site)
+        result = sync_paid_makers_to_accountant_ledger(payload.site, payload.maker_ids)
     except Exception as exc:
         raise HTTPException(503, f"Sinkronisasi Akuntan gagal: {type(exc).__name__}: {exc}") from exc
     if result.get("failed"):
@@ -826,7 +823,9 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
             "matchedReference": match.get("reference_number") if match else None,
             "currentApprovalStatus": match.get("approval_status") if match else None,
             "matchMethod": method, "matchConfidence": confidence,
-            "willApprove": bool(match and status == "SUCCESS" and confidence >= 0.8),
+            "willApprove": bool(match and status == "SUCCESS" and confidence >= 0.8
+                                and not (str(match.get("maker_status") or "").upper() == "PAID"
+                                         and str(match.get("approval_status") or "").upper() == "APPROVED")),
         })
     return output
 
@@ -871,7 +870,7 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
     matches = _match_transactions(parsed, payload.site)
     if not payload.commit:
         return {"committed": False, "transactions": matches}
-    approved = [row for row in matches if row["willApprove"]]
+    approved = list({int(row["matchedMakerId"]): row for row in matches if row["willApprove"]}.values())
     if not approved:
         raise HTTPException(409, "tidak ada transaksi SUCCESS yang cocok secara aman dengan Maker")
     filename = f"bukti_approval_{(payload.site or 'multi').lower()}_{_safe_filename(payload.file_name)}"
@@ -935,7 +934,9 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
                 )
             conn.commit()
     try:
-        ledger_sync = sync_paid_makers_to_accountant_ledger(payload.site)
+        ledger_sync = sync_paid_makers_to_accountant_ledger(
+            payload.site, [int(row["matchedMakerId"]) for row in approved]
+        )
     except Exception as exc:
         # Payment evidence has already been committed. Do not undo a valid PAID
         # state because an external ledger sync is temporarily unavailable.
