@@ -296,6 +296,271 @@ def _append_firestore_finance_fallback(out: dict[str, Any], site: str) -> None:
         return
 
 
+
+WEEKLY_RECEIVED_PO_STATUSES = {"RECEIVED", "CLOSED"}
+
+
+def _weekly_site_payload(site: dict[str, str], start_date: date) -> dict[str, Any]:
+    days = []
+    by_date: dict[date, dict[str, Any]] = {}
+    for offset in range(7):
+        day_date = date.fromordinal(start_date.toordinal() + offset)
+        day = {
+            "date": day_date.isoformat(),
+            "planning": {"status": "NO_PLAN", "snapshotId": None, "itemCount": 0, "items": []},
+            "procurement": {"poCount": 0, "notOrdered": 0, "draft": 0, "sent": 0,
+                            "partial": 0, "received": 0, "notArrived": 0,
+                            "purchaseOrders": []},
+            "accountant": {"submissions": []},
+            "maker": {"count": 0, "notCreated": 0, "pendingApproval": 0,
+                      "approved": 0, "paid": 0, "rejected": 0, "items": []},
+            "payments": {"due": 0, "overdue": 0, "items": []},
+            "reviewCount": 0,
+        }
+        days.append(day)
+        by_date[day_date] = day
+    return {**site, "days": days, "_by_date": by_date}
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value else None)
+
+
+@router.get("/control-tower-weekly")
+def control_tower_weekly(
+    from_date: date = Query(alias="fromDate"),
+    site: str = "",
+) -> dict[str, Any]:
+    """Seven-day read-only review built from the committed planning/PO/finance workflow tables."""
+    definitions = _site_defs(site)
+    end_date = date.fromordinal(from_date.toordinal() + 6)
+    sites = [_weekly_site_payload(definition, from_date) for definition in definitions]
+    if not database_ready():
+        return {"fromDate": from_date.isoformat(), "throughDate": end_date.isoformat(),
+                "databaseReady": False, "buildInfo": _build_info(),
+                "sites": [{k: v for k, v in row.items() if k != "_by_date"} for row in sites]}
+
+    try:
+        with connection() as conn:
+            with conn.cursor() as cur:
+                for row in sites:
+                    db_site = row["dbSite"]
+                    by_date = row["_by_date"]
+
+                    cur.execute(
+                        """select distinct on (ps.distribution_date)
+                                  ps.id,ps.distribution_date,ps.cooking_at,ps.payload,
+                                  count(psi.id) filter(where coalesce(psi.planned_qty,0)>0) as item_count,
+                                  coalesce(array_agg(distinct psi.item_name)
+                                    filter(where coalesce(psi.planned_qty,0)>0),array[]::text[]) as item_names
+                           from planning_snapshots ps
+                           left join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
+                           where upper(ps.site)=%s and ps.status='ACTIVE'
+                             and ps.distribution_date between %s and %s
+                           group by ps.id,ps.distribution_date,ps.cooking_at,ps.payload,ps.created_at
+                           order by ps.distribution_date,ps.created_at desc,ps.id desc""",
+                        (db_site, from_date, end_date),
+                    )
+                    for plan in cur.fetchall():
+                        day = by_date.get(plan["distribution_date"])
+                        if day is not None:
+                            names = list(plan.get("item_names") or [])
+                            day["planning"] = {
+                                "status": "READY" if int(plan.get("item_count") or 0) else "EMPTY",
+                                "snapshotId": int(plan["id"]),
+                                "cookingAt": _iso(plan.get("cooking_at")),
+                                "itemCount": int(plan.get("item_count") or 0),
+                                "items": names[:5],
+                                "moreItems": max(0, len(names) - 5),
+                            }
+
+                    cur.execute(
+                        """with po_by_day as (
+                             select po.id,upper(po.site) site,poc.distribution_date,
+                                    po.po_code,upper(po.vendor_code) vendor_code,
+                                    upper(po.status) status,count(distinct poci.id) item_count,
+                                    coalesce(sum(poci.po_qty),0) ordered_qty
+                             from purchase_orders po
+                             join purchase_order_coverage poc on poc.purchase_order_id=po.id
+                             left join purchase_order_coverage_items poci on poci.purchase_order_coverage_id=poc.id
+                             where upper(po.site)=%s and poc.distribution_date between %s and %s
+                               and upper(coalesce(po.status,'')) <> all(%s)
+                             group by po.id,poc.distribution_date
+                             union all
+                             select po.id,upper(po.site) site,pc.distribution_date,
+                                    po.po_code,upper(po.vendor_code) vendor_code,
+                                    upper(po.status) status,count(distinct poi.id) item_count,
+                                    coalesce(sum(poi.po_qty),0) ordered_qty
+                             from purchase_orders po
+                             join production_cycles pc on pc.id=po.production_cycle_id
+                             left join purchase_order_items poi on poi.purchase_order_id=po.id
+                             where upper(po.site)=%s and pc.distribution_date between %s and %s
+                               and upper(coalesce(po.status,'')) <> all(%s)
+                               and not exists(select 1 from purchase_order_coverage poc where poc.purchase_order_id=po.id)
+                             group by po.id,pc.distribution_date
+                           )
+                           select p.*,coalesce(r.receipt_count,0) receipt_count
+                           from po_by_day p
+                           left join lateral (
+                             select count(*) receipt_count from goods_receipts gr
+                             where gr.purchase_order_id=p.id and gr.received_at is not null
+                           ) r on true
+                           order by p.distribution_date,p.vendor_code,p.po_code""",
+                        (db_site, from_date, end_date, ["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"],
+                         db_site, from_date, end_date, ["CANCELLED", "SUPERSEDED", "HISTORICAL_IMPORTED"]),
+                    )
+                    for po in cur.fetchall():
+                        day = by_date.get(po["distribution_date"])
+                        if day is None:
+                            continue
+                        status = str(po.get("status") or "DRAFT").upper()
+                        receipt_count = int(po.get("receipt_count") or 0)
+                        procurement = day["procurement"]
+                        procurement["poCount"] += 1
+                        if status in {"DRAFT", "FINALIZED"}:
+                            procurement["draft"] += 1
+                        elif status == "PARTIAL_RECEIVED":
+                            procurement["partial"] += 1
+                            procurement["notArrived"] += 1
+                        elif status in {"SENT", "ACKNOWLEDGED"}:
+                            procurement["sent"] += 1
+                            procurement["notArrived"] += 1
+                        elif status in WEEKLY_RECEIVED_PO_STATUSES:
+                            procurement["received"] += 1
+                        procurement["purchaseOrders"].append({
+                            "id": str(po["id"]), "code": po.get("po_code"),
+                            "vendor": po.get("vendor_code"), "status": status,
+                            "itemCount": int(po.get("item_count") or 0),
+                            "orderedQty": float(po.get("ordered_qty") or 0),
+                            "receiptCount": receipt_count,
+                        })
+
+                    cur.execute(
+                        """select coalesce(pc.distribution_date,s.source_distribution_date) distribution_date,
+                                  s.id,s.accountant_code,s.status submission_status,
+                                  s.sent_at,s.drive_upload_status,
+                                  i.id invoice_id,i.invoice_number,i.invoice_category,i.invoice_amount
+                           from accountant_submissions s
+                           left join production_cycles pc on pc.id=s.production_cycle_id
+                           left join lateral(select * from accountant_invoices x
+                                             where x.accountant_submission_id=s.id
+                                             order by x.id desc limit 1) i on true
+                           where upper(s.site)=%s
+                             and coalesce(pc.distribution_date,s.source_distribution_date) between %s and %s
+                           order by coalesce(pc.distribution_date,s.source_distribution_date),s.id""",
+                        (db_site, from_date, end_date),
+                    )
+                    for flow in cur.fetchall():
+                        day = by_date.get(flow["distribution_date"])
+                        if day is None:
+                            continue
+                        day["accountant"]["submissions"].append({
+                            "id": int(flow["id"]), "code": flow.get("accountant_code"),
+                            "status": str(flow.get("submission_status") or "PENDING").upper(),
+                            "invoiceNumber": flow.get("invoice_number"),
+                            "invoiceCategory": flow.get("invoice_category"),
+                            "invoiceAmount": float(flow.get("invoice_amount") or 0),
+                            "driveStatus": flow.get("drive_upload_status"),
+                        })
+
+                    cur.execute(
+                        """select coalesce(pc_m.distribution_date,pc_s.distribution_date,
+                                           s.source_distribution_date,i.invoice_date) distribution_date,
+                                  m.id,m.reference_number,m.amount,m.status maker_status,
+                                  a.status approval_status,
+                                  exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) has_receipt
+                           from bgn_makers m
+                           left join accountant_invoices i on i.id=m.accountant_invoice_id
+                           left join accountant_submissions s on s.id=i.accountant_submission_id
+                           left join production_cycles pc_m on pc_m.id=m.production_cycle_id
+                           left join production_cycles pc_s on pc_s.id=s.production_cycle_id
+                           left join lateral(select * from bgn_approvals x where x.bgn_maker_id=m.id
+                                             order by x.created_at desc,x.id desc limit 1) a on true
+                           where upper(m.site)=%s
+                             and coalesce(pc_m.distribution_date,pc_s.distribution_date,
+                                          s.source_distribution_date,i.invoice_date) between %s and %s
+                           order by coalesce(pc_m.distribution_date,pc_s.distribution_date,
+                                             s.source_distribution_date,i.invoice_date),m.id""",
+                        (db_site, from_date, end_date),
+                    )
+                    for maker in cur.fetchall():
+                        day = by_date.get(maker["distribution_date"])
+                        if day is None:
+                            continue
+                        approval = str(maker.get("approval_status") or "PENDING").upper()
+                        maker_status = str(maker.get("maker_status") or "").upper()
+                        has_receipt = bool(maker.get("has_receipt"))
+                        paid = has_receipt or maker_status == "PAID"
+                        day["maker"]["items"].append({
+                            "id": int(maker["id"]),
+                            "reference": maker.get("reference_number") or f"Maker #{maker['id']}",
+                            "amount": float(maker.get("amount") or 0),
+                            "makerStatus": maker_status or "CREATED",
+                            "approvalStatus": approval,
+                            "hasReceipt": has_receipt,
+                            "status": "PAID" if paid else approval,
+                        })
+
+                    cur.execute(
+                        """select vi.id,vi.vendor_code,vi.invoice_number,vi.net_amount,
+                                  vi.payable_status,vi.due_date
+                           from vendor_invoices vi
+                                  vi.payable_status,vi.due_date
+                           from vendor_invoices vi
+                           where upper(coalesce(vi.site,''))=%s and vi.due_date between %s and %s
+                             and upper(coalesce(vi.payable_status,'UNPAID')) <> all(%s)
+                           order by vi.due_date,vi.id""",
+                        (db_site, from_date, end_date, list(DONE_PAYABLE)),
+                    )
+                    for invoice in cur.fetchall():
+                        day = by_date.get(invoice["due_date"])
+                        if day is None:
+                            continue
+                        status = str(invoice.get("payable_status") or "UNPAID").upper()
+                        day["payments"]["due"] += 1
+                        day["payments"]["items"].append({
+                            "id": int(invoice["id"]), "vendor": invoice.get("vendor_code"),
+                            "invoiceNumber": invoice.get("invoice_number"),
+                            "amount": float(invoice.get("net_amount") or 0),
+                            "status": status,
+                            "dueDate": invoice["due_date"].isoformat(),
+                            "overdue": invoice["due_date"] < from_date,
+                        })
+
+                    cur.execute(
+                        """select count(*) n from candidate_events
+                           where upper(coalesce(site,''))=%s
+                             and status='PENDING' and requires_confirmation=true""",
+                        (db_site,),
+                    )
+                    review_count = int(cur.fetchone()["n"] or 0)
+                    for day in by_date.values():
+                        day["reviewCount"] = review_count
+                        procurement = day["procurement"]
+                        if day["planning"]["status"] == "READY":
+                            procurement["notOrdered"] = max(0, 1 if procurement["poCount"] == 0 else 0)
+                        maker_data = day["maker"]
+                        maker_data["count"] = len(maker_data["items"])
+                        maker_data["notCreated"] = int(day["planning"]["status"] == "READY" and maker_data["count"] == 0)
+                        maker_data["paid"] = sum(1 for item in maker_data["items"] if item["status"] == "PAID")
+                        maker_data["approved"] = sum(1 for item in maker_data["items"] if item["approvalStatus"] == "APPROVED" and item["status"] != "PAID")
+                        maker_data["pendingApproval"] = sum(1 for item in maker_data["items"] if item["status"] != "PAID" and item["approvalStatus"] not in {"APPROVED", "REJECTED"})
+                        maker_data["rejected"] = sum(1 for item in maker_data["items"] if item["approvalStatus"] == "REJECTED")
+                        day["payments"]["overdue"] = int(day["date"] < from_date.isoformat()) * day["payments"]["due"]
+
+        return {
+            "fromDate": from_date.isoformat(),
+            "throughDate": end_date.isoformat(),
+            "databaseReady": True,
+            "buildInfo": _build_info(),
+            "sites": [{k: v for k, v in row.items() if k != "_by_date"} for row in sites],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"weekly control tower query failed: {type(exc).__name__}") from exc
+
+
 @router.get("/control-tower-v2")
 def control_tower_v2(
     target_date: date = Query(alias="date"),
