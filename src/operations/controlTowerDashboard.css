@@ -174,6 +174,7 @@
 .ct-plan-group li small, .ct-plan-empty { color: #89958e; font-size: 8px; }
 .ct-plan-group li em { flex: 0 0 auto; color: #5a7164; font-size: 8px; font-style: normal; white-space: nowrap; }
 .ct-plan-empty { display: block; }
+.ct-plan-unclassified { display: block; margin-top: 6px; color: #8a7460; font-size: 8px; line-height: 1.35; }
 @media (max-width: 760px) {
   .ct-stage-plan { grid-column: 1 / -1; }
 }
