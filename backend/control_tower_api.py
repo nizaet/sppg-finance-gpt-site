@@ -400,6 +400,16 @@ def control_tower_weekly(
                             large = _as_number(payload.get("porsiBesar"))
                             service_days = _as_number(payload.get("bgnServiceDays") or payload.get("serviceDays") or payload.get("paguServiceDays"))
                             plan_names = payload.get("planNames") or ([payload.get("planName")] if payload.get("planName") else [])
+                            raw_menu_items = payload.get("menuItems") or payload.get("recipes") or []
+                            menu_items = [
+                                {
+                                    "name": str(menu.get("name") or menu.get("itemName") or "").strip(),
+                                    "englishName": str(menu.get("englishName") or "").strip() or None,
+                                    "categoryName": str(menu.get("categoryName") or menu.get("category_name") or "").strip() or None,
+                                }
+                                for menu in raw_menu_items
+                                if isinstance(menu, dict) and (menu.get("name") or menu.get("itemName"))
+                            ]
                             name_text = " ".join(str(name) for name in plan_names if name).casefold()
                             if service_days not in {1, 2}:
                                 service_days = 2 if ("kering" in name_text or "dry ration" in name_text or re.search(r"(?<![a-z0-9])b3(?![a-z0-9])", name_text)) else 1
@@ -411,6 +421,7 @@ def control_tower_weekly(
                                 "cookingAt": _iso(plan.get("cooking_at")),
                                 "itemCount": int(plan.get("item_count") or 0),
                                 "menuNames": [str(name) for name in plan_names if name],
+                                "menuItems": menu_items,
                                 "items": items,
                                 "allocationTotal": allocation,
                                 "paguTotal": pagu,
