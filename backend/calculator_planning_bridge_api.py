@@ -462,6 +462,7 @@ def _planning_payload(site: str, distribution_date: date) -> tuple[PlanningSnaps
         "planNames": [candidate["data"].get("planName") for candidate in selected_candidates],
         "porsiKecil": plan.get("porsiKecil"),
         "porsiBesar": plan.get("porsiBesar"),
+        "bgnServiceDays": plan.get("bgnServiceDays") or plan.get("serviceDays") or plan.get("paguServiceDays"),
         "shoppingListGrandTotal": sum(_as_float((candidate["data"].get("shoppingListJSON") or {}).get("grand_total_num")) or 0 for candidate in selected_candidates),
         "recipes": [recipe for candidate in selected_candidates for recipe in _json_safe(candidate["data"].get("recipes") or [])],
         "sourceUpdatedAt": _json_safe(updated),
