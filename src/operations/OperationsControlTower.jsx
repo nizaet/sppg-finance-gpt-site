@@ -62,38 +62,33 @@ const PLAN_GROUPS = [
   { id: "fruit", label: "Buah" },
 ];
 
-function planGroup(item) {
-  const code = String(item.categoryCode || "").toUpperCase();
-  const name = String(item.itemName || "").toLocaleLowerCase("id-ID");
-  if (/buah|apel|anggur|alpukat|belimbing|durian|duren|duku|jambu|jeruk|kiwi|kelengkeng|lengkeng|leci|longan|mangga|manggis|markisa|melon|nanas|nangka|pear|pepaya|pisang|rambutan|salak|sawo|semangka|sirsak|stroberi|strawberry|kurma|naga/.test(name)) return "fruit";
-  if (/TEMPE|TAHU|PROTEIN_NABATI|KACANG/.test(code) || /tempe|tahu|oncom|kacang hijau|kacang merah|kacang tanah|edamame/.test(name)) return "plant";
-  if (/AYAM|IKAN|TELUR|PROTEIN_HEWANI|DAGING/.test(code) || /ayam|ikan|telur|dori|lele|bandeng|tuna|tongkol|udang|cumi|sapi|daging|hati ayam|bakso|sosis|nugget|kornet|susu|keju|yogurt|yoghurt/.test(name)) return "animal";
-  if (/putren|jagung muda/.test(name)) return "vegetable";
-  if (/BERAS|KARBO|KARBOHIDRAT/.test(code) || /beras|nasi|mie|mi |bihun|soun|pasta|makaroni|kentang|singkong|ubi |ubi$|ketela|jagung|tepung|sagu|talas|roti|oat|gula/.test(name)) return "carb";
-  return "vegetable";
+function menuGroup(menu) {
+  const name = String(menu.name || menu.itemName || "").toLocaleLowerCase("id-ID");
+  const category = String(menu.categoryName || "").toLocaleLowerCase("id-ID");
+  const text = `${category} ${name}`;
+
+  if (/buah|apel|anggur|alpukat|belimbing|durian|duren|duku|jambu|jeruk|kiwi|kelengkeng|lengkeng|leci|longan|mangga|manggis|markisa|melon|nanas|nangka|pear|pepaya|pisang|rambutan|salak|sawo|semangka|sirsak|stroberi|strawberry|kurma|naga/.test(text)) return "fruit";
+  if (/sayur|vegetable|tumis|oseng|capcay|salad|lalapan/.test(category)) return "vegetable";
+  if (/nabati|tahu|tempe|oncom|kacang/.test(category) || /tempe|tahu|oncom|kacang hijau|kacang merah|kacang tanah|edamame/.test(name)) return "plant";
+  if (/hewani|daging|ayam|ikan|telur/.test(category) || /ayam|ikan|telur|sate|dori|lele|bandeng|tuna|tongkol|udang|cumi|sapi|daging|hati ayam|bakso|sosis|nugget|kornet/.test(name)) return "animal";
+  if (/karbo|beras|nasi/.test(category) || /beras|nasi|mie|mi |bihun|soun|pasta|makaroni|kentang|singkong|ubi |ubi$|ketela|jagung|tepung|sagu|talas|roti|oat/.test(name)) return "carb";
+  if (/sayur|vegetable|tumis|oseng|capcay|lalapan|sop|sup/.test(name)) return "vegetable";
+  return null;
 }
 
-function quantityText(value, unit) {
-  if (value == null) return "Jumlah —";
-  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(Number(value)) + " " + (unit || "");
-}
-
-function planRows(plan) {
-  const items = Array.isArray(plan.items) ? plan.items : [];
-  return PLAN_GROUPS.map(group => {
-    const rows = items.filter(item => planGroup(item) === group.id);
-    const totalsKnown = rows.length > 0 && rows.every(item => item.allocatedAmount != null && Number.isFinite(Number(item.allocatedAmount)));
-    const total = totalsKnown ? rows.reduce((sum, item) => sum + Number(item.allocatedAmount), 0) : null;
-    return { ...group, rows, total };
-  });
+function planMenuGroups(plan) {
+  const menuItems = Array.isArray(plan.menuItems) ? plan.menuItems : [];
+  const groups = PLAN_GROUPS.map(group => ({
+    ...group,
+    items: menuItems.filter(menu => menuGroup(menu) === group.id),
+  }));
+  return { groups, ungrouped: menuItems.filter(menu => !menuGroup(menu)) };
 }
 
 function PlanBreakdown({ plan }) {
-  const groups = planRows(plan);
-  const menuNames = (plan.menuNames || []).filter(Boolean);
+  const { groups, ungrouped } = planMenuGroups(plan);
   const variance = plan.variance == null ? null : Number(plan.variance);
   return <>
-    {menuNames.length > 0 && <small className="ct-plan-menu">Menu: {menuNames.join(" · ")}</small>}
     <div className="ct-plan-finance">
       <div><small>Alokasi rencana</small><b>{plan.allocationTotal == null ? "—" : money(plan.allocationTotal)}</b></div>
       <div><small>Pagu</small><b>{plan.paguTotal == null ? "—" : money(plan.paguTotal)}</b></div>
@@ -104,15 +99,17 @@ function PlanBreakdown({ plan }) {
     </div>
     <div className="ct-plan-groups">
       {groups.map(group => <section key={group.id} className="ct-plan-group">
-        <h4><span>{group.label}</span><b>{group.total == null ? "—" : money(group.total)}</b></h4>
-        {group.rows.length
-          ? <ul>{group.rows.map((item, index) => <li key={item.itemName + index}>
-              <span><b>{item.itemName}</b><small>{quantityText(item.quantity, item.unit)}</small></span>
-              <em>{item.allocatedAmount == null ? "—" : money(item.allocatedAmount)}</em>
+        <h4><span>{group.label}</span></h4>
+        {group.items.length
+          ? <ul>{group.items.map((menu, index) => <li key={menu.name + index}>
+              <span><b>{menu.name}</b></span>
             </li>)}</ul>
-          : <small className="ct-plan-empty">Tidak ada bahan</small>}
+          : <small className="ct-plan-empty">Belum ada menu</small>}
       </section>)}
     </div>
+    {ungrouped.length > 0 && <small className="ct-plan-unclassified">
+      Menu belum terkelompok: {ungrouped.map(menu => menu.name).join(" · ")}
+    </small>}
   </>;
 }
 
@@ -207,7 +204,7 @@ function SiteDay({ site, day }) {
       <section className="ct-stage ct-stage-plan">
         <div className="ct-stage-title"><ClipboardList size={15} /><strong>Planning</strong></div>
         {planReady
-          ? <><b>{plan.itemCount} bahan direncanakan</b><PlanBreakdown plan={plan} />{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
+          ? <><b>{(Array.isArray(plan.menuItems) ? plan.menuItems.length : 0)} menu harian</b><PlanBreakdown plan={plan} />{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
           : <span className="ct-state ct-state-muted">Belum ada planning aktif</span>}
       </section>
 
