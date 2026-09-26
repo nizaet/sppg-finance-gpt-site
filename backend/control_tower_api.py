@@ -505,8 +505,6 @@ def control_tower_weekly(
                         """select vi.id,vi.vendor_code,vi.invoice_number,vi.net_amount,
                                   vi.payable_status,vi.due_date
                            from vendor_invoices vi
-                                  vi.payable_status,vi.due_date
-                           from vendor_invoices vi
                            where upper(coalesce(vi.site,''))=%s and vi.due_date between %s and %s
                              and upper(coalesce(vi.payable_status,'UNPAID')) <> all(%s)
                            order by vi.due_date,vi.id""",
