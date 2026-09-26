@@ -26,6 +26,10 @@ function localDate(key) {
   const [year, month, day] = key.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day, 12));
 }
+function isWeekend(key) {
+  const day = localDate(key).getUTCDay();
+  return day === 0 || day === 6;
+}
 function dateRangeLabel(from, through) {
   return `${DATE_FMT.format(localDate(from))} – ${DATE_FMT.format(localDate(through))}`;
 }
@@ -48,6 +52,67 @@ function poSummary(po) {
   if (status === "SENT" || status === "ACKNOWLEDGED") return ["Terkirim · menunggu barang", "wait"];
   if (status === "FINALIZED") return ["Siap dikirim", "wait"];
   return ["Draft · belum terkirim", "warn"];
+}
+
+const PLAN_GROUPS = [
+  { id: "carb", label: "Karbohidrat" },
+  { id: "animal", label: "Protein hewani" },
+  { id: "plant", label: "Protein nabati" },
+  { id: "vegetable", label: "Sayur" },
+  { id: "fruit", label: "Buah" },
+];
+
+function planGroup(item) {
+  const code = String(item.categoryCode || "").toUpperCase();
+  const name = String(item.itemName || "").toLocaleLowerCase("id-ID");
+  if (/apel|anggur|alpukat|belimbing|durian|duren|jambu|jeruk|kiwi|mangga|melon|nanas|nangka|pear|pepaya|pisang|salak|semangka|sirsak|stroberi|strawberry/.test(name)) return "fruit";
+  if (/TEMPE|TAHU|PROTEIN_NABATI|KACANG/.test(code) || /tempe|tahu|oncom|kacang hijau|kacang merah|kacang tanah|edamame/.test(name)) return "plant";
+  if (/AYAM|IKAN|TELUR|PROTEIN_HEWANI|DAGING/.test(code) || /ayam|ikan|telur|dori|lele|bandeng|tuna|tongkol|udang|cumi|sapi|daging|hati ayam|bakso|sosis|nugget|kornet/.test(name)) return "animal";
+  if (/BERAS|KARBO|KARBOHIDRAT/.test(code) || /beras|nasi|mie|mi |bihun|soun|pasta|makaroni|kentang|singkong|ubi |ubi$|jagung|tepung|sagu|talas|roti|oat/.test(name)) return "carb";
+  return "vegetable";
+}
+
+function quantityText(value, unit) {
+  if (value == null) return "Jumlah —";
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(Number(value)) + " " + (unit || "");
+}
+
+function planRows(plan) {
+  const items = Array.isArray(plan.items) ? plan.items : [];
+  return PLAN_GROUPS.map(group => {
+    const rows = items.filter(item => planGroup(item) === group.id);
+    const totalsKnown = rows.length > 0 && rows.every(item => item.allocatedAmount != null && Number.isFinite(Number(item.allocatedAmount)));
+    const total = totalsKnown ? rows.reduce((sum, item) => sum + Number(item.allocatedAmount), 0) : null;
+    return { ...group, rows, total };
+  });
+}
+
+function PlanBreakdown({ plan }) {
+  const groups = planRows(plan);
+  const menuNames = (plan.menuNames || []).filter(Boolean);
+  const variance = plan.variance == null ? null : Number(plan.variance);
+  return <>
+    {menuNames.length > 0 && <small className="ct-plan-menu">Menu: {menuNames.join(" · ")}</small>}
+    <div className="ct-plan-finance">
+      <div><small>Alokasi rencana</small><b>{plan.allocationTotal == null ? "—" : money(plan.allocationTotal)}</b></div>
+      <div><small>Pagu</small><b>{plan.paguTotal == null ? "—" : money(plan.paguTotal)}</b></div>
+      <div className={variance == null ? "" : variance < 0 ? "over" : "under"}>
+        <small>{variance == null ? "Selisih pagu" : variance < 0 ? "Melebihi pagu" : variance > 0 ? "Sisa pagu" : "Pas pagu"}</small>
+        <b>{variance == null ? "—" : money(Math.abs(variance))}</b>
+      </div>
+    </div>
+    <div className="ct-plan-groups">
+      {groups.map(group => <section key={group.id} className="ct-plan-group">
+        <h4><span>{group.label}</span><b>{group.total == null ? "—" : money(group.total)}</b></h4>
+        {group.rows.length
+          ? <ul>{group.rows.map((item, index) => <li key={item.itemName + index}>
+              <span><b>{item.itemName}</b><small>{quantityText(item.quantity, item.unit)}</small></span>
+              <em>{item.allocatedAmount == null ? "—" : money(item.allocatedAmount)}</em>
+            </li>)}</ul>
+          : <small className="ct-plan-empty">Tidak ada bahan</small>}
+      </section>)}
+    </div>
+  </>;
 }
 
 function MetricCard({ icon: Icon, label, value, note, tone = "neutral" }) {
@@ -141,7 +206,7 @@ function SiteDay({ site, day }) {
       <section className="ct-stage">
         <div className="ct-stage-title"><ClipboardList size={15} /><strong>Planning</strong></div>
         {planReady
-          ? <><b>{plan.itemCount} bahan</b><small>{plan.items?.join(", ")}{plan.moreItems ? ` +${plan.moreItems}` : ""}</small>{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
+          ? <><b>{plan.itemCount} bahan direncanakan</b><PlanBreakdown plan={plan} />{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
           : <span className="ct-state ct-state-muted">Belum ada planning aktif</span>}
       </section>
 
@@ -259,6 +324,7 @@ export default function OperationsControlTower() {
     const byDate = new Map();
     for (const site of displayedSites) {
       for (const day of site.days || []) {
+        if (isWeekend(day.date)) continue;
         if (!byDate.has(day.date)) byDate.set(day.date, { date: day.date, bySite: {} });
         byDate.get(day.date).bySite[site.dbSite] = day;
       }
@@ -271,6 +337,7 @@ export default function OperationsControlTower() {
     for (const site of displayedSites) {
       result.reviews += site.days?.[0]?.reviewCount || 0;
       for (const day of site.days || []) {
+        if (isWeekend(day.date)) continue;
         if (day.planning?.status === "READY") result.plans++;
         result.notOrdered += day.procurement?.notOrdered || 0;
         result.waiting += day.procurement?.notArrived || 0;
@@ -316,7 +383,7 @@ export default function OperationsControlTower() {
     <section className="ct-week-summary">
       <div className="ct-week-summary-title"><div><span className="ct-eyebrow">RENTANG REVIEW</span><h2>{dateRangeLabel(fromDate, throughDate)}</h2></div><span>{buildText}</span></div>
       <div className="ct-metrics">
-        <MetricCard icon={ClipboardList} label="Hari dengan planning" value={data?.databaseReady ? totals.plans : "—"} note={`dari ${displayedSites.length * 7} hari dapur`} />
+        <MetricCard icon={ClipboardList} label="Hari dengan planning" value={data?.databaseReady ? totals.plans : "—"} note={`dari ${dayRows.length * displayedSites.length} hari kerja`} />
         <MetricCard icon={AlertCircle} label="Rencana tanpa catatan PO" value={data?.databaseReady ? totals.notOrdered : "—"} note="cek stok & lead time; bukan otomatis kurang" tone="neutral" />
         <MetricCard icon={PackageCheck} label="PO menunggu barang" value={data?.databaseReady ? totals.waiting : "—"} note="terkirim atau diterima sebagian" tone={totals.waiting ? "warn" : "good"} />
         <MetricCard icon={ShieldCheck} label="Maker perlu dicek" value={data?.databaseReady ? totals.makerReview : "—"} note={`${totals.makers} Maker tercatat minggu ini`} tone={totals.makerReview ? "warn" : "neutral"} />
