@@ -99,10 +99,11 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
   };
 
   const syncLedger = async () => {
+    if (!window.confirm(`Sinkronkan semua Maker PAID ${proofSite} sejak 24 Agustus 2026? Hanya transaksi yang belum ada di Akuntan akan dibuat; koreksi lama tidak diubah.`)) return;
     setLedgerSyncBusy(true); reportError("");
     try {
       const result = await accountantApi.syncAccountantLedger(proofSite);
-      reportMessage(`Sinkron Akuntan ${proofSite} selesai: ${result.synced || 0} dari ${result.attempted || 0} pemasukan PAID sejak ${result.fromDate || "2026-08-24"}.`);
+      reportMessage(`Sinkron Akuntan ${proofSite}: ${result.synced || 0} transaksi baru; ${result.skipped || 0} transaksi lama dilewati tanpa mengubah koreksi.`);
       await onChanged?.();
     } catch (e) { reportError(e.message || "Gagal menyinkronkan pemasukan ke Akuntan"); }
     finally { setLedgerSyncBusy(false); }
@@ -110,13 +111,13 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
 
   const saveProof = async () => {
     if (!proofPreview?.willApproveCount) return reportError("Tidak ada transaksi SUCCESS yang cocok secara aman.");
-    if (!window.confirm(`Tandai ${proofPreview.willApproveCount} Maker sebagai PAID dan tautkan satu file bukti yang sama?`)) return;
+    if (!window.confirm(`Approve ${proofPreview.willApproveCount} Maker yang cocok, simpan bukti, dan masukkan hanya transaksi baru ke Akuntan ${proofSite}?`)) return;
     setProofBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: proofSite, parsedPayload: proofPreview.raw });
       const ledger = result.accountantLedgerSync;
       const syncInfo = ledger
-        ? ` ${ledger.synced || 0} pemasukan disinkronkan ke Akuntan ${proofSite} sejak ${ledger.fromDate || "2026-08-24"}.`
+        ? ` ${ledger.synced || 0} transaksi baru dari file ini masuk ke Akuntan ${proofSite}; ${ledger.skipped || 0} yang sudah ada dilewati.`
         : "";
       reportMessage(`${result.paidCount || result.approvedCount} Maker ditandai PAID. File bukti hanya diupload sekali dan linknya dipakai bersama.${syncInfo}`);
       setProofFile(null); setProofPreview(null); await onChanged?.();
@@ -164,7 +165,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
       {proofPreview&&<div className="ops-parse-result">
         <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
-        <div className="ops-row-actions"><button type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><Upload size={14}/> Simpan Bukti & Tandai PAID {proofPreview.willApproveCount} Maker</button></div>
+        <div className="ops-row-actions"><button type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><Upload size={14}/> Approve & Sinkronkan {proofPreview.willApproveCount} Maker Baru</button></div>
       </div>}
     </section>
   </>;
