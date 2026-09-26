@@ -57,6 +57,67 @@ function MetricCard({ icon: Icon, label, value, note, tone = "neutral" }) {
   </div>;
 }
 
+function getSiteCode(site) {
+  const label = String(site?.siteLabel || site?.dbSite || "").toUpperCase();
+  return label.includes("CEMPLANG") ? "CEMPLANG" : label.includes("MAJA") ? "MAJA" : "SITE";
+}
+
+function TodayFocus({ sites, loading, error, ready }) {
+  const totals = sites.reduce((sum, site) => {
+    for (const key of ["poOverdue", "poDueToday", "poShortage", "receivingIssues", "paymentsDue", "reviewQueue"]) {
+      sum[key] += Number(site.summary?.[key] || 0);
+    }
+    return sum;
+  }, { poOverdue: 0, poDueToday: 0, poShortage: 0, receivingIssues: 0, paymentsDue: 0, reviewQueue: 0 });
+  const poItems = sites.flatMap(site => (site.lanes?.procurement || [])
+    .filter(item => ["TERLAMBAT", "HARI INI", "CEK SISA"].includes(String(item.badge || item.status || "").toUpperCase()))
+    .map(item => ({ ...item, site: getSiteCode(site) })));
+  const receivingItems = sites.flatMap(site => (site.lanes?.receiving || [])
+    .filter(item => item.severity === "warning")
+    .map(item => ({ ...item, site: site.dbSite })));
+  const paymentItems = sites.flatMap(site => (site.lanes?.payments || [])
+    .filter(item => item.status === "JATUH TEMPO" || item.severity === "warning")
+    .map(item => ({ ...item, site: site.dbSite })));
+
+  const unavailable = !ready || (!sites.length && (loading || error));
+  const procurementWarning = sites.filter(site => site.procurementError).map(getSiteCode).join(", ");
+  return <section className="ct-today-panel">
+    <header className="ct-today-heading">
+      <div><span className="ct-eyebrow">TINDAK LANJUT HARI INI · {dateKey()}</span><h2>Yang perlu segera dilihat</h2></div>
+      {loading && <span className="ct-today-loading"><RefreshCw size={13} className="ct-spin" /> Memuat status harian</span>}
+    </header>
+    {error && <div className="ct-today-error">{error}</div>}
+    {!ready && !loading && !error && <div className="ct-today-error">Data ringkasan harian belum siap dari database.</div>}
+    {procurementWarning && <div className="ct-today-error">Pengingat PO gagal dibaca untuk {procurementWarning}; angka PO harian pada dapur itu perlu diperiksa ulang.</div>}
+    <div className="ct-today-metrics">
+      <div className={totals.poOverdue ? "urgent" : ""}><strong>{unavailable ? "—" : totals.poOverdue}</strong><span>PO terlambat</span></div>
+      <div><strong>{unavailable ? "—" : totals.poDueToday}</strong><span>PO harus dibuat hari ini</span></div>
+      <div><strong>{unavailable ? "—" : totals.poShortage}</strong><span>Sisa PO untuk dicek</span></div>
+      <div className={totals.receivingIssues ? "urgent" : ""}><strong>{unavailable ? "—" : totals.receivingIssues}</strong><span>Penerimaan berselisih</span></div>
+      <div className={totals.paymentsDue ? "urgent" : ""}><strong>{unavailable ? "—" : totals.paymentsDue}</strong><span>Tagihan jatuh tempo</span></div>
+      <div><strong>{unavailable ? "—" : totals.reviewQueue}</strong><span>Item antrian review</span></div>
+    </div>
+    <div className="ct-today-lists">
+      <TodayList title="PO yang perlu ditangani" items={poItems} empty="Tidak ada item due/terlambat yang dilaporkan." />
+      <TodayList title="Penerimaan dengan selisih" items={receivingItems} empty="Tidak ada selisih penerimaan yang dilaporkan." />
+      <TodayList title="Tagihan jatuh tempo" items={paymentItems} empty="Tidak ada tagihan jatuh tempo yang dilaporkan." />
+    </div>
+    <small className="ct-today-footnote">Ringkasan harian mengikuti Pengingat PO dan data penerimaan/pembayaran yang tersimpan. Status nol berarti tidak ada item yang dilaporkan sumber tersebut.</small>
+  </section>;
+}
+
+function TodayList({ title, items, empty }) {
+  return <section className="ct-today-list">
+    <h3>{title}<span>{items.length}</span></h3>
+    {items.length ? <ul>{items.slice(0, 4).map((item, index) =>
+      <li key={item.id || `${item.site}-${index}`}>
+        <span><i>{item.site}</i><b>{item.title}</b><small>{item.subtitle}</small></span>
+        <em>{item.badge || item.status}</em>
+      </li>
+    )}</ul> : <p>{empty}</p>}
+  </section>;
+}
+
 function SiteDay({ site, day }) {
   const plan = day.planning || {};
   const procurement = day.procurement || {};
@@ -161,18 +222,27 @@ export default function OperationsControlTower() {
   const [fromDate, setFromDate] = useState(() => dateKey(new Date()));
   const [siteFilter, setSiteFilter] = useState("");
   const [data, setData] = useState(null);
+  const [dailyData, setDailyData] = useState(null);
+  const [dailyError, setDailyError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true); setError(""); setData(null);
+    setLoading(true); setError(""); setData(null); setDailyData(null); setDailyError("");
     try {
       if (!hasOperationsBackend) {
         setData(null);
         setError("Data Control Tower tidak tersedia. Hubungkan backend operasional untuk melihat laporan live.");
         return;
       }
-      setData(await operationsApi.getControlTowerWeek(fromDate, siteFilter));
+      const [weekResult, todayResult] = await Promise.allSettled([
+        operationsApi.getControlTowerWeek(fromDate, siteFilter),
+        operationsApi.getControlTower(dateKey(), siteFilter),
+      ]);
+      if (weekResult.status === "rejected") throw weekResult.reason;
+      setData(weekResult.value);
+      if (todayResult.status === "fulfilled") setDailyData(todayResult.value);
+      else setDailyError("Status harian gagal dimuat; jadwal mingguan tetap tersedia.");
     } catch (err) {
       setError(err.message || "Gagal memuat review mingguan.");
     } finally { setLoading(false); }
@@ -213,6 +283,7 @@ export default function OperationsControlTower() {
   }, [displayedSites]);
 
   const throughDate = shiftDate(fromDate, 6);
+  const dailySites = [...(dailyData?.sites || [])].sort((a, b) => SITE_ORDER.indexOf(getSiteCode(a)) - SITE_ORDER.indexOf(getSiteCode(b)));
   const build = data?.buildInfo || {};
   const buildText = build.commit ? `Diperbarui dari ${build.branch || "produksi"} · ${build.commit.slice(0, 8)}` : "Data operasional live";
   const shiftWeek = amount => setFromDate(value => shiftDate(value, amount * 7));
@@ -239,6 +310,8 @@ export default function OperationsControlTower() {
         </div>
       </div>
     </header>
+
+    <TodayFocus sites={dailySites} loading={loading && !dailyData} error={dailyError} ready={Boolean(dailyData?.databaseReady)} />
 
     <section className="ct-week-summary">
       <div className="ct-week-summary-title"><div><span className="ct-eyebrow">RENTANG REVIEW</span><h2>{dateRangeLabel(fromDate, throughDate)}</h2></div><span>{buildText}</span></div>
