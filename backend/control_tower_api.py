@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -326,6 +327,13 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value else None)
 
 
+def _as_number(value: Any) -> float | None:
+    try:
+        return None if value is None or value == "" else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/control-tower-weekly")
 def control_tower_weekly(
     from_date: date = Query(alias="fromDate"),
@@ -351,8 +359,17 @@ def control_tower_weekly(
                         """select distinct on (ps.distribution_date)
                                   ps.id,ps.distribution_date,ps.cooking_at,ps.payload,
                                   count(psi.id) filter(where coalesce(psi.planned_qty,0)>0) as item_count,
-                                  coalesce(array_agg(distinct psi.item_name)
-                                    filter(where coalesce(psi.planned_qty,0)>0),array[]::text[]) as item_names
+                                  coalesce(jsonb_agg(jsonb_build_object(
+                                    'itemName',psi.item_name,
+                                    'categoryCode',psi.category_code,
+                                    'quantity',psi.planned_qty,
+                                    'unit',psi.unit,
+                                    'planningPrice',psi.planning_price,
+                                    'allocatedAmount',case when psi.planned_qty is not null and psi.planning_price > 0
+                                      then psi.planned_qty*psi.planning_price else null end
+                                  ) order by lower(psi.item_name),psi.id)
+                                    filter(where psi.id is not null and coalesce(psi.planned_qty,0)>0),
+                                    '[]'::jsonb) as plan_items
                            from planning_snapshots ps
                            left join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id
                            where upper(ps.site)=%s and ps.status='ACTIVE'
@@ -364,14 +381,40 @@ def control_tower_weekly(
                     for plan in cur.fetchall():
                         day = by_date.get(plan["distribution_date"])
                         if day is not None:
-                            names = list(plan.get("item_names") or [])
+                            payload = plan.get("payload") or {}
+                            items = list(plan.get("plan_items") or [])
+                            amounts = [item.get("allocatedAmount") for item in items]
+                            saved_allocation = _as_number(payload.get("shoppingListGrandTotal"))
+                            all_items_priced = bool(items) and all(value is not None for value in amounts)
+                            item_total = sum(float(value) for value in amounts) if all_items_priced else None
+                            if saved_allocation is not None and saved_allocation > 0:
+                                allocation = saved_allocation
+                            elif item_total is not None and item_total > 0:
+                                allocation = item_total
+                            elif not items:
+                                allocation = saved_allocation
+                            else:
+                                allocation = None
+
+                            small = _as_number(payload.get("porsiKecil"))
+                            large = _as_number(payload.get("porsiBesar"))
+                            service_days = _as_number(payload.get("bgnServiceDays") or payload.get("serviceDays") or payload.get("paguServiceDays"))
+                            plan_names = payload.get("planNames") or ([payload.get("planName")] if payload.get("planName") else [])
+                            name_text = " ".join(str(name) for name in plan_names if name).casefold()
+                            if service_days not in {1, 2}:
+                                service_days = 2 if ("kering" in name_text or "dry ration" in name_text or re.search(r"(?<![a-z0-9])b3(?![a-z0-9])", name_text)) else 1
+                            pagu = round((small * 8000 + large * 10000) * service_days, 2) if small is not None and large is not None else None
+                            variance = round(pagu - allocation, 2) if pagu is not None and allocation is not None else None
                             day["planning"] = {
                                 "status": "READY" if int(plan.get("item_count") or 0) else "EMPTY",
                                 "snapshotId": int(plan["id"]),
                                 "cookingAt": _iso(plan.get("cooking_at")),
                                 "itemCount": int(plan.get("item_count") or 0),
-                                "items": names[:5],
-                                "moreItems": max(0, len(names) - 5),
+                                "menuNames": [str(name) for name in plan_names if name],
+                                "items": items,
+                                "allocationTotal": allocation,
+                                "paguTotal": pagu,
+                                "variance": variance,
                             }
 
                     cur.execute(

@@ -54,9 +54,31 @@ jobs:
           python -m unittest -v tests.test_inventory_manual_route
       - name: Compile reminder and planning bridge modules
         run: python -m py_compile backend/po_reminder_v3_api.py backend/po_reminder_v4_api.py backend/po_reminder_projection_cache_patch.py backend/po_delivery_alerts_api.py backend/po_delivery_receipt_reconcile_patch.py backend/receiving_runtime_patch.py backend/inventory_manual_api.py backend/po_reminder_completed_shortage.py backend/po_reminder_operational_reconcile.py backend/po_reminder_legacy_po_reconcile.py backend/po_reminder_tools_api.py backend/po_shortage_stock_api.py backend/item_taxonomy.py backend/control_tower_api.py backend/calculator_planning_bridge_api.py backend/calculator_pages.py backend/migrate.py
+      - name: Apply schema migrations
+        run: python -m backend.migrate
+      - name: Exercise synchronized Control Tower SQL
+        run: |
+          python - <<'PY'
+          from datetime import date
+          from backend.control_tower_api import control_tower_v2, control_tower_weekly
+
+          payload = control_tower_v2(target_date=date(2026, 8, 17), site='CEMPLANG')
+          assert payload['databaseReady'] is True, payload
+          assert len(payload['sites']) == 1, payload
+          site = payload['sites'][0]
+          assert 'procurement' in site['lanes'], site
+          assert 'receiving' in site['lanes'], site
+          assert 'receiptsToday' in site['summary'], site
+          assert 'poShortage' in site['summary'], site
+          weekly = control_tower_weekly(from_date=date(2026, 8, 17), site='CEMPLANG')
+          assert weekly['databaseReady'] is True, weekly
+          assert len(weekly['sites']) == 1, weekly
+          assert len(weekly['sites'][0]['days']) == 7, weekly
+          assert all('planning' in day for day in weekly['sites'][0]['days']), weekly
+          print('control tower daily and weekly synchronized queries ok')
+          PY
       - name: Validate migration and dedicated Tempe rules
         run: |
-          python -m backend.migrate
           python - <<'PY'
           from backend.db import connection
 
@@ -90,22 +112,6 @@ jobs:
           assert 'CHECKED' in resolution_check, resolution_check
           print('procurement migration rules ok:', rules)
           print('override table + CHECKED resolution ok')
-          PY
-      - name: Exercise synchronized Control Tower SQL
-        run: |
-          python - <<'PY'
-          from datetime import date
-          from backend.control_tower_api import control_tower_v2
-
-          payload = control_tower_v2(target_date=date(2026, 8, 17), site='CEMPLANG')
-          assert payload['databaseReady'] is True, payload
-          assert len(payload['sites']) == 1, payload
-          site = payload['sites'][0]
-          assert 'procurement' in site['lanes'], site
-          assert 'receiving' in site['lanes'], site
-          assert 'receiptsToday' in site['summary'], site
-          assert 'poShortage' in site['summary'], site
-          print('control tower synchronized query ok')
           PY
       - name: Validate split same-vendor order support
         run: python -m unittest -v tests.test_po_split_integration
