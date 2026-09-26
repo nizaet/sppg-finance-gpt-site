@@ -8,6 +8,7 @@ import "./controlTowerDashboard.css";
 
 const SITE_ORDER = ["MAJA", "CEMPLANG"];
 const DATE_FMT = new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" });
+const COOKING_FMT = new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const WEEKDAY_FMT = new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "long" });
 
 function dateKey(date = new Date()) {
@@ -79,7 +80,7 @@ function SiteDay({ site, day }) {
       <section className="ct-stage">
         <div className="ct-stage-title"><ClipboardList size={15} /><strong>Planning</strong></div>
         {planReady
-          ? <><b>{plan.itemCount} bahan</b><small>{plan.items?.join(", ")}{plan.moreItems ? ` +${plan.moreItems}` : ""}</small></>
+          ? <><b>{plan.itemCount} bahan</b><small>{plan.items?.join(", ")}{plan.moreItems ? ` +${plan.moreItems}` : ""}</small>{plan.cookingAt && <small>Masak {COOKING_FMT.format(new Date(plan.cookingAt))} WIB</small>}</>
           : <span className="ct-state ct-state-muted">Belum ada planning aktif</span>}
       </section>
 
@@ -148,7 +149,7 @@ function DayCard({ day, sites }) {
   return <section className={`ct-day-card ${current ? "ct-day-today" : ""}`}>
     <header className="ct-day-heading">
       <div><span className="ct-weekday">{weekday}{current && <i>HARI INI</i>}</span><h3>{DATE_FMT.format(date)}</h3></div>
-      <span className="ct-date-iso">{day.date}</span>
+      <span className="ct-date-iso">Distribusi · {day.date}</span>
     </header>
     <div className="ct-day-sites">
       {sites.map(site => <SiteDay key={site.dbSite} site={site.dbSite} day={day.bySite[site.dbSite]} />)}
@@ -243,7 +244,7 @@ export default function OperationsControlTower() {
       <div className="ct-week-summary-title"><div><span className="ct-eyebrow">RENTANG REVIEW</span><h2>{dateRangeLabel(fromDate, throughDate)}</h2></div><span>{buildText}</span></div>
       <div className="ct-metrics">
         <MetricCard icon={ClipboardList} label="Hari dengan planning" value={data?.databaseReady ? totals.plans : "—"} note={`dari ${displayedSites.length * 7} hari dapur`} />
-        <MetricCard icon={AlertCircle} label="Planning tanpa PO" value={data?.databaseReady ? totals.notOrdered : "—"} note="periksa sesuai lead time" tone="neutral" />
+        <MetricCard icon={AlertCircle} label="Rencana tanpa catatan PO" value={data?.databaseReady ? totals.notOrdered : "—"} note="cek stok & lead time; bukan otomatis kurang" tone="neutral" />
         <MetricCard icon={PackageCheck} label="PO menunggu barang" value={data?.databaseReady ? totals.waiting : "—"} note="terkirim atau diterima sebagian" tone={totals.waiting ? "warn" : "good"} />
         <MetricCard icon={ShieldCheck} label="Maker perlu dicek" value={data?.databaseReady ? totals.makerReview : "—"} note={`${totals.makers} Maker tercatat minggu ini`} tone={totals.makerReview ? "warn" : "neutral"} />
         <MetricCard icon={Wallet} label="Tagihan jatuh tempo" value={data?.databaseReady ? totals.payments : "—"} note="sesuai tanggal jatuh tempo" tone={totals.payments ? "alert" : "good"} />
@@ -266,6 +267,6 @@ export default function OperationsControlTower() {
       {data?.databaseReady && dayRows.map(day => <DayCard key={day.date} day={day} sites={displayedSites} />)}
       {data?.databaseReady && !dayRows.length && !loading && <div className="ct-empty">Belum ada data untuk rentang tanggal ini.</div>}
     </section>
-    <footer className="ct-footer"><span>Belum ada PO belum tentu terlambat; cek tanggal pesan berdasarkan lead time. PO terkirim belum dihitung sebagai barang masuk.</span><span>Control Tower hanya membaca data operasional.</span></footer>
+    <footer className="ct-footer"><span>Rencana tanpa catatan PO bukan bukti stok kurang; cek stok dan lead time. Barang baru dianggap datang saat receipt tercatat.</span><span>Control Tower hanya membaca data operasional.</span></footer>
   </main>;
 }
