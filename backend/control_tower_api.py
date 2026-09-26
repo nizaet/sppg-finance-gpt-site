@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -364,7 +365,7 @@ def control_tower_weekly(
                                     'quantity',psi.planned_qty,
                                     'unit',psi.unit,
                                     'planningPrice',psi.planning_price,
-                                    'allocatedAmount',case when psi.planned_qty is not null and psi.planning_price is not null
+                                    'allocatedAmount',case when psi.planned_qty is not null and psi.planning_price > 0
                                       then psi.planned_qty*psi.planning_price else null end
                                   ) order by lower(psi.item_name),psi.id)
                                     filter(where psi.id is not null and coalesce(psi.planned_qty,0)>0),
@@ -384,12 +385,16 @@ def control_tower_weekly(
                             items = list(plan.get("plan_items") or [])
                             amounts = [item.get("allocatedAmount") for item in items]
                             saved_allocation = _as_number(payload.get("shoppingListGrandTotal"))
-                            if saved_allocation is not None and (saved_allocation != 0 or not any(float(value or 0) > 0 for value in amounts)):
+                            all_items_priced = bool(items) and all(value is not None for value in amounts)
+                            item_total = sum(float(value) for value in amounts) if all_items_priced else None
+                            if saved_allocation is not None and saved_allocation > 0:
                                 allocation = saved_allocation
-                            elif items and all(value is not None for value in amounts):
-                                allocation = sum(float(value) for value in amounts)
+                            elif item_total is not None and item_total > 0:
+                                allocation = item_total
+                            elif not items:
+                                allocation = saved_allocation
                             else:
-                                allocation = saved_allocation
+                                allocation = None
 
                             small = _as_number(payload.get("porsiKecil"))
                             large = _as_number(payload.get("porsiBesar"))
@@ -397,7 +402,7 @@ def control_tower_weekly(
                             plan_names = payload.get("planNames") or ([payload.get("planName")] if payload.get("planName") else [])
                             name_text = " ".join(str(name) for name in plan_names if name).casefold()
                             if service_days not in {1, 2}:
-                                service_days = 2 if ("kering" in name_text or "dry ration" in name_text or __import__("re").search(r"(?<![a-z0-9])b3(?![a-z0-9])", name_text)) else 1
+                                service_days = 2 if ("kering" in name_text or "dry ration" in name_text or re.search(r"(?<![a-z0-9])b3(?![a-z0-9])", name_text)) else 1
                             pagu = round((small * 8000 + large * 10000) * service_days, 2) if small is not None and large is not None else None
                             variance = round(pagu - allocation, 2) if pagu is not None and allocation is not None else None
                             day["planning"] = {
