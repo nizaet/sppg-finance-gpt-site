@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Check, Clock3,
   PackageCheck, RefreshCw, ShoppingCart, Wallet, ClipboardList, ShieldCheck,
@@ -289,12 +289,14 @@ export default function OperationsControlTower() {
   const [dailyError, setDailyError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [fetchedAt, setFetchedAt] = useState(null);
+  const loadRequestId = useRef(0);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(""); setData(null); setDailyData(null); setDailyError("");
+    const requestId = ++loadRequestId.current;
+    setLoading(true); setError(""); setData(null); setDailyData(null); setDailyError(""); setFetchedAt(null);
     try {
       if (!hasOperationsBackend) {
-        setData(null);
         setError("Data Control Tower tidak tersedia. Hubungkan backend operasional untuk melihat laporan live.");
         return;
       }
@@ -302,16 +304,23 @@ export default function OperationsControlTower() {
         operationsApi.getControlTowerWeek(fromDate, siteFilter),
         operationsApi.getControlTower(dateKey(), siteFilter),
       ]);
+      if (requestId !== loadRequestId.current) return;
       if (weekResult.status === "rejected") throw weekResult.reason;
       setData(weekResult.value);
       if (todayResult.status === "fulfilled") setDailyData(todayResult.value);
       else setDailyError("Status harian gagal dimuat; jadwal mingguan tetap tersedia.");
+      setFetchedAt(new Date());
     } catch (err) {
-      setError(err.message || "Gagal memuat review mingguan.");
-    } finally { setLoading(false); }
+      if (requestId === loadRequestId.current) setError(err.message || "Gagal memuat review mingguan.");
+    } finally {
+      if (requestId === loadRequestId.current) setLoading(false);
+    }
   }, [fromDate, siteFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { loadRequestId.current += 1; };
+  }, [load]);
 
   const displayedSites = useMemo(() => {
     const rows = data?.sites || [];
@@ -350,7 +359,8 @@ export default function OperationsControlTower() {
   const throughDate = shiftDate(fromDate, 6);
   const dailySites = [...(dailyData?.sites || [])].sort((a, b) => SITE_ORDER.indexOf(getSiteCode(a)) - SITE_ORDER.indexOf(getSiteCode(b)));
   const build = data?.buildInfo || {};
-  const buildText = build.commit ? `Diperbarui dari ${build.branch || "produksi"} · ${build.commit.slice(0, 8)}` : "Data operasional live";
+  const buildText = build.commit ? `Build ${build.branch || "produksi"} · ${build.commit.slice(0, 8)}` : "Build aktif";
+  const fetchedText = fetchedAt ? new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(fetchedAt) : null;
   const shiftWeek = amount => setFromDate(value => shiftDate(value, amount * 7));
 
   return <main className="ct-dashboard">
@@ -379,7 +389,7 @@ export default function OperationsControlTower() {
     <TodayFocus sites={dailySites} loading={loading && !dailyData} error={dailyError} ready={Boolean(dailyData?.databaseReady)} />
 
     <section className="ct-week-summary">
-      <div className="ct-week-summary-title"><div><span className="ct-eyebrow">RENTANG REVIEW</span><h2>{dateRangeLabel(fromDate, throughDate)}</h2></div><span>{buildText}</span></div>
+      <div className="ct-week-summary-title"><div><span className="ct-eyebrow">RENTANG REVIEW</span><h2>{dateRangeLabel(fromDate, throughDate)}</h2></div><div className="ct-data-meta"><span className="ct-data-freshness">{fetchedText ? `Data ditarik ${fetchedText} WIB` : loading ? "Memuat data terbaru…" : "Data belum dimuat"}</span><small>{buildText}</small></div></div>
       <div className="ct-metrics">
         <MetricCard icon={ClipboardList} label="Hari dengan planning" value={data?.databaseReady ? totals.plans : "—"} note={`dari ${dayRows.length * displayedSites.length} hari kerja`} />
         <MetricCard icon={AlertCircle} label="Rencana tanpa catatan PO" value={data?.databaseReady ? totals.notOrdered : "—"} note="cek stok & lead time; bukan otomatis kurang" tone="neutral" />
