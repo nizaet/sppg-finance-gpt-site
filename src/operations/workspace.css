@@ -826,3 +826,43 @@ html[data-app-theme="light"] .weekly-menu-metrics em { color: #64748b; }
   .ops-site-switcher .ops-po-site-tabs button { flex: 1; min-width: 0; min-height: 40px; }
   .ops-site-switcher .ops-switcher-note { display: none; }
 }
+
+
+/* PDF approval is the primary action; bulk ledger sync is intentionally secondary. */
+.ops-secondary-sync-wrap {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.24);
+}
+.ops-secondary-sync-note {
+  margin: 0 0 8px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.ops-row-actions button.ops-approve-proof-button {
+  background: #15803d;
+  border-color: #166534;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 750;
+  padding: 10px 14px;
+}
+.ops-row-actions button.ops-approve-proof-button:hover { background: #166534; }
+.ops-row-actions button.ops-secondary-sync-button {
+  background: #b91c1c;
+  border-color: #991b1b;
+  color: #fff;
+}
+.ops-row-actions button.ops-secondary-sync-button:hover { background: #991b1b; }
+html[data-app-theme="light"] .ops-row-actions button.ops-approve-proof-button {
+  background: #15803d;
+  border-color: #166534;
+  color: #fff;
+}
+html[data-app-theme="light"] .ops-row-actions button.ops-approve-proof-button:hover { background: #166534; }
+html[data-app-theme="light"] .ops-row-actions button.ops-secondary-sync-button {
+  background: #dc2626;
+  border-color: #b91c1c;
+  color: #fff;
+}
+html[data-app-theme="light"] .ops-row-actions button.ops-secondary-sync-button:hover { background: #b91c1c; }
