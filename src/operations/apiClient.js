@@ -53,11 +53,21 @@ function poReminderHorizon(value) {
   return Math.min(Math.trunc(requested), PO_REMINDER_ACTION_HORIZON_DAYS);
 }
 
+let freshReadNonce = 0;
+function requestFreshControlTower(path, params) {
+  // Prevent browser/proxy caches and the shared in-flight GET map from returning an older dashboard response.
+  params.set("_fresh", `${Date.now()}-${++freshReadNonce}`);
+  return request(`${path}?${params}`, {
+    cache: "no-store",
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+  });
+}
+
 export const operationsApi = {
   health: () => request("/health"),
   getSchemaStatus: () => request("/v1/schema-status"),
-  getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return request(`/v1/control-tower-v2?${q}`); },
-  getControlTowerWeek: (fromDate, site = "") => { const q = new URLSearchParams({ fromDate }); if (site) q.set("site", site); return request(`/v1/control-tower-weekly?${q}`); },
+  getControlTower: (date, site = "") => { const q = new URLSearchParams({ date }); if (site) q.set("site", site); return requestFreshControlTower("/v1/control-tower-v2", q); },
+  getControlTowerWeek: (fromDate, site = "") => { const q = new URLSearchParams({ fromDate }); if (site) q.set("site", site); return requestFreshControlTower("/v1/control-tower-weekly", q); },
   getPoCalendar: ({ from, to, site }) => { const q = new URLSearchParams({ from, to }); if (site) q.set("site", site); return request(`/v1/po-calendar?${q}`); },
   previewPoSchedule: ({ distributionDate, cookingDate = "", site = "" }) => { const q = new URLSearchParams({ distributionDate }); if (cookingDate) q.set("cookingDate", cookingDate); if (site) q.set("site", site); return request(`/v1/po-schedule/preview?${q}`); },
   getPoReminders: ({ site = "", date = "", horizonDays = PO_REMINDER_ACTION_HORIZON_DAYS, refresh = false } = {}) => { const q = new URLSearchParams({ horizonDays: String(poReminderHorizon(horizonDays)) }); if (site) q.set("site", site); if (date) q.set("date", date); if (refresh) q.set("refresh", "true"); return request(`/v1/po-reminders-v3?${q}`); },
