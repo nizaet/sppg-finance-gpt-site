@@ -107,10 +107,12 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     await load(); await onChanged?.();
   };
   const syncAccountantIncome = async () => {
+    const scope = site || "MAJA dan CEMPLANG";
+    if (!window.confirm(`Sinkronkan Maker PAID yang belum ada ke Akuntan ${scope}? Duplikat dan koreksi yang sudah ada tidak akan diubah.`)) return;
     setLedgerSyncBusy(true); reportError("");
     try {
       const result = await accountantApi.syncAccountantLedger(site || null);
-      reportMessage(`Sinkronisasi selesai: ${result.synced || 0} dari ${result.attempted || 0} pemasukan PAID masuk ke Akuntan ${site || "MAJA dan CEMPLANG"}.`);
+      reportMessage(`Sinkronisasi Akuntan ${scope} selesai: ${result.synced || 0} transaksi baru masuk; ${result.skipped || 0} sudah ada/dilewati.`);
       await load();
     } catch (error) { reportError(error.message || "Gagal menyinkronkan pemasukan Akuntan"); }
     finally { setLedgerSyncBusy(false); }
@@ -169,11 +171,12 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
   };
   const saveProof = async () => {
     if (!proofPreview?.willApproveCount) return reportError("Tidak ada transaksi SUCCESS yang cocok dengan Maker.");
-    if (!window.confirm(`File ini akan menandai ${proofPreview.willApproveCount} Maker sebagai APPROVED. Lanjutkan?`)) return;
+    if (!window.confirm(`Dari file bukti ini, tandai ${proofPreview.willApproveCount} Maker yang cocok sebagai APPROVED dan PAID, lalu kirim hanya Maker tersebut ke Akuntan? Transaksi PAID lain tidak ikut disinkronkan.`)) return;
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: selected?.site || null, parsedPayload: proofPreview.raw });
-      await afterAction(`${result.paidCount || result.approvedCount} Maker ditandai APPROVED dan PAID; satu link bukti dipakai pada semua transaksi yang cocok.`);
+      const sync = result.accountantLedgerSync;
+      await afterAction(`${result.paidCount || result.approvedCount} Maker dari file ini ditandai APPROVED dan PAID; hanya transaksi tersebut yang disinkronkan ke Akuntan (${sync?.synced || 0} baru, ${sync?.skipped || 0} sudah ada). Satu link bukti dipakai pada semua transaksi yang cocok.`);
     } catch (error) { reportError(error.message || "Gagal menyimpan bukti approval"); }
     finally { setBusy(false); }
   };
