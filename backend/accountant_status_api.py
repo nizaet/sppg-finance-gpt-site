@@ -105,7 +105,7 @@ def approve_bgn_maker_now(maker_id: int) -> dict[str, Any]:
             conn.commit()
 
     try:
-        ledger_sync = sync_paid_makers_to_accountant_ledger(str(maker.get("site") or ""))
+        ledger_sync = sync_paid_makers_to_accountant_ledger(str(maker.get("site") or ""), [maker_id])
     except Exception as exc:
         ledger_sync = {"attempted": 0, "synced": 0, "failed": 1, "errors": [f"{type(exc).__name__}: {exc}"[:500]]}
     return {
