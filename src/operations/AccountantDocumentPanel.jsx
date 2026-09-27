@@ -161,12 +161,16 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
         <div className="ops-action-field"><span>Aksi</span><button type="button" onClick={e=>{e.preventDefault();readProof();}} disabled={proofBusy} aria-disabled={proofBusy}><FileSearch size={14}/> {proofBusy?"Membaca…":"Baca Semua Transaksi"}</button>{!proofFile&&<small className="ops-file-hint">Pilih file terlebih dahulu.</small>}</div>
       </div>
       {proofProgress&&<ReadProgress progress={proofProgress}/>}
-      <div className="ops-row-actions"><button type="button" onClick={syncLedger} disabled={ledgerSyncBusy}><Upload size={14}/> {ledgerSyncBusy ? "Menyinkronkan…" : `Sinkronkan Semua PAID ke Akuntan ${proofSite}`}</button></div>
       {proofPreview&&<div className="ops-parse-result">
         <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
+        <div className="ops-notice">Periksa hasil di bawah, lalu tekan tombol hijau untuk menyetujui. Hanya Maker SUCCESS yang cocok dari PDF ini yang dikirim ke Akuntan.</div>
+        <div className="ops-row-actions"><button className="ops-approve-proof-button" type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><CheckCircle2 size={14}/> {proofBusy?"Menyimpan approval…":`Approve hasil PDF & Sinkronkan ${proofPreview.willApproveCount} Maker`}</button></div>
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
-        <div className="ops-row-actions"><button type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><Upload size={14}/> Approve & Sinkronkan {proofPreview.willApproveCount} Maker Baru</button></div>
       </div>}
+      <div className="ops-secondary-sync-wrap">
+        <p className="ops-secondary-sync-note">Sinkronisasi massal jarang digunakan. Tombol ini memproses semua Maker PAID pada site yang dipilih.</p>
+        <div className="ops-row-actions"><button className="ops-secondary-sync-button" type="button" onClick={syncLedger} disabled={ledgerSyncBusy}><Upload size={14}/> {ledgerSyncBusy ? "Menyinkronkan…" : `Sinkronkan Semua PAID ke Akuntan ${proofSite}`}</button></div>
+      </div>
     </section>
   </>;
 }
