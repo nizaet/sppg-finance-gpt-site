@@ -175,7 +175,8 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.commitApprovalEvidence({ file: proofFile, site: selected?.site || null, parsedPayload: proofPreview.raw });
-      const sync = result.accountantLedgerSync;\n      await afterAction(`${result.paidCount || result.approvedCount} Maker dari file ini ditandai APPROVED dan PAID; hanya transaksi tersebut yang disinkronkan ke Akuntan (${sync?.synced || 0} baru, ${sync?.skipped || 0} sudah ada). Satu link bukti dipakai pada semua transaksi yang cocok.`);
+      const sync = result.accountantLedgerSync;
+      await afterAction(`${result.paidCount || result.approvedCount} Maker dari file ini ditandai APPROVED dan PAID; hanya transaksi tersebut yang disinkronkan ke Akuntan (${sync?.synced || 0} baru, ${sync?.skipped || 0} sudah ada). Satu link bukti dipakai pada semua transaksi yang cocok.`);
     } catch (error) { reportError(error.message || "Gagal menyimpan bukti approval"); }
     finally { setBusy(false); }
   };
