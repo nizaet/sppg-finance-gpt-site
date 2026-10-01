@@ -448,6 +448,19 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
     setMessage(`Master ${master.canonical_name} dibuka untuk diedit.`);
   };
 
+  const editStockUnit = (item) => {
+    const itemNames = [item.item_name, ...(item.raw_item_names || [])].map(normalizedName);
+    const master = masters.find((candidate) => candidate.code === item.inventory_item_code)
+      || masters.find((candidate) => [candidate.canonical_name, ...(candidate.aliases || [])].some((name) => itemNames.includes(normalizedName(name))));
+    if (master) {
+      editMaster(master);
+    } else {
+      setMasterForm({ ...blankMasterForm(), canonical_name: item.item_name || "", base_unit: item.unit || "" });
+      setMessage(`Belum ada Master Barang untuk ${item.item_name}; buat master ini untuk menetapkan satuan dasar.`);
+    }
+    window.setTimeout(() => document.getElementById("inventory-master-editor")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  };
+
   const negativeCount = useMemo(() => items.filter((item) => Number(item.projected_balance ?? item.balance ?? 0) < 0).length, [items]);
   const lowConfidenceCount = useMemo(() => items.filter((item) => item.confidence === "LOW").length, [items]);
   const historyRows = useMemo(() => history.map((row) => ({ ...row, is_balance_active: Number(row.id) === Number(balanceMeta?.latestStockOpnameId) })), [history, balanceMeta?.latestStockOpnameId]);
@@ -561,7 +574,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
         </div>}
       </section>}
 
-      <section className="ops-module">
+      <section className="ops-module" id="inventory-master-editor">
         <div className="ops-module-header"><div><span className="ops-kicker">MASTER BARANG & ALIAS</span><h3>Tambah atau Perbarui Klasifikasi</h3><p>Contoh: buat “Mi telur ayam” sebagai jenis tersendiri lalu masukkan alias “mi telur”, “mie telur ayam”. Laporan berikutnya akan dikenali lebih cepat.</p></div></div>
         <div className="ops-form-grid">
           <label>Kode (opsional)<input value={masterForm.code} onChange={(e) => setMasterForm((current) => ({ ...current, code: e.target.value.toUpperCase() }))} placeholder="MI_TELUR_AYAM" /></label>
@@ -592,11 +605,12 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
             <label>Barang<input value={stockEdit.item_name} onChange={(e) => updateStockEdit({ item_name: e.target.value })} /></label>
             <label>Stok tercatat sekarang<input value={qty(stockEdit.current_balance)} disabled /></label>
             <label>Stok baru<input className="ops-qty-input" type="number" min="0" step="0.0001" value={stockEdit.target_balance} onChange={(e) => updateStockEdit({ target_balance: Number(e.target.value) })} /></label>
-            <label>Unit<input value={stockEdit.unit} onChange={(e) => updateStockEdit({ unit: e.target.value })} placeholder="kg / pcs / ikat" /></label>
+            <label>Unit stok<input value={stockEdit.unit} readOnly aria-describedby="stock-unit-help" /></label>
             <label>Alasan<input value={stockEdit.reason} onChange={(e) => updateStockEdit({ reason: e.target.value })} placeholder="contoh: koreksi hitung fisik" /></label>
             <label>Aksi<div className="ops-row-actions"><button type="button" onClick={commitManualStockEdit} disabled={saving}><Save size={14} /> Simpan Koreksi</button><button type="button" onClick={() => setStockEdit(null)} disabled={saving}><XCircle size={14} /> Batal</button></div></label>
           </div>
-          <div className="ops-muted">Yang disimpan adalah selisih dari stok tercatat ke stok baru. Riwayat SO, PO, dan penerimaan tetap ada untuk audit.</div>
+          <div className="ops-muted" id="stock-unit-help">Koreksi stok memakai satuan yang tercatat. Untuk mengubah satuan dasar, buka Master Barang agar konversi dan pembacaan stok ikut diperbarui. Riwayat SO dan penerimaan tetap tersimpan.</div>
+          <div className="ops-row-actions"><button type="button" onClick={() => editStockUnit(stockEdit)} disabled={saving}><Pencil size={14} /> Ubah Satuan di Master Barang</button></div>
         </div>}
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>SO fisik terakhir</th><th>Barang masuk / keluar sesudah SO</th><th>Pemakaian aktual</th><th>Stok aktual sekarang</th><th>Dikurangi planning</th><th>PO belum diterima (proyeksi)</th><th>Sisa untuk PO</th><th>Unit</th><th>Status data</th><th>Aksi</th></tr></thead><tbody>
           {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td>+{qty(item.expected_po_supply || 0)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}{item.unit_conversion_notes?.map((note) => <div className="ops-muted" key={note}>{note}</div>)}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div>{item.last_stock_check_at && <div className="ops-muted">Koreksi fisik {new Date(item.last_stock_check_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}</td><td><button type="button" onClick={() => openManualStockEdit(item)} disabled={saving}><Pencil size={14} /> Edit Stok</button></td></tr>)}
