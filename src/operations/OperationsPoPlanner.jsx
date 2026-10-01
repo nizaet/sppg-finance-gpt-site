@@ -133,6 +133,16 @@ function convertKnownStockQty(qtyValue, fromUnit, toUnit, typeCode) {
   if (from === to) return amount;
   if (from === "gr" && to === "kg") return amount / 1000;
   if (from === "kg" && to === "gr") return amount * 1000;
+  if (typeCode === "GARAM") {
+    const kilograms = from === "kg" ? amount : from === "pcs" ? amount * 0.5 : null;
+    if (kilograms == null) return null;
+    return to === "kg" ? kilograms : to === "pcs" ? kilograms / 0.5 : null;
+  }
+  if (typeCode === "KALDU_JAMUR") {
+    const packs = from === "pack" || from === "pouch" ? amount : null;
+    if (packs == null) return null;
+    return to === "pack" || to === "pouch" ? packs : null;
+  }
   if (typeCode === "LADA_PUTIH") {
     const kilograms = from === "kg" || from === "pcs" ? amount : null;
     if (kilograms == null) return null;
@@ -174,6 +184,7 @@ function buildStockLookup(items = []) {
     expectedSupply: Number(item.expected_po_supply || 0),
     stockAsOf: item.stock_as_of || null,
     lastStockCheckAt: item.last_stock_check_at || null,
+    conversionNotes: Array.isArray(item.unit_conversion_notes) ? item.unit_conversion_notes : [],
     confidence: item.confidence || "LOW",
   }));
 }
@@ -194,6 +205,7 @@ function stockForItem(item, lookup) {
     expectedSupply: sum("expectedSupply"),
     stockAsOf: matched.map(row => row.stockAsOf).filter(Boolean).sort().at(-1) || null,
     lastStockCheckAt: matched.map(row => row.lastStockCheckAt).filter(Boolean).sort().at(-1) || null,
+    conversionNotes: Array.from(new Set(matched.flatMap(row => row.conversionNotes))),
     basis: matched.length ? "CONFIRMED_NAME_TYPE_AND_UNIT" : "NO_MATCHING_STOCK",
     allocationKey: `${typeCode || name}|${unit}`,
     confidence: matched.length && matched.every(row => row.confidence !== "LOW") ? "HIGH" : "LOW",
@@ -256,6 +268,7 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       expected_supply_qty: stock.expectedSupply,
       stock_checked_at: stock.lastStockCheckAt,
       stock_unit_warning: stock.unitWarning,
+      stock_unit_conversion_notes: stock.conversionNotes,
       stock_requires_review: requiresReview,
       unconverted_stock: stock.unconvertedStock,
       stock_manual_resolution: false,
@@ -1508,6 +1521,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                               {item.stock_checked_at && <div className="ops-muted">Koreksi fisik {compactTimestamp(item.stock_checked_at)}</div>}
                               {item.expected_supply_qty > 0 && <div className="ops-muted">+ PO belum diterima {qty(item.expected_supply_qty)} (proyeksi)</div>}
                               {item.stock_unit_warning && <div className="ops-muted">{item.stock_unit_warning}</div>}
+                              {item.stock_unit_conversion_notes?.map((note, index) => <div className="ops-muted" key={`conversion-${index}`}>Konversi stok: {note}</div>)}
                               {item.unconverted_stock?.map((row, index) => <div className="ops-muted" key={index}>SO fisik: {row.name} {qty(row.quantity)} {row.unit} · periksa isi kemasan</div>)}
                               <div className="ops-muted">Keyakinan {item.stock_confidence}</div>
                               {item.cooperative_stock_qty != null && <div className="ops-muted">Koperasi {qty(item.cooperative_stock_qty)}{item.cooperative_shortfall_qty > 0 ? ` · kurang ${qty(item.cooperative_shortfall_qty)}` : ""}</div>}
