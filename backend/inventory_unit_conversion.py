@@ -9,6 +9,11 @@ from backend.stock_opname_parser import canonical_unit
 # Owner-confirmed operating conversions. These are intentionally narrow: no
 # other pcs/botol/pack item is guessed without an inventory-master rule.
 _CONFIRMED_OPERATIONAL_UNITS: dict[str, dict[str, Any]] = {
+    # Owner-confirmed package rules previously used in CEMPLANG stock
+    # reconciliation: each salt piece is a 500 g packet, and a mushroom
+    # seasoning pouch is equivalent to one planning pack.
+    "GARAM": {"target": "kg", "factors": {"pcs": 0.5}},
+    "KALDU_JAMUR": {"target": "pack", "factors": {"pouch": 1.0}},
     "LADA_PUTIH": {"target": "kg", "factors": {"pcs": 1.0}},
     # Historical Calculator rows labelled Saori as liter. The owner confirmed
     # each Saori bottle is 1 kg, so the old numeric planning quantity is kept
