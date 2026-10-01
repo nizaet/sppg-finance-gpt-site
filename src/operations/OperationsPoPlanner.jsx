@@ -680,7 +680,14 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createVendorPo = async (vendor) => {
-    if (!planningSnapshot?.id || !vendor || vendor === "UNASSIGNED") return;
+    if (!planningSnapshot?.id) {
+      setError("Data planning belum siap. Muat ulang daftar planning sebelum membuat PO.");
+      return;
+    }
+    if (!vendor || vendor === "UNASSIGNED") {
+      setError("Pilih vendor untuk item yang akan dibuatkan PO.");
+      return;
+    }
     if (draftItems.some((item) => item.vendor_code === vendor && !item.excluded && item.stock_requires_review && !item.stock_manual_resolution && !findActivePoForItem(item, distributionDate))) {
       setError("Masih ada item dengan stok berunit berbeda. Periksa fisik, isi PO Qty manual (termasuk 0 bila cukup), atau keluarkan item sebelum membuat PO.");
       return;
@@ -690,7 +697,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       setError("Ada stok dengan satuan belum dikonversi. Periksa fisik dan isi PO Qty secara manual sebelum membuat PO.");
       return;
     }
-    if (!lines.length) return;
+    if (!lines.length) {
+      setError(`Belum ada item yang bisa dimasukkan ke PO ${vendor}. Isi PO Qty lebih dari 0 untuk item yang akan dipesan, atau periksa status item yang masih menunggu konversi stok.`);
+      return;
+    }
 
     const hasPoForVendorDate = Boolean(activePoByVendorDate.get(`${vendor}|${distributionDate}`));
     const code = hasPoForVendorDate
@@ -1473,7 +1483,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     {existingPo && <div className="ops-muted"><strong>Sudah ada PO parsial:</strong> {existingPo.po_code} · Rev {existingPo.revision_no} · {existingPo.status}. Item yang belum masuk tetap dapat dibuatkan PO.</div>}
                   </div>
                   {group.vendor !== "UNASSIGNED" && (
-                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Number(x.po_qty || 0) <= 0 || Boolean(findActivePoForItem(x, distributionDate)))}>
+                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Boolean(findActivePoForItem(x, distributionDate)))}>
                       <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : existingPo ? "Buat PO Item Tersisa" : "Buat Draft PO"}
                     </button>
                   )}
