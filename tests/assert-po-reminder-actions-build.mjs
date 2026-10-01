@@ -33,8 +33,6 @@ const requiredMarkers = [
   "PO dibuat",
   "Jadwal pesan/kirim",
   "TAMBAHAN-",
-  "planning_item_ids",
-  "item_keys",
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",
@@ -90,6 +88,13 @@ const plannerSource = fs.readFileSync(
   path.resolve("src/operations/OperationsPoPlanner.jsx"),
   "utf8",
 );
+const poListingSource = fs.readFileSync(
+  path.resolve("backend/purchase_order_listing_api.py"),
+  "utf8",
+);
+if (!poListingSource.includes("planning_item_ids") || !poListingSource.includes("item_keys")) {
+  throw new Error("PO coverage identifiers must be provided by the backend listing API");
+}
 if (plannerSource.includes("useEffect(() => { loadBase(); }, [activeSite])")) {
   throw new Error("PO Vendor tab must not pull list/vendor/reminder data automatically");
 }
