@@ -698,7 +698,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       return;
     }
     if (!lines.length) {
-      setError(`Belum ada item yang bisa dimasukkan ke PO ${vendor}. Isi PO Qty lebih dari 0 untuk item yang akan dipesan, atau periksa status item yang masih menunggu konversi stok.`);
+      const eligibleItems = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && !findActivePoForItem(item, distributionDate));
+      setError(eligibleItems.length
+        ? `Belum ada item yang bisa dimasukkan ke PO ${vendor}. Isi PO Qty lebih dari 0 untuk item yang akan dipesan.`
+        : `Tidak ada item tersisa untuk PO ${vendor}; semua item sudah dikeluarkan atau sudah tercakup PO.`);
       return;
     }
 
@@ -1483,7 +1486,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     {existingPo && <div className="ops-muted"><strong>Sudah ada PO parsial:</strong> {existingPo.po_code} · Rev {existingPo.revision_no} · {existingPo.status}. Item yang belum masuk tetap dapat dibuatkan PO.</div>}
                   </div>
                   {group.vendor !== "UNASSIGNED" && (
-                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor || group.items.every((x) => x.excluded || Boolean(findActivePoForItem(x, distributionDate)))}>
+                    <button type="button" onClick={() => createVendorPo(group.vendor)} disabled={creatingVendor === group.vendor}>
                       <ShoppingCart size={15} /> {creatingVendor === group.vendor ? "Menyimpan..." : existingPo ? "Buat PO Item Tersisa" : "Buat Draft PO"}
                     </button>
                   )}
