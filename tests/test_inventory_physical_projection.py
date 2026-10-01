@@ -104,6 +104,28 @@ def test_same_day_manual_added_stock_is_visible_after_so(monkeypatch):
     assert result["items"][0]["actual_balance"] == 5
 
 
+@pytest.mark.parametrize("restored_pcs, expected_units", [
+    (0, ["botol"]),
+    (2, ["botol", "pcs"]),
+])
+def test_unit_change_hides_only_exhausted_old_unit(restored_pcs, expected_units, monkeypatch):
+    so = {"id": 130, "stock_date": date(2026, 10, 1), "created_at": datetime(2026, 10, 1, tzinfo=timezone.utc)}
+    items = [{"area_code": None, "raw_item_name": "Baking Powder", "canonical_item_name": "Baking Powder", "inventory_item_code": None, "qty": 5, "unit": "pcs"}]
+    checked = datetime(2026, 10, 1, 8, tzinfo=timezone.utc)
+    movements = [
+        {"item_name": "Baking Powder", "qty": 5, "unit": "pcs", "from_location": "CEMPLANG", "to_location": "MANUAL_ADJUSTMENT", "movement_type": "MANUAL_ADJUSTMENT", "source_type": "MANUAL_STOCK_EDIT", "notes": '{"unit_change":true,"target_balance":0,"previous_unit":"pcs","new_unit":"botol"}', "occurred_at": checked},
+        {"item_name": "Baking Powder", "qty": 5, "unit": "botol", "from_location": "MANUAL_ADJUSTMENT", "to_location": "CEMPLANG", "movement_type": "MANUAL_ADJUSTMENT", "source_type": "MANUAL_STOCK_EDIT", "notes": '{"unit_change":true,"target_balance":5,"previous_unit":"pcs","new_unit":"botol"}', "occurred_at": checked},
+    ]
+    if restored_pcs:
+        movements.append({"item_name": "Baking Powder", "qty": restored_pcs, "unit": "pcs", "from_location": "KOPERASI", "to_location": "CEMPLANG", "movement_type": "GOODS_RECEIPT", "source_type": "GOODS_RECEIPT", "notes": None, "occurred_at": checked + timedelta(days=1)})
+    monkeypatch.setattr(summary, "require_db", lambda: None)
+    monkeypatch.setattr(summary, "load_item_matchers", lambda *args: [])
+    monkeypatch.setattr(summary, "connection", connection_for([[so], [so], items, movements, [], []]))
+    result = summary.inventory_balances(site="CEMPLANG", limit=1000, for_date=date(2026, 10, 3), include_current_corrections=True)
+    assert sorted(item["unit"] for item in result["items"]) == expected_units
+    assert next(item for item in result["items"] if item["unit"] == "botol")["actual_balance"] == 5
+
+
 def test_same_day_po_stock_confirmation_is_visible_after_so(monkeypatch):
     so = {"id": 62, "stock_date": date(2026, 9, 16), "created_at": datetime(2026, 9, 16, 1, tzinfo=timezone.utc)}
     items = [{"area_code": None, "raw_item_name": "Bawang Bombay", "canonical_item_name": "Bawang Bombay", "inventory_item_code": None, "qty": 6.35, "unit": "kg"}]

@@ -40,6 +40,12 @@ assert.equal(cemplangSalt.stock_requires_review,false);
 const cemplangMushroom = env.draftItemsForSnapshot({items:[{id:2,item_name:'Kaldu Jamur Totole',planned_qty:5,unit:'pack',preferred_vendor_code:'KOPERASI'}]},[row('Kaldu Jamur','pouch',0.6)],[],'CEMPLANG')[0];
 assert.equal(cemplangMushroom.stock_qty,0.6,'confirmed pouch stock must be visible in packs');
 assert.equal(cemplangMushroom.recommended_po_qty,4.4,'mushroom seasoning PO subtracts pouch stock one-for-one');
+const bakingPowder = env.draftItemsForSnapshot({items:[{id:7,item_name:'Baking Powder',planned_qty:3,unit:'botol',preferred_vendor_code:'KOPERASI'}]},[row('Baking Powder','pcs',5)],[],'CEMPLANG')[0];
+assert.equal(bakingPowder.stock_requires_review,true,'unknown packaging remains a warehouse note');
+assert.equal(bakingPowder.recommended_po_qty,3,'unknown units are not silently subtracted from the PO');
+assert.equal(bakingPowder.po_qty,3,'Koperasi draft starts with an editable positive quantity');
+const mixedBaking = env.draftItemsForSnapshot({items:[{id:8,item_name:'Baking Powder',planned_qty:3,unit:'botol',preferred_vendor_code:'KOPERASI'}]},[row('Baking Powder','pcs',5),row('Baking Powder','botol',2)],[],'CEMPLANG')[0];
+assert.equal(mixedBaking.recommended_po_qty,1,'known compatible stock still reduces the PO');
 assert.equal(env.draftItemsForSnapshot({items:[{id:2,item_name:'Minyak Goreng',planned_qty:44,unit:'liter'}]},[row('Minyak Goreng','liter',10,{available_for_po:6,planned_depletion:4})],[],'CEMPLANG')[0].recommended_po_qty,38,'N+1 uses stock after N0');
 assert.equal(env.draftItemsForSnapshot({items:[{id:3,item_name:'Minyak Goreng',planned_qty:44,unit:'liter'}]},[row('Minyak Goreng','liter',10)],[],'CEMPLANG')[0].recommended_po_qty,34,'N0 uses physical stock');
 const sharedStock = env.draftItemsForSnapshot({items:[

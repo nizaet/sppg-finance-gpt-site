@@ -44,6 +44,7 @@ def _new_row(name: str, unit: str, match: dict[str, Any]) -> dict[str, Any]:
         "last_movement_at": None,
         "last_stock_check_at": None,
         "unit_conversion_notes": [],
+        "retired_by_unit_change": False,
     }
 
 
@@ -212,6 +213,10 @@ def inventory_balances(
                             checked = row["last_stock_check_at"]
                             if checked is None or occurred > checked:
                                 row["last_stock_check_at"] = occurred
+                        if (isinstance(notes, dict) and notes.get("unit_change") is True
+                                and str(movement["from_location"] or "").upper() == location
+                                and str(movement["to_location"] or "").upper() == "MANUAL_ADJUSTMENT"):
+                            row["retired_by_unit_change"] = True
                     except (ValueError, TypeError):
                         pass
                 if row["last_movement_at"] is None or occurred > row["last_movement_at"]:
@@ -282,6 +287,11 @@ def inventory_balances(
     for row in rows.values():
         actual_balance = row["so_qty"] + row["movement_delta"] - row["actual_usage_depletion"]
         projected_balance = actual_balance - row["planned_depletion"]
+        # A unit correction keeps the old SO and outgoing movement as audit
+        # evidence. Hide only its exhausted old-unit row from the live stock
+        # list; if stock arrives in that unit again, it becomes visible.
+        if row["retired_by_unit_change"] and abs(actual_balance) < 0.00005 and abs(projected_balance) < 0.00005:
+            continue
         stock_age = max(0, (target_date - stock_date).days - 1) if stock_date else None
         confidence = _confidence(bool(latest_so), stock_age, row["planned_depletion"], row["classification_status"])
         basis = "LEDGER_ONLY"
