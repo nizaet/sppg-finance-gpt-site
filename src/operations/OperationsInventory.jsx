@@ -14,6 +14,10 @@ const localDateTime = (value) => value ? new Date(value).toLocaleString("id-ID",
 }) : "-";
 const stockKey = (name, unit) => `${String(name || "").toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim()}|${String(unit || "").toLocaleLowerCase("id-ID").trim()}`;
 const normalizedName = (value) => String(value || "").toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim();
+const canonicalUnit = (value) => {
+  const unit = String(value || "").toLocaleLowerCase("id-ID").trim().replace(/\.$/, "");
+  return ({ kgs: "kg", kilogram: "kg", kilograms: "kg", gram: "gr", grams: "gr", pc: "pcs", piece: "pcs", pieces: "pcs", packs: "pack", pak: "pack", litre: "liter", ltr: "liter", lt: "liter", l: "liter" })[unit] || unit;
+};
 const todayMonth = () => new Date().toISOString().slice(0, 7);
 const transferMonthBounds = (month) => {
   const first = new Date(`${month}-01T12:00:00`);
@@ -286,6 +290,7 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
       item_name: item.item_name || "",
       inventory_item_code: item.inventory_item_code || "",
       unit: item.unit || "",
+      original_unit: item.unit || "",
       current_balance: current,
       target_balance: current,
       reason: "Koreksi manual stok gudang",
@@ -300,13 +305,18 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
     if (!stockEdit?.item_name?.trim()) return setError("Nama barang wajib diisi untuk koreksi manual.");
     const current = Number(stockEdit.current_balance || 0);
     const target = Number(stockEdit.target_balance);
+    const previousUnit = String(stockEdit.original_unit || "").trim();
+    const unit = String(stockEdit.unit || "").trim();
+    const unitChanged = canonicalUnit(previousUnit) !== canonicalUnit(unit);
     if (!Number.isFinite(target) || target < 0) return setError("Stok baru harus berupa angka 0 atau lebih.");
     const delta = target - current;
-    if (Math.abs(delta) <= 0.00005) return setError("Stok baru sama dengan stok tercatat. Tidak ada koreksi yang perlu disimpan.");
-    if (!window.confirm(
-      `Set stok aktual ${stockEdit.item_name} dari ${qty(current)} ${stockEdit.unit || ""} menjadi ${qty(target)} ${stockEdit.unit || ""}?\n\n` +
-      `Sistem akan mencatat movement koreksi ${signedQty(delta)} ${stockEdit.unit || ""}. Histori SO dan penerimaan tidak dihapus.`
-    )) return;
+    if (!unitChanged && Math.abs(delta) <= 0.00005) return setError("Satuan dan stok baru sama dengan catatan. Tidak ada perubahan untuk disimpan.");
+    const confirmation = unitChanged
+      ? `Ganti satuan stok ${stockEdit.item_name} dari ${qty(current)} ${previousUnit || "(kosong)"} menjadi ${qty(target)} ${unit || "(kosong)"}?\n\n` +
+        `Pastikan Stok baru sudah dihitung dalam satuan ${unit || "baru"}. Sistem akan mencatat stok lama keluar dan saldo baru masuk sebagai dua movement audit. Histori SO dan penerimaan tidak dihapus.`
+      : `Set stok aktual ${stockEdit.item_name} dari ${qty(current)} ${unit || ""} menjadi ${qty(target)} ${unit || ""}?\n\n` +
+        `Sistem akan mencatat movement koreksi ${signedQty(delta)} ${unit || ""}. Histori SO dan penerimaan tidak dihapus.`;
+    if (!window.confirm(confirmation)) return;
     setSaving(true);
     setError("");
     setMessage("");
@@ -315,13 +325,16 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
         location: activeSite,
         item_name: stockEdit.item_name.trim(),
         inventory_item_code: stockEdit.inventory_item_code || null,
-        unit: stockEdit.unit || null,
+        unit: unit || null,
+        previous_unit: previousUnit,
         current_balance: current,
         target_balance: target,
         reason: stockEdit.reason || "Koreksi manual stok gudang",
         actor: "operator",
       }, true);
-      setMessage(`Stok ${result.itemName} diset ke ${qty(result.balanceAfter ?? target)} ${result.unit || ""}. Movement koreksi #${result.movementId}; delta ${signedQty(result.adjustmentDelta)} ${result.unit || ""}.`);
+      setMessage(result.unitChanged
+        ? `Satuan stok ${result.itemName} diubah dari ${previousUnit || "-"} ke ${unit || "-"}; saldo baru ${qty(result.balanceAfter ?? target)} ${unit || ""}. Movement audit ${result.movementIds?.map((id) => `#${id}`).join(", ") || `#${result.movementId}`} tersimpan.`
+        : `Stok ${result.itemName} diset ke ${qty(result.balanceAfter ?? target)} ${result.unit || ""}. Movement koreksi #${result.movementId}; delta ${signedQty(result.adjustmentDelta)} ${result.unit || ""}.`);
       setStockEdit(null);
       await load(search);
     } catch (err) {
@@ -446,19 +459,6 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
       package_unit: packageUnit, package_factor: packageFactor, metadata: master.metadata || {},
     });
     setMessage(`Master ${master.canonical_name} dibuka untuk diedit.`);
-  };
-
-  const editStockUnit = (item) => {
-    const itemNames = [item.item_name, ...(item.raw_item_names || [])].map(normalizedName);
-    const master = masters.find((candidate) => candidate.code === item.inventory_item_code)
-      || masters.find((candidate) => [candidate.canonical_name, ...(candidate.aliases || [])].some((name) => itemNames.includes(normalizedName(name))));
-    if (master) {
-      editMaster(master);
-    } else {
-      setMasterForm({ ...blankMasterForm(), canonical_name: item.item_name || "", base_unit: item.unit || "" });
-      setMessage(`Belum ada Master Barang untuk ${item.item_name}; buat master ini untuk menetapkan satuan dasar.`);
-    }
-    window.setTimeout(() => document.getElementById("inventory-master-editor")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   };
 
   const negativeCount = useMemo(() => items.filter((item) => Number(item.projected_balance ?? item.balance ?? 0) < 0).length, [items]);
@@ -604,13 +604,12 @@ export default function OperationsInventory({ fixedSite = "", routeSite = '', on
           <div className="ops-form-grid">
             <label>Barang<input value={stockEdit.item_name} onChange={(e) => updateStockEdit({ item_name: e.target.value })} /></label>
             <label>Stok tercatat sekarang<input value={qty(stockEdit.current_balance)} disabled /></label>
-            <label>Stok baru<input className="ops-qty-input" type="number" min="0" step="0.0001" value={stockEdit.target_balance} onChange={(e) => updateStockEdit({ target_balance: Number(e.target.value) })} /></label>
-            <label>Unit stok<input value={stockEdit.unit} readOnly aria-describedby="stock-unit-help" /></label>
+            <label>Stok baru ({stockEdit.unit || "satuan"})<input className="ops-qty-input" type="number" min="0" step="0.0001" value={stockEdit.target_balance} onChange={(e) => updateStockEdit({ target_balance: Number(e.target.value) })} /></label>
+            <label>Satuan stok<input value={stockEdit.unit} onChange={(e) => updateStockEdit({ unit: e.target.value })} placeholder="kg / pcs / botol" aria-describedby="stock-unit-help" /></label>
             <label>Alasan<input value={stockEdit.reason} onChange={(e) => updateStockEdit({ reason: e.target.value })} placeholder="contoh: koreksi hitung fisik" /></label>
-            <label>Aksi<div className="ops-row-actions"><button type="button" onClick={commitManualStockEdit} disabled={saving}><Save size={14} /> Simpan Koreksi</button><button type="button" onClick={() => setStockEdit(null)} disabled={saving}><XCircle size={14} /> Batal</button></div></label>
+            <label>Aksi<div className="ops-row-actions"><button type="button" onClick={commitManualStockEdit} disabled={saving}><Save size={14} /> {saving ? "Menyimpan..." : "Simpan Perubahan"}</button><button type="button" onClick={() => setStockEdit(null)} disabled={saving}><XCircle size={14} /> Batal</button></div></label>
           </div>
-          <div className="ops-muted" id="stock-unit-help">Koreksi stok memakai satuan yang tercatat. Untuk mengubah satuan dasar, buka Master Barang agar konversi dan pembacaan stok ikut diperbarui. Riwayat SO dan penerimaan tetap tersimpan.</div>
-          <div className="ops-row-actions"><button type="button" onClick={() => editStockUnit(stockEdit)} disabled={saving}><Pencil size={14} /> Ubah Satuan di Master Barang</button></div>
+          <div className="ops-muted" id="stock-unit-help">Satuan bisa diubah langsung di sini. Jika satuannya diganti, isi Stok baru memakai satuan baru; sistem mencatat saldo lama keluar dan saldo baru masuk supaya histori stok tetap bisa diaudit.</div>
         </div>}
         <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>SO fisik terakhir</th><th>Barang masuk / keluar sesudah SO</th><th>Pemakaian aktual</th><th>Stok aktual sekarang</th><th>Dikurangi planning</th><th>PO belum diterima (proyeksi)</th><th>Sisa untuk PO</th><th>Unit</th><th>Status data</th><th>Aksi</th></tr></thead><tbody>
           {items.map((item, index) => <tr key={`${item.item_name}-${item.unit}-${index}`}><td><strong>{item.item_name}</strong><div className="ops-muted">{item.raw_item_names?.join(" · ")}</div></td><td>{qty(item.so_qty)}</td><td>{signedQty(item.movement_delta)}</td><td>−{qty(item.actual_usage_depletion)}</td><td><strong>{qty(item.actual_balance)}</strong></td><td>−{qty(item.planned_depletion)}</td><td>+{qty(item.expected_po_supply || 0)}</td><td><strong>{qty(item.projected_balance)}</strong></td><td>{item.unit || "-"}{item.unit_conversion_notes?.map((note) => <div className="ops-muted" key={note}>{note}</div>)}</td><td>{item.confidence === "LOW" ? "Perlu cek" : "Siap"}<div className="ops-muted">SO {item.stock_as_of || "-"}</div>{item.last_stock_check_at && <div className="ops-muted">Koreksi fisik {new Date(item.last_stock_check_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}</td><td><button type="button" onClick={() => openManualStockEdit(item)} disabled={saving}><Pencil size={14} /> Edit Stok</button></td></tr>)}
