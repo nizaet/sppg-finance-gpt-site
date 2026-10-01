@@ -195,6 +195,7 @@ function stockForItem(item, lookup) {
     stockAsOf: matched.map(row => row.stockAsOf).filter(Boolean).sort().at(-1) || null,
     lastStockCheckAt: matched.map(row => row.lastStockCheckAt).filter(Boolean).sort().at(-1) || null,
     basis: matched.length ? "CONFIRMED_NAME_TYPE_AND_UNIT" : "NO_MATCHING_STOCK",
+    allocationKey: `${typeCode || name}|${unit}`,
     confidence: matched.length && matched.every(row => row.confidence !== "LOW") ? "HIGH" : "LOW",
     requiresReview: unconverted.length > 0,
     unconvertedStock: unconverted.map(row => ({ name: row.names[0], unit: row.unit, quantity: row.actualBalance })),
@@ -224,13 +225,19 @@ function shiftDate(value, days) {
 function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site) {
   const stockLookup = buildStockLookup(inventoryItems);
   const cooperativeLookup = buildStockLookup(cooperativeItems);
+  const remainingByItem = new Map();
+  const reviewByItem = new Set();
   return (snapshot?.items || []).map((item) => {
     const operationalItem = { ...item, unit: operationalPlanningUnit(item) };
     const assignment = safeVendorForPlanningItem(item, site);
     const planned = item.planned_qty == null ? 0 : Number(item.planned_qty);
     const stock = stockForItem(operationalItem, stockLookup);
     const cooperativeStock = assignment.vendor === "KOPERASI" ? stockForItem(operationalItem, cooperativeLookup) : null;
-    const recommended = stock.requiresReview ? null : Math.max(0, Number((planned - stock.balance).toFixed(4)));
+    const remainingStock = remainingByItem.has(stock.allocationKey) ? remainingByItem.get(stock.allocationKey) : stock.balance;
+    if (stock.requiresReview) reviewByItem.add(stock.allocationKey);
+    const requiresReview = reviewByItem.has(stock.allocationKey);
+    const recommended = requiresReview ? null : Math.max(0, Number((planned - remainingStock).toFixed(4)));
+    if (!requiresReview) remainingByItem.set(stock.allocationKey, Math.max(0, Number((remainingStock - planned).toFixed(4))));
     return {
       planning_snapshot_item_id: item.id,
       item_code: item.item_code || null,
@@ -249,7 +256,7 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       expected_supply_qty: stock.expectedSupply,
       stock_checked_at: stock.lastStockCheckAt,
       stock_unit_warning: stock.unitWarning,
-      stock_requires_review: stock.requiresReview,
+      stock_requires_review: requiresReview,
       unconverted_stock: stock.unconvertedStock,
       stock_manual_resolution: false,
       stock_as_of: stock.stockAsOf,
