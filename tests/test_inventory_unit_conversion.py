@@ -38,6 +38,18 @@ def test_owner_confirmed_ladaku_piece_is_one_kilogram():
     assert note == "1 pcs = 1 kg (aturan operasional)"
 
 
+def test_owner_confirmed_salt_piece_is_half_kilogram():
+    qty, unit, note = convert_inventory_quantity(3, "pcs", {"stockTypeCode": "GARAM"})
+    assert (qty, unit) == (1.5, "kg")
+    assert note == "1 pcs = 0.5 kg (aturan operasional)"
+
+
+def test_owner_confirmed_mushroom_seasoning_pouch_equals_pack():
+    qty, unit, note = convert_inventory_quantity(0.6, "pouch", {"stockTypeCode": "KALDU_JAMUR"})
+    assert (qty, unit) == (0.6, "pack")
+    assert note == "1 pouch = 1 pack (aturan operasional)"
+
+
 def test_owner_confirmed_saori_bottle_and_legacy_liter_are_kilograms():
     bottle = convert_inventory_quantity(2, "botol", {"stockTypeCode": "SAUS_TIRAM"})
     legacy = convert_inventory_quantity(2, "liter", {"stockTypeCode": "SAUS_TIRAM"})
