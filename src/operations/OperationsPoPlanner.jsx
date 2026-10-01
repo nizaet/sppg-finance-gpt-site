@@ -442,6 +442,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [message, setMessage] = useState("");
   const [actionId, setActionId] = useState(null);
   const [creatingVendor, setCreatingVendor] = useState("");
+  const [draftVendorError, setDraftVendorError] = useState(null);
   const [reminders, setReminders] = useState([]);
   const [remindersPulled, setRemindersPulled] = useState(false);
   const [vendorPhones, setVendorPhones] = useState({});
@@ -680,26 +681,28 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createVendorPo = async (vendor) => {
+    setDraftVendorError(null);
+    setError("");
+    const showDraftError = (detail) => {
+      setError(detail);
+      setDraftVendorError({ vendor, detail });
+    };
     if (!planningSnapshot?.id) {
-      setError("Data planning belum siap. Muat ulang daftar planning sebelum membuat PO.");
+      showDraftError("Data planning belum siap. Muat ulang daftar planning sebelum membuat PO.");
       return;
     }
     if (!vendor || vendor === "UNASSIGNED") {
-      setError("Pilih vendor untuk item yang akan dibuatkan PO.");
-      return;
-    }
-    if (draftItems.some((item) => item.vendor_code === vendor && !item.excluded && item.stock_requires_review && !item.stock_manual_resolution && !findActivePoForItem(item, distributionDate))) {
-      setError("Masih ada item dengan stok berunit berbeda. Periksa fisik, isi PO Qty manual (termasuk 0 bila cukup), atau keluarkan item sebelum membuat PO.");
+      showDraftError("Pilih vendor untuk item yang akan dibuatkan PO.");
       return;
     }
     const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0 && !findActivePoForItem(item, distributionDate));
     if (lines.some((item) => item.stock_requires_review && !item.stock_manual_resolution)) {
-      setError("Ada stok dengan satuan belum dikonversi. Periksa fisik dan isi PO Qty secara manual sebelum membuat PO.");
+      showDraftError("Ada stok dengan satuan belum dikonversi. Periksa fisik dan isi PO Qty secara manual sebelum membuat PO.");
       return;
     }
     if (!lines.length) {
       const eligibleItems = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && !findActivePoForItem(item, distributionDate));
-      setError(eligibleItems.length
+      showDraftError(eligibleItems.length
         ? `Belum ada item yang bisa dimasukkan ke PO ${vendor}. Isi PO Qty lebih dari 0 untuk item yang akan dipesan.`
         : `Tidak ada item tersisa untuk PO ${vendor}; semua item sudah dikeluarkan atau sudah tercakup PO.`);
       return;
@@ -750,7 +753,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       const poData = await operationsApi.getPurchaseOrders({ site: activeSite, limit: 50 });
       setPurchaseOrders(poData?.items || []);
     } catch (err) {
-      setError(err.message || "Gagal membuat draft PO");
+      showDraftError(err.message || "Gagal membuat draft PO");
     } finally {
       setCreatingVendor("");
     }
@@ -1497,6 +1500,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                     <button type="button" onClick={() => clearVendorPulledData(group.vendor)} title="Bersihkan hanya hasil tarikan vendor ini; PO tersimpan tidak dihapus"><Trash2 size={15} /> Bersihkan Vendor</button>
                   </div>}
                 </div>
+                {draftVendorError?.vendor === group.vendor && <div className="ops-error" role="alert">{draftVendorError.detail}</div>}
                 <div className="ops-table-wrap">
                   <table className="ops-table">
                     <thead><tr><th>Ikut PO?</th><th>Item</th><th>Planning</th><th>Stok Gudang</th><th>Rekomendasi PO</th><th>PO Qty — EDIT</th><th>Unit</th><th>Vendor</th><th>Dasar</th></tr></thead>
