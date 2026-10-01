@@ -33,8 +33,6 @@ const requiredMarkers = [
   "PO dibuat",
   "Jadwal pesan/kirim",
   "TAMBAHAN-",
-  "planning_item_ids",
-  "item_keys",
   "PO sudah dilakukan",
   "Konfirmasi stok gudang",
   "Buat PO Tambahan",

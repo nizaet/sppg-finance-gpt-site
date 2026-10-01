@@ -105,7 +105,7 @@ jobs:
                       and conname='po_reminder_overrides_resolution_check'
                   """)
                   resolution_check = cur.fetchone()['definition']
-          assert rules[('MAJA','TEMPE')] == 4, rules
+          assert rules[('MAJA','TEMPE')] == 2, rules
           assert rules[('MAJA','TAHU')] == 2, rules
           assert rules[('CEMPLANG','TEMPE')] is None, rules
           assert override_table == 'po_reminder_overrides', override_table

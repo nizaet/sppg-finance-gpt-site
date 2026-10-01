@@ -31,6 +31,19 @@ assert.equal(env.poCoversItem({status:'SENT',coverage_dates:['2026-09-14'],item_
 assert.equal(stock({item_name:'Bawang Putih Bubuk',unit:'kg'}, [row('Bawang Putih','kg',10.9)]).balance,0);
 assert.equal(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).balance,0);
 assert.match(stock({item_name:'Ketumbar',unit:'kg'}, [row('Ketumbar','pcs',1)]).unitWarning,/pcs/);
+assert.equal(stock({item_name:'Garam',unit:'kg'}, [row('Garam','pcs',3)]).requiresReview,true);
+assert.equal(stock({item_name:'Kaldu Jamur Totole',unit:'pack'}, [row('Kaldu Jamur','pouch',0.6)]).unconvertedStock[0].quantity,0.6);
+const cemplang = env.draftItemsForSnapshot({items:[{id:1,item_name:'Garam',planned_qty:5,unit:'kg',preferred_vendor_code:'KOPERASI'}]},[row('Garam','pcs',3)],[],'CEMPLANG')[0];
+assert.equal(cemplang.recommended_po_qty,null,'unknown package weight cannot become a full automatic PO');
+assert.equal(cemplang.po_qty,0);
+assert.equal(cemplang.stock_requires_review,true);
+assert.equal(env.draftItemsForSnapshot({items:[{id:2,item_name:'Minyak Goreng',planned_qty:44,unit:'liter'}]},[row('Minyak Goreng','liter',10,{available_for_po:6,planned_depletion:4})],[],'CEMPLANG')[0].recommended_po_qty,38,'N+1 uses stock after N0');
+assert.equal(env.draftItemsForSnapshot({items:[{id:3,item_name:'Minyak Goreng',planned_qty:44,unit:'liter'}]},[row('Minyak Goreng','liter',10)],[],'CEMPLANG')[0].recommended_po_qty,34,'N0 uses physical stock');
+const sharedStock = env.draftItemsForSnapshot({items:[
+  {id:4,item_name:'Beras',planned_qty:5,unit:'kg'},
+  {id:5,item_name:'Beras Putih Lokal',planned_qty:5,unit:'kg'},
+]},[row('Beras','kg',6)],[],'CEMPLANG');
+assert.deepEqual(sharedStock.map(x=>x.recommended_po_qty),[0,4],'a shared warehouse balance is allocated once across duplicate planning lines');
 assert.equal(stock({item_name:'Tepung Beras',unit:'kg'}, [row('Tepung Beras','pcs',11),row('Tepung Beras','kg',4)]).balance,4);
 assert.equal(stock({item_name:'Knorr Chicken Powder',unit:'kg'}, [row('Kaldu Ayam Bubuk','kg',2,{raw_item_names:['Knorr Chicken','Chicken Powder','Kaldu Ayam Bubuk']})]).balance,2);
 assert.equal(stock({item_name:'Bombay',unit:'kg'}, [row('bawang bombay','kg',2,{raw_item_names:['Bombay','Bawang Bombay'],actual_balance:7,projected_balance:2,planned_depletion:5})]).balance,2);

@@ -1,5 +1,6 @@
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -192,3 +193,28 @@ def test_so_closes_previous_cooking_day_before_same_day_po(site, monkeypatch):
     assert row["actual_balance"] == 36
     assert row["planned_depletion"] == 0
     assert row["available_for_po"] == 36
+
+
+@pytest.mark.parametrize("site", ["MAJA", "CEMPLANG"])
+def test_po_pre_cooking_so_reserves_n0_for_n_plus_one(site, monkeypatch):
+    n0 = datetime.now(ZoneInfo("Asia/Jakarta")).date()
+    base = {"latestStockOpnameDate": n0, "forDate": n0 + timedelta(days=2), "items": [{
+        "item_name": "Minyak Goreng", "unit": "liter", "so_qty": 10,
+        "movement_delta": 0, "actual_usage_depletion": 0, "last_stock_check_at": None,
+    }]}
+    monkeypatch.setattr(projection, "inventory_balances", lambda **kwargs: base)
+    monkeypatch.setattr(projection, "load_item_matchers", lambda *args: [])
+    plans = [
+        {"item_name": "Minyak Goreng", "unit": "liter", "planned_qty": 4,
+         "cooking_date": n0, "distribution_date": n0 + timedelta(days=1)},
+        {"item_name": "Minyak Goreng", "unit": "liter", "planned_qty": 12,
+         "cooking_date": n0 + timedelta(days=1), "distribution_date": n0 + timedelta(days=2)},
+    ]
+    monkeypatch.setattr(projection, "connection", connection_for([[], [], plans, []]))
+    row = projection.inventory_balances_v2(
+        site=site, limit=1000, for_date=n0 + timedelta(days=2),
+        cooking_date=n0 + timedelta(days=1), same_day_stock_before_cooking=True,
+    )["items"][0]
+    assert row["actual_balance"] == 10
+    assert row["planned_depletion"] == 4
+    assert row["available_for_po"] == 6

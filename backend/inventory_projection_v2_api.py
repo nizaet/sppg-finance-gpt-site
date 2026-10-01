@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -145,6 +145,7 @@ def inventory_balances_v2(
     limit: int = Query(default=300, ge=1, le=1000),
     for_date: date | None = Query(default=None, alias="forDate"),
     cooking_date: date | None = Query(default=None, alias="cookingDate"),
+    same_day_stock_before_cooking: bool = Query(default=False, alias="sameDayStockBeforeCooking"),
 ) -> dict[str, Any]:
     """Taxonomy-aware warehouse projection.
 
@@ -174,6 +175,9 @@ def inventory_balances_v2(
     # whereas HTTP requests receive a date/None.
     selected_cooking_date = cooking_date if isinstance(cooking_date, date) else None
     target_cooking_date = selected_cooking_date or (target_date - timedelta(days=1))
+    # The PO screen explicitly treats a same-day SO as the pre-cooking count.
+    # Older callers retain the conservative post-cooking SO interpretation.
+    pre_cooking_so = same_day_stock_before_cooking is True and stock_date == datetime.now(ZoneInfo("Asia/Jakarta")).date()
     usage_end = target_cooking_date
 
     with connection() as conn:
@@ -206,8 +210,8 @@ def inventory_balances_v2(
                         from actual_usage au
                         join production_cycles pc on pc.id=au.production_cycle_id
                         where upper(pc.site)=%s
-                          and pc.distribution_date > %s
-                          and pc.distribution_date < %s
+                          and pc.distribution_date >= %s
+                          and pc.distribution_date <= %s
                         """,
                         (location, stock_date, usage_end),
                     )
@@ -244,11 +248,12 @@ def inventory_balances_v2(
                         # SO is a physical anchor through stock_date. This guard
                         # prevents same-day double depletion independently of
                         # the SQL boundary above.
-                        if plan_cooking_date <= stock_date:
+                        if plan_cooking_date < stock_date or (plan_cooking_date == stock_date and not pre_cooking_so):
                             continue
                         type_code, unit, label, method = _type_key(plan.get("item_name"), plan.get("unit"), masters)
-                        usage_key = (type_code, unit, plan["distribution_date"])
-                        if usage_key in actual_usage_dates or usage_key in production_usage_dates:
+                        actual_key = (type_code, unit, plan["distribution_date"])
+                        movement_key = (type_code, unit, plan_cooking_date)
+                        if actual_key in actual_usage_dates or movement_key in production_usage_dates:
                             continue
                         key = (type_code, unit)
                         row = grouped.setdefault(key, _empty_row(label, unit, type_code, method))
@@ -256,10 +261,7 @@ def inventory_balances_v2(
                         # following distribution day. Stock confirmed after
                         # today's cooking already reflects today's consumption.
                         # Only later cooking plans may deplete it again.
-                        if _before_physical_check(
-                            row,
-                            plan_cooking_date,
-                        ):
+                        if _before_physical_check(row, plan_cooking_date):
                             continue
                         row["planned_depletion"] += _operational_quantity(
                             plan.get("item_name"), plan.get("planned_qty"), plan.get("unit"), masters
