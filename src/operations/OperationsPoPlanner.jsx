@@ -212,7 +212,7 @@ function stockForItem(item, lookup) {
     requiresReview: unconverted.length > 0,
     unconvertedStock: unconverted.map(row => ({ name: row.names[0], unit: row.unit, quantity: row.actualBalance })),
     unitWarning: candidates.some(row => !matched.includes(row))
-      ? `Stok ${[...new Set(candidates.filter(row => !matched.includes(row)).map(row => row.unit))].join(", ")} belum dikonversi ke ${unit}.` : "",
+      ? `Stok ${[...new Set(candidates.filter(row => !matched.includes(row)).map(row => row.unit))].join(", ")} berbeda satuan dari ${unit}; sesuaikan satuan dan qty di Gudang.` : "",
   };
 }
 
@@ -238,7 +238,6 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
   const stockLookup = buildStockLookup(inventoryItems);
   const cooperativeLookup = buildStockLookup(cooperativeItems);
   const remainingByItem = new Map();
-  const reviewByItem = new Set();
   return (snapshot?.items || []).map((item) => {
     const operationalItem = { ...item, unit: operationalPlanningUnit(item) };
     const assignment = safeVendorForPlanningItem(item, site);
@@ -246,10 +245,11 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
     const stock = stockForItem(operationalItem, stockLookup);
     const cooperativeStock = assignment.vendor === "KOPERASI" ? stockForItem(operationalItem, cooperativeLookup) : null;
     const remainingStock = remainingByItem.has(stock.allocationKey) ? remainingByItem.get(stock.allocationKey) : stock.balance;
-    if (stock.requiresReview) reviewByItem.add(stock.allocationKey);
-    const requiresReview = reviewByItem.has(stock.allocationKey);
-    const recommended = requiresReview ? null : Math.max(0, Number((planned - remainingStock).toFixed(4)));
-    if (!requiresReview) remainingByItem.set(stock.allocationKey, Math.max(0, Number((remainingStock - planned).toFixed(4))));
+    const requiresReview = stock.requiresReview;
+    // Stock in an unknown unit is a Gudang note, not a PO blocker. Deduct
+    // only compatible stock and let the operator edit the proposed quantity.
+    const recommended = Math.max(0, Number((planned - remainingStock).toFixed(4)));
+    remainingByItem.set(stock.allocationKey, Math.max(0, Number((remainingStock - planned).toFixed(4))));
     return {
       planning_snapshot_item_id: item.id,
       item_code: item.item_code || null,
@@ -276,9 +276,9 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       stock_basis: stock.basis,
       stock_confidence: stock.confidence,
       cooperative_stock_qty: cooperativeStock?.balance ?? null,
-      cooperative_shortfall_qty: cooperativeStock && recommended != null && !cooperativeStock.requiresReview ? Math.max(0, Number((recommended - cooperativeStock.balance).toFixed(4))) : null,
+      cooperative_shortfall_qty: cooperativeStock && !cooperativeStock.requiresReview ? Math.max(0, Number((recommended - cooperativeStock.balance).toFixed(4))) : null,
       recommended_po_qty: recommended,
-      po_qty: recommended ?? 0,
+      po_qty: recommended,
       unit: operationalItem.unit,
       planning_price: item.planning_price == null ? null : Number(item.planning_price),
       vendor_code: assignment.vendor,
@@ -696,10 +696,6 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       return;
     }
     const lines = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && Number(item.po_qty || 0) > 0 && !findActivePoForItem(item, distributionDate));
-    if (lines.some((item) => item.stock_requires_review && !item.stock_manual_resolution)) {
-      showDraftError("Ada stok dengan satuan belum dikonversi. Periksa fisik dan isi PO Qty secara manual sebelum membuat PO.");
-      return;
-    }
     if (!lines.length) {
       const eligibleItems = draftItems.filter((item) => item.vendor_code === vendor && !item.excluded && !findActivePoForItem(item, distributionDate));
       showDraftError(eligibleItems.length
@@ -761,10 +757,6 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
 
   const createSingleItemPo = async (item) => {
     if (!planningSnapshot?.id || !item?.vendor_code || Number(item.po_qty || 0) <= 0) return;
-    if (item.stock_requires_review && !item.stock_manual_resolution) {
-      setError("Periksa satuan stok dan isi PO Qty manual untuk item ini terlebih dahulu.");
-      return;
-    }
     const existingSplit = findActiveItemSplitPo(item, distributionDate);
     if (existingSplit) {
       await viewPoDetail(existingSplit);
@@ -1289,18 +1281,10 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createRangeDrafts = async () => {
-    if (rangeRows.some((row) => row.items.some((item) => !item.excluded && item.stock_requires_review && !item.stock_manual_resolution && !findActiveItemSplitPo(item, row.date)))) {
-      setError("Masih ada item rentang dengan stok berunit berbeda. Periksa fisik, isi PO Qty manual (termasuk 0 bila cukup), atau keluarkan item.");
-      return;
-    }
     const candidates = rangeRows.map((row) => ({
       ...row,
       selected: row.items.filter((item) => !item.excluded && Number(item.po_qty || 0) > 0 && !findActiveItemSplitPo(item, row.date)),
     })).filter((row) => row.snapshot && row.selected.length);
-    if (candidates.some((row) => row.selected.some((item) => item.stock_requires_review && !item.stock_manual_resolution))) {
-      setError("Ada stok dengan satuan belum dikonversi dalam rentang PO. Periksa fisik dan isi PO Qty manual untuk item tersebut.");
-      return;
-    }
     if (!candidates.length) {
       setError("Tidak ada item rentang yang dipilih untuk dibuatkan PO.");
       return;
@@ -1543,7 +1527,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
                               <div className="ops-muted">Keyakinan {item.stock_confidence}</div>
                               {item.cooperative_stock_qty != null && <div className="ops-muted">Koperasi {qty(item.cooperative_stock_qty)}{item.cooperative_shortfall_qty > 0 ? ` · kurang ${qty(item.cooperative_shortfall_qty)}` : ""}</div>}
                             </td>
-                            <td><strong>{item.stock_requires_review ? "Perlu konversi" : qty(item.recommended_po_qty)}</strong>{item.stock_requires_review && <div className="ops-muted">Periksa stok fisik, lalu isi PO Qty manual.</div>}</td>
+                            <td><strong>{qty(item.recommended_po_qty)}</strong>{item.stock_requires_review && <div className="ops-muted">Stok beda satuan belum dikurangkan. Sesuaikan satuan dan qty di Gudang.</div>}</td>
                             <td>
                               <div className="ops-row-actions">
                                 <PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(splitPo)} title={item.item_name} onChange={(value) => updateDraftItem(item.planning_snapshot_item_id, { po_qty: value })} />
@@ -1591,7 +1575,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             {row.snapshot && <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Ikut PO?</th><th>Item</th><th>Planning</th><th>Stok</th><th>Rekomendasi</th><th>PO Qty — EDIT</th><th>Unit</th></tr></thead><tbody>
               {row.items.map((item) => <tr key={`${row.date}-${item.planning_snapshot_item_id}`} className={Number(item.stock_qty || 0) > 0 ? !item.stock_requires_review && Number(item.recommended_po_qty || 0) <= 0 ? "ops-row-covered" : "ops-row-has-stock" : ""}>
                 <td><button type="button" onClick={() => updateRangeItem(row.date, item.planning_snapshot_item_id, { excluded: !item.excluded })}>{item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}</button></td>
-                <td><strong>{item.item_name}</strong>{findActiveItemSplitPo(item, row.date) && <div><span className="ops-stock-badge ops-stock-covered">✓ PO sendiri sudah ada</span></div>}</td><td>{qty(item.planned_qty)}</td><td><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>{item.unconverted_stock?.map((stockRow, index) => <div className="ops-muted" key={index}>SO: {stockRow.name} {qty(stockRow.quantity)} {stockRow.unit}</div>)}</td><td>{item.stock_requires_review ? "Perlu konversi · isi Qty manual" : qty(item.recommended_po_qty)}</td>
+                <td><strong>{item.item_name}</strong>{findActiveItemSplitPo(item, row.date) && <div><span className="ops-stock-badge ops-stock-covered">✓ PO sendiri sudah ada</span></div>}</td><td>{qty(item.planned_qty)}</td><td><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>{item.unconverted_stock?.map((stockRow, index) => <div className="ops-muted" key={index}>SO: {stockRow.name} {qty(stockRow.quantity)} {stockRow.unit}</div>)}</td><td>{qty(item.recommended_po_qty)}{item.stock_requires_review && <div className="ops-muted">Stok beda satuan: sesuaikan di Gudang.</div>}</td>
                 <td><PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(findActiveItemSplitPo(item, row.date))} title={`${item.item_name} ${row.date}`} onChange={(value) => updateRangeItem(row.date, item.planning_snapshot_item_id, { po_qty: value })} /></td><td>{item.unit || "-"}</td>
               </tr>)}
               {!row.items.length && <tr><td colSpan="7" className="ops-empty-cell">Tidak ada item yang terhubung ke vendor {rangeVendor} pada tanggal ini.</td></tr>}
