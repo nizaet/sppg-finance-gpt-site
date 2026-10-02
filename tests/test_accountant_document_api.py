@@ -82,6 +82,35 @@ def test_same_amount_on_multiple_bank_rows_is_not_an_approval_match() -> None:
     assert all(row["matchedMakerId"] is None and not row["willApprove"] for row in rows)
 
 
+def test_wrapped_payroll_reference_groups_two_paid_transfers() -> None:
+    reference = api._bank_reference("DIAH MAULIDIAH GJ/2026/10\n/7", "2026")
+    assert reference == "GJ/2026/10/7"
+    makers = [{"maker_id": 147, "site": "CEMPLANG", "reference_number": reference,
+               "amount": 10_000_000, "maker_status": "PAID", "approval_status": "APPROVED"}]
+    parsed = {"transactions": [
+        {"transaction_id": "BANK-DIAH", "reference_number": reference, "amount": 5_000_000, "status": "SUCCESS"},
+        {"transaction_id": "BANK-APRIYA", "reference_number": reference, "amount": 5_000_000, "status": "SUCCESS"},
+        {"transaction_id": "BANK-PAYROLL", "amount": 30_925_000, "status": "SUCCESS", "aggregate_transfer": True},
+    ]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert [row["matchedMakerId"] for row in rows] == [147, 147, None]
+    assert [row["decision"] for row in rows] == ["ALREADY_PAID", "ALREADY_PAID", "AGGREGATE_TRANSFER"]
+    assert all(not row["willApprove"] for row in rows)
+
+
+def test_partial_payroll_does_not_approve_pending_maker() -> None:
+    makers = [{"maker_id": 147, "site": "CEMPLANG", "reference_number": "GJ/2026/10/7",
+               "amount": 10_000_000, "maker_status": "PENDING", "approval_status": "PENDING"}]
+    parsed = {"transactions": [
+        {"transaction_id": "BANK-A", "reference_number": "GJ/2026/10/7", "amount": 5_000_000, "status": "SUCCESS"},
+        {"transaction_id": "BANK-B", "reference_number": "GJ/2026/10/7", "amount": 5_000_000, "status": "SUCCESS"},
+    ]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert all(row["matchedMakerId"] is None and not row["willApprove"] for row in rows)
+
+
 def test_mandiri_status_pdf_without_time_reads_every_wrapped_row() -> None:
     # Actual Jasper/BNI exports put Reference No. directly after the date, not
     # after a clock value.  The beneficiary reference year can be wrapped into
