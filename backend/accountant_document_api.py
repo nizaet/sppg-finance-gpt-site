@@ -659,6 +659,11 @@ def _bank_reference(block: str, fallback_year: str | None = None) -> str | None:
     ``43/OP/DMM/IX/2`` + ``026``).  Keeping this deterministic avoids losing a
     safe exact match merely because the visual table is narrow.
     """
+    # Payroll references use a different structure from invoice references,
+    # and the final "/7" often appears on the next line of the bank table.
+    payroll = re.search(r"\b(GJ\s*/\s*20\d{2}\s*/\s*\d{1,2}\s*/\s*\d{1,3})\b", block, re.I)
+    if payroll:
+        return re.sub(r"\s+", "", payroll.group(1)).upper()
     match = re.search(
         r"(?<!\d)(\d{1,4}\s*/\s*[A-Z]{2,12}\s*/\s*[A-Z]{2,12}\s*/\s*"
         r"[IVXLCDM]{1,8}\s*/)",
@@ -805,14 +810,18 @@ def _ref(value: Any) -> str:
 def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[str, Any]]:
     makers = _maker_candidates(site)
     output = []
+    transactions = [raw for raw in (parsed.get("transactions") or []) if isinstance(raw, dict)]
     amount_counts = Counter(
         round(amount, 2)
-        for raw in (parsed.get("transactions") or []) if isinstance(raw, dict)
+        for raw in transactions
         if (amount := _number(raw.get("amount"))) is not None
     )
-    for raw in parsed.get("transactions") or []:
-        if not isinstance(raw, dict):
-            continue
+    reference_groups: dict[str, list[dict[str, Any]]] = {}
+    for raw in transactions:
+        key = _ref(raw.get("reference_number"))
+        if key:
+            reference_groups.setdefault(key, []).append(raw)
+    for raw in transactions:
         reference = str(raw.get("reference_number") or "").strip()
         amount = _number(raw.get("amount"))
         status = str(raw.get("status") or "UNKNOWN").upper()
@@ -831,6 +840,20 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
         method, confidence, match = None, 0.0, None
         if len(exact) == 1:
             method, confidence, match = "REFERENCE_AMOUNT" if len(reference_hits) > 1 else "REFERENCE_EXACT", 1.0, exact[0]
+        elif len(reference_hits) == 1 and amount is not None:
+            group = reference_groups.get(_ref(reference), [])
+            group_amounts = [_number(item.get("amount")) for item in group]
+            transaction_ids = [item.get("transaction_id") for item in group]
+            candidate = reference_hits[0]
+            if (len(group) > 1 and all(value is not None for value in group_amounts)
+                    and all(str(item.get("status") or "").upper() == "SUCCESS" for item in group)
+                    and all(transaction_ids) and len(set(transaction_ids)) == len(group)
+                    and abs(sum(group_amounts) - float(candidate.get("amount") or 0)) < 0.01
+                    and str(candidate.get("maker_status") or "").upper() == "PAID"
+                    and str(candidate.get("approval_status") or "").upper() == "APPROVED"):
+                # Only identify an already-paid Maker. Never approve a pending
+                # Maker from individual partial rows as separate transactions.
+                method, confidence, match = "REFERENCE_GROUP_PAID", 1.0, candidate
         elif not reference_hits and amount is not None and not raw.get("aggregate_transfer") and amount_counts[round(amount, 2)] == 1:
             amount_hits = [m for m in makers if abs(float(m.get("amount") or 0) - amount) < 0.01]
             if len(amount_hits) == 1:
