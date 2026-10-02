@@ -425,6 +425,16 @@ function aggregateRangePoItems(candidates) {
   return Array.from(grouped.values());
 }
 
+function rangePoCode(site, firstDate, lastDate, vendor, candidates, isAdditional) {
+  const dates = firstDate === lastDate
+    ? firstDate.replaceAll("-", "")
+    : `${firstDate.replaceAll("-", "")}-${lastDate.replaceAll("-", "")}`;
+  const base = `PO-${site}-${dates}-${vendor}`;
+  if (!isAdditional) return base;
+  const itemIds = candidates.flatMap((row) => row.selected.map((item) => `${row.date.replaceAll("-", "")}-${item.planning_snapshot_item_id || poItemSlug(item.item_name)}`)).sort();
+  return `${base}-TAMBAHAN-${itemIds.join("-").slice(0, 48)}`;
+}
+
 export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [distributionDate, setDistributionDate] = useState(today());
   const [cookingDate, setCookingDate] = useState(today());
@@ -460,6 +470,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [rangeVendor, setRangeVendor] = useState("WIKIAN");
   const [rangeRows, setRangeRows] = useState([]);
   const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeActionFeedback, setRangeActionFeedback] = useState(null);
   const [viewingPo, setViewingPo] = useState(null);
   const [reminderActionKey, setReminderActionKey] = useState("");
   const [stockCheckDialog, setStockCheckDialog] = useState(null);
@@ -1237,6 +1248,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const loadRange = async () => {
+    setRangeActionFeedback(null);
     const dates = dateRange(rangeFrom, rangeTo, 8);
     if (!dates.length) {
       setError("Rentang tanggal tidak valid.");
@@ -1250,7 +1262,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const rows = await Promise.all(dates.map(async (date) => {
+      const [rows] = await Promise.all([Promise.all(dates.map(async (date) => {
         const [snapshots, stock, cooperative] = await Promise.all([
           operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate: date, activeOnly: true }),
           operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: date, cookingDate: shiftDate(date, -1), sameDayStockBeforeCooking: true }),
@@ -1262,7 +1274,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         const items = draftItemsForSnapshot(detail, stock?.items || [], cooperative?.items || [], activeSite)
           .filter((item) => item.vendor_code === rangeVendor);
         return { date, snapshot: detail, items };
-      }));
+      })), refreshPurchaseOrders().catch(() => null)]);
       setRangeRows(rows);
       const count = rows.reduce((sum, row) => sum + row.items.length, 0);
       setMessage(`${count} item ${rangeVendor} ditarik dari ${rows.filter((row) => row.snapshot).length} tanggal planning. Qty masih dapat diedit sebelum dibuat menjadi PO.`);
@@ -1281,67 +1293,75 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createRangeDrafts = async () => {
-    const candidates = rangeRows.map((row) => ({
-      ...row,
-      selected: row.items.filter((item) => !item.excluded && Number(item.po_qty || 0) > 0 && !findActiveItemSplitPo(item, row.date)),
-    })).filter((row) => row.snapshot && row.selected.length);
-    if (!candidates.length) {
-      setError("Tidak ada item rentang yang dipilih untuk dibuatkan PO.");
-      return;
-    }
-    const existingCoverage = candidates
-      .map((row) => ({ date: row.date, po: activePoByVendorDate.get(`${rangeVendor}|${row.date}`) }))
-      .filter((row) => row.po);
-    if (existingCoverage.length) {
-      const labels = existingCoverage.map((row) => `${row.date}: ${row.po.po_code} (${row.po.status})`).join("; ");
-      setError(`PO tidak dibuat ulang karena cakupan sudah ada: ${labels}. Buka PO tersebut untuk edit atau buat revisi, agar qty tidak tergandakan.`);
-      return;
-    }
-    const firstDate = candidates[0].date;
-    const lastDate = candidates[candidates.length - 1].date;
-    const aggregateItems = aggregateRangePoItems(candidates);
-    if (!window.confirm(
-      `Buat 1 DRAFT PO GABUNGAN ${rangeVendor} untuk ${candidates.length} tanggal distribusi?\n\n` +
-      `${aggregateItems.length} jenis barang akan dijumlahkan dalam satu pesan vendor. Rincian qty per tanggal tetap disimpan untuk pengingat, audit, dan penerimaan.`
-    )) return;
-    setRangeLoading(true);
+    setRangeActionFeedback(null);
     setError("");
-    setMessage("");
+    const showRangeError = (detail) => {
+      setError(detail);
+      setRangeActionFeedback({ kind: "error", detail });
+    };
     try {
-      const codeDate = firstDate === lastDate
-        ? firstDate.replaceAll("-", "")
-        : `${firstDate.replaceAll("-", "")}-${lastDate.replaceAll("-", "")}`;
-      const result = await operationsApi.createSplitPurchaseOrder({
-        po_code: `PO-${activeSite}-${codeDate}-${rangeVendor}`,
-        site: activeSite,
-        vendor_code: rangeVendor,
-        distribution_date: firstDate,
-        cooking_at: `${shiftDate(firstDate, -1)}T03:00:00+07:00`,
-        source_planning_snapshot_id: candidates[0].snapshot.id,
-        status: "DRAFT",
-        items: aggregateItems,
-        coverage: candidates.map((row) => ({
-          distribution_date: row.date,
-          cooking_date: shiftDate(row.date, -1),
-          source_planning_snapshot_id: row.snapshot.id,
-          items: row.selected.map(poItemPayload),
-        })),
-      });
-      if (result?.alreadyExists) {
-        await refreshPurchaseOrders();
-        const dates = (result.duplicateCoverageDates || []).join(", ") || `${firstDate} s.d. ${lastDate}`;
-        setMessage(`PO gabungan sudah ada: ${result.poCode} rev ${result.revisionNo} (${result.status}) untuk ${dates}. Tidak dibuat duplikat.`);
+      const candidates = rangeRows.map((row) => ({
+        ...row,
+        selected: row.items.filter((item) => !item.excluded && Number(item.po_qty || 0) > 0 && !findActivePoForItem(item, row.date)),
+      })).filter((row) => row.snapshot && row.selected.length);
+      if (!candidates.length) {
+        showRangeError("Tidak ada item tersisa untuk PO gabungan. Isi PO Qty di atas 0, atau buka PO yang sudah mencakup item terpilih.");
         return;
       }
-      await refreshPurchaseOrders();
-      const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 });
-      setReminders(reminderData?.items || []);
-      setRemindersPulled(true);
-      setMessage(`1 DRAFT PO gabungan ${result.poCode} berhasil dibuat. Cakupan ${candidates.length} hari: ${candidates.map((row) => row.date).join(", ")}.`);
+      const existingCoverage = candidates
+        .map((row) => ({ date: row.date, po: activePoByVendorDate.get(`${rangeVendor}|${row.date}`) }))
+        .filter((row) => row.po);
+      const firstDate = candidates[0].date;
+      const lastDate = candidates[candidates.length - 1].date;
+      const aggregateItems = aggregateRangePoItems(candidates);
+      if (!window.confirm(
+        `Buat 1 DRAFT PO GABUNGAN ${rangeVendor} untuk ${candidates.length} tanggal distribusi${existingCoverage.length ? " sebagai PO tambahan item tersisa" : ""}?\n\n` +
+        `${aggregateItems.length} jenis barang akan dijumlahkan dalam satu pesan vendor. Item yang sudah tercakup PO aktif tidak ikut lagi. Rincian qty per tanggal tetap disimpan untuk pengingat, audit, dan penerimaan.`
+      )) return;
+      setRangeLoading(true);
+      setMessage("");
+      try {
+        const result = await operationsApi.createSplitPurchaseOrder({
+          po_code: rangePoCode(activeSite, firstDate, lastDate, rangeVendor, candidates, existingCoverage.length > 0),
+          site: activeSite,
+          vendor_code: rangeVendor,
+          distribution_date: firstDate,
+          cooking_at: `${shiftDate(firstDate, -1)}T03:00:00+07:00`,
+          source_planning_snapshot_id: candidates[0].snapshot.id,
+          status: "DRAFT",
+          items: aggregateItems,
+          coverage: candidates.map((row) => ({
+            distribution_date: row.date,
+            cooking_date: shiftDate(row.date, -1),
+            source_planning_snapshot_id: row.snapshot.id,
+            items: row.selected.map(poItemPayload),
+          })),
+        });
+        if (result?.alreadyExists) {
+          const dates = (result.duplicateCoverageDates || []).join(", ") || `${firstDate} s.d. ${lastDate}`;
+          const detail = `PO gabungan sudah ada: ${result.poCode} rev ${result.revisionNo} (${result.status}) untuk ${dates}. Tidak dibuat duplikat.`;
+          setMessage(detail);
+          setRangeActionFeedback({ kind: "success", detail });
+        } else {
+          const detail = `1 DRAFT PO gabungan ${result.poCode} berhasil dibuat. Cakupan ${candidates.length} hari: ${candidates.map((row) => row.date).join(", ")}.`;
+          setMessage(detail);
+          setRangeActionFeedback({ kind: "success", detail });
+        }
+        // The PO is already committed. A failed list/reminder refresh must
+        // never turn its success message into a false "create failed" error.
+        await refreshPurchaseOrders().catch(() => {});
+        const reminderData = await operationsApi.getPoReminders({ site: activeSite, date: today(), horizonDays: 2 }).catch(() => null);
+        if (reminderData) {
+          setReminders(reminderData.items || []);
+          setRemindersPulled(true);
+        }
+      } catch (err) {
+        showRangeError(err.message || "Gagal membuat PO rentang tanggal");
+      } finally {
+        setRangeLoading(false);
+      }
     } catch (err) {
-      setError(err.message || "Gagal membuat PO rentang tanggal");
-    } finally {
-      setRangeLoading(false);
+      showRangeError(err.message || "Gagal memeriksa PO gabungan");
     }
   };
 
@@ -1561,22 +1581,23 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
           <Layers3 size={32} />
         </div>
         <div className="ops-form-grid">
-          <label>Dari tanggal<input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} /></label>
-          <label>Sampai tanggal<input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} /></label>
-          <label>Vendor<select value={rangeVendor} onChange={(e) => { setRangeVendor(e.target.value); setRangeRows([]); }}>{vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}</select></label>
+          <label>Dari tanggal<input type="date" value={rangeFrom} onChange={(e) => { setRangeFrom(e.target.value); setRangeRows([]); setRangeActionFeedback(null); }} /></label>
+          <label>Sampai tanggal<input type="date" value={rangeTo} onChange={(e) => { setRangeTo(e.target.value); setRangeRows([]); setRangeActionFeedback(null); }} /></label>
+          <label>Vendor<select value={rangeVendor} onChange={(e) => { setRangeVendor(e.target.value); setRangeRows([]); setRangeActionFeedback(null); }}>{vendorOptions.map((vendor) => <option key={vendor.code} value={vendor.code}>{vendor.name}</option>)}</select></label>
         </div>
         <div className="ops-chat-actions">
           <button type="button" onClick={loadRange} disabled={rangeLoading}><RefreshCw size={15} /> {rangeLoading ? "Menarik…" : "Tarik Tanggal Terpilih"}</button>
           <button type="button" onClick={createRangeDrafts} disabled={rangeLoading || !rangeRows.some((row) => row.items.some((item) => !item.excluded && Number(item.po_qty || 0) > 0))}><ShoppingCart size={15} /> Buat 1 Draft PO Gabungan</button>
         </div>
+        {rangeActionFeedback && <div className={rangeActionFeedback.kind === "error" ? "ops-error" : "ops-success"} role="alert">{rangeActionFeedback.detail}</div>}
         {rangeRows.map((row) => (
           <div className="ops-draft-group" key={row.date}>
             <div className="ops-draft-group-head"><div><strong>Distribusi {row.date}</strong><span>{row.snapshot ? `${row.items.length} item ${rangeVendor}` : "Planning belum ada"}</span></div></div>
             {row.snapshot && <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Ikut PO?</th><th>Item</th><th>Planning</th><th>Stok</th><th>Rekomendasi</th><th>PO Qty — EDIT</th><th>Unit</th></tr></thead><tbody>
               {row.items.map((item) => <tr key={`${row.date}-${item.planning_snapshot_item_id}`} className={Number(item.stock_qty || 0) > 0 ? !item.stock_requires_review && Number(item.recommended_po_qty || 0) <= 0 ? "ops-row-covered" : "ops-row-has-stock" : ""}>
                 <td><button type="button" onClick={() => updateRangeItem(row.date, item.planning_snapshot_item_id, { excluded: !item.excluded })}>{item.excluded ? <RotateCcw size={14} /> : <XCircle size={14} />} {item.excluded ? "Kembalikan" : "Hapus"}</button></td>
-                <td><strong>{item.item_name}</strong>{findActiveItemSplitPo(item, row.date) && <div><span className="ops-stock-badge ops-stock-covered">✓ PO sendiri sudah ada</span></div>}</td><td>{qty(item.planned_qty)}</td><td><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>{item.unconverted_stock?.map((stockRow, index) => <div className="ops-muted" key={index}>SO: {stockRow.name} {qty(stockRow.quantity)} {stockRow.unit}</div>)}</td><td>{qty(item.recommended_po_qty)}{item.stock_requires_review && <div className="ops-muted">Stok beda satuan: sesuaikan di Gudang.</div>}</td>
-                <td><PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(findActiveItemSplitPo(item, row.date))} title={`${item.item_name} ${row.date}`} onChange={(value) => updateRangeItem(row.date, item.planning_snapshot_item_id, { po_qty: value })} /></td><td>{item.unit || "-"}</td>
+                <td><strong>{item.item_name}</strong>{findActivePoForItem(item, row.date) && <div><span className="ops-stock-badge ops-stock-covered">✓ SUDAH PO</span></div>}</td><td>{qty(item.planned_qty)}</td><td><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>{item.unconverted_stock?.map((stockRow, index) => <div className="ops-muted" key={index}>SO: {stockRow.name} {qty(stockRow.quantity)} {stockRow.unit}</div>)}</td><td>{qty(item.recommended_po_qty)}{item.stock_requires_review && <div className="ops-muted">Stok beda satuan: sesuaikan di Gudang.</div>}</td>
+                <td><PoQtyMath value={item.po_qty} disabled={item.excluded || Boolean(findActivePoForItem(item, row.date))} title={`${item.item_name} ${row.date}`} onChange={(value) => updateRangeItem(row.date, item.planning_snapshot_item_id, { po_qty: value })} /></td><td>{item.unit || "-"}</td>
               </tr>)}
               {!row.items.length && <tr><td colSpan="7" className="ops-empty-cell">Tidak ada item yang terhubung ke vendor {rangeVendor} pada tanggal ini.</td></tr>}
             </tbody></table></div>}
