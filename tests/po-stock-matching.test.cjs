@@ -76,5 +76,5 @@ const priorOrder = {status:'SENT',coverage_dates:['2026-10-05'],item_refs:[{plan
 assert.equal(env.poCoversItem(priorOrder,range[0].selected[0],'2026-10-05'),true,'an already ordered date/item must be excluded');
 assert.equal(env.poCoversItem(priorOrder,range[1].selected[0],'2026-10-06'),false,'a different remaining date/item stays eligible');
 assert.equal(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,false),'PO-CEMPLANG-20261005-20261007-WIKIAN');
-assert.match(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,true),/-SISA-/,'new items can use a separate draft without overwriting an existing PO');
+assert.match(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,true),/-TAMBAHAN-/,'new items can use a separate draft without overwriting an existing PO');
 console.log('PASS production PO stock matching: identity, units, aliases and zero remainder');
