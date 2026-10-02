@@ -37,6 +37,17 @@ def test_approval_does_not_approve_pending_bank_transaction() -> None:
     assert result[0]["willApprove"] is False
 
 
+def test_same_amount_on_multiple_bank_rows_is_not_an_approval_match() -> None:
+    makers = [{"maker_id": 14, "site": "CEMPLANG", "reference_number": "GJ/2026/10/7", "amount": 5_000_000, "maker_status": "PENDING", "approval_status": "PENDING"}]
+    parsed = {"transactions": [
+        {"transaction_id": "BANK-A", "amount": 5_000_000, "status": "SUCCESS"},
+        {"transaction_id": "BANK-B", "amount": 5_000_000, "status": "SUCCESS"},
+    ]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert all(row["matchedMakerId"] is None and not row["willApprove"] for row in rows)
+
+
 def test_mandiri_status_pdf_without_time_reads_every_wrapped_row() -> None:
     # Actual Jasper/BNI exports put Reference No. directly after the date, not
     # after a clock value.  The beneficiary reference year can be wrapped into
@@ -55,6 +66,52 @@ Reference No.
         ("20260911145919843671", "43/OP/DMM/IX/2026", 8_948_000.0, "SUCCESS"),
         ("20260911145755843101", "9/BPJS/DMM/IX/2026", 789_599.0, "SUCCESS"),
     ]
+
+
+def test_pdfium_bank_status_reads_wrapped_header_amounts_and_all_rows() -> None:
+    text = """Transaction Status
+Creation Date Transaction
+ID Document No Status
+Sep 28,
+2026
+13:18:21
+(GMT +7)
+202609281
+318524813
+202609281
+318524813
+Success Single Transfer To Other Bank IDR 5,000,000.0
+0
+2015788750 MITRA IDR 4,993,500.0
+0 BNI 13/PC/DMM/IX/
+Oct 02,
+2026
+11:51:59
+(GMT +7)
+202610021
+151709417
+202610021
+151709417
+Success Payroll By File Upload IDR 30,925,000.
+00
+Multiple Multiple
+"""
+    rows = api._bank_status_transactions(text)
+    assert len(rows) == 2
+    assert rows[0]["transaction_id"] == "202609281318524813"
+    assert rows[0]["reference_number"] == "13/PC/DMM/IX/2026"
+    assert rows[0]["amount"] == 5_000_000
+    assert rows[1]["amount"] == 30_925_000
+    assert rows[1]["aggregate_transfer"] is True
+    assert api._ref("13/PC/DMM/IX/26") == api._ref(rows[0]["reference_number"])
+
+    # A payroll file is a total for multiple recipients; a coincidentally
+    # equal Maker amount is insufficient evidence to approve one recipient.
+    makers = [{"maker_id": 154, "site": "CEMPLANG", "reference_number": "111/OP/DMM/IX/2026", "amount": 30_925_000, "maker_status": "PENDING", "approval_status": "PENDING"}]
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        matches = api._match_transactions({"transactions": rows}, "CEMPLANG")
+    assert matches[1]["matchedMakerId"] is None
+    assert matches[1]["willApprove"] is False
 
 
 def test_date_range_uses_period_end_as_invoice_date_without_false_fallback_warning() -> None:
