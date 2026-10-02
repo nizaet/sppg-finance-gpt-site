@@ -18,7 +18,7 @@ const ordered = [...plugins.filter(p => p.enforce === 'pre'), ...plugins.filter(
 const file = path.join(root, 'src/operations/OperationsPoPlanner.jsx');
 let source = fs.readFileSync(file, 'utf8');
 for (const plugin of ordered) { const result = plugin.transform?.(source, file); if (result) source = typeof result === 'string' ? result : result.code; }
-const env = {}; vm.createContext(env);
+const env = { qty: v => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 }) }; vm.createContext(env);
 vm.runInContext(source.slice(source.indexOf('function normalize('), source.indexOf('export default function OperationsPoPlanner')), env);
 const stock = (item, rows) => env.stockForItem(item, env.buildStockLookup(rows));
 const row = (name, unit, amount, extra = {}) => ({ item_name: name, unit, available_for_po: amount, actual_balance: amount, projected_balance: amount, ...extra });
@@ -64,4 +64,17 @@ assert.equal(stock({item_name:'Saus tiram Saori',unit:'kg'}, [row('Saus Tiram','
 assert.equal(stock({item_name:'Lada Putih Ladaku',unit:'kg'}, [row('Lada Putih','pcs',1)]).balance,1);
 assert.equal(stock({item_name:'Daun Salam',unit:'ikat'}, [row('Daun Salam','kg',0.3),row('Daun Salam','ikat',1)]).balance,1);
 assert.equal(stock({item_name:'Beras Putih',unit:'kg'}, [row('Beras','kg',7,{available_for_po:0})]).balance,0);
+const range = [
+  {date:'2026-10-05',selected:[{planning_snapshot_item_id:11,item_name:'Daging Ayam Fillet Dada',planned_qty:175,po_qty:155,unit:'kg'}]},
+  {date:'2026-10-06',selected:[{planning_snapshot_item_id:12,item_name:'Daging Ayam Potong',planned_qty:258,po_qty:258,unit:'kg'}]},
+  {date:'2026-10-07',selected:[{planning_snapshot_item_id:13,item_name:'Daging Ayam Fillet Dada',planned_qty:8,po_qty:8,unit:'kg'}]},
+];
+const combined = env.aggregateRangePoItems(range);
+assert.equal(combined.length,2,'the three selected dates produce two aggregated PO items');
+assert.equal(combined.find(item => item.item_name === 'Daging Ayam Fillet Dada').po_qty,163);
+const priorOrder = {status:'SENT',coverage_dates:['2026-10-05'],item_refs:[{planning_snapshot_item_id:11,item_name:'Daging Ayam Fillet Dada',unit:'kg'}]};
+assert.equal(env.poCoversItem(priorOrder,range[0].selected[0],'2026-10-05'),true,'an already ordered date/item must be excluded');
+assert.equal(env.poCoversItem(priorOrder,range[1].selected[0],'2026-10-06'),false,'a different remaining date/item stays eligible');
+assert.equal(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,false),'PO-CEMPLANG-20261005-20261007-WIKIAN');
+assert.match(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,true),/-SISA-/,'new items can use a separate draft without overwriting an existing PO');
 console.log('PASS production PO stock matching: identity, units, aliases and zero remainder');
