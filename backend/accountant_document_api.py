@@ -816,7 +816,7 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
         reference = str(raw.get("reference_number") or "").strip()
         amount = _number(raw.get("amount"))
         status = str(raw.get("status") or "UNKNOWN").upper()
-        exact = [
+        reference_hits = [
             m for m in makers
             if _ref(reference) and _ref(m.get("reference_number"))
             and (
@@ -825,13 +825,35 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
                 or _ref(reference) in _ref(m.get("reference_number"))
             )
         ]
+        # Invoice numbers can be reused for different payment categories.
+        # A bank row must also agree on the amount before choosing a Maker.
+        exact = [m for m in reference_hits if amount is None or abs(float(m.get("amount") or 0) - amount) < 0.01]
         method, confidence, match = None, 0.0, None
         if len(exact) == 1:
-            method, confidence, match = "REFERENCE_EXACT", 1.0, exact[0]
-        elif amount is not None and not raw.get("aggregate_transfer") and amount_counts[round(amount, 2)] == 1:
+            method, confidence, match = "REFERENCE_AMOUNT" if len(reference_hits) > 1 else "REFERENCE_EXACT", 1.0, exact[0]
+        elif not reference_hits and amount is not None and not raw.get("aggregate_transfer") and amount_counts[round(amount, 2)] == 1:
             amount_hits = [m for m in makers if abs(float(m.get("amount") or 0) - amount) < 0.01]
             if len(amount_hits) == 1:
                 method, confidence, match = "AMOUNT_UNIQUE", 0.8, amount_hits[0]
+        already_paid = bool(match and str(match.get("maker_status") or "").upper() == "PAID"
+                            and str(match.get("approval_status") or "").upper() == "APPROVED")
+        will_approve = bool(match and status == "SUCCESS" and confidence >= 0.8 and not already_paid)
+        if already_paid:
+            decision = "ALREADY_PAID"
+        elif will_approve:
+            decision = "READY_TO_APPROVE"
+        elif status != "SUCCESS":
+            decision = "BANK_NOT_SUCCESS"
+        elif len(reference_hits) > 1 and not exact:
+            decision = "REFERENCE_AMOUNT_MISMATCH"
+        elif len(exact) > 1:
+            decision = "AMBIGUOUS_REFERENCE"
+        elif reference_hits:
+            decision = "AMOUNT_MISMATCH"
+        elif raw.get("aggregate_transfer"):
+            decision = "AGGREGATE_TRANSFER"
+        else:
+            decision = "NO_MAKER"
         output.append({
             "referenceNumber": reference or None, "beneficiary": raw.get("beneficiary"),
             "amount": amount, "status": status, "transactionDate": _iso_date(raw.get("transaction_date")),
@@ -839,10 +861,9 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
             "matchedSite": match.get("site") if match else None,
             "matchedReference": match.get("reference_number") if match else None,
             "currentApprovalStatus": match.get("approval_status") if match else None,
+            "currentMakerStatus": match.get("maker_status") if match else None,
             "matchMethod": method, "matchConfidence": confidence,
-            "willApprove": bool(match and status == "SUCCESS" and confidence >= 0.8
-                                and not (str(match.get("maker_status") or "").upper() == "PAID"
-                                         and str(match.get("approval_status") or "").upper() == "APPROVED")),
+            "decision": decision, "willApprove": will_approve,
         })
     return output
 

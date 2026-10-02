@@ -37,6 +37,40 @@ def test_approval_does_not_approve_pending_bank_transaction() -> None:
     assert result[0]["willApprove"] is False
 
 
+def test_same_invoice_number_uses_amount_to_select_pending_maker() -> None:
+    makers = [
+        {"maker_id": 151, "site": "CEMPLANG", "reference_number": "111/OP/DMM/IX/26", "amount": 5_755_000, "maker_status": "PENDING", "approval_status": "PENDING"},
+        {"maker_id": 154, "site": "CEMPLANG", "reference_number": "111/OP/DMM/IX/26", "amount": 30_925_000, "maker_status": "PENDING", "approval_status": "PENDING"},
+    ]
+    parsed = {"transactions": [{"reference_number": "111/OP/DMM/IX/2026", "amount": 5_755_000, "status": "SUCCESS"}]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert rows[0]["matchedMakerId"] == 151
+    assert rows[0]["matchMethod"] == "REFERENCE_AMOUNT"
+    assert rows[0]["decision"] == "READY_TO_APPROVE"
+    assert rows[0]["willApprove"] is True
+
+
+def test_successful_bank_row_for_already_paid_maker_is_not_approved_again() -> None:
+    makers = [{"maker_id": 152, "site": "CEMPLANG", "reference_number": "141/BB/MMD/X/26", "amount": 28_778_700, "maker_status": "PAID", "approval_status": "APPROVED"}]
+    parsed = {"transactions": [{"reference_number": "141/BB/MMD/X/2026", "amount": 28_778_700, "status": "SUCCESS"}]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert rows[0]["matchedMakerId"] == 152
+    assert rows[0]["decision"] == "ALREADY_PAID"
+    assert rows[0]["willApprove"] is False
+
+
+def test_reference_match_with_wrong_amount_is_not_approved() -> None:
+    makers = [{"maker_id": 151, "site": "CEMPLANG", "reference_number": "111/OP/DMM/IX/26", "amount": 5_755_000, "maker_status": "PENDING", "approval_status": "PENDING"}]
+    parsed = {"transactions": [{"reference_number": "111/OP/DMM/IX/2026", "amount": 30_925_000, "status": "SUCCESS"}]}
+    with patch.object(api, "_maker_candidates", return_value=makers):
+        rows = api._match_transactions(parsed, "CEMPLANG")
+    assert rows[0]["matchedMakerId"] is None
+    assert rows[0]["decision"] == "AMOUNT_MISMATCH"
+    assert rows[0]["willApprove"] is False
+
+
 def test_same_amount_on_multiple_bank_rows_is_not_an_approval_match() -> None:
     makers = [{"maker_id": 14, "site": "CEMPLANG", "reference_number": "GJ/2026/10/7", "amount": 5_000_000, "maker_status": "PENDING", "approval_status": "PENDING"}]
     parsed = {"transactions": [
