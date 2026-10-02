@@ -432,7 +432,7 @@ function rangePoCode(site, firstDate, lastDate, vendor, candidates, isAdditional
   const base = `PO-${site}-${dates}-${vendor}`;
   if (!isAdditional) return base;
   const itemIds = candidates.flatMap((row) => row.selected.map((item) => `${row.date.replaceAll("-", "")}-${item.planning_snapshot_item_id || poItemSlug(item.item_name)}`)).sort();
-  return `${base}-SISA-${itemIds.join("-").slice(0, 48)}`;
+  return `${base}-TAMBAHAN-${itemIds.join("-").slice(0, 48)}`;
 }
 
 export default function OperationsPoPlanner({ fixedSite = "" }) {
@@ -1262,7 +1262,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setError("");
     setMessage("");
     try {
-      const [rows, poData] = await Promise.all([Promise.all(dates.map(async (date) => {
+      const [rows] = await Promise.all([Promise.all(dates.map(async (date) => {
         const [snapshots, stock, cooperative] = await Promise.all([
           operationsApi.getPlanningSnapshots({ site: activeSite, distributionDate: date, activeOnly: true }),
           operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: date, cookingDate: shiftDate(date, -1), sameDayStockBeforeCooking: true }),
@@ -1274,9 +1274,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         const items = draftItemsForSnapshot(detail, stock?.items || [], cooperative?.items || [], activeSite)
           .filter((item) => item.vendor_code === rangeVendor);
         return { date, snapshot: detail, items };
-      })), operationsApi.getPurchaseOrders({ site: activeSite, limit: 100 }).catch(() => null)]);
+      })), refreshPurchaseOrders().catch(() => null)]);
       setRangeRows(rows);
-      if (poData) setPurchaseOrders(poData.items || []);
       const count = rows.reduce((sum, row) => sum + row.items.length, 0);
       setMessage(`${count} item ${rangeVendor} ditarik dari ${rows.filter((row) => row.snapshot).length} tanggal planning. Qty masih dapat diedit sebelum dibuat menjadi PO.`);
     } catch (err) {
