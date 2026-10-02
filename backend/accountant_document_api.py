@@ -6,6 +6,7 @@ import io
 import json
 import re
 import urllib.parse
+from collections import Counter
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -680,7 +681,7 @@ def _bank_status_transactions(text: str) -> list[dict[str, Any]]:
     It is deliberately used only for bank status PDFs; ordinary proof images
     continue through the document AI parser.
     """
-    if "Transaction Status" not in text or "Transaction ID" not in text:
+    if not re.search(r"Transaction\s+Status", text, re.I) or not re.search(r"Transaction\s+ID", text, re.I):
         return []
     start_pattern = (
         r"(?=\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+"
@@ -704,7 +705,12 @@ def _bank_status_transactions(text: str) -> list[dict[str, Any]]:
             compact,
             re.I,
         )
-        amount = _number(amount_match.group(1)) if amount_match else None
+        # Bank PDFium wraps the final decimal digits onto the next line:
+        # "28,781,200. 00". Its comma is a thousands separator, whereas
+        # the generic _number() assumes Indonesian decimal commas.
+        amount_text = re.sub(r"\s+", "", amount_match.group(1)) if amount_match else ""
+        amount = (float(amount_text.replace(",", ""))
+                  if re.fullmatch(r"\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?", amount_text) else None)
         if amount is None:
             continue
         date_match = re.match(
@@ -717,13 +723,15 @@ def _bank_status_transactions(text: str) -> list[dict[str, Any]]:
             if month:
                 transaction_date = date(int(date_match.group(3)), month, int(date_match.group(2))).isoformat()
         ids = re.findall(r"\b20\d{10,}\b", compact)
+        split_id = re.search(r"\b(20\d{7})\s+(\d{9})\b", compact)
         rows.append({
-            "transaction_id": ids[0] if ids else None,
+            "transaction_id": ids[0] if ids else "".join(split_id.groups()) if split_id else None,
             "reference_number": _bank_reference(block, date_match.group(3) if date_match else None),
             "beneficiary": None,
             "amount": amount,
             "status": status,
             "transaction_date": transaction_date,
+            "aggregate_transfer": bool(re.search(r"Payroll\s+By\s+File\s+Upload", compact, re.I)),
         })
     return rows
 
@@ -787,12 +795,21 @@ def _maker_candidates(site: str | None) -> list[dict[str, Any]]:
 
 
 def _ref(value: Any) -> str:
-    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    reference = str(value or "").upper().strip()
+    # The bank export prints a four-digit year, while some Maker records use
+    # the same invoice reference with a two-digit year suffix.
+    reference = re.sub(r"/(\d{2})$", lambda match: "/20" + match.group(1), reference)
+    return re.sub(r"[^A-Z0-9]", "", reference)
 
 
 def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[str, Any]]:
     makers = _maker_candidates(site)
     output = []
+    amount_counts = Counter(
+        round(amount, 2)
+        for raw in (parsed.get("transactions") or []) if isinstance(raw, dict)
+        if (amount := _number(raw.get("amount"))) is not None
+    )
     for raw in parsed.get("transactions") or []:
         if not isinstance(raw, dict):
             continue
@@ -811,7 +828,7 @@ def _match_transactions(parsed: dict[str, Any], site: str | None) -> list[dict[s
         method, confidence, match = None, 0.0, None
         if len(exact) == 1:
             method, confidence, match = "REFERENCE_EXACT", 1.0, exact[0]
-        elif amount is not None:
+        elif amount is not None and not raw.get("aggregate_transfer") and amount_counts[round(amount, 2)] == 1:
             amount_hits = [m for m in makers if abs(float(m.get("amount") or 0) - amount) < 0.01]
             if len(amount_hits) == 1:
                 method, confidence, match = "AMOUNT_UNIQUE", 0.8, amount_hits[0]
