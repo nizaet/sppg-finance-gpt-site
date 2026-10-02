@@ -88,7 +88,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
           label: "Membaca file dari perangkat…",
         }),
       });
-      setProofPreview(data); reportMessage(`${data.transactionCount} transaksi terbaca; ${data.willApproveCount} Maker cocok dan siap ditandai PAID.`);
+      setProofPreview(data); reportMessage(`${data.transactionCount} transaksi terbaca; ${data.transactions.filter(x=>x.decision==="ALREADY_PAID").length} sudah PAID, ${data.willApproveCount} siap diapprove.`);
     } catch (e) { reportError(e.message || "Gagal membaca bukti approval"); }
     finally {
       window.clearInterval(progressTimer);
@@ -154,7 +154,7 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
     </section>
 
     <section className="ops-module">
-      <div className="ops-module-header"><div><span className="ops-kicker">BUKTI APPROVAL MASSAL</span><h3>Satu File untuk Beberapa Maker</h3><p>Sistem membaca seluruh transaksi dalam PDF/gambar, mencocokkan nomor referensi atau nilai unik, lalu menautkan satu link Drive ke semua Maker yang cocok. Transaksi Pending/Failed tidak diapprove.</p></div></div>
+      <div className="ops-module-header"><div><span className="ops-kicker">BUKTI APPROVAL MASSAL</span><h3>Satu File untuk Beberapa Maker</h3><p>Sistem membaca seluruh transaksi dalam PDF/gambar dan mencocokkan referensi serta nominal dengan Maker. Bukti disimpan untuk Maker yang baru diapprove; Maker yang sudah PAID tidak disinkronkan ulang.</p></div></div>
       <div className="ops-form-grid">
         <label>Site<select value={proofSite} onChange={e=>{setProofSite(e.target.value);setProofPreview(null);}}><option value="MAJA">MAJA</option><option value="CEMPLANG">CEMPLANG</option></select></label>
         <label>File bukti approval<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}} onInput={e=>{const picked=e.currentTarget.files?.[0]||null;setProofFile(picked);setProofPreview(null);}}/>{proofFile&&<small className="ops-file-ready">✓ File siap dibaca</small>}</label>
@@ -162,10 +162,10 @@ export default function AccountantDocumentPanel({ onChanged, reportError, report
       </div>
       {proofProgress&&<ReadProgress progress={proofProgress}/>}
       {proofPreview&&<div className="ops-parse-result">
-        <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.matchedCount} cocok · {proofPreview.willApproveCount} akan menjadi PAID</strong></div>
-        <div className="ops-notice">Periksa hasil di bawah, lalu tekan tombol hijau untuk menyetujui. Hanya Maker SUCCESS yang cocok dari PDF ini yang dikirim ke Akuntan.</div>
+        <div><CheckCircle2 size={16}/><strong>{proofPreview.transactionCount} transaksi · {proofPreview.transactions.filter(x=>x.decision==="ALREADY_PAID").length} sudah PAID · {proofPreview.willApproveCount} siap diapprove · {proofPreview.transactions.filter(x=>!x.matchedMakerId).length} perlu dicocokkan</strong></div>
+        <div className="ops-notice">SUCCESS berarti transfer berhasil di bank. Maker yang sudah PAID tidak perlu diapprove atau dikirim ulang ke Akuntan. Untuk nomor invoice ganda, sistem juga memeriksa nominal; transaksi yang belum cocok perlu diperiksa sebelum approval.</div>
         <div className="ops-row-actions"><button className="ops-approve-proof-button" type="button" onClick={saveProof} disabled={proofBusy||!proofPreview.willApproveCount}><CheckCircle2 size={14}/> {proofBusy?"Menyimpan approval…":`Approve hasil PDF & Sinkronkan ${proofPreview.willApproveCount} Maker`}</button></div>
-        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Tidak ditemukan"}</td><td>{x.willApprove?"APPROVE":"REVIEW / ABAIKAN"}</td></tr>)}</tbody></table></div>
+        <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Referensi Bukti</th><th>Nilai</th><th>Status Bank</th><th>Maker Cocok</th><th>Hasil</th></tr></thead><tbody>{proofPreview.transactions.map((x,i)=><tr key={i}><td>{x.referenceNumber||"-"}</td><td>{money(x.amount)}</td><td>{x.status}</td><td>{x.matchedMakerId?`#${x.matchedMakerId} · ${x.matchedReference}`:"Belum cocok"}</td><td>{({ALREADY_PAID:"SUDAH PAID / APPROVED",READY_TO_APPROVE:"SIAP APPROVE",BANK_NOT_SUCCESS:"STATUS BANK BELUM SUCCESS",REFERENCE_AMOUNT_MISMATCH:"NOMOR GANDA; NOMINAL BELUM COCOK",AMBIGUOUS_REFERENCE:"NOMOR DAN NOMINAL GANDA",AMOUNT_MISMATCH:"NOMINAL BERBEDA",AGGREGATE_TRANSFER:"TRANSFER MASSAL; CEK RINCIAN",NO_MAKER:"MAKER BELUM COCOK"})[x.decision]||(x.willApprove?"SIAP APPROVE":"PERLU DICEK")}</td></tr>)}</tbody></table></div>
       </div>}
       <div className="ops-secondary-sync-wrap">
         <p className="ops-secondary-sync-note">Sinkronisasi massal jarang digunakan. Tombol ini memproses semua Maker PAID pada site yang dipilih.</p>
