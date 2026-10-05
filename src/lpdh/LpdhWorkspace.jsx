@@ -70,11 +70,12 @@ function monthLabel(monthKey) {
   return new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, 1, 6)));
 }
 
-function MonthGrid({ monthKey, selectedDate, effectiveDates = [], onSelect, mode = "report" }) {
+function MonthGrid({ monthKey, selectedDate, effectiveDates = [], calendarItems = [], onSelect, mode = "report" }) {
   const [year, month] = monthKey.split("-").map(Number);
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const daysInMonth = new Date(year, month, 0).getDate();
   const effective = useMemo(() => new Set(effectiveDates), [effectiveDates]);
+  const statusMap = useMemo(() => Object.fromEntries((calendarItems || []).map((item) => [item.serviceDate, item])), [calendarItems]);
   const today = todayJakarta();
   const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => index < firstWeekday ? null : index - firstWeekday + 1);
 
@@ -85,17 +86,20 @@ function MonthGrid({ monthKey, selectedDate, effectiveDates = [], onSelect, mode
         if(!day) return <span className="lpdh-calendar-empty" key={`blank-${index}`}/>;
         const key=dateKey(year,month,day); const isEffective=effective.has(key); const selected=selectedDate===key; const isToday=today===key;
         const weekend=[0,6].includes(new Date(year,month-1,day).getDay());
+        const item=statusMap[key] || {};
+        const reportStatus=item.status || "EMPTY";
+        const statusLabel=reportStatus==="GENERATED"?"Sudah generate":reportStatus==="READY"?"Siap generate":reportStatus==="DRAFT"?"Draft":item.finalized?"Final kalkulator":"Belum diisi";
         return <button key={key} type="button" onClick={()=>onSelect(key)}
-          className={`lpdh-calendar-day ${selected?"selected":""} ${isToday?"today":""} ${isEffective?"effective":"non-effective"} ${mode==="master"?"service-toggle":""}`}>
+          className={`lpdh-calendar-day ${selected?"selected":""} ${isToday?"today":""} ${isEffective?"effective":"non-effective"} ${mode==="master"?"service-toggle":""} status-${String(reportStatus).toLowerCase()}`}>
           <span className="lpdh-calendar-day-number">{day}</span>
-          <span className="lpdh-calendar-day-status">{mode==="master" ? (isEffective?"Pelayanan efektif":weekend?"Akhir pekan":"Tidak efektif") : (isEffective?"Efektif":"Tidak efektif")}</span>
+          <span className="lpdh-calendar-day-status">{mode==="master" ? (isEffective?"Pelayanan efektif":weekend?"Akhir pekan":"Tidak efektif") : (isEffective?statusLabel:"Tidak efektif")}</span>
         </button>;
       })}
     </div>
   </>;
 }
 
-function CalendarPanel({ selectedDate, setSelectedDate, effectiveDates, onOpenDaily, onOpenMaster }) {
+function CalendarPanel({ selectedDate, setSelectedDate, effectiveDates, calendarItems, onOpenDaily, onOpenMaster }) {
   const [monthKey,setMonthKey]=useState(monthKeyFromDate(selectedDate));
   useEffect(()=>setMonthKey(monthKeyFromDate(selectedDate)),[selectedDate]);
   const isEffective=effectiveDates.includes(selectedDate);
@@ -103,7 +107,7 @@ function CalendarPanel({ selectedDate, setSelectedDate, effectiveDates, onOpenDa
     <div className="lpdh-calendar-toolbar"><div><div className="lpdh-kicker">LAPORAN HARIAN</div><h2>Kalender LPDH</h2><p>Pilih tanggal. Data setiap hari tersimpan terpisah dan hanya Hari Pelayanan Efektif yang dapat digenerate.</p></div>
       <div className="lpdh-calendar-month-nav"><button onClick={()=>setMonthKey(shiftMonth(monthKey,-1))}><ChevronLeft size={18}/></button><strong>{monthLabel(monthKey)}</strong><button onClick={()=>setMonthKey(shiftMonth(monthKey,1))}><ChevronRight size={18}/></button></div>
     </div>
-    <MonthGrid monthKey={monthKey} selectedDate={selectedDate} effectiveDates={effectiveDates} onSelect={setSelectedDate}/>
+    <MonthGrid monthKey={monthKey} selectedDate={selectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onSelect={setSelectedDate}/>
     <div className="lpdh-selected-date"><div><span>Tanggal aktif</span><strong>{formatDateLabel(selectedDate)}</strong><small>{isEffective?"Hari Pelayanan Efektif":"Bukan Hari Pelayanan Efektif"}</small></div>
       <div className="lpdh-inline-actions"><button type="button" onClick={onOpenMaster}>Atur HPE</button><button type="button" className="primary" onClick={onOpenDaily}>Buka Data Harian</button></div>
     </div>
@@ -164,6 +168,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [selectedDate,setSelectedDate]=useState(todayJakarta());
   const [effectiveMonth,setEffectiveMonth]=useState(monthKeyFromDate(todayJakarta()));
   const [effectiveDates,setEffectiveDates]=useState([]);
+  const [calendarItems,setCalendarItems]=useState([]);
   const [masters,setMasters]=useState(normalizeMasters({}));
   const [daily,setDaily]=useState(normalizeDaily({},todayJakarta()));
   const [finalPlan,setFinalPlan]=useState(null);
@@ -179,6 +184,10 @@ export default function LpdhWorkspace({ role, onLogout }) {
 
   const loadEffective=useCallback(async(targetSite=site,month=effectiveMonth)=>{
     const r=await lpdhApi.getEffectiveDays(targetSite,month); setEffectiveDates((r.dates||[]).map(String)); return r;
+  },[site,effectiveMonth]);
+
+  const loadCalendar=useCallback(async(targetSite=site,month=effectiveMonth)=>{
+    const r=await lpdhApi.calendar(targetSite,month); setCalendarItems(r.items||[]); return r;
   },[site,effectiveMonth]);
 
   const loadMasters=useCallback(async(targetSite=site)=>{
@@ -197,27 +206,27 @@ export default function LpdhWorkspace({ role, onLogout }) {
     setBusy(true);
     try{
       const month=monthKeyFromDate(selectedDate); setEffectiveMonth(month);
-      const results=await Promise.allSettled([loadMasters(site),loadDaily(site,selectedDate),loadEffective(site,month),lpdhApi.reference(site),lpdhApi.history(site)]);
-      if(results[3].status==="fulfilled") setReferenceRows(results[3].value.rows||[]);
-      if(results[4].status==="fulfilled") setHistory(results[4].value.items||[]);
+      const results=await Promise.allSettled([loadMasters(site),loadDaily(site,selectedDate),loadEffective(site,month),loadCalendar(site,month),lpdhApi.reference(site),lpdhApi.history(site)]);
+      if(results[4].status==="fulfilled") setReferenceRows(results[4].value.rows||[]);
+      if(results[5].status==="fulfilled") setHistory(results[5].value.items||[]);
       try{await refreshPreview(site,selectedDate);}catch{}
       const rejected=results.find((x)=>x.status==="rejected");
       if(rejected) throw rejected.reason;
     }catch(err){flash(err.message||"Gagal memuat LPDH","error");}
     finally{setBusy(false);}
-  },[site,selectedDate,loadMasters,loadDaily,loadEffective,refreshPreview]);
+  },[site,selectedDate,loadMasters,loadDaily,loadEffective,loadCalendar,refreshPreview]);
 
   useEffect(()=>{boot();},[site,selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(()=>{
     const month=monthKeyFromDate(selectedDate);
-    if(month!==effectiveMonth){setEffectiveMonth(month);loadEffective(site,month).catch((e)=>flash(e.message,"error"));}
+    if(month!==effectiveMonth){setEffectiveMonth(month);Promise.all([loadEffective(site,month),loadCalendar(site,month)]).catch((e)=>flash(e.message,"error"));}
   },[selectedDate]);
 
   const changeSite=(next)=>{setSite(next);setActive("calendar");setPreview(null);};
 
   const saveEffective=async(month,dates)=>{
-    setBusy(true); try{await lpdhApi.saveEffectiveDays(site,month,dates);setEffectiveDates(dates);flash(`${dates.length} Hari Pelayanan Efektif tersimpan.`);await refreshPreview();}catch(e){flash(e.message,"error");}finally{setBusy(false);}
+    setBusy(true); try{await lpdhApi.saveEffectiveDays(site,month,dates);setEffectiveDates(dates);flash(`${dates.length} Hari Pelayanan Efektif tersimpan.`);await Promise.all([refreshPreview(),loadCalendar(site,month)]);}catch(e){flash(e.message,"error");}finally{setBusy(false);}
   };
 
   const generate=async()=>{
@@ -228,7 +237,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
       const result=await lpdhApi.generate(site,selectedDate);
       downloadBase64(result.filename,result.mimeType,result.contentBase64);
       flash(`${result.filename} berhasil dibuat dengan rumus workbook tetap aktif.`);
-      const h=await lpdhApi.history(site);setHistory(h.items||[]);
+      const [h]=await Promise.all([lpdhApi.history(site),loadCalendar(site,monthKeyFromDate(selectedDate))]);setHistory(h.items||[]);
       await loadDaily();
     }catch(e){flash(e.message||"Generate gagal","error");}
     finally{setBusy(false);}
@@ -258,10 +267,10 @@ export default function LpdhWorkspace({ role, onLogout }) {
       </nav>
 
       <section className="lpdh-content">
-        {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>}
+        {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>loadMasters(site)}/>}
-        {active==="daily"&&<DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={refreshPreview}/>} 
+        {active==="daily"&&<DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async()=>{await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>} 
         {active==="documents"&&<DocumentsPanel serviceDate={selectedDate} daily={daily} preview={preview} masters={masters} onMessage={flash}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={refreshPreview} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}

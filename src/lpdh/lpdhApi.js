@@ -45,6 +45,7 @@ export const lpdhApi = {
     body: JSON.stringify({ site, service_date: serviceDate, data, status }),
   }),
   deleteDaily: (site, date) => request(`/v1/lpdh/daily?${q({ site, date })}`, { method: "DELETE" }),
+  calendar: (site, month) => request(`/v1/lpdh/calendar?${q({ site, month })}`),
   getEffectiveDays: (site, month) => request(`/v1/lpdh/effective-days?${q({ site, month })}`),
   saveEffectiveDays: (site, month, dates, notes = {}) => request("/v1/lpdh/effective-days", {
     method: "PUT",
