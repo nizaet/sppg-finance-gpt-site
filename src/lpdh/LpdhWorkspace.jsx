@@ -248,7 +248,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
     ["service-days","Hari Pelayanan Efektif",CalendarCheck2],
     ["masters","Master Data",FolderCog],
     ["daily","Input Harian",Files],
-    ["documents","Invoice & Kuitansi",ReceiptText],
+    ["documents","Vendor · Invoice & Kuitansi",ReceiptText],
     ["review","Review LPDH / Sheet Excel",FileCheck2],
     ["generate","Generate & Riwayat",History],
   ];
