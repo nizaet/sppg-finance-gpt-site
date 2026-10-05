@@ -812,6 +812,9 @@ def fallback_lpdh_workbook() -> Workbook:
     ws = wb["I_RegisterBukti"]
     for col, header in enumerate(["Sumber","Kode","Nomor Bukti","Tanggal","Nilai","Link","Status No","Status Tanggal"], 1):
         ws.cell(4, col, header)
+    for rr in range(5, 126):
+        ws[f"G{rr}"] = f'=IF(C{rr}="","BELUM ADA",IF(COUNTIF($C$5:$C$125,C{rr})=1,"UNIK","DUPLIKAT"))'
+        ws[f"H{rr}"] = f'=IF(E{rr}=0,"OK",IF(AND(D{rr}>=Identitas!B32,D{rr}<=Identitas!B33),"OK","PERIKSA"))'
     ws["B127"] = "Jumlah duplikat"; ws["C127"] = '=COUNTIF(G5:G125,"DUPLIKAT")'
     ws["B128"] = "Tanggal di luar periode"; ws["C128"] = '=COUNTIF(H5:H125,"PERIKSA")'
     ws["B129"] = "Bukti belum lengkap"; ws["C129"] = '=COUNTIFS(E5:E125,">0",F5:F125,"<>https://*")'
@@ -826,8 +829,38 @@ def fallback_lpdh_workbook() -> Workbook:
         "Bukti TopUp lengkap","Saldo komponen tidak negatif","Saldo komponen = VA","Tiga pengesah lengkap",
         "Upload H+1 tepat waktu","TopUp <= plafon VA",
     ]
-    for rr, label in enumerate(check_labels, 5):
-        ws[f"A{rr}"] = rr - 4; ws[f"B{rr}"] = label; ws[f"C{rr}"] = "PERIKSA"
+    check_formulas = [
+        '=IF(COUNTBLANK(Identitas!B5:B15)=0,"OK","PERIKSA")',
+        '=IF(Identitas!B20="Ya","OK","PERIKSA")',
+        '=IF(ABS(A_PM!C26)<0.0001,"OK","PERIKSA")',
+        '=IF(COUNTIF(A_PM!J6:J15,"<>0")=0,"OK","PERIKSA")',
+        '=IF(COUNTIFS(A_PM!H6:H15,">0",A_PM!I6:I15,"")=0,"OK","PERIKSA")',
+        '=IF(OR(Ref!B12="",A_PM!C27<=Ref!B12/100),"OK","PERIKSA")',
+        '=IF(AND(COUNTIFS(A_PM!G6:G15,">0",A_PM!K6:K15,"<>Ya")=0,COUNTIF(A_PM!N6:N15,"Belum lengkap")=0),"OK","PERIKSA")',
+        '=IF(COUNTIFS(A_PM!G6:G15,">0",A_PM!M6:M15,"<>https://*")=0,"OK","PERIKSA")',
+        '=IF(SUMPRODUCT(--(A_PM!O6:O15>A_PM!E6:E15))=0,"OK","PERIKSA")',
+        '=IF(Identitas!B21>0,"OK","PERIKSA")',
+        '=IF(B_BahanBaku!I52="DALAM PAGU","OK","PERIKSA")',
+        '=IF(C_Operasional!H28="DALAM PAGU","OK","PERIKSA")',
+        '=IF(I_RegisterBukti!C129=0,"OK","PERIKSA")',
+        '=IF(I_RegisterBukti!C127=0,"OK","PERIKSA")',
+        '=IF(I_RegisterBukti!C128=0,"OK","PERIKSA")',
+        '=IF(COUNTIF(C1_Relawan!N6:N65,"PERIKSA")=0,"OK","PERIKSA")',
+        '=IF(D_Insentif!C11="DAPAT DIBERIKAN","OK","PERIKSA")',
+        '=IF(D_Insentif!C16=D_Insentif!C14*D_Insentif!C15,"OK","PERIKSA")',
+        '=IF(ABS(D_Insentif!C31)<0.0001,"OK","PERIKSA")',
+        '=IF(D_Insentif!C34="LENGKAP","OK","PERIKSA")',
+        '=IF(COUNTIF(E_Saldo!M19:M23,"PERIKSA")=0,"OK","PERIKSA")',
+        '=IF(MIN(E_Saldo!E5:E7)>=0,"OK","PERIKSA")',
+        '=IF(ABS(E_Saldo!E11)<0.01,"OK","PERIKSA")',
+        '=IF(AND(COUNTIF(Identitas!E36:E38,"VALID")=3,COUNTIF(Identitas!F36:F38,"Ya")=3),"OK","PERIKSA")',
+        '=IF(Identitas!B28="OK","OK","PERIKSA")',
+        '=IF(F_TopUp!C11="OK","OK","PERIKSA")',
+    ]
+    for rr, (label, formula) in enumerate(zip(check_labels, check_formulas), 5):
+        ws[f"A{rr}"] = rr - 4
+        ws[f"B{rr}"] = label
+        ws[f"C{rr}"] = formula
     ws["B32"] = "Jumlah PERIKSA"; ws["C32"] = '=COUNTIF(C5:C30,"PERIKSA")'
     ws["B33"] = "Status"; ws["C33"] = '=IF(C32=0,"LENGKAP","PERLU PERBAIKAN")'
 
@@ -865,6 +898,7 @@ def populate_workbook(
     service_date: str,
     template_bytes: bytes | None = None,
 ) -> bytes:
+    using_official_template = bool(template_bytes or LPDH_TEMPLATE.is_file())
     wb = load_lpdh_workbook(template_bytes)
     try:
         wb.calculation.calcMode = "auto"
@@ -1057,26 +1091,23 @@ def populate_workbook(
         }.items():
             _set_if(saldo_ws, f"{col}{idx}", value)
 
-    register_ws = wb["I_RegisterBukti"]
-    for idx, item in enumerate(preview.get("register") or [], start=5):
-        if idx > 125:
-            break
-        for col, value in {
-            "A": item.get("source"), "B": item.get("code"), "C": item.get("proofNo"),
-            "D": _excel_date(item.get("date")), "E": as_number(item.get("amount")),
-            "F": item.get("link"), "G": item.get("proofStatus"),
-        }.items():
-            _set_if(register_ws, f"{col}{idx}", value)
-        register_ws[f"H{idx}"] = f'=IF(E{idx}=0,"OK",IF(AND(D{idx}>=Identitas!B32,D{idx}<=Identitas!B33),"OK","PERIKSA"))'
+    if not using_official_template:
+        register_ws = wb["I_RegisterBukti"]
+        for idx, item in enumerate(preview.get("register") or [], start=5):
+            if idx > 125:
+                break
+            for col, value in {
+                "A": item.get("source"), "B": item.get("code"), "C": item.get("proofNo"),
+                "D": _excel_date(item.get("date")), "E": as_number(item.get("amount")),
+                "F": item.get("link"),
+            }.items():
+                _set_if(register_ws, f"{col}{idx}", value)
 
-    check_ws = wb["G_CekPPK"]
-    for idx, item in enumerate(preview.get("checks") or [], start=5):
-        if idx > 30:
-            break
-        check_ws[f"A{idx}"] = item.get("no")
-        check_ws[f"B{idx}"] = item.get("check")
-        check_ws[f"C{idx}"] = item.get("status")
-        check_ws[f"D{idx}"] = item.get("detail")
+        check_ws = wb["G_CekPPK"]
+        for idx, item in enumerate(preview.get("checks") or [], start=5):
+            if idx > 30:
+                break
+            check_ws[f"D{idx}"] = item.get("detail")
 
     topup_ws = wb["F_TopUp"]
     proposal = daily.get("topupProposal") or {}
