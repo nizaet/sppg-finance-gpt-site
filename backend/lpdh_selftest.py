@@ -16,6 +16,7 @@ compute_preview = _logic.compute_preview
 make_master_template = _logic.make_master_template
 parse_master_workbook = _logic.parse_master_workbook
 populate_workbook = _logic.populate_workbook
+fallback_lpdh_workbook = _logic.fallback_lpdh_workbook
 
 
 def fixture():
@@ -133,6 +134,16 @@ def run():
     assert isinstance(wb["Identitas"]["B16"].value, str) and wb["Identitas"]["B16"].value.startswith("=")
     assert wb["B_BahanBaku"]["I6"].value.startswith("=")
     assert wb["C_Operasional"]["H6"].value.startswith("=")
+    assert wb["G_CekPPK"]["C5"].value.startswith("=")
+    assert wb["I_RegisterBukti"]["G5"].value.startswith("=")
+
+    base_wb = fallback_lpdh_workbook()
+    base_io = BytesIO()
+    base_wb.save(base_io)
+    official_like = populate_workbook(masters, daily, good, service_date, template_bytes=base_io.getvalue())
+    official_wb = load_workbook(BytesIO(official_like), data_only=False)
+    assert official_wb["G_CekPPK"]["C5"].value.startswith("="), "official-template formulas must be preserved"
+    assert official_wb["I_RegisterBukti"]["G5"].value.startswith("="), "official register formulas must be preserved"
 
     template = make_master_template()
     parsed = parse_master_workbook(template)
