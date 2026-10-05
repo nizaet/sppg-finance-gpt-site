@@ -166,24 +166,24 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         finalizeLpdhButton.type = 'button';
         finalizeLpdhButton.className = 'railway-app-control railway-lpdh-final';
         finalizeLpdhButton.innerHTML = '<i class="fas fa-circle-check"></i><span>Finalkan untuk LPDH</span>';
-        finalizeLpdhButton.addEventListener('click', async function () {
-          if (typeof window.__finalizeLpdhCurrentPlan !== 'function') {
+        finalizeLpdhButton.addEventListener('click', async function () {{
+          if (typeof window.__finalizeLpdhCurrentPlan !== 'function') {{
             alert('Modul FINAL LPDH belum siap. Muat ulang halaman lalu coba lagi.');
             return;
-          }
+          }}
           finalizeLpdhButton.disabled = true;
           var original = finalizeLpdhButton.innerHTML;
           finalizeLpdhButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Finalisasi...</span>';
-          try { await window.__finalizeLpdhCurrentPlan(); }
-          finally { finalizeLpdhButton.disabled = false; finalizeLpdhButton.innerHTML = original; }
-        });
+          try {{ await window.__finalizeLpdhCurrentPlan(); }}
+          finally {{ finalizeLpdhButton.disabled = false; finalizeLpdhButton.innerHTML = original; }}
+        }});
         controls.appendChild(finalizeLpdhButton);
 
         var lpdhWorkspaceButton = document.createElement('button');
         lpdhWorkspaceButton.type = 'button';
         lpdhWorkspaceButton.className = 'railway-app-control';
         lpdhWorkspaceButton.innerHTML = '<i class="fas fa-file-excel"></i><span>LPDH</span>';
-        lpdhWorkspaceButton.addEventListener('click', function () { window.location.assign('/lpdh'); });
+        lpdhWorkspaceButton.addEventListener('click', function () {{ window.location.assign('/lpdh'); }});
         controls.appendChild(lpdhWorkspaceButton);
 
         var themeButton = document.createElement('button');
