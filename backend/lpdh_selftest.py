@@ -35,9 +35,9 @@ def fixture():
             "bankName": "Bank Test",
         },
         "signers": [
-            {"name": "Kepala", "identityType": "NIK", "identityNumber": "3201010101010101", "signed": "Ya"},
-            {"name": "Akuntan", "identityType": "NIP", "identityNumber": "199001012020011001", "signed": "Ya"},
-            {"name": "Yayasan", "identityType": "NIK", "identityNumber": "3201010101010102", "signed": "Ya"},
+            {"name": "Pengawas Keuangan", "identityType": "NIK", "identityNumber": "3201010101010101", "signed": "Ya"},
+            {"name": "Kepala SPPG", "identityType": "NIP", "identityNumber": "199001012020011001", "signed": "Ya"},
+            {"name": "Perwakilan Yayasan", "identityType": "NIK", "identityNumber": "3201010101010102", "signed": "Ya"},
         ],
         "beneficiaries": [
             {"code": "SKL-01", "groupCode": "KS-01", "targetPm": 100, "status": "Aktif"},
@@ -63,7 +63,7 @@ def fixture():
         },
     }
     daily = {
-        "dayStatus": "Hari Pelayanan Efektif",
+        "dayStatus": "HPE",
         "hpeNumber": 1,
         "pm": {
             "rows": [{
@@ -96,7 +96,6 @@ def fixture():
         },
         "balance": {"openingRaw": 10000, "openingOperational": 10000, "openingIncentive": 500000, "bankBalance": 313000},
         "topups": [],
-        "topupProposal": {"raw": 0, "operational": 0, "incentive": 0},
         "upload": {"date": "2026-10-06", "time": "05:00"},
     }
     final_plan = {
@@ -125,6 +124,9 @@ def run():
     assert good["errorCount"] == 0
     assert good["rawStatus"] == "DALAM PAGU"
     assert good["operationalStatus"] == "DALAM PAGU"
+    assert good["hpeEligible"] is True
+    assert good["topup"]["requiredTotal"] == good["rawTotal"] + good["operationalTotal"] + good["incentiveCalculated"]
+    assert good["checks"][5]["status"] == "BELUM DITETAPKAN"
     assert all(row["proofStatus"] == "UNIK" for row in good["register"])
 
     content = populate_workbook(masters, daily, good, service_date)
@@ -134,6 +136,11 @@ def run():
     assert isinstance(wb["Identitas"]["B16"].value, str) and wb["Identitas"]["B16"].value.startswith("=")
     assert wb["B_BahanBaku"]["I6"].value.startswith("=")
     assert wb["C_Operasional"]["H6"].value.startswith("=")
+    assert wb["C_Operasional"]["E6"].value == "='C1_Relawan'!C66"
+    assert wb["D_Insentif"]["B6"].value == "Tidak"
+    assert wb["D_Insentif"]["C6"].value.startswith("=")
+    assert wb["F_TopUp"]["B5"].value.startswith("=")
+    assert wb["F_TopUp"]["C5"].value is None
     assert wb["G_CekPPK"]["C5"].value.startswith("=")
     assert wb["I_RegisterBukti"]["G5"].value.startswith("=")
 
@@ -151,7 +158,7 @@ def run():
     assert len(parsed["volunteers"]) == 1
     assert len(parsed["operations"]) > 0
 
-    print("LPDH SELFTEST OK: invalid-blocking, 26 validations, formula workbook, master import")
+    print("LPDH SELFTEST OK: official semantics, invalid-blocking, 26 validations, formula workbook, master import")
 
 
 if __name__ == "__main__":

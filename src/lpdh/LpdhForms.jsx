@@ -342,6 +342,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
         <Field label="Maksimum VA" type="number" value={data.parameters.maxVa} onChange={(v) => updateParameter("maxVa", v)} />
         <Field label="Maks HPE / minggu" type="number" value={data.parameters.maxHpePerWeek} onChange={(v) => updateParameter("maxHpePerWeek", v)} />
         <Field label="Batas upload H+1 (jam)" type="number" value={data.parameters.uploadHour} onChange={(v) => updateParameter("uploadHour", v)} />
+        <Field label="Batas buffer (desimal; 0,05 = 5%)" type="number" value={data.parameters.bufferPct} onChange={(v) => updateParameter("bufferPct", v)} />
         <Field label="Toleransi tanggal transaksi (hari)" type="number" value={data.parameters.dateTolerance} onChange={(v) => updateParameter("dateTolerance", v)} />
         <Field label="Indeks kemahalan" type="number" value={data.parameters.cityIndex} onChange={(v) => updateParameter("cityIndex", v)} />
         <Field label="Sumber indeks" value={data.parameters.cityIndexSource} onChange={(v) => updateParameter("cityIndexSource", v)} />
