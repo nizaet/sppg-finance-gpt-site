@@ -175,6 +175,8 @@ export default function OperationsWorkspace({ accessRole = "OWNER", config, onLo
           <a href={config?.calculatorUrls?.CEMPLANG || "/dapur/cemplang"}><Calculator size={17} /> Kalkulator Cemplang</a>
           <a href={config?.accountantUrls?.MAJA || "/accountant/maja"}><WalletCards size={17} /> Akuntan Maja</a>
           <a href={config?.accountantUrls?.CEMPLANG || "/accountant/cemplang"}><WalletCards size={17} /> Akuntan Cemplang</a>
+          <a href="/lpdh?site=MAJA"><FileSpreadsheet size={17} /> LPDH Maja</a>
+          <a href="/lpdh?site=CEMPLANG"><FileSpreadsheet size={17} /> LPDH Cemplang</a>
           <span className="ops-nav-label">Operasional</span>
           {tabs.map(([id, label, Icon]) => (
             <a
