@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
+from backend.auth_api import session_role
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
@@ -58,7 +59,10 @@ def _master_price(payload: Any) -> float:
 
 
 @router.get("/accountant-documents/master")
-def master_items(site: Site) -> dict[str, Any]:
+def master_items(site: Site, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = session_role(authorization)
+    if role != "OWNER" and role != site:
+        raise HTTPException(403, "akses site tidak diizinkan")
     _require_db()
     with connection() as conn:
         with conn.cursor() as cur:
@@ -86,7 +90,10 @@ def master_items(site: Site) -> dict[str, Any]:
 
 
 @router.get("/accountant-documents")
-def list_documents(site: Site, service_date: date | None = None) -> dict[str, Any]:
+def list_documents(site: Site, service_date: date | None = None, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = session_role(authorization)
+    if role != "OWNER" and role != site:
+        raise HTTPException(403, "akses site tidak diizinkan")
     _require_db()
     with connection() as conn:
         with conn.cursor() as cur:
@@ -135,7 +142,10 @@ def list_documents(site: Site, service_date: date | None = None) -> dict[str, An
 
 
 @router.post("/accountant-documents")
-def generate_document(payload: GeneratedDocumentIn) -> dict[str, Any]:
+def generate_document(payload: GeneratedDocumentIn, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = session_role(authorization)
+    if role != "OWNER" and role != payload.site:
+        raise HTTPException(403, "akses site tidak diizinkan")
     _require_db()
     total = sum(round(item.quantity * item.unit_price, 2) for item in payload.items)
     with connection() as conn:
@@ -168,7 +178,8 @@ def generate_document(payload: GeneratedDocumentIn) -> dict[str, Any]:
 
 
 @router.patch("/accountant-documents/{document_id}/finalize")
-def finalize_document(document_id: int) -> dict[str, Any]:
+def finalize_document(document_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    session_role(authorization)
     _require_db()
     with connection() as conn:
         with conn.cursor() as cur:
