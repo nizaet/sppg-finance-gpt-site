@@ -246,9 +246,25 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
 def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     _require_db()
     site = _site(request, payload.site)
-    status = str(payload.status or "DRAFT").upper()
-    if status not in {"DRAFT", "READY", "GENERATED"}:
+    requested_status = str(payload.status or "DRAFT").upper()
+    if requested_status not in {"DRAFT", "READY", "GENERATED"}:
         raise HTTPException(400, "status daily tidak valid")
+    status = requested_status
+    if requested_status != "GENERATED":
+        masters = _load_master(site)["data"] or {}
+        normalized, context = _daily_with_hpe(site, payload.service_date, payload.data or {})
+        final_plan = _load_final_plan(site, payload.service_date)
+        if final_plan and context["effective"]:
+            validation = compute_preview(
+                masters,
+                normalized,
+                payload.service_date.isoformat(),
+                context["effective"],
+                final_plan,
+            )
+            status = "READY" if validation["ready"] else "DRAFT"
+        else:
+            status = "DRAFT"
     actor = _role(request)
     with connection() as conn:
         with conn.cursor() as cur:
@@ -277,6 +293,60 @@ def delete_daily(request: Request, site: str = Query(), service_date: date = Que
             deleted = cur.rowcount
         conn.commit()
     return {"site": target, "serviceDate": service_date, "deleted": bool(deleted)}
+
+
+@router.get("/calendar")
+def calendar_month(request: Request, site: str = Query(), month: str = Query()) -> dict[str, Any]:
+    _require_db()
+    target = _site(request, site)
+    start, end = _month_bounds(month)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select service_date,is_effective,note
+                   from lpdh_effective_days
+                   where site=%s and service_date >= %s and service_date < %s
+                   order by service_date""",
+                (target, start, end),
+            )
+            effective_rows = cur.fetchall()
+            cur.execute(
+                """select service_date,status,revision,updated_at
+                   from lpdh_daily_state
+                   where site=%s and service_date >= %s and service_date < %s
+                   order by service_date""",
+                (target, start, end),
+            )
+            daily_rows = cur.fetchall()
+            cur.execute(
+                """select service_date,revision,finalized_at
+                   from lpdh_final_plans
+                   where site=%s and service_date >= %s and service_date < %s
+                   order by service_date""",
+                (target, start, end),
+            )
+            plan_rows = cur.fetchall()
+
+    effective_map = {row["service_date"].isoformat(): row for row in effective_rows}
+    daily_map = {row["service_date"].isoformat(): row for row in daily_rows}
+    plan_map = {row["service_date"].isoformat(): row for row in plan_rows}
+    all_dates = sorted(set(effective_map) | set(daily_map) | set(plan_map))
+    items = []
+    for day in all_dates:
+        e = effective_map.get(day)
+        d = daily_map.get(day)
+        p = plan_map.get(day)
+        items.append({
+            "serviceDate": day,
+            "effective": bool(e and e["is_effective"]),
+            "note": (e or {}).get("note") if e else "",
+            "status": (d or {}).get("status") if d else "EMPTY",
+            "dailyRevision": (d or {}).get("revision") if d else 0,
+            "updatedAt": (d or {}).get("updated_at") if d else None,
+            "finalized": bool(p),
+            "finalPlanRevision": (p or {}).get("revision") if p else 0,
+        })
+    return {"site": target, "month": month, "items": items}
 
 
 @router.get("/effective-days")
