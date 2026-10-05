@@ -658,6 +658,200 @@ def _set_if(ws, cell: str, value: Any) -> None:
         ws[cell] = value
 
 
+
+def fallback_lpdh_workbook() -> Workbook:
+    """Formula-capable fallback in the same sheet order as the official workbook."""
+    wb = Workbook()
+    wb.active.title = "Petunjuk"
+    for name in ["Identitas", "A_PM", "B_BahanBaku", "C_Operasional", "C1_Relawan", "D_Insentif", "E_Saldo", "F_TopUp", "G_CekPPK", "H_RekapPPK", "I_RegisterBukti", "J_Pengesahan", "Ref"]:
+        wb.create_sheet(name)
+
+    ws = wb["Petunjuk"]
+    ws["A1"] = "LPDH SPPG"
+    ws["A3"] = "Workbook fallback berformula. Unggah template resmi di Master Data untuk mempertahankan layout resmi persis."
+
+    ws = wb["Identitas"]
+    for row, label in [
+        (5, "Nomor LPDH"), (6, "ID SPPG"), (7, "Nama SPPG"), (8, "Desa/Kelurahan"),
+        (9, "Kecamatan"), (10, "Kabupaten/Kota"), (11, "Provinsi"), (12, "Yayasan"),
+        (13, "Nomor VA"), (14, "Bank"), (15, "Tanggal Pelayanan"), (16, "Hari"),
+        (17, "Minggu ke"), (18, "Status Hari"), (19, "HPE ke"), (20, "Dihitung HPE"),
+        (21, "Indeks Kemahalan"), (22, "Sumber Indeks"), (25, "Tanggal Upload"),
+        (26, "Jam Upload"), (27, "Deadline"), (28, "Status Upload"), (29, "Nama File"),
+        (32, "Tanggal transaksi mulai"), (33, "Tanggal transaksi akhir"),
+    ]:
+        ws[f"A{row}"] = label
+    ws["B16"] = '=IF(B15="","",CHOOSE(WEEKDAY(B15),"Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"))'
+    ws["B17"] = '=IF(B15="","",INT((DAY(B15)-1)/7)+1)'
+    ws["B20"] = '=IF(AND(B18="Hari Pelayanan Efektif",B19<=Ref!B10),"Ya","Tidak")'
+    ws["B21"] = '=IFERROR(XLOOKUP(B10,Ref!A65:A214,Ref!B65:B214,1),1)'
+    ws["B22"] = '=IFERROR(XLOOKUP(B10,Ref!A65:A214,Ref!C65:C214,""),"")'
+    ws["B27"] = '=IF(B15="","",B15+1+TIME(Ref!B11,0,0))'
+    ws["B28"] = '=IF(OR(B25="",B26=""),"PERIKSA",IF(B25+B26<=B27,"OK","TERLAMBAT"))'
+    ws["B29"] = '=IF(B15="","","LPDH_"&B6&"_"&TEXT(B15,"yyyymmdd")&".xlsx")'
+    ws["B32"] = '=IF(B15="","",B15-Ref!B13)'
+    ws["B33"] = '=B15'
+    for offset, role in enumerate(["Kepala SPPG", "Akuntan", "Yayasan/PPK"]):
+        rr = 36 + offset
+        ws[f"A{rr}"] = role
+        ws[f"E{rr}"] = f'=IF(C{rr}="NIK",IF(LEN(SUBSTITUTE(D{rr}," ",""))=16,"VALID","PERIKSA"),IF(C{rr}="NIP",IF(LEN(SUBSTITUTE(D{rr}," ",""))=18,"VALID","PERIKSA"),"PERIKSA"))'
+
+    ws = wb["A_PM"]
+    headers = ["Kode","Kelompok Sasaran","Kategori Porsi","Jenis PIC","Target PM SPS","Didistribusikan POP","Diterima Fleet","Tidak Diterima","Alasan","Selisih","BNBA","No BAST","Link BAST","Status BAST","PM Dihitung","Capaian","Pagu Bahan Disesuaikan","Keterangan"]
+    for col, header in enumerate(headers, 1):
+        ws.cell(5, col, header)
+    for rr, (code, label, portion, pic) in enumerate(GROUPS, 6):
+        ws.cell(rr, 1, code); ws.cell(rr, 2, label); ws.cell(rr, 3, portion); ws.cell(rr, 4, pic)
+        ws.cell(rr, 10, f"=F{rr}-G{rr}-H{rr}")
+        ws.cell(rr, 14, f'=IF(G{rr}<=0,"Tidak wajib",IF(AND(L{rr}<>"",LEFT(M{rr},8)="https://"),"Terlampir","Belum lengkap"))')
+        ws.cell(rr, 15, f'=IF(AND(Identitas!B20="Ya",K{rr}="Ya",N{rr}="Terlampir"),G{rr},0)')
+        ws.cell(rr, 16, f'=IF(E{rr}=0,0,O{rr}/E{rr})')
+        ws.cell(rr, 17, f'=IF(C{rr}="Kecil",Ref!B6,Ref!B7)*IF(Ref!B14="Ya",Identitas!B21,1)')
+    for col in [5, 6, 7, 8, 10, 15]:
+        ws.cell(16, col, f"=SUM({ws.cell(6,col).coordinate}:{ws.cell(15,col).coordinate})")
+    for cell, label in [("B19","Total Diproduksi"),("B20","Total Didistribusikan"),("B21","Organoleptik"),("B22","Retained Sample"),("B23","Tidak Didistribusikan"),("B24","Buffer"),("B25","Total Alokasi"),("B26","Selisih Produksi"),("B27","Buffer %")]:
+        ws[cell] = label
+    ws["C20"] = "=F16"; ws["C25"] = "=SUM(C20:C24)"; ws["C26"] = "=C19-C25"; ws["C27"] = '=IF(C19=0,0,C24/C19)'
+    ws["B44"] = "PM Dihitung"; ws["C44"] = "=O16"
+    ws["B45"] = "Organoleptik"; ws["C45"] = '=IF(Identitas!B20="Ya",C21,0)'
+    ws["B46"] = "Retained Sample"; ws["C46"] = '=IF(Identitas!B20="Ya",C22,0)'
+    ws["B47"] = "PM Dasar Insentif"; ws["C47"] = "=SUM(C44:C46)"
+
+    ws = wb["B_BahanBaku"]
+    headers = ["No","Kode Unik","Tanggal","Bahan","Kategori","Volume","Unit","Harga Satuan","Jumlah","Supplier","Nomor Bukti/Nota","Link Bukti","Status No","Status Tanggal","Catatan"]
+    for col, header in enumerate(headers, 1):
+        ws.cell(5, col, header)
+    for rr in range(6, 46):
+        ws.cell(rr, 1, rr - 5)
+        ws.cell(rr, 2, f'=IF(D{rr}="","","ID-"&TEXT(C{rr},"yyyymmdd")&"-BB-"&TEXT(A{rr},"000"))')
+        ws.cell(rr, 9, f'=IFERROR(F{rr}*H{rr},0)')
+        ws.cell(rr, 13, f'=IF(K{rr}="","BELUM ADA",IF(COUNTIF($K$6:$K$45,K{rr})=1,"UNIK","DUPLIKAT"))')
+        ws.cell(rr, 14, f'=IF(I{rr}=0,"OK",IF(AND(C{rr}>=Identitas!B32,C{rr}<=Identitas!B33),"OK","PERIKSA"))')
+    ws["H46"] = "TOTAL"; ws["I46"] = "=SUM(I6:I45)"
+    ws["H49"] = "Porsi diproduksi"; ws["I49"] = "=A_PM!C19"
+    ws["H50"] = "Biaya/porsi"; ws["I50"] = '=IF(I49=0,0,I46/I49)'
+    ws["H51"] = "Pagu/porsi"; ws["I51"] = '=IF(A_PM!O16=0,0,SUMPRODUCT(A_PM!O6:O15,A_PM!Q6:Q15)/A_PM!O16)'
+    ws["H52"] = "Status"; ws["I52"] = '=IF(I50<=I51,"DALAM PAGU","MELEBIHI PAGU")'
+
+    ws = wb["C_Operasional"]
+    headers = ["No","Kode Unik","Tanggal","Uraian","Volume","Unit","Harga Satuan","Jumlah","Nomor Bukti","Link Bukti","Status No","Status Tanggal","Catatan"]
+    for col, header in enumerate(headers, 1):
+        ws.cell(5, col, header)
+    for rr, item_name in enumerate(OPERATIONAL_DEFAULTS, 6):
+        ws.cell(rr, 1, rr - 5); ws.cell(rr, 4, item_name)
+        ws.cell(rr, 2, f'=IF(I{rr}="","","ID-"&TEXT(C{rr},"yyyymmdd")&"-OP-"&TEXT(A{rr},"000"))')
+        ws.cell(rr, 8, f'=IFERROR(E{rr}*G{rr},0)')
+        ws.cell(rr, 11, f'=IF(I{rr}="","BELUM ADA",IF(COUNTIF($I$6:$I$21,I{rr})=1,"UNIK","DUPLIKAT"))')
+        ws.cell(rr, 12, f'=IF(H{rr}=0,"OK",IF(AND(C{rr}>=Identitas!B32,C{rr}<=Identitas!B33),"OK","PERIKSA"))')
+    ws["G22"] = "TOTAL"; ws["H22"] = "=SUM(H6:H21)"
+    ws["G25"] = "PM Dihitung"; ws["H25"] = "=A_PM!C47"
+    ws["G26"] = "Operasional/PM"; ws["H26"] = '=IF(H25=0,0,H22/H25)'
+    ws["G27"] = "Pagu/PM"; ws["H27"] = '=Ref!B8*IF(Ref!B15="Ya",Identitas!B21,1)'
+    ws["G28"] = "Status"; ws["H28"] = '=IF(H26<=H27,"DALAM PAGU","MELEBIHI PAGU")'
+
+    ws = wb["C1_Relawan"]
+    headers = ["No","Kode Unik","Nama Relawan","Tugas","Tanggal Pembayaran","Hari Kerja","Besaran Harian","Jumlah Diterima","Metode Bayar","No Bukti Pembayaran","Link Bukti","Status No","Status Tanggal","Status Bukti"]
+    for col, header in enumerate(headers, 1):
+        ws.cell(5, col, header)
+    for rr in range(6, 66):
+        ws.cell(rr, 1, rr - 5)
+        ws.cell(rr, 2, f'=IF(C{rr}="","","ID-"&TEXT(E{rr},"yyyymmdd")&"-RL-"&TEXT(A{rr},"000"))')
+        ws.cell(rr, 8, f'=IFERROR(F{rr}*G{rr},0)')
+        ws.cell(rr, 12, f'=IF(J{rr}="","BELUM ADA",IF(COUNTIF($J$6:$J$65,J{rr})=1,"UNIK","DUPLIKAT"))')
+        ws.cell(rr, 13, f'=IF(H{rr}=0,"OK",IF(AND(E{rr}>=Identitas!B32,E{rr}<=Identitas!B33),"OK","PERIKSA"))')
+        ws.cell(rr, 14, f'=IF(H{rr}=0,"OK",IF(AND(J{rr}<>"",LEFT(K{rr},8)="https://"),"LENGKAP","PERIKSA"))')
+    ws["G66"] = "TOTAL"; ws["H66"] = "=SUM(H6:H65)"
+
+    ws = wb["D_Insentif"]
+    for rr, label in {
+        5:"Hari Pelayanan Efektif",6:"Kontaminasi",7:"Insiden Fatal",8:"Suspend",9:"Verifikasi",10:"PM masuk SIPGN",11:"Kelayakan",
+        14:"PM Dasar Insentif",15:"Tarif",16:"Insentif Dihitung",19:"No Pernyataan PPK",20:"Nilai Pernyataan",
+        21:"Nilai Dibayar",22:"Tanggal Bayar",23:"No Bukti",24:"No Kuitansi",25:"Kuitansi Ditandatangani",
+        26:"Link Bukti",27:"Ref Transaksi VA",31:"Selisih Dibayar vs Pernyataan",32:"Status No Bukti",33:"Status Tanggal",34:"Status Bukti",
+    }.items():
+        ws[f"B{rr}"] = label
+    ws["C5"] = "=Identitas!B20"
+    ws["C11"] = '=IF(AND(C5="Ya",C6="Tidak",C7="Tidak",C8="Tidak",C9="Ya",C10="Ya"),"DAPAT DIBERIKAN","TIDAK/BELUM")'
+    ws["C14"] = "=A_PM!C47"; ws["C15"] = "=Ref!B5"; ws["C16"] = "=C14*C15"
+    ws["C31"] = "=C21-C20"
+    ws["C32"] = '=IF(C23="","BELUM ADA",IF(COUNTIF(I_RegisterBukti!C:C,C23)=1,"UNIK","DUPLIKAT"))'
+    ws["C33"] = '=IF(C21=0,"OK",IF(AND(C22>=Identitas!B32,C22<=Identitas!B33),"OK","PERIKSA"))'
+    ws["C34"] = '=IF(C21=0,"OK",IF(AND(C23<>"",C24<>"",C25="Ya",LEFT(C26,8)="https://"),"LENGKAP","PERIKSA"))'
+
+    ws = wb["E_Saldo"]
+    for rr, label in [(5,"Bahan Baku"),(6,"Operasional"),(7,"Insentif")]:
+        ws[f"A{rr}"] = label; ws[f"E{rr}"] = f"=B{rr}+C{rr}-D{rr}"
+    ws["A8"] = "TOTAL"; ws["B8"] = "=SUM(B5:B7)"; ws["C8"] = "=SUM(C5:C7)"; ws["D8"] = "=SUM(D5:D7)"; ws["E8"] = "=SUM(E5:E7)"
+    ws["D5"] = "=B_BahanBaku!I46"; ws["D6"] = "=C_Operasional!H22"; ws["D7"] = "=D_Insentif!C21"
+    ws["A10"] = "Saldo VA"; ws["A11"] = "Selisih"; ws["E11"] = "=E10-E8"
+    top_headers = ["No","Kode","Tanggal","SP2D/Ref","TopUp Bahan","TopUp Operasional","TopUp Insentif","Total","No Kuitansi","Link Bukti","Status No","Status Tanggal","Status Bukti"]
+    for col, header in enumerate(top_headers, 1):
+        ws.cell(18, col, header)
+    for rr in range(19, 24):
+        ws.cell(rr, 1, rr - 18)
+        ws.cell(rr, 2, f'=IF(D{rr}="","","TU-"&TEXT(C{rr},"yyyymmdd")&"-"&TEXT(A{rr},"000"))')
+        ws.cell(rr, 8, f"=SUM(E{rr}:G{rr})")
+        ws.cell(rr, 11, f'=IF(I{rr}="","BELUM ADA",IF(COUNTIF($I$19:$I$23,I{rr})=1,"UNIK","DUPLIKAT"))')
+        ws.cell(rr, 12, f'=IF(H{rr}=0,"OK",IF(AND(C{rr}>=Identitas!B32,C{rr}<=Identitas!B33),"OK","PERIKSA"))')
+        ws.cell(rr, 13, f'=IF(H{rr}=0,"OK",IF(AND(I{rr}<>"",LEFT(J{rr},8)="https://"),"LENGKAP","PERIKSA"))')
+    ws["D24"] = "TOTAL"; ws["E24"] = "=SUM(E19:E23)"; ws["F24"] = "=SUM(F19:F23)"; ws["G24"] = "=SUM(G19:G23)"; ws["H24"] = "=SUM(H19:H23)"
+    ws["C5"] = "=E24"; ws["C6"] = "=F24"; ws["C7"] = "=G24"
+
+    ws = wb["F_TopUp"]
+    for rr, label in [(5,"Bahan Baku"),(6,"Operasional"),(7,"Insentif")]:
+        ws[f"A{rr}"] = label
+    ws["B5"] = "=B_BahanBaku!I46"; ws["B6"] = "=C_Operasional!H22"; ws["B7"] = "=D_Insentif!C16"; ws["B8"] = "=SUM(B5:B7)"
+    ws["B10"] = "Ruang VA"; ws["C10"] = "=MAX(0,Ref!B9-E_Saldo!E8)"; ws["B11"] = "Status"; ws["C11"] = '=IF(SUM(C5:C7)<=C10,"OK","MELEBIHI")'
+
+    ws = wb["I_RegisterBukti"]
+    for col, header in enumerate(["Sumber","Kode","Nomor Bukti","Tanggal","Nilai","Link","Status No","Status Tanggal"], 1):
+        ws.cell(4, col, header)
+    ws["B127"] = "Jumlah duplikat"; ws["C127"] = '=COUNTIF(G5:G125,"DUPLIKAT")'
+    ws["B128"] = "Tanggal di luar periode"; ws["C128"] = '=COUNTIF(H5:H125,"PERIKSA")'
+    ws["B129"] = "Bukti belum lengkap"; ws["C129"] = '=COUNTIFS(E5:E125,">0",F5:F125,"<>https://*")'
+
+    ws = wb["G_CekPPK"]
+    check_labels = [
+        "Identitas wajib lengkap","Hari pelayanan efektif / batas HPE","Produksi seimbang","POP dan Fleet seimbang",
+        "Alasan tidak diterima lengkap","Buffer sesuai ambang","BNBA & BAST lengkap","Link BAST valid",
+        "PM tidak melebihi target","Indeks kemahalan tersedia","Bahan/porsi dalam pagu","Operasional/PM dalam pagu",
+        "Bukti transaksi terlampir","Nomor bukti unik","Tanggal transaksi sesuai periode","Bukti relawan lengkap",
+        "Syarat insentif terpenuhi","Hitung insentif sesuai","Pembayaran insentif sesuai PPK","Bukti insentif lengkap",
+        "Bukti TopUp lengkap","Saldo komponen tidak negatif","Saldo komponen = VA","Tiga pengesah lengkap",
+        "Upload H+1 tepat waktu","TopUp <= plafon VA",
+    ]
+    for rr, label in enumerate(check_labels, 5):
+        ws[f"A{rr}"] = rr - 4; ws[f"B{rr}"] = label; ws[f"C{rr}"] = "PERIKSA"
+    ws["B32"] = "Jumlah PERIKSA"; ws["C32"] = '=COUNTIF(C5:C30,"PERIKSA")'
+    ws["B33"] = "Status"; ws["C33"] = '=IF(C32=0,"LENGKAP","PERLU PERBAIKAN")'
+
+    ws = wb["H_RekapPPK"]
+    ws["A1"] = "REKAP PPK"; ws["A3"] = "Tanggal"; ws["B3"] = "=Identitas!B15"; ws["A4"] = "SPPG"; ws["B4"] = "=Identitas!B7"
+    ws["A5"] = "Total Bahan"; ws["B5"] = "=B_BahanBaku!I46"; ws["A6"] = "Total Operasional"; ws["B6"] = "=C_Operasional!H22"
+    ws["A7"] = "Insentif"; ws["B7"] = "=D_Insentif!C16"; ws["A8"] = "Status Validasi"; ws["B8"] = "=G_CekPPK!C33"
+
+    ws = wb["J_Pengesahan"]
+    ws["A1"] = "LEMBAR PENGESAHAN LPDH"; ws["A3"] = "SPPG"; ws["B3"] = "=Identitas!B7"; ws["A4"] = "Tanggal"; ws["B4"] = "=Identitas!B15"
+    ws["A6"] = "Total Bahan"; ws["B6"] = "=B_BahanBaku!I46"; ws["A7"] = "Total Operasional"; ws["B7"] = "=C_Operasional!H22"; ws["A8"] = "Insentif"; ws["B8"] = "=D_Insentif!C16"
+
+    ws = wb["Ref"]
+    for rr, (label, value) in enumerate([
+        ("Tarif Insentif",2000),("Pagu Bahan Kecil",8000),("Pagu Bahan Besar",10000),("Pagu Operasional/PM",3000),
+        ("Maks VA",500000000),("Maks HPE/Minggu",5),("Jam Upload H+1",6),("Buffer %",None),("Toleransi Tanggal",1),
+        ("Indeks Bahan","Ya"),("Indeks Operasional","Ya"),
+    ], 5):
+        ws[f"A{rr}"] = label; ws[f"B{rr}"] = value
+    return wb
+
+
+def load_lpdh_workbook(template_bytes: bytes | None = None) -> Workbook:
+    if template_bytes:
+        return load_workbook(io.BytesIO(template_bytes), data_only=False)
+    if LPDH_TEMPLATE.is_file():
+        return load_workbook(LPDH_TEMPLATE, data_only=False)
+    return fallback_lpdh_workbook()
+
+
 def populate_workbook(
     masters: dict[str, Any],
     daily: dict[str, Any],
@@ -723,6 +917,23 @@ def populate_workbook(
     for cell, value in ref_values.items():
         _set_if(ref, cell, value)
 
+    city_name = str(identity.get("city") or "").strip()
+    if city_name:
+        city_row = None
+        for rr in range(65, 215):
+            if str(ref.cell(rr, 1).value or "").strip().lower() == city_name.lower():
+                city_row = rr
+                break
+        if city_row is None:
+            for rr in range(65, 215):
+                if not str(ref.cell(rr, 1).value or "").strip():
+                    city_row = rr
+                    break
+        if city_row is not None:
+            ref.cell(city_row, 1, city_name)
+            ref.cell(city_row, 2, as_number(params.get("cityIndex"), 1.0) or 1.0)
+            ref.cell(city_row, 3, str(params.get("cityIndexSource") or "Master LPDH"))
+
     pm_ws = wb["A_PM"]
     for idx, row_data in enumerate(preview["pmRows"], start=6):
         _set_if(pm_ws, f"E{idx}", row_data["targetPm"])
@@ -757,9 +968,9 @@ def populate_workbook(
     volunteer_total = preview["volunteerTotal"]
     incentive_total = preview["incentiveRecipientTotal"]
     special = [
-        {"description": "Relawan", "amount": volunteer_total, "date": service_date, "proofNoDerived": daily.get("volunteerReceiptBaseNo") or "", "evidenceLink": daily.get("volunteerBatchEvidenceLink") or "", "unit": "orang", "qty": len([x for x in preview["volunteers"] if as_number(x.get("amount")) > 0]), "price": 0},
-        {"description": "Insentif Penanggung Jawab Satuan Pendidikan", "amount": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"guru","sekolah","penanggung jawab satuan pendidikan"}), "date": service_date, "proofNoDerived": daily.get("incentiveReceiptBaseNo") or "", "evidenceLink": daily.get("incentiveBatchEvidenceLink") or "", "unit": "orang", "qty": 0, "price": 0},
-        {"description": "Insentif Kader Posyandu", "amount": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"kader","posyandu","kader posyandu"}), "date": service_date, "proofNoDerived": daily.get("incentiveReceiptBaseNo") or "", "evidenceLink": daily.get("incentiveBatchEvidenceLink") or "", "unit": "orang", "qty": 0, "price": 0},
+        {"description": "Relawan", "amount": volunteer_total, "date": daily.get("volunteerPaymentDate") or service_date, "proofNoDerived": daily.get("volunteerReceiptBaseNo") or "", "evidenceLink": daily.get("volunteerBatchEvidenceLink") or "", "unit": "paket", "qty": 1 if volunteer_total > 0 else 0, "price": volunteer_total},
+        {"description": "Insentif Penanggung Jawab Satuan Pendidikan", "amount": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"guru","sekolah","penanggung jawab satuan pendidikan"}), "date": daily.get("incentivePaymentDate") or service_date, "proofNoDerived": daily.get("incentiveReceiptBaseNo") or "", "evidenceLink": daily.get("incentiveBatchEvidenceLink") or "", "unit": "paket", "qty": 1, "price": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"guru","sekolah","penanggung jawab satuan pendidikan"})},
+        {"description": "Insentif Kader Posyandu", "amount": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"kader","posyandu","kader posyandu"}), "date": daily.get("incentivePaymentDate") or service_date, "proofNoDerived": daily.get("incentiveReceiptBaseNo") or "", "evidenceLink": daily.get("incentiveBatchEvidenceLink") or "", "unit": "paket", "qty": 1, "price": sum(as_number(x.get("amount")) for x in preview["incentiveRecipients"] if str(x.get("type") or "").lower() in {"kader","posyandu","kader posyandu"})},
     ]
     by_name = {str(x.get("description") or "").strip().lower(): x for x in op_numbered}
     for pos, default_name in enumerate(OPERATIONAL_DEFAULTS, start=6):
@@ -839,6 +1050,27 @@ def populate_workbook(
             "J": item.get("evidenceLink"),
         }.items():
             _set_if(saldo_ws, f"{col}{idx}", value)
+
+    register_ws = wb["I_RegisterBukti"]
+    for idx, item in enumerate(preview.get("register") or [], start=5):
+        if idx > 125:
+            break
+        for col, value in {
+            "A": item.get("source"), "B": item.get("code"), "C": item.get("proofNo"),
+            "D": _excel_date(item.get("date")), "E": as_number(item.get("amount")),
+            "F": item.get("link"), "G": item.get("proofStatus"),
+        }.items():
+            _set_if(register_ws, f"{col}{idx}", value)
+        register_ws[f"H{idx}"] = f'=IF(E{idx}=0,"OK",IF(AND(D{idx}>=Identitas!B32,D{idx}<=Identitas!B33),"OK","PERIKSA"))'
+
+    check_ws = wb["G_CekPPK"]
+    for idx, item in enumerate(preview.get("checks") or [], start=5):
+        if idx > 30:
+            break
+        check_ws[f"A{idx}"] = item.get("no")
+        check_ws[f"B{idx}"] = item.get("check")
+        check_ws[f"C{idx}"] = item.get("status")
+        check_ws[f"D{idx}"] = item.get("detail")
 
     topup_ws = wb["F_TopUp"]
     proposal = daily.get("topupProposal") or {}
