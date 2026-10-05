@@ -168,6 +168,9 @@ def master_target_by_group(masters: dict[str, Any]) -> dict[str, float]:
         if large_code:
             represented.add(large_code)
             totals[large_code] += as_number(row.get("largePortions"))
+        if "staffLarge" in row:
+            represented.add("PTK")
+            totals["PTK"] += as_number(row.get("staffLarge"))
     for row in masters.get("posyandu") or []:
         if str(row.get("status") or "Aktif").strip().lower() == "nonaktif":
             continue
@@ -1402,8 +1405,8 @@ def make_master_template() -> bytes:
     ws.append(["Isi Master_Sekolah, Master_Posyandu, Master_Relawan, dan Master_Operasional. Kolom F/G sekolah = porsi kecil/besar. Jangan isi unit contoh sebagai data nyata."])
 
     school = wb.create_sheet("Master_Sekolah")
-    school.append(["Kode Unit","Nama Sekolah","Jenis Sekolah","Nama PIC","No. HP PIC","Porsi Kecil","Porsi Besar","Alamat","Status Aktif","Catatan"])
-    school.append(["","","SD/MI","","",None,None,"","Aktif",""])
+    school.append(["Kode Unit","Nama Sekolah","Jenis Sekolah","Nama PIC","No. HP PIC","Porsi Kecil","Porsi Besar","Tenaga pendidik (Besar)","Alamat","Status Aktif","Catatan"])
+    school.append(["","","SD/MI","","",None,None,None,"","Aktif",""])
     posyandu = wb.create_sheet("Master_Posyandu")
     posyandu.append(["Kode Unit","Nama Posyandu","Nama Kader","No. HP Kader","Alamat","Balita (Kecil)","Ibu Hamil (Besar)","Ibu Menyusui (Besar)","Status Aktif","Catatan"])
     posyandu.append(["","","","","",None,None,None,"Aktif",""])
@@ -1457,7 +1460,7 @@ def make_master_template() -> bytes:
     choice = DataValidation(type="list", formula1='"PAUD,SD/MI,SMP/MTs,SMA/MA/SMK/SLB,Santri,PTK"')
     school.add_data_validation(choice)
     choice.add("C2:C1000")
-    for sheet, columns in ((school, "FG"), (posyandu, "FGH")):
+    for sheet, columns in ((school, "FGH"), (posyandu, "FGH")):
         for col in columns:
             whole = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="0", allow_blank=True)
             whole.error = "Isi jumlah porsi sebagai bilangan bulat tidak negatif"
@@ -1504,24 +1507,32 @@ def parse_master_workbook(content: bytes) -> dict[str, Any]:
         })
 
     for row in records("Master_Sekolah"):
-        if not str(row.get("Nama Sekolah") or "").strip():
+        name = str(row.get("Nama Sekolah") or row.get("Nama Sekolah / Posyandu") or "").strip()
+        if not name:
             continue
+        type_by_group = {"KS-01":"PAUD", "KS-02":"SD/MI", "KS-03":"SD/MI", "KS-04":"SMP/MTs", "KS-05":"SMA/MA/SMK/SLB", "KS-06":"Santri", "PTK":"PTK"}
+        school_type = str(row.get("Jenis Sekolah") or type_by_group.get(str(row.get("Kode Kelompok") or "").strip()) or "").strip()
+        staff = row.get("Tenaga pendidik (Besar)", row.get("Tenaga pendidik"))
         result["schools"].append({
-            "code": str(row.get("Kode Unit") or "").strip(), "name": str(row.get("Nama Sekolah") or "").strip(),
-            "schoolType": str(row.get("Jenis Sekolah") or "").strip(), "picName": str(row.get("Nama PIC") or "").strip(),
+            "code": str(row.get("Kode Unit") or "").strip(), "name": name,
+            "schoolType": school_type, "picName": str(row.get("Nama PIC") or "").strip(),
             "phone": str(row.get("No. HP PIC") or "").strip(), "smallPortions": as_number(row.get("Porsi Kecil")),
             "largePortions": as_number(row.get("Porsi Besar")), "address": str(row.get("Alamat") or "").strip(),
             "status": str(row.get("Status Aktif") or "Aktif").strip(), "note": str(row.get("Catatan") or "").strip(),
+            **({"staffLarge": as_number(staff)} if staff not in (None, "") else {}),
         })
-    for row in records("Master_Posyandu"):
-        if not str(row.get("Nama Posyandu") or "").strip():
+    posyandu_sheet = "Master_Posyandu" if "Master_Posyandu" in wb.sheetnames else "Master Posyandu"
+    for row in records(posyandu_sheet):
+        name = str(row.get("Nama Posyandu") or row.get("Nama Sekolah / Posyandu") or "").strip()
+        if not name:
             continue
+        balita = row.get("Balita (Kecil)", next((value for key, value in row.items() if key.startswith("Anak Balita")), 0))
         result["posyandu"].append({
-            "code": str(row.get("Kode Unit") or "").strip(), "name": str(row.get("Nama Posyandu") or "").strip(),
-            "picName": str(row.get("Nama Kader") or "").strip(), "phone": str(row.get("No. HP Kader") or "").strip(),
-            "address": str(row.get("Alamat") or "").strip(), "balitaSmall": as_number(row.get("Balita (Kecil)")),
-            "pregnantLarge": as_number(row.get("Ibu Hamil (Besar)")),
-            "breastfeedingLarge": as_number(row.get("Ibu Menyusui (Besar)")),
+            "code": str(row.get("Kode Unit") or "").strip(), "name": name,
+            "picName": str(row.get("Nama Kader") or row.get("Nama PIC") or "").strip(), "phone": str(row.get("No. HP Kader") or row.get("No. HP PIC") or "").strip(),
+            "address": str(row.get("Alamat") or "").strip(), "balitaSmall": as_number(balita),
+            "pregnantLarge": as_number(row.get("Ibu Hamil (Besar)", row.get("Ibu Hamil"))),
+            "breastfeedingLarge": as_number(row.get("Ibu Menyusui (Besar)", row.get("Ibu Menyusui"))),
             "status": str(row.get("Status Aktif") or "Aktif").strip(), "note": str(row.get("Catatan") or "").strip(),
         })
 
@@ -1603,6 +1614,9 @@ def validate_master_portions(data):
         small, large = as_number(row.get("smallPortions")), as_number(row.get("largePortions"))
         if small < 0 or large < 0 or small != int(small) or large != int(large):
             raise ValueError("Jumlah porsi sekolah harus bilangan bulat tidak negatif")
+        staff = as_number(row.get("staffLarge"))
+        if staff < 0 or staff != int(staff):
+            raise ValueError("Jumlah tenaga pendidik harus bilangan bulat tidak negatif")
         if row["schoolType"] == "PAUD" and large or row["schoolType"] not in {"PAUD", "SD/MI"} and small:
             raise ValueError("Porsi tidak sesuai klausul: PAUD kecil; SMP/SMA/Santri/PTK besar; SD kelas 1–3 kecil dan 4–6 besar")
     for row in data.get("posyandu") or []:

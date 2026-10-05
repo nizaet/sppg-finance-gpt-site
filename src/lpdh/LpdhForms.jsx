@@ -292,17 +292,18 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     </Section>
 
     <Section title="Master Sekolah" subtitle="Kolom F = porsi kecil; G = porsi besar. SD kelas 1–3 kecil, kelas 4–6 besar; PAUD kecil; SMP/SMA/Santri/PTK besar." actions={<button type="button" onClick={() => addList("schools", { code: "", name: "", schoolType: "SD/MI", smallPortions: 0, largePortions: 0, status: "Aktif" })}><Plus size={15}/> Tambah sekolah</button>}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Sekolah</th><th>Jenis</th><th>Porsi Kecil (F)</th><th>Porsi Besar (G)</th><th>PIC</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
+      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Sekolah</th><th>Jenis</th><th>Porsi Kecil (F)</th><th>Porsi Besar (G)</th><th>Tenaga Pendidik Besar (H)</th><th>PIC</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
         {data.schools.map((row, index) => <tr key={index}>
           <td><input value={row.code || ""} onChange={e => updateList("schools", index, "code", e.target.value)}/></td>
           <td><input value={row.name || ""} onChange={e => updateList("schools", index, "name", e.target.value)}/></td>
           <td><select value={row.schoolType || "SD/MI"} onChange={e => { const list = clone(data.schools); list[index] = { ...row, schoolType: e.target.value, smallPortions: ["PAUD", "SD/MI"].includes(e.target.value) ? row.smallPortions : 0, largePortions: e.target.value === "PAUD" ? 0 : row.largePortions }; setMasters({ ...data, schools: list }); }}>{["PAUD", "SD/MI", "SMP/MTs", "SMA/MA/SMK/SLB", "Santri", "PTK"].map(t => <option key={t}>{t}</option>)}</select></td>
           <td><input aria-label={`Porsi kecil sekolah ${index + 1}`} type="number" min="0" step="1" disabled={!["PAUD", "SD/MI"].includes(row.schoolType)} value={row.smallPortions ?? ""} onChange={e => updateList("schools", index, "smallPortions", numValue(e.target.value))}/></td>
           <td><input aria-label={`Porsi besar sekolah ${index + 1}`} type="number" min="0" step="1" disabled={row.schoolType === "PAUD"} value={row.largePortions ?? ""} onChange={e => updateList("schools", index, "largePortions", numValue(e.target.value))}/></td>
+          <td><input aria-label={`Tenaga pendidik sekolah ${index + 1}`} type="number" min="0" step="1" value={row.staffLarge ?? ""} onChange={e => updateList("schools", index, "staffLarge", numValue(e.target.value))}/></td>
           {["picName", "phone", "address"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("schools", index, key, e.target.value)}/></td>)}
           <td><select value={row.status || "Aktif"} onChange={e => updateList("schools", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button type="button" className="icon danger" onClick={() => deleteList("schools", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.schools.length && <EmptyRow colSpan={10}/>}</tbody></table></div>
+        </tr>)}{!data.schools.length && <EmptyRow colSpan={11}/>}</tbody></table></div>
     </Section>
 
     <Section title="Master Posyandu" subtitle="Balita 6–59 bulan selalu kecil; ibu hamil dan ibu menyusui selalu besar." actions={<button type="button" onClick={() => addList("posyandu", { code: "", name: "", balitaSmall: 0, pregnantLarge: 0, breastfeedingLarge: 0, status: "Aktif" })}><Plus size={15}/> Tambah posyandu</button>}>

@@ -61,6 +61,19 @@ class MasterAndNumberTests(unittest.TestCase):
         self.assertEqual(logic.master_target_by_group(data)['KS-02'],0)
         self.assertEqual(logic.master_target_by_group(data)['PTK'],10)
 
+    def test_user_split_template_legacy_headers(self):
+        from openpyxl import Workbook
+        wb=Workbook(); school=wb.active; school.title='Master_Sekolah'
+        school.append(['Kode Unit','Jenis Unit','Nama Sekolah / Posyandu','Kode Kelompok','Kelompok Sasaran','Porsi Kecil','Porsi Besar','Tenaga pendidik','Jenis PIC','Target PM','Nama PIC','No. HP PIC','Alamat','Status Aktif','Catatan'])
+        school.append(['S1','Sekolah','SD Uji','KS-02','SD/MI',100,70,12,'Sekolah',182,'Guru Uji','','','Aktif',''])
+        pos=wb.create_sheet('Master Posyandu')
+        pos.append(['Kode Unit','Jenis Unit','Nama Sekolah / Posyandu','Kode Kelompok','Ibu Hamil','Ibu Menyusui','Anak Balita (6–59 bulan)','Jenis PIC','Target PM','Nama PIC','No. HP PIC','Alamat','Status Aktif','Catatan'])
+        pos.append(['P1','Posyandu','Pos Uji','KS-07',5,7,20,'3B',32,'Kader Uji','','','Aktif',''])
+        out=BytesIO(); wb.save(out)
+        data=logic.parse_master_workbook(out.getvalue()); logic.validate_master_portions(data)
+        counts=logic.master_target_by_group(data)
+        self.assertEqual([counts[k] for k in ('KS-02','KS-03','PTK','KS-07','KS-08','KS-09')],[100,70,12,5,7,20])
+
     def test_merge_preserves_edits_and_is_repeatable(self):
         parsed = {'identity':{'sppgId':'SOURCE'}, 'volunteers':[{'code':'R1','name':'Person A','dailyRate':100,'sourceRow':'C1_Relawan!6'}], 'groupTargets':{'KS-02':100}}
         original = {'identity':{'sppgId':'EXISTING'}, 'parameters':{'operationalPerPm':123}}
