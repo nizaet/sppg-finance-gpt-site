@@ -333,33 +333,22 @@ def build_register(
             "link": row.get("evidenceLink") or "",
         })
 
+    # Normal operational rows. Guru/kader are added below as the aggregate
+    # C_Operasional rows used by the official workbook.
     op_numbered = assign_document_numbers(operations, "invoiceNo")
     for idx, row in enumerate(op_numbered, 1):
         if as_number(row.get("amount")) <= 0 and not row.get("_baseProofNo"):
             continue
         entries.append({
             "source": "C_Operasional",
-            "code": f"OP-{idx:03d}",
+            "code": f"OP-{idx + 3:03d}",
             "proofNo": row.get("proofNoDerived") or row.get("_baseProofNo") or "",
             "date": row.get("date") or "",
             "amount": as_number(row.get("amount")),
             "link": row.get("evidenceLink") or "",
         })
 
-    volunteer_base = str(daily.get("volunteerReceiptBaseNo") or "").strip()
-    volunteer_for_number = []
-    for row in volunteers:
-        copy = deepcopy(row)
-        copy["receiptBase"] = copy.get("receiptNo") or volunteer_base
-        volunteer_for_number.append(copy)
-    volunteer_numbered = assign_document_numbers(volunteer_for_number, "receiptBase")
-    for idx, row in enumerate(volunteer_numbered, 1):
-        if as_number(row.get("amount")) <= 0:
-            continue
-        entries.append({
-            "source": "C1_Relawan",
-            "code": f"RL-{idx:03d}",
-            "proofNo": row.get("proofNoDerived"    incentive_base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
+    incentive_base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
     school_rows = [
         x for x in incentive_recipients
         if str(x.get("type") or "").strip().lower() in {"guru", "sekolah", "penanggung jawab satuan pendidikan"}
@@ -375,7 +364,10 @@ def build_register(
         amount = sum(as_number(x.get("amount")) for x in rows)
         if amount <= 0:
             continue
-        proof = str(daily.get(explicit_key) or (f"{incentive_base}-{suffix}" if incentive_base else "")).strip()
+        proof = str(
+            daily.get(explicit_key)
+            or (f"{incentive_base}-{suffix}" if incentive_base else "")
+        ).strip()
         entries.append({
             "source": "C_Operasional",
             "code": code,
@@ -385,7 +377,21 @@ def build_register(
             "link": daily.get("incentiveBatchEvidenceLink") or "",
         })
 
-) or row.get("_baseProofNo") or "",
+    # Relawan remain nominative and are registered per person.
+    volunteer_base = str(daily.get("volunteerReceiptBaseNo") or "").strip()
+    volunteer_for_number = []
+    for row in volunteers:
+        copy = deepcopy(row)
+        copy["receiptBase"] = copy.get("receiptNo") or volunteer_base
+        volunteer_for_number.append(copy)
+    volunteer_numbered = assign_document_numbers(volunteer_for_number, "receiptBase")
+    for idx, row in enumerate(volunteer_numbered, 1):
+        if as_number(row.get("amount")) <= 0:
+            continue
+        entries.append({
+            "source": "C1_Relawan",
+            "code": f"RL-{idx:03d}",
+            "proofNo": row.get("proofNoDerived") or row.get("_baseProofNo") or "",
             "date": row.get("date") or "",
             "amount": as_number(row.get("amount")),
             "link": row.get("evidenceLink") or "",
@@ -395,7 +401,7 @@ def build_register(
     if as_number(incentive.get("paidAmount")) > 0 or incentive.get("proofNo"):
         entries.append({
             "source": "D_Insentif",
-            "code": "IN-001",
+            "code": "INS-001",
             "proofNo": str(incentive.get("proofNo") or "").strip(),
             "date": incentive.get("paymentDate") or "",
             "amount": as_number(incentive.get("paidAmount")),
@@ -403,7 +409,11 @@ def build_register(
         })
 
     for idx, row in enumerate(daily.get("topups") or [], 1):
-        amount = as_number(row.get("rawAmount")) + as_number(row.get("operationalAmount")) + as_number(row.get("incentiveAmount"))
+        amount = (
+            as_number(row.get("rawAmount"))
+            + as_number(row.get("operationalAmount"))
+            + as_number(row.get("incentiveAmount"))
+        )
         if amount <= 0 and not row.get("receiptNo"):
             continue
         entries.append({
@@ -415,10 +425,18 @@ def build_register(
             "link": row.get("evidenceLink") or "",
         })
 
-    counts = Counter(str(x["proofNo"]).strip().upper() for x in entries if str(x["proofNo"]).strip())
+    counts = Counter(
+        str(x["proofNo"]).strip().upper()
+        for x in entries
+        if str(x["proofNo"]).strip()
+    )
     for row in entries:
         proof = str(row["proofNo"]).strip()
-        row["proofStatus"] = "UNIK" if proof and counts[proof.upper()] == 1 else ("DUPLIKAT" if proof else "BELUM ADA")
+        row["proofStatus"] = (
+            "UNIK"
+            if proof and counts[proof.upper()] == 1
+            else ("DUPLIKAT" if proof else "BELUM ADA")
+        )
     return entries
 
 
