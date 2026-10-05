@@ -390,7 +390,9 @@ def save_official_template(payload: OfficialTemplateIn, request: Request) -> dic
             revision = cur.fetchone()["revision"]
         conn.commit()
     return {"site": site, "installed": True, "filename": payload.filename, "revision": revision}
-\n\n@router.get("/calculator-final")
+
+
+@router.get("/calculator-final")
 def get_calculator_final(request: Request, site: str = Query(), service_date: date = Query(alias="date")) -> dict[str, Any]:
     _require_db()
     target = _site(request, site)
