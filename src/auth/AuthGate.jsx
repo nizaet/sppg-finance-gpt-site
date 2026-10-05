@@ -98,7 +98,7 @@ function SessionBar({ role, config, onLogout }) {
   const calculatorSites = role === "OWNER" ? ["MAJA", "CEMPLANG"] : [role];
 
   return (
-    <div className="sppg-session-bar">
+    <div className={`sppg-session-bar${/^\/lpdh(?:\/|$)/.test(window.location.pathname) ? " sppg-session-bar--lpdh" : ""}`}>
       <span>{ROLE_LABELS[role] || role}</span>
       {calculatorSites.map((site) => (
         <a key={site} href={config?.calculatorUrls?.[site] || `/dapur/${site.toLowerCase()}`}>
