@@ -71,8 +71,8 @@ function Volunteer({ preview }) {
 
 function Incentive({ preview, daily }) {
   const x=daily?.incentive||{}; const e=x.eligibility||{};
-  return <div className="lpdh-sheet-body"><h3>D_Insentif</h3><Table headers={["Syarat","Nilai"]} rows={[
-    ["Hari pelayanan efektif",preview?.effective?"Ya":"Tidak"],["Kontaminasi",yes(e.contamination)],["Insiden fatal",yes(e.fatalIncident)],["Suspend",yes(e.suspended)],["Terverifikasi",yes(e.verified)],["PM masuk SIPGN",yes(e.pmInputSipgn)],["PM dasar insentif",num(preview?.production?.incentivePm)],["Tarif",money(preview?.parameters?.incentiveTariff)],["Insentif dihitung",money(preview?.incentiveCalculated)],["No Pernyataan PPK",x.ppkStatementNo||""],["Nilai Pernyataan",money(x.statementAmount)],["Dibayar",money(x.paidAmount)],["Tanggal",x.paymentDate||""],["No Bukti",x.proofNo||""],["No Kuitansi",x.receiptNo||""],["Bukti",x.evidenceLink||""]
+  return <div className="lpdh-sheet-body"><h3>D_Insentif · Mitra/Yayasan</h3><Table headers={["Syarat","Nilai"]} rows={[
+    ["Hari berstatus HPE",preview?.hpeEligible?"Ya":"Tidak"],["Kontaminasi",yes(e.contamination)],["Insiden fatal",yes(e.fatalIncident)],["Suspend",yes(e.suspended)],["Terverifikasi",yes(e.verified)],["PM masuk SIPGN",yes(e.pmInputSipgn)],["PM dasar insentif",num(preview?.production?.incentivePm)],["Tarif",money(preview?.parameters?.incentiveTariff)],["Insentif dihitung",money(preview?.incentiveCalculated)],["No Pernyataan PPK",x.ppkStatementNo||""],["Nilai Pernyataan",money(x.statementAmount)],["Dibayar",money(x.paidAmount)],["Tanggal",x.paymentDate||""],["No Bukti",x.proofNo||""],["No Kuitansi",x.receiptNo||""],["Bukti",x.evidenceLink||""]
   ]}/></div>;
 }
 
@@ -81,9 +81,15 @@ function Balance({ preview, daily }) {
   return <div className="lpdh-sheet-body"><h3>E_Saldo</h3><Table headers={["Komponen","Saldo Awal","TopUp","Pengeluaran","Saldo Akhir"]} rows={rows}/><div className="lpdh-summary-cards"><div><span>Total saldo komponen</span><strong>{money(b.closingTotal)}</strong></div><div><span>Saldo VA</span><strong>{money(b.bankBalance)}</strong></div><div><span>Selisih</span><strong>{money(b.bankDifference)}</strong></div></div><h4>Penerimaan TopUp</h4><Table headers={["Tanggal","Referensi","Bahan","Operasional","Insentif","Kuitansi","Bukti"]} rows={(daily?.topups||[]).map(x=>[x.date||"",x.reference||"",money(x.rawAmount),money(x.operationalAmount),money(x.incentiveAmount),x.receiptNo||"",x.evidenceLink||""])}/></div>;
 }
 
-function Topup({ preview, daily }) {
-  const t=daily?.topupProposal||{}; const p=preview?.topup||{};
-  return <div className="lpdh-sheet-body"><h3>F_TopUp</h3><Table headers={["Komponen","Usulan"]} rows={[["Bahan baku",money(t.raw)],["Operasional",money(t.operational)],["Insentif",money(t.incentive)],["TOTAL",money(p.proposalTotal)],["Ruang maksimum VA",money(p.roomToMax)]]}/><Status ok={p.withinMax}>Usulan {p.withinMax?"dalam":"melebihi"} plafon VA</Status></div>;
+function Topup({ preview }) {
+  const p=preview?.topup||{};
+  return <div className="lpdh-sheet-body"><h3>F_TopUp</h3><Table headers={["Komponen","Usulan SPPG Otomatis"]} rows={[
+    ["Biaya Bahan Baku Pangan",money(p.requiredRaw)],
+    ["Biaya Operasional",money(p.requiredOperational)],
+    ["Insentif Ketersediaan dan Mutu Layanan",money(p.requiredIncentive)],
+    ["JUMLAH",money(p.requiredTotal)],
+    ["Ruang top up s.d. batas saldo VA",money(p.roomToMax)]
+  ]}/><Status ok={p.withinMax}>Usulan {p.withinMax?"dalam":"melebihi"} batas saldo VA</Status><p className="lpdh-sheet-help">Kolom “Disetujui PPK” pada Excel tetap menjadi kewenangan Tim PPK dan tidak diisi otomatis.</p></div>;
 }
 
 function Checks({ preview }) {
@@ -103,7 +109,7 @@ function Register({ preview }) {
 
 function Approval({ masters, preview, serviceDate }) {
   const i=masters?.identity||{}; const signers=masters?.signers||[];
-  return <div className="lpdh-sheet-body"><h3>J_Pengesahan</h3><div className="lpdh-approval"><h2>LEMBAR PENGESAHAN LPDH</h2><p>{i.sppgName||"SPPG"} · {serviceDate}</p><p>Dengan ini menyatakan data realisasi, bukti transaksi, saldo, dan perhitungan pada LPDH telah diperiksa.</p><div className="lpdh-summary-cards"><div><span>Total bahan</span><strong>{money(preview?.rawTotal)}</strong></div><div><span>Total operasional</span><strong>{money(preview?.operationalTotal)}</strong></div><div><span>Insentif</span><strong>{money(preview?.incentiveCalculated)}</strong></div></div><div className="lpdh-signers">{signers.slice(0,3).map((s,i)=><div key={i}><span>{["Kepala SPPG","Akuntan","Yayasan/PPK"][i]}</span><strong>{s.name||"Belum diisi"}</strong><small>{s.identityType||""} {s.identityNumber||""}</small><Status ok={yes(s.signed)}>{yes(s.signed)?"Ditandatangani":"Belum tanda tangan"}</Status></div>)}</div></div></div>;
+  return <div className="lpdh-sheet-body"><h3>J_Pengesahan</h3><div className="lpdh-approval"><h2>LEMBAR PENGESAHAN LPDH</h2><p>{i.sppgName||"SPPG"} · {serviceDate}</p><p>Dengan ini menyatakan data realisasi, bukti transaksi, saldo, dan perhitungan pada LPDH telah diperiksa.</p><div className="lpdh-summary-cards"><div><span>Total bahan</span><strong>{money(preview?.rawTotal)}</strong></div><div><span>Total operasional</span><strong>{money(preview?.operationalTotal)}</strong></div><div><span>Insentif</span><strong>{money(preview?.incentiveCalculated)}</strong></div></div><div className="lpdh-signers">{signers.slice(0,3).map((s,i)=><div key={i}><span>{["Pengawas Keuangan SPPG","Kepala SPPG","Perwakilan Mitra/Yayasan"][i]}</span><strong>{s.name||"Belum diisi"}</strong><small>{s.identityType||""} {s.identityNumber||""}</small><Status ok={yes(s.signed)}>{yes(s.signed)?"Ditandatangani":"Belum tanda tangan"}</Status></div>)}</div></div></div>;
 }
 
 function Ref({ preview, referenceRows }) {
@@ -122,7 +128,7 @@ export default function LpdhSheets({ activeSheet, masters, daily, preview, servi
     case "C1_Relawan": return <Volunteer preview={preview}/>;
     case "D_Insentif": return <Incentive preview={preview} daily={daily}/>;
     case "E_Saldo": return <Balance preview={preview} daily={daily}/>;
-    case "F_TopUp": return <Topup preview={preview} daily={daily}/>;
+    case "F_TopUp": return <Topup preview={preview}/>;
     case "G_CekPPK": return <Checks preview={preview}/>;
     case "H_RekapPPK": return <Rekap preview={preview} masters={masters} daily={daily} serviceDate={serviceDate}/>;
     case "I_RegisterBukti": return <Register preview={preview}/>;

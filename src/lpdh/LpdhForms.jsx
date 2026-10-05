@@ -80,7 +80,15 @@ export function normalizeMasters(value = {}) {
   const data = clone(value || {}) || {};
   data.identity = data.identity || {};
   data.signers = Array.isArray(data.signers) ? data.signers : [];
-  while (data.signers.length < 3) data.signers.push({ name: "", identityType: "NIK", identityNumber: "", signed: "Tidak" });
+  const signerTypes = ["NIK", "NIP", "NIK"];
+  while (data.signers.length < 3) {
+    const index = data.signers.length;
+    data.signers.push({ name: "", identityType: signerTypes[index], identityNumber: "", signed: "Tidak" });
+  }
+  data.signers = data.signers.slice(0, 3).map((row, index) => ({
+    ...row,
+    identityType: signerTypes[index],
+  }));
   data.beneficiaries = Array.isArray(data.beneficiaries) ? data.beneficiaries : [];
   data.volunteers = Array.isArray(data.volunteers) ? data.volunteers : [];
   data.operations = Array.isArray(data.operations) ? data.operations : [];
@@ -107,7 +115,7 @@ export function normalizeDaily(value = {}, serviceDate = "") {
   data.topups = Array.isArray(data.topups) ? data.topups : [];
   data.topupProposal = data.topupProposal || {};
   data.upload = data.upload || {};
-  data.dayStatus = data.dayStatus || "Hari Pelayanan Efektif";
+  data.dayStatus = data.dayStatus || "HPE";
   data.hpeNumber = data.hpeNumber || 1;
   data._serviceDate = serviceDate;
   return data;
@@ -270,9 +278,9 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     <Section title="Pengesah" subtitle="Tiga baris ini dipakai juga pada J_Pengesahan.">
       <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Peran</th><th>Nama</th><th>Jenis ID</th><th>Nomor ID</th><th>Ditandatangani</th></tr></thead>
         <tbody>{data.signers.slice(0, 3).map((row, index) => <tr key={index}>
-          <td>{["Kepala SPPG","Akuntan","Pihak Yayasan/PPK"][index]}</td>
+          <td>{["Pengawas Keuangan SPPG","Kepala SPPG","Perwakilan Mitra/Yayasan"][index]}</td>
           <td><input value={row.name || ""} onChange={(e) => updateSigner(index, "name", e.target.value)} /></td>
-          <td><select value={row.identityType || "NIK"} onChange={(e) => updateSigner(index, "identityType", e.target.value)}><option>NIK</option><option>NIP</option></select></td>
+          <td><input value={["NIK","NIP","NIK"][index]} disabled /></td>
           <td><input value={row.identityNumber || ""} onChange={(e) => updateSigner(index, "identityNumber", e.target.value)} /></td>
           <td><select value={row.signed || "Tidak"} onChange={(e) => updateSigner(index, "signed", e.target.value)}><option>Ya</option><option>Tidak</option></select></td>
         </tr>)}</tbody></table></div>
@@ -425,7 +433,16 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <span>{finalPlan?.payload ? `${finalPlan.planName || "Rencana"} · revisi ${finalPlan.revision || 1}` : "Finalkan dulu rencana aktual di Kalkulator agar bahan baku dapat ditarik otomatis."}</span>
       </div>
       <div className="lpdh-form-grid compact">
-        <Field label="Status hari" value={data.dayStatus} onChange={(v) => update("dayStatus", v)} />
+        <Field label="Status hari">
+          <select value={data.dayStatus || "HPE"} onChange={(e) => update("dayStatus", e.target.value)}>
+            <option>HPE</option>
+            <option>Libur nasional/cuti bersama</option>
+            <option>Libur sekolah/libur khusus daerah</option>
+            <option>Tanpa pembelajaran tatap muka</option>
+            <option>Kondisi tertentu (pemda/BGN)</option>
+            <option>Melebihi 5 hari dalam seminggu</option>
+          </select>
+        </Field>
         <Field label="HPE ke-" type="number" value={data.hpeNumber} onChange={(v) => update("hpeNumber", v)} />
         <Field label="Nomor dasar kuitansi relawan" value={data.volunteerReceiptBaseNo} onChange={(v) => update("volunteerReceiptBaseNo", v)} placeholder="mis. RL/0410/2026" />
         <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
@@ -435,6 +452,8 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Tanggal pembayaran guru/kader" type="date" value={data.incentivePaymentDate} onChange={(v) => update("incentivePaymentDate", v)} />
         <Field label="Ref penarikan/bank guru/kader" value={data.incentivePaymentReference} onChange={(v) => update("incentivePaymentReference", v)} />
         <Field label="Bukti bank guru/kader (1 untuk batch)" value={data.incentiveBatchEvidenceLink} onChange={(v) => update("incentiveBatchEvidenceLink", v)} placeholder="https://..." />
+        <Field label="No bukti agregat guru (C_Operasional)" value={data.schoolPicOperationalProofNo} onChange={(v) => update("schoolPicOperationalProofNo", v)} placeholder="kosong = nomor dasar-GURU" />
+        <Field label="No bukti agregat kader (C_Operasional)" value={data.cadreOperationalProofNo} onChange={(v) => update("cadreOperationalProofNo", v)} placeholder="kosong = nomor dasar-KADER" />
       </div>
     </Section>
 
@@ -518,7 +537,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         </tr>)}{!data.incentiveRecipients.length&&<EmptyRow colSpan={8}/>}</tbody></table></div>
     </Section>
 
-    <Section title="D_Insentif · Ketersediaan & Mutu Layanan">
+    <Section title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">
       <div className="lpdh-form-grid">
         <YesNo label="Ada kontaminasi?" value={data.incentive.eligibility.contamination} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,contamination:v}}})}/>
         <YesNo label="Ada insiden fatal?" value={data.incentive.eligibility.fatalIncident} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,fatalIncident:v}}})}/>
@@ -537,15 +556,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="E_Saldo & F_TopUp">
+    <Section title="E_Saldo & F_TopUp" subtitle="Usulan SPPG pada F_TopUp dihitung otomatis dari bahan baku + operasional + Insentif Ketersediaan dan Mutu Layanan. Kolom persetujuan PPK tidak diisi oleh aplikasi.">
       <div className="lpdh-form-grid">
         <Field label="Saldo awal bahan" type="number" value={data.balance.openingRaw} onChange={(v)=>updateNested("balance","openingRaw",v)}/>
         <Field label="Saldo awal operasional" type="number" value={data.balance.openingOperational} onChange={(v)=>updateNested("balance","openingOperational",v)}/>
         <Field label="Saldo awal insentif" type="number" value={data.balance.openingIncentive} onChange={(v)=>updateNested("balance","openingIncentive",v)}/>
         <Field label="Saldo VA rekening koran" type="number" value={data.balance.bankBalance} onChange={(v)=>updateNested("balance","bankBalance",v)}/>
-        <Field label="Usulan TopUp bahan" type="number" value={data.topupProposal.raw} onChange={(v)=>updateNested("topupProposal","raw",v)}/>
-        <Field label="Usulan TopUp operasional" type="number" value={data.topupProposal.operational} onChange={(v)=>updateNested("topupProposal","operational",v)}/>
-        <Field label="Usulan TopUp insentif" type="number" value={data.topupProposal.incentive} onChange={(v)=>updateNested("topupProposal","incentive",v)}/>
       </div>
       <div className="lpdh-inline-actions"><button type="button" onClick={()=>addList("topups",{date:serviceDate,reference:"",rawAmount:0,operationalAmount:0,incentiveAmount:0,receiptNo:"",evidenceLink:""})}><Plus size={15}/> Tambah penerimaan TopUp</button></div>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Tgl</th><th>SP2D/Ref</th><th>Bahan</th><th>Operasional</th><th>Insentif</th><th>No Kuitansi</th><th>Link</th><th></th></tr></thead><tbody>
