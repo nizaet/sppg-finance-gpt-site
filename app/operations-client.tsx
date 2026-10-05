@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { downloadXlsx } from "./xlsx";
+import InvoiceDocumentsClient from "./invoice-documents-client";
 import { operationalCategories, operationalCategoryLabels, operationalCategoryFromNote, operationalNote } from "./operational-categories";
 
 type Unit = { id: string; name: string; bankChannel: string };
@@ -124,11 +125,11 @@ const tabs = [
   ["today", "Hari Ini", "01"],
   ["purchase", "Belanja & PO", "02"],
   ["payment", "Invoice & Bank", "03"],
-  ["daily-payments", "Upah & Insentif", "04"],
-  ["ai", "Asisten AI", "05"],
-  ["migration", "Migrasi Data", "06"],
-  ["access", "Akses Tim", "07"],
-  ["settings", "Pengaturan AI", "08"],
+  ["daily-payments", "Upah & Insentif", "05"],
+  ["ai", "Asisten AI", "06"],
+  ["migration", "Migrasi Data", "07"],
+  ["access", "Akses Tim", "08"],
+  ["settings", "Pengaturan AI", "09"],
 ] as const;
 
 const categoryLabels: Record<string, string> = {
@@ -598,6 +599,7 @@ export default function OperationsClient({ displayName, onOpenKitchen }: { displ
                 syncSupplierPayments={syncSupplierPaymentRows}
               />
             )}
+            {activeTab === "documents" && <InvoiceDocumentsClient unit={unit} workflow={workflow} date={date} />}
             {activeTab === "payment" && (
               <PaymentView
                 unit={unit}
