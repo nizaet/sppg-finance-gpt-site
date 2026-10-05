@@ -4,6 +4,7 @@ import { getApp, getApps, initializeApp } from "firebase/app";
 import { getAuth, signInWithCustomToken } from "firebase/auth";
 import AuthGate from "./auth/AuthGate.jsx";
 import CalculatorGateway from "./auth/CalculatorGateway.jsx";
+import AppGateway from "./auth/AppGateway.jsx";
 import { authApi, readSessionToken } from "./auth/session.js";
 import { authenticateMajaFirebase } from "./auth/maja-firebase.js";
 import { applyAppTheme } from "./theme.js";
@@ -18,6 +19,7 @@ installInventoryUiEnhancements();
 const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const isOperationsRoute = pathname === "/operations" || pathname.startsWith("/operations/");
 const isCalculatorRoute = pathname === "/calculator" || pathname.startsWith("/calculator/");
+const isLpdhRoute = pathname === "/lpdh" || pathname.startsWith("/lpdh/");
 const isCemplangAccountantRoute = pathname === "/accountant/cemplang" || pathname.startsWith("/accountant/cemplang/");
 
 const firebaseConfig = {
@@ -31,6 +33,7 @@ const firebaseConfig = {
 };
 
 const OperationsApp = lazy(() => import("./operations/OperationsWorkspace.jsx"));
+const LpdhApp = lazy(() => import("./lpdh/LpdhWorkspace.jsx"));
 const AccountantApp = lazy(() => Promise.all([
   import("./App.jsx"),
   import("./styles.css"),
@@ -107,10 +110,20 @@ function CemplangAccountantRoute() {
 function RoutedApp({ role, config, onLogout }) {
   const normalizedRole = String(role || "OWNER").toUpperCase();
 
-  // MAJA/CEMPLANG are calculator-only. This routing rule applies regardless of
-  // which browser URL they manually type after login.
+  // MAJA/CEMPLANG share one login between the existing Calculator and the
+  // LPDH administration workspace. The root route acts as the app chooser.
   if (normalizedRole !== "OWNER") {
-    return <CalculatorRedirect role={normalizedRole} />;
+    if (isLpdhRoute) {
+      return (
+        <Suspense fallback={<BootFallback text={`Menyiapkan LPDH ${normalizedRole}…`} />}>
+          <LpdhApp role={normalizedRole} onLogout={onLogout} />
+        </Suspense>
+      );
+    }
+    if (isCalculatorRoute) {
+      return <CalculatorGateway role={normalizedRole} config={config} />;
+    }
+    return <AppGateway role={normalizedRole} config={config} onLogout={onLogout} />;
   }
 
   if (isCalculatorRoute) {
