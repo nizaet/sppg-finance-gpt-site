@@ -355,7 +355,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
   </div>;
 }
 
-export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, api, onSaved, onPreview }) {
+export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview }) {
   const data = normalizeDaily(daily, serviceDate);
   const [busy, setBusy] = useState(false);
   const masterData = normalizeMasters(masters);
@@ -433,18 +433,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <strong>{finalPlan?.payload ? "Final Kalkulator tersedia" : "Belum ada Final Kalkulator"}</strong>
         <span>{finalPlan?.payload ? `${finalPlan.planName || "Rencana"} · revisi ${finalPlan.revision || 1}` : "Finalkan dulu rencana aktual di Kalkulator agar bahan baku dapat ditarik otomatis."}</span>
       </div>
+      <div className={preview?.effective ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
+        <strong>{preview?.effective ? "Hari Pelayanan Efektif" : "Bukan Hari Pelayanan Efektif"}</strong>
+        <span>{preview?.effective ? `HPE ke-${preview?.hpeNumber || 1} minggu ini · otomatis dari kalender pelayanan` : "Tanggal ini tidak dapat digenerate. Atur dari tab Hari Pelayanan Efektif."}</span>
+      </div>
       <div className="lpdh-form-grid compact">
-        <Field label="Status hari">
-          <select value={data.dayStatus || "HPE"} onChange={(e) => update("dayStatus", e.target.value)}>
-            <option>HPE</option>
-            <option>Libur nasional/cuti bersama</option>
-            <option>Libur sekolah/libur khusus daerah</option>
-            <option>Tanpa pembelajaran tatap muka</option>
-            <option>Kondisi tertentu (pemda/BGN)</option>
-            <option>Melebihi 5 hari dalam seminggu</option>
-          </select>
-        </Field>
-        <Field label="HPE ke-" type="number" value={data.hpeNumber} onChange={(v) => update("hpeNumber", v)} />
         <Field label="Nomor dasar kuitansi relawan" value={data.volunteerReceiptBaseNo} onChange={(v) => update("volunteerReceiptBaseNo", v)} placeholder="mis. RL/0410/2026" />
         <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
         <Field label="Ref penarikan/bank relawan" value={data.volunteerPaymentReference} onChange={(v) => update("volunteerPaymentReference", v)} />
