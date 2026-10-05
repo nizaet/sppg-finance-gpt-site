@@ -459,7 +459,8 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         lpdh_finalize_hook + "        async function saveDailyPlan() {",
         1,
     )
-\n    shared_master_replacements = [
+
+    shared_master_replacements = [
         (
             '                showMessage("Resep berhasil disimpan.", "success");',
             '                await window.__syncSharedCalculatorMaster("RECIPES", "UPSERT", recipeId, { id: recipeId, ...recipeData });\n                showMessage("Resep tersimpan dan tersinkron ke Maja + Cemplang.", "success");',

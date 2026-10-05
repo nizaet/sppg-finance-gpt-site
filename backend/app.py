@@ -19,7 +19,8 @@ from backend.operational_api import router as operational_router
 from backend.vendor_payables_api import router as vendor_payables_router
 from backend.inventory_api import router as inventory_router
 from backend.vendor_workflow_api import router as vendor_workflow_router
-from backend.menu_planning_advisor_api import router as menu_planning_advisor_router\nfrom backend.lpdh_api import router as lpdh_router
+from backend.menu_planning_advisor_api import router as menu_planning_advisor_router
+from backend.lpdh_api import router as lpdh_router
 from backend.operations_action_schema_v017_api import schema_v0170, schema_v0171, schema_v0172
 from backend.unified_action_schema_api import schema_v0180, schema_v0181, schema_v0182, schema_v0183, schema_v0184, schema_v0185, schema_v0186, schema_v0187, schema_v0188
 
@@ -33,7 +34,8 @@ app.include_router(operational_router)
 app.include_router(menu_planning_advisor_router)
 app.include_router(vendor_payables_router, prefix="/v1")
 app.include_router(inventory_router)
-app.include_router(vendor_workflow_router)\napp.include_router(lpdh_router)
+app.include_router(vendor_workflow_router)
+app.include_router(lpdh_router)
 
 origins = [x.strip() for x in os.getenv("SPPG_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
