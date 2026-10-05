@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -148,7 +148,8 @@ def _load_final_plan(site: str, service_date: date) -> dict[str, Any] | None:
     }
 
 
-def _effective(site: str, service_date: date) -> bool:
+def _effective_context(site: str, service_date: date) -> dict[str, Any]:
+    week_start = service_date - timedelta(days=service_date.weekday())
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -156,7 +157,34 @@ def _effective(site: str, service_date: date) -> bool:
                 (site, service_date),
             )
             row = cur.fetchone()
-    return bool(row and row["is_effective"])
+            effective = bool(row and row["is_effective"])
+            if effective:
+                cur.execute(
+                    """select count(*) as n
+                       from lpdh_effective_days
+                       where site=%s
+                         and is_effective=true
+                         and service_date >= %s
+                         and service_date <= %s""",
+                    (site, week_start, service_date),
+                )
+                count_row = cur.fetchone()
+                hpe_number = int((count_row or {}).get("n") or 0)
+            else:
+                hpe_number = 0
+    return {"effective": effective, "hpeNumber": hpe_number}
+
+
+def _effective(site: str, service_date: date) -> bool:
+    return bool(_effective_context(site, service_date)["effective"])
+
+
+def _daily_with_hpe(site: str, service_date: date, daily: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    context = _effective_context(site, service_date)
+    normalized = dict(daily or {})
+    normalized["dayStatus"] = "HPE" if context["effective"] else normalized.get("dayStatus") or "Tidak HPE"
+    normalized["hpeNumber"] = context["hpeNumber"]
+    return normalized, context
 
 
 @router.get("/masters")
@@ -203,11 +231,13 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     _require_db()
     target = _site(request, site)
     daily = _load_daily(target, service_date)
+    normalized, context = _daily_with_hpe(target, service_date, daily.get("data") or {})
     return {
         "site": target,
         "serviceDate": service_date,
         **daily,
-        "effective": _effective(target, service_date),
+        "data": normalized,
+        **context,
         "finalPlan": _load_final_plan(target, service_date),
     }
 
@@ -451,9 +481,10 @@ def preview(request: Request, site: str = Query(), service_date: date = Query(al
     _require_db()
     target = _site(request, site)
     masters = _load_master(target)["data"] or {}
-    daily = _load_daily(target, service_date)["data"] or {}
+    raw_daily = _load_daily(target, service_date)["data"] or {}
+    daily, context = _daily_with_hpe(target, service_date, raw_daily)
     final_plan = _load_final_plan(target, service_date)
-    return compute_preview(masters, daily, service_date.isoformat(), _effective(target, service_date), final_plan)
+    return compute_preview(masters, daily, service_date.isoformat(), context["effective"], final_plan)
 
 
 @router.post("/generate")
@@ -463,11 +494,13 @@ def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
     actor = _role(request)
     masters = _load_master(site)["data"] or {}
     daily_state = _load_daily(site, payload.service_date)
-    daily = daily_state["data"] or {}
+    daily, context = _daily_with_hpe(site, payload.service_date, daily_state["data"] or {})
     final_plan = _load_final_plan(site, payload.service_date)
     if not final_plan:
         raise HTTPException(409, {"message": "Data Kalkulator belum berstatus FINAL untuk tanggal ini"})
-    preview_data = compute_preview(masters, daily, payload.service_date.isoformat(), _effective(site, payload.service_date), final_plan)
+    if not context["effective"]:
+        raise HTTPException(409, {"message": "Tanggal ini bukan Hari Pelayanan Efektif"})
+    preview_data = compute_preview(masters, daily, payload.service_date.isoformat(), context["effective"], final_plan)
     if not preview_data["ready"]:
         issues = [row for row in preview_data["checks"] if not row["ok"]]
         raise HTTPException(
