@@ -164,7 +164,9 @@ function GeneratePanel({ site, serviceDate, preview, history, onRefresh, onGener
 
 export default function LpdhWorkspace({ role, onLogout }) {
   const accountRole=String(role||"").toUpperCase();
-  const requestedSite=typeof window!=="undefined" ? String(new URLSearchParams(window.location.search).get("site")||"").toUpperCase() : "";\n  const initialSite=accountRole==="OWNER" && (requestedSite==="MAJA" || requestedSite==="CEMPLANG") ? requestedSite : (accountRole==="OWNER"?"MAJA":accountRole);\n  const [site,setSite]=useState(initialSite);
+  const requestedSite=typeof window!=="undefined" ? String(new URLSearchParams(window.location.search).get("site")||"").toUpperCase() : "";
+  const initialSite=accountRole==="OWNER" && (requestedSite==="MAJA" || requestedSite==="CEMPLANG") ? requestedSite : (accountRole==="OWNER"?"MAJA":accountRole);
+  const [site,setSite]=useState(initialSite);
   const [selectedDate,setSelectedDate]=useState(todayJakarta());
   const [effectiveMonth,setEffectiveMonth]=useState(monthKeyFromDate(todayJakarta()));
   const [effectiveDates,setEffectiveDates]=useState([]);
