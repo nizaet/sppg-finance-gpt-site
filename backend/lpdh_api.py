@@ -164,6 +164,9 @@ def get_masters(request: Request, site: str = Query()) -> dict[str, Any]:
     _require_db()
     target = _site(request, site)
     result = _load_master(target)
+    public_data = dict(result.get("data") or {})
+    public_data.pop("_officialTemplateBase64", None)
+    result = {**result, "data": public_data}
     return {"site": target, **result}
 
 
@@ -172,6 +175,11 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
     _require_db()
     site = _site(request, payload.site)
     actor = _role(request)
+    current = _load_master(site)["data"] or {}
+    incoming = dict(payload.data or {})
+    for protected_key in ("_officialTemplateBase64", "_officialTemplateFilename"):
+        if protected_key not in incoming and protected_key in current:
+            incoming[protected_key] = current[protected_key]
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -183,7 +191,7 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
                        updated_by=excluded.updated_by,
                        updated_at=now()
                    returning revision,updated_at""",
-                (site, json.dumps(payload.data, ensure_ascii=False), actor),
+                (site, json.dumps(incoming, ensure_ascii=False), actor),
             )
             row = cur.fetchone()
         conn.commit()
@@ -457,6 +465,8 @@ def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
     daily_state = _load_daily(site, payload.service_date)
     daily = daily_state["data"] or {}
     final_plan = _load_final_plan(site, payload.service_date)
+    if not final_plan:
+        raise HTTPException(409, {"message": "Data Kalkulator belum berstatus FINAL untuk tanggal ini"})
     preview_data = compute_preview(masters, daily, payload.service_date.isoformat(), _effective(site, payload.service_date), final_plan)
     if not preview_data["ready"]:
         issues = [row for row in preview_data["checks"] if not row["ok"]]

@@ -262,7 +262,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>loadMasters(site)}/>}
         {active==="daily"&&<DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} api={lpdhApi} onSaved={flash} onPreview={refreshPreview}/>}
-        {active==="documents"&&<DocumentsPanel serviceDate={selectedDate} daily={daily} preview={preview} onMessage={flash}/>}
+        {active==="documents"&&<DocumentsPanel serviceDate={selectedDate} daily={daily} preview={preview} masters={masters} onMessage={flash}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={refreshPreview} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
       </section>

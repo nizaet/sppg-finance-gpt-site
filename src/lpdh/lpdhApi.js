@@ -63,6 +63,11 @@ export const lpdhApi = {
     method: "POST",
     body: JSON.stringify({ site, filename, content_base64: contentBase64 }),
   }),
+  officialTemplateStatus: (site) => request(`/v1/lpdh/official-template?${q({ site })}`),
+  saveOfficialTemplate: (site, filename, contentBase64) => request("/v1/lpdh/official-template", {
+    method: "PUT",
+    body: JSON.stringify({ site, filename, content_base64: contentBase64 }),
+  }),
 };
 
 export function arrayBufferToBase64(buffer) {

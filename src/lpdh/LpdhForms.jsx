@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileUp, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 
@@ -84,6 +84,8 @@ export function normalizeMasters(value = {}) {
   data.beneficiaries = Array.isArray(data.beneficiaries) ? data.beneficiaries : [];
   data.volunteers = Array.isArray(data.volunteers) ? data.volunteers : [];
   data.operations = Array.isArray(data.operations) ? data.operations : [];
+  data.vendor = data.vendor || {};
+  data.assets = data.assets || {};
   data.parameters = { ...DEFAULT_PARAMETERS, ...(data.parameters || {}) };
   return data;
 }
@@ -130,11 +132,23 @@ export function rawFromFinalPlan(finalPlan, serviceDate) {
 
 export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload }) {
   const fileRef = useRef(null);
+  const officialTemplateRef = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [officialTemplate, setOfficialTemplate] = useState({ installed: false, filename: "" });
   const data = normalizeMasters(masters);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.officialTemplateStatus(site).then((result) => {
+      if (!cancelled) setOfficialTemplate(result || { installed: false, filename: "" });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [api, site]);
 
   const updateIdentity = (key, value) => setMasters({ ...data, identity: { ...data.identity, [key]: value } });
   const updateParameter = (key, value) => setMasters({ ...data, parameters: { ...data.parameters, [key]: value } });
+  const updateVendor = (key, value) => setMasters({ ...data, vendor: { ...data.vendor, [key]: value } });
+  const updateAsset = (key, value) => setMasters({ ...data, assets: { ...data.assets, [key]: value } });
   const updateSigner = (index, key, value) => {
     const signers = clone(data.signers);
     signers[index] = { ...signers[index], [key]: value };
@@ -178,14 +192,47 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     }
   };
 
+  const uploadOfficialTemplate = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+      const result = await api.saveOfficialTemplate(site, file.name, contentBase64);
+      setOfficialTemplate(result);
+      onSaved?.(`Template resmi ${file.name} terpasang. Generate berikutnya akan memakai workbook ini beserta rumus dan formatnya.`);
+    } catch (error) {
+      onSaved?.(error.message || "Template resmi gagal dipasang.", "error");
+    } finally {
+      setBusy(false);
+      if (officialTemplateRef.current) officialTemplateRef.current.value = "";
+    }
+  };
+
+  const uploadImageAsset = (key, file) => {
+    if (!file) return;
+    if (file.size > 1_500_000) {
+      onSaved?.("Gambar maksimal 1,5 MB. Gunakan PNG/JPG yang sudah diperkecil.", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => updateAsset(key, String(reader.result || ""));
+    reader.readAsDataURL(file);
+  };
+
   return <div className="lpdh-stack">
     <Section title="Master Data LPDH" subtitle="Diisi sekali, lalu dipakai ulang untuk seluruh hari pelayanan." actions={<>
       <button type="button" onClick={downloadTemplate} disabled={busy}><Download size={15}/> Template Excel</button>
-      <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={15}/> Import Excel</button>
+      <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={15}/> Import Master</button>
       <input ref={fileRef} hidden type="file" accept=".xlsx" onChange={(e) => importFile(e.target.files?.[0])} />
+      <button type="button" onClick={() => officialTemplateRef.current?.click()} disabled={busy}><FileUp size={15}/> Template LPDH Resmi</button>
+      <input ref={officialTemplateRef} hidden type="file" accept=".xlsx" onChange={(e) => uploadOfficialTemplate(e.target.files?.[0])} />
       <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Master</button>
     </>}>
       <div className="lpdh-note">Master tersimpan per dapur. Akun YAYASAN dapat mengelola Maja dan Cemplang; akun dapur hanya site sendiri.</div>
+      <div className={officialTemplate.installed ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
+        <strong>{officialTemplate.installed ? "Template resmi terpasang" : "Template resmi belum diunggah"}</strong>
+        <span>{officialTemplate.installed ? officialTemplate.filename : "Fallback formula aktif. Unggah workbook resmi agar layout output persis mengikuti file sumber."}</span>
+      </div>
     </Section>
 
     <Section title="Identitas SPPG & Rekening">
@@ -200,6 +247,23 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
         <Field label="Provinsi" value={data.identity.province} onChange={(v) => updateIdentity("province", v)} />
         <Field label="Nomor VA" value={data.identity.vaNumber} onChange={(v) => updateIdentity("vaNumber", v)} />
         <Field label="Bank" value={data.identity.bankName} onChange={(v) => updateIdentity("bankName", v)} />
+      </div>
+    </Section>
+
+    <Section title="Master Vendor & Aset Invoice" subtitle="Dipakai saat preview/cetak invoice. Layout persis akan mengikuti contoh invoice yang Anda kirim; data dan asetnya sudah disiapkan.">
+      <div className="lpdh-form-grid">
+        <Field label="Nama vendor / koperasi" value={data.vendor.name} onChange={(v) => updateVendor("name", v)} />
+        <Field label="Alamat vendor" value={data.vendor.address} onChange={(v) => updateVendor("address", v)} />
+        <Field label="No. HP / kontak" value={data.vendor.phone} onChange={(v) => updateVendor("phone", v)} />
+        <Field label="NPWP / identitas" value={data.vendor.taxId} onChange={(v) => updateVendor("taxId", v)} />
+        <Field label="Prefix invoice bahan" value={data.vendor.rawInvoicePrefix} onChange={(v) => updateVendor("rawInvoicePrefix", v)} placeholder="mis. INV/BB/" />
+        <Field label="Prefix invoice operasional" value={data.vendor.operationalInvoicePrefix} onChange={(v) => updateVendor("operationalInvoicePrefix", v)} placeholder="mis. INV/OP/" />
+        <Field label="Nama penandatangan invoice" value={data.vendor.signatoryName} onChange={(v) => updateVendor("signatoryName", v)} />
+      </div>
+      <div className="lpdh-asset-grid">
+        <label className="lpdh-asset-upload"><span>Tanda tangan vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorSignature",e.target.files?.[0])}/>{data.assets.vendorSignature && <img src={data.assets.vendorSignature} alt="Preview tanda tangan vendor"/>}</label>
+        <label className="lpdh-asset-upload"><span>Stempel vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorStamp",e.target.files?.[0])}/>{data.assets.vendorStamp && <img src={data.assets.vendorStamp} alt="Preview stempel vendor"/>}</label>
+        <label className="lpdh-asset-upload"><span>Logo vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorLogo",e.target.files?.[0])}/>{data.assets.vendorLogo && <img src={data.assets.vendorLogo} alt="Preview logo vendor"/>}</label>
       </div>
     </Section>
 
@@ -515,10 +579,23 @@ function deriveNumbers(rows, base, overrideKey = "receiptNo") {
   });
 }
 
-export function DocumentsPanel({ serviceDate, daily, preview, onMessage }) {
+export function DocumentsPanel({ serviceDate, daily, preview, masters, onMessage }) {
   const data = normalizeDaily(daily, serviceDate);
   const volunteerDocs = useMemo(() => deriveNumbers((data.volunteerPayments || []).filter((x)=>(Number(x.workDays)||0)*(Number(x.dailyRate)||0)>0), data.volunteerReceiptBaseNo), [data]);
   const incentiveDocs = useMemo(() => deriveNumbers((data.incentiveRecipients || []).filter((x)=>Number(x.amount)>0), data.incentiveReceiptBaseNo), [data]);
+  const masterData = normalizeMasters(masters || {});
+  const vendor = masterData.vendor || {};
+  const assets = masterData.assets || {};
+  const groupInvoices = (rows) => Object.values((rows || []).reduce((groups, row) => {
+    const no = String(row.invoiceNo || "").trim();
+    if (!no) return groups;
+    if (!groups[no]) groups[no] = { invoiceNo: no, rows: [] };
+    groups[no].rows.push(row);
+    return groups;
+  }, {}));
+  const rawInvoices = useMemo(() => groupInvoices(data.rawMaterials), [data.rawMaterials]);
+  const operationalInvoices = useMemo(() => groupInvoices(data.operations), [data.operations]);
+  const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[char]));
 
   const printDocument = (title, rows) => {
     const win = window.open("", "_blank", "noopener,noreferrer");
@@ -528,18 +605,43 @@ export function DocumentsPanel({ serviceDate, daily, preview, onMessage }) {
     win.document.close();
   };
 
+  const printInvoice = (kind, invoice) => {
+    const rows = invoice.rows || [];
+    const win = window.open("", "_blank", "noopener,noreferrer");
+    if (!win) return onMessage?.("Popup diblokir browser. Izinkan popup untuk cetak invoice.", "error");
+    const items = rows.map((x, index) => {
+      const qty = Number(x.qty || 0); const price = Number(x.price || 0);
+      return `<tr><td>${index+1}</td><td>${esc(x.name || x.description || "")}</td><td style="text-align:right">${qty.toLocaleString("id-ID")}</td><td>${esc(x.unit || "")}</td><td style="text-align:right">Rp ${price.toLocaleString("id-ID")}</td><td style="text-align:right">Rp ${(qty*price).toLocaleString("id-ID")}</td></tr>`;
+    }).join("");
+    const total = rows.reduce((sum,x)=>sum+(Number(x.qty||0)*Number(x.price||0)),0);
+    const logo = assets.vendorLogo ? `<img class="logo" src="${esc(assets.vendorLogo)}"/>` : "";
+    const signature = assets.vendorSignature ? `<img class="sign-img" src="${esc(assets.vendorSignature)}"/>` : "";
+    const stamp = assets.vendorStamp ? `<img class="stamp" src="${esc(assets.vendorStamp)}"/>` : "";
+    win.document.write(`<!doctype html><html><head><title>${esc(invoice.invoiceNo)}</title><style>
+      body{font-family:Arial,sans-serif;color:#111;padding:32px}.head{display:flex;justify-content:space-between;gap:20px}.logo{max-width:120px;max-height:70px}h1{font-size:22px;margin:0 0 5px}.muted{color:#666;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:24px}td,th{border:1px solid #aaa;padding:8px;font-size:12px}th{background:#f3f3f3}.total{text-align:right;margin-top:14px;font-size:16px}.sign-area{display:flex;justify-content:flex-end;margin-top:45px}.sign-box{width:260px;text-align:center;position:relative;min-height:130px}.sign-img{max-height:80px;max-width:180px}.stamp{max-height:80px;max-width:100px;position:absolute;right:20px;top:20px;opacity:.8}
+    </style></head><body><div class="head"><div>${logo}<h1>INVOICE</h1><div><strong>${esc(vendor.name || "Vendor / Koperasi")}</strong></div><div class="muted">${esc(vendor.address || "")}</div><div class="muted">${esc(vendor.phone || "")}</div></div><div><strong>No. ${esc(invoice.invoiceNo)}</strong><div class="muted">Tanggal pelayanan: ${esc(serviceDate)}</div><div class="muted">${esc(kind)}</div></div></div>
+    <table><thead><tr><th>No</th><th>Uraian</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Jumlah</th></tr></thead><tbody>${items}</tbody></table><div class="total"><strong>Total: Rp ${total.toLocaleString("id-ID")}</strong></div>
+    <div class="sign-area"><div class="sign-box">Hormat kami,<br>${signature}${stamp}<br><strong>${esc(vendor.signatoryName || vendor.name || "Vendor")}</strong></div></div><script>window.print()</script></body></html>`);
+    win.document.close();
+  };
+
   return <div className="lpdh-stack">
     <Section title="Invoice & Kuitansi" subtitle="Nomor asli invoice tetap disimpan. Jika satu invoice memiliki beberapa baris, register bukti memberi suffix otomatis agar unik.">
       <div className="lpdh-summary-cards">
         <div><span>Bahan baku</span><strong>{preview?.rawMaterials?.length || 0} baris</strong><small>Satu invoice dapat mencakup seluruh bahan.</small></div>
         <div><span>Relawan</span><strong>{volunteerDocs.length} kuitansi</strong><small>Dari nomor dasar {data.volunteerReceiptBaseNo || "belum diisi"}.</small></div>
         <div><span>Guru/Kader</span><strong>{incentiveDocs.length} kuitansi</strong><small>Dari nomor dasar {data.incentiveReceiptBaseNo || "belum diisi"}.</small></div>
+        <div><span>Invoice vendor</span><strong>{rawInvoices.length + operationalInvoices.length}</strong><small>{rawInvoices.length} bahan · {operationalInvoices.length} operasional.</small></div>
       </div>
       <div className="lpdh-inline-actions">
         <button type="button" onClick={()=>printDocument("Kuitansi Upah Relawan",volunteerDocs)} disabled={!volunteerDocs.length}>Cetak/Save PDF Kuitansi Relawan</button>
         <button type="button" onClick={()=>printDocument("Kuitansi Insentif Guru/Kader",incentiveDocs)} disabled={!incentiveDocs.length}>Cetak/Save PDF Kuitansi Guru/Kader</button>
       </div>
-      <div className="lpdh-note">Layout invoice vendor final akan dibuat mengikuti contoh invoice yang Anda berikan. Mesin nomor dan data transaksinya sudah disiapkan sekarang.</div>
+      <div className="lpdh-invoice-list">
+        {rawInvoices.map((invoice)=><button type="button" key={`raw-${invoice.invoiceNo}`} onClick={()=>printInvoice("Bahan Baku",invoice)}>Invoice bahan · {invoice.invoiceNo}</button>)}
+        {operationalInvoices.map((invoice)=><button type="button" key={`op-${invoice.invoiceNo}`} onClick={()=>printInvoice("Operasional",invoice)}>Invoice operasional · {invoice.invoiceNo}</button>)}
+      </div>
+      <div className="lpdh-note">Generator invoice vendor generik sudah aktif memakai logo, tanda tangan, dan stempel master. Saat contoh invoice asli diberikan, layoutnya dapat dibuat persis tanpa mengubah data transaksi.</div>
     </Section>
     <Section title="Nomor kuitansi yang akan dipakai">
       <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Jenis</th><th>Nomor</th><th>Nama</th><th>Nilai</th></tr></thead><tbody>
