@@ -12,6 +12,11 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.workbook import Workbook
 
+try:
+    from .generated_document_logic import category_name, grouped_operations, line_amount
+except ImportError:
+    from generated_document_logic import category_name, grouped_operations, line_amount
+
 ROOT = Path(__file__).resolve().parents[1]
 LPDH_TEMPLATE = ROOT / "backend" / "templates" / "LPDH_SPPG_Format_Excel_PPK.xlsx"
 
@@ -217,7 +222,7 @@ def final_plan_raw_rows(final_plan: dict[str, Any] | None, service_date: str) ->
 
 def raw_rows(daily: dict[str, Any], final_plan: dict[str, Any] | None, service_date: str) -> list[dict[str, Any]]:
     rows = deepcopy(daily.get("rawMaterials") or [])
-    if not rows:
+    if not rows and not daily.get("_documentWorkflow"):
         rows = final_plan_raw_rows(final_plan, service_date)
     default_invoice = str(daily.get("rawInvoiceNo") or "").strip()
     default_evidence = str(daily.get("rawInvoiceEvidenceLink") or "").strip()
@@ -229,6 +234,9 @@ def raw_rows(daily: dict[str, Any], final_plan: dict[str, Any] | None, service_d
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"))
         row["amount"] = row["qty"] * row["price"]
+    for row in rows:
+        if row.get("sourceDocumentId"):
+            row["amount"] = line_amount(row["qty"], row["price"])
     return rows[:40]
 
 
@@ -294,6 +302,11 @@ def operational_rows(masters: dict[str, Any], daily: dict[str, Any]) -> list[dic
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"), as_number(ref.get("defaultPrice")))
         row["amount"] = row["qty"] * row["price"]
+    for row in rows:
+        ref = master_by_code.get(str(row.get("itemCode") or ""), {})
+        row["category"] = category_name(row.get("category") or ref.get("category"), row.get("description"))
+        if row.get("sourceDocumentId"):
+            row["amount"] = line_amount(row["qty"], row["price"])
     return rows
 
 
@@ -312,6 +325,9 @@ def assign_document_numbers(rows: list[dict[str, Any]], base_key: str, explicit_
             width = max(2, len(str(len(indexes))))
             for seq, index in enumerate(indexes, start=1):
                 cloned[index]["proofNoDerived"] = f"{base}-{seq:0{width}d}"
+    for row in cloned:
+        if row.get("sourceDocumentId"):
+            row["proofNoDerived"] = row["_baseProofNo"]
     return cloned
 
 
@@ -354,7 +370,22 @@ def build_register(
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
-    raw_numbered = assign_document_numbers(raw, "invoiceNo")
+    # One evidence record per source invoice, irrespective of its number of items.
+    invoice_groups = {}
+    for source, rows in (("B_BahanBaku", raw), ("C_Operasional", operations)):
+        for row in rows:
+            if row.get("sourceDocumentId"):
+                key = (source, row["sourceDocumentId"])
+                if key not in invoice_groups:
+                    invoice_groups[key] = {"source": source, "code": f"DOC-{row['sourceDocumentId']}",
+                                           "proofNo": row.get("invoiceNo") or "", "date": row.get("date") or "",
+                                           "amount": 0, "link": row.get("evidenceLink") or ""}
+                invoice_groups[key]["amount"] += as_number(row.get("amount"))
+                if not https_url(row.get("evidenceLink")):
+                    invoice_groups[key]["link"] = ""
+    entries.extend(invoice_groups.values())
+
+    raw_numbered = assign_document_numbers([x for x in raw if not x.get("sourceDocumentId")], "invoiceNo")
     for idx, row in enumerate(raw_numbered, 1):
         if as_number(row.get("amount")) <= 0 and not row.get("_baseProofNo"):
             continue
@@ -369,7 +400,7 @@ def build_register(
 
     # Normal operational rows. Guru/kader are added below as the aggregate
     # C_Operasional rows used by the official workbook.
-    op_numbered = assign_document_numbers(operations, "invoiceNo")
+    op_numbered = assign_document_numbers([x for x in operations if not x.get("sourceDocumentId")], "invoiceNo")
     for idx, row in enumerate(op_numbered, 1):
         if as_number(row.get("amount")) <= 0 and not row.get("_baseProofNo"):
             continue
@@ -385,11 +416,11 @@ def build_register(
     incentive_base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
     school_rows = [
         x for x in incentive_recipients
-        if str(x.get("type") or "").strip().lower() in {"guru", "sekolah", "penanggung jawab satuan pendidikan"}
+        if not x.get("sourceDocumentId") and str(x.get("type") or "").strip().lower() in {"guru", "sekolah", "penanggung jawab satuan pendidikan"}
     ]
     cadre_rows = [
         x for x in incentive_recipients
-        if str(x.get("type") or "").strip().lower() in {"kader", "posyandu", "kader posyandu"}
+        if not x.get("sourceDocumentId") and str(x.get("type") or "").strip().lower() in {"kader", "posyandu", "kader posyandu"}
     ]
     for code, rows, suffix, explicit_key in [
         ("OP-002", school_rows, "GURU", "schoolPicOperationalProofNo"),
@@ -410,6 +441,11 @@ def build_register(
             "amount": amount,
             "link": daily.get("incentiveBatchEvidenceLink") or "",
         })
+
+    for idx, row in enumerate(incentive_recipients, 1):
+        if row.get("sourceDocumentId") and as_number(row.get("amount")) > 0:
+            entries.append({"source": "C_Operasional", "code": f"IK-{idx:03d}", "proofNo": row.get("receiptNo") or "",
+                            "date": row.get("date") or "", "amount": as_number(row.get("amount")), "link": row.get("evidenceLink") or ""})
 
     # Relawan remain nominative and are registered per person.
     volunteer_base = str(daily.get("volunteerReceiptBaseNo") or "").strip()
@@ -579,7 +615,7 @@ def compute_preview(
     ] + [
         str(r.get("generatedReceiptNo") or "").strip()
         for r in incentive_receipts
-        if str(r.get("generatedReceiptNo") or "").strip()
+        if not r.get("sourceDocumentId") and str(r.get("generatedReceiptNo") or "").strip()
     ]
     proof_counts = Counter(value.upper() for value in proof_universe)
     duplicate_numbers = sorted({value for value in proof_universe if proof_counts[value.upper()] > 1})
@@ -731,6 +767,7 @@ def compute_preview(
         "weightedRawPagu": weighted_raw_pagu,
         "rawStatus": "DALAM PAGU" if produced > 0 and raw_per_portion <= weighted_raw_pagu + 0.0001 else "MELEBIHI PAGU",
         "operations": operations,
+        "operationalGroups": grouped_operations(operations),
         "volunteers": volunteers,
         "incentiveRecipients": incentive_recipients,
         "incentiveReceipts": incentive_receipts,
@@ -1160,11 +1197,14 @@ def populate_workbook(
             "L": item.get("evidenceLink"), "O": item.get("note"),
         }.items():
             _set_if(raw_ws, f"{col}{i}", value)
+        if item.get("sourceDocumentId"):
+            raw_ws[f"I{i}"] = f"=ROUND(F{i}*H{i},2)"
+            raw_ws[f"M{i}"] = f'=IF(K{i}="","BELUM ADA",IF(COUNTIF(I_RegisterBukti!$C$5:$C$130,K{i})<=1,"UNIK","DUPLIKAT"))'
 
     op_ws = wb["C_Operasional"]
     op_rows = preview["operations"]
     op_numbered = assign_document_numbers(op_rows, "invoiceNo")
-    by_name = {str(x.get("description") or "").strip().lower(): x for x in op_numbered}
+    by_name = {str(x.get("description") or "").strip().lower(): x for x in grouped_operations(op_numbered)}
 
     school_rows = [
         x for x in preview["incentiveRecipients"]
@@ -1198,6 +1238,11 @@ def populate_workbook(
         },
     }
 
+    for pos, rows in ((7, school_rows), (8, cadre_rows)):
+        if any(x.get("sourceDocumentId") for x in rows):
+            special_rows[pos]["proofNo"] = "; ".join(dict.fromkeys(x.get("receiptNo") or "" for x in rows if x.get("receiptNo")))
+            special_rows[pos]["evidenceLink"] = "; ".join(dict.fromkeys(x.get("evidenceLink") or "" for x in rows if x.get("evidenceLink")))
+
     for pos, default_name in enumerate(OPERATIONAL_DEFAULTS, start=6):
         if pos == 6:
             # Official workbook row 6 is driven entirely by C1_Relawan formulas.
@@ -1212,6 +1257,8 @@ def populate_workbook(
             _set_if(op_ws, f"E{pos}", item.get("qty"))
             _set_if(op_ws, f"F{pos}", item.get("unit"))
             _set_if(op_ws, f"G{pos}", price)
+            if any(x.get("sourceDocumentId") for x in (school_rows if pos == 7 else cadre_rows)):
+                op_ws[f"H{pos}"] = f"=ROUND(E{pos}*G{pos},2)"
             _set_if(op_ws, f"I{pos}", item.get("proofNo"))
             _set_if(op_ws, f"J{pos}", item.get("evidenceLink"))
             _set_if(op_ws, f"M{pos}", item.get("note"))
@@ -1225,7 +1272,8 @@ def populate_workbook(
         _set_if(op_ws, f"E{pos}", as_number(item.get("qty")))
         _set_if(op_ws, f"F{pos}", item.get("unit"))
         _set_if(op_ws, f"G{pos}", as_number(item.get("price")))
-        _set_if(op_ws, f"I{pos}", item.get("proofNoDerived") or item.get("_baseProofNo") or "")
+        op_ws[f"H{pos}"] = f"=ROUND(E{pos}*G{pos},2)"
+        _set_if(op_ws, f"I{pos}", item.get("invoiceNo") or item.get("proofNoDerived") or item.get("_baseProofNo") or "")
         _set_if(op_ws, f"J{pos}", item.get("evidenceLink"))
         _set_if(op_ws, f"M{pos}", item.get("note"))
 
@@ -1285,8 +1333,12 @@ def populate_workbook(
         }.items():
             _set_if(saldo_ws, f"{col}{idx}", value)
 
-    if not using_official_template:
+    if not using_official_template or daily.get("_documentWorkflow"):
         register_ws = wb["I_RegisterBukti"]
+        if daily.get("_documentWorkflow"):
+            for rr in range(5, 126):
+                for cc in range(1, 7):
+                    register_ws.cell(rr, cc).value = None
         for idx, item in enumerate(preview.get("register") or [], start=5):
             if idx > 125:
                 break

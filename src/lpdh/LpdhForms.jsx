@@ -368,24 +368,21 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     setDaily({ ...data, pm: { ...data.pm, rows } });
   };
   const updateList = (name, index, key, value) => {
+    if (data[name][index]?.sourceDocumentId && !["evidenceLink", "paymentReference"].includes(key)) return onSaved?.("Nilai dan nomor berasal dari dokumen FINAL yang terkunci. Link bukti masih dapat dilengkapi.", "error");
     const list = clone(data[name]); list[index] = { ...list[index], [key]: value };
     setDaily({ ...data, [name]: list });
   };
-  const deleteList = (name, index) => setDaily({ ...data, [name]: data[name].filter((_, i) => i !== index) });
+  const deleteList = (name, index) => {
+    if (data[name][index]?.sourceDocumentId) return onSaved?.("Baris berasal dari dokumen FINAL dan tidak dapat dihapus dari data harian.", "error");
+    setDaily({ ...data, [name]: data[name].filter((_, i) => i !== index) });
+  };
   const addList = (name, row) => setDaily({ ...data, [name]: [...data[name], row] });
 
   const pullFinal = () => {
     if (!finalPlan?.payload) return onSaved?.("Belum ada data FINAL dari Kalkulator untuk tanggal ini.", "error");
-    const raw = rawFromFinalPlan(finalPlan, serviceDate).map((row) => ({
-      ...row,
-      date: data.rawInvoiceDate || serviceDate,
-      invoiceNo: data.rawInvoiceNo || row.invoiceNo || "",
-      evidenceLink: data.rawInvoiceEvidenceLink || row.evidenceLink || "",
-    }));
     const payload = finalPlan.payload || {};
     setDaily({
       ...data,
-      rawMaterials: raw,
       pm: {
         ...data.pm,
         production: {
@@ -394,12 +391,25 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         },
       },
     });
-    onSaved?.(`${raw.length} bahan ditarik dari Final Kalkulator. Isi nomor invoice, supplier, dan bukti sebelum generate.`);
+    onSaved?.("Porsi produksi ditarik dari Final Kalkulator. Bahan dan biaya berasal dari tab Buat Invoice & Kuitansi setelah finalisasi.");
+  };
+
+  const pullDocuments = async () => {
+    setBusy(true);
+    try {
+      await api.saveDaily(site, serviceDate, data, "DRAFT");
+      const result = await api.syncDocuments(site, serviceDate);
+      setDaily(normalizeDaily(result.data || {}, serviceDate));
+      onSaved?.(result.imported ? `${result.imported} dokumen FINAL ditarik tanpa menggandakan biaya.` : "Belum ada dokumen FINAL. Buat dan finalkan invoice/kuitansi terlebih dahulu.");
+      await onPreview?.();
+    } catch (error) { onSaved?.(error.message, "error"); }
+    finally { setBusy(false); }
   };
 
   const prepareVolunteers = () => {
     const existing = Object.fromEntries(data.volunteerPayments.map((x) => [x.volunteerCode || x.code || x.name, x]));
     const rows = masterData.volunteers.filter((x) => String(x.status || "Aktif").toLowerCase() !== "nonaktif").map((v) => ({
+      ...existing[v.code || v.name],
       volunteerCode: v.code || v.name,
       name: v.name,
       role: v.role || "",
@@ -431,12 +441,13 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
 
   return <div className="lpdh-stack">
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
-      <button type="button" onClick={pullFinal} disabled={!finalPlan?.payload}><Download size={15}/> Tarik Final Kalkulator</button>
+      <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
+      <button type="button" onClick={pullFinal} disabled={!finalPlan?.payload}><Download size={15}/> Tarik Porsi Final Kalkulator</button>
       <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Draft</button>
     </>}>
       <div className={finalPlan?.payload ? "lpdh-status-box ok" : "lpdh-status-box warn"}>
         <strong>{finalPlan?.payload ? "Final Kalkulator tersedia" : "Belum ada Final Kalkulator"}</strong>
-        <span>{finalPlan?.payload ? `${finalPlan.planName || "Rencana"} · revisi ${finalPlan.revision || 1}` : "Finalkan dulu rencana aktual di Kalkulator agar bahan baku dapat ditarik otomatis."}</span>
+        <span>{finalPlan?.payload ? `${finalPlan.planName || "Rencana"} · revisi ${finalPlan.revision || 1}` : "Finalkan rencana di Kalkulator. Buat invoice dari daftar belanja pada tab Buat Invoice & Kuitansi."}</span>
       </div>
       <div className={preview?.effective ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
         <strong>{preview?.effective ? "Hari Pelayanan Efektif" : "Bukan Hari Pelayanan Efektif"}</strong>
@@ -483,8 +494,8 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="B_BahanBaku" subtitle={`Total sementara Rp ${rawTotal.toLocaleString("id-ID")}. Satu invoice boleh punya banyak barang; nomor bukti unik akan diberi suffix otomatis.`} actions={<>
-      <button type="button" onClick={() => setDaily({...data, rawMaterials:data.rawMaterials.map((row)=>({...row,date:data.rawInvoiceDate||serviceDate,invoiceNo:data.rawInvoiceNo||row.invoiceNo||"",evidenceLink:data.rawInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian</button>
+    <Section title="B_BahanBaku" subtitle={`Total sementara Rp ${rawTotal.toLocaleString("id-ID")}. Nomor dan nilai dokumen FINAL terkunci; satu invoice boleh memuat banyak barang.`} actions={<>
+      <button type="button" onClick={() => setDaily({...data, rawMaterials:data.rawMaterials.map((row)=>row.sourceDocumentId ? row : ({...row,date:data.rawInvoiceDate||serviceDate,invoiceNo:data.rawInvoiceNo||row.invoiceNo||"",evidenceLink:data.rawInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian manual</button>
       <button type="button" onClick={() => addList("rawMaterials", { date: data.rawInvoiceDate || serviceDate, name: "", category: "", qty: 0, unit: "kg", price: 0, supplier: "", invoiceNo: data.rawInvoiceNo || "", evidenceLink: data.rawInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah bahan</button>
     </>}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Bahan</th><th>Kategori</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Supplier</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
@@ -503,13 +514,13 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     <Section title="C_Operasional" subtitle={`Belanja operasional lain Rp ${opTotal.toLocaleString("id-ID")}. Upah relawan dan insentif guru/kader dihitung terpisah lalu masuk total operasional.`} actions={<>
-      <button type="button" onClick={() => setDaily({...data, operations:data.operations.map((row)=>({...row,date:data.operationalInvoiceDate||serviceDate,invoiceNo:data.operationalInvoiceNo||row.invoiceNo||"",evidenceLink:data.operationalInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian</button>
+      <button type="button" onClick={() => setDaily({...data, operations:data.operations.map((row)=>row.sourceDocumentId ? row : ({...row,date:data.operationalInvoiceDate||serviceDate,invoiceNo:data.operationalInvoiceNo||row.invoiceNo||"",evidenceLink:data.operationalInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian manual</button>
       <button type="button" onClick={() => addList("operations", { date: data.operationalInvoiceDate || serviceDate, itemCode: "", description: "", qty: 1, unit: "unit", price: 0, invoiceNo: data.operationalInvoiceNo || "", evidenceLink: data.operationalInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah</button>
     </>}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Item master</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Harga</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.operations.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("operations", index, "date", e.target.value)}/></td>
-          <td><select value={row.itemCode || ""} onChange={(e) => { const code=e.target.value; const master=masterData.operations.find((x)=>x.code===code); const list=clone(data.operations); list[index]={...list[index],itemCode:code,description:master?.name||list[index].description,unit:master?.unit||list[index].unit,price:master?.defaultPrice??list[index].price}; setDaily({...data,operations:list}); }}><option value="">— pilih —</option>{masterData.operations.filter((x)=>String(x.status||"Aktif").toLowerCase()!=="nonaktif").map((x)=><option key={x.code} value={x.code}>{x.name}</option>)}</select></td>
+          <td><select disabled={Boolean(row.sourceDocumentId)} value={row.itemCode || ""} onChange={(e) => { const code=e.target.value; const master=masterData.operations.find((x)=>x.code===code); const list=clone(data.operations); list[index]={...list[index],itemCode:code,description:master?.name||list[index].description,unit:master?.unit||list[index].unit,price:master?.defaultPrice??list[index].price}; setDaily({...data,operations:list}); }}><option value="">— pilih —</option>{masterData.operations.filter((x)=>String(x.status||"Aktif").toLowerCase()!=="nonaktif").map((x)=><option key={x.code} value={x.code}>{x.name}</option>)}</select></td>
           <td><input value={row.description || ""} onChange={(e) => updateList("operations", index, "description", e.target.value)}/></td>
           <td><input type="number" step="0.01" value={row.qty ?? ""} onChange={(e) => updateList("operations", index, "qty", numValue(e.target.value))}/></td>
           <td><input value={row.unit || ""} onChange={(e) => updateList("operations", index, "unit", e.target.value)}/></td>
@@ -520,7 +531,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></table></div>
     </Section>
 
-    <Section title="C1_Relawan" subtitle={`Total upah relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Nomor dasar kuitansi dapat disiapkan di awal minggu; suffix per orang dibuat otomatis.`} actions={<button type="button" onClick={prepareVolunteers}><RefreshCw size={15}/> Siapkan dari master</button>}>
+    <Section title="C1_Relawan" subtitle={`Total upah harian relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Buat kuitansi per penerima di tab Buat Invoice & Kuitansi; pembayaran 1 hari.`} actions={<button type="button" onClick={prepareVolunteers}><RefreshCw size={15}/> Siapkan dari master</button>}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Nama</th><th>Tugas</th><th>Tgl Bayar</th><th>Hari Kerja</th><th>Tarif/Hari</th><th>Jumlah</th><th>Metode</th><th>Kuitansi override</th><th>Link Bukti</th></tr></thead>
         <tbody>{data.volunteerPayments.map((row, index) => <tr key={row.volunteerCode || index}>
           <td>{row.name}</td><td>{row.role}</td>

@@ -133,7 +133,7 @@ class SppgAccessMiddleware:
             # daily plans; all other operational APIs remain OWNER-only.
             await self.app(scope, receive, send)
             return
-        if path.startswith("/v1/lpdh"):
+        if path.startswith("/v1/lpdh") or path.startswith("/v1/accountant-documents"):
             # LPDH endpoints enforce site scope against request.state.sppg_role.
             # This gives MAJA/CEMPLANG accountants access only to their own site,
             # while OWNER can review both.

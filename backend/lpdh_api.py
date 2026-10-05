@@ -249,6 +249,21 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     requested_status = str(payload.status or "DRAFT").upper()
     if requested_status not in {"DRAFT", "READY", "GENERATED"}:
         raise HTTPException(400, "status daily tidak valid")
+    from backend.accountant_generated_document_api import daily_lock, load_documents
+    from backend.generated_document_logic import merge_final_documents
+    with connection() as conn, conn.cursor() as cur:
+        daily_lock(cur, site, payload.service_date)
+        try:
+            payload.data = merge_final_documents(payload.data, load_documents(cur, site, payload.service_date, True))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        result = _save_daily_locked(payload, request, site, cur)
+        conn.commit()
+    return result
+
+
+def _save_daily_locked(payload, request, site, cur):
+    requested_status = str(payload.status or "DRAFT").upper()
     status = requested_status
     if requested_status != "GENERATED":
         masters = _load_master(site)["data"] or {}
@@ -266,9 +281,7 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
         else:
             status = "DRAFT"
     actor = _role(request)
-    with connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
+    cur.execute(
                 """insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
                    values (%s,%s,%s::jsonb,%s,1,%s,now())
                    on conflict (site,service_date) do update
@@ -278,8 +291,7 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
                    returning revision,updated_at""",
                 (site, payload.service_date, json.dumps(payload.data, ensure_ascii=False), status, actor),
             )
-            row = cur.fetchone()
-        conn.commit()
+    row = cur.fetchone()
     return {"site": site, "serviceDate": payload.service_date, "saved": True, "status": status, "revision": row["revision"], "updatedAt": row["updated_at"]}
 
 
@@ -561,6 +573,15 @@ def preview(request: Request, site: str = Query(), service_date: date = Query(al
 def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
     _require_db()
     site = _site(request, payload.site)
+    from backend.accountant_generated_document_api import daily_lock
+    with connection() as conn, conn.cursor() as cur:
+        daily_lock(cur, site, payload.service_date)
+        result = _generate_locked(payload, request, site, cur)
+        conn.commit()
+    return result
+
+
+def _generate_locked(payload, request, site, cur):
     actor = _role(request)
     masters = _load_master(site)["data"] or {}
     daily_state = _load_daily(site, payload.service_date)
@@ -591,23 +612,20 @@ def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
             template_bytes = None
     content = populate_workbook(masters, daily, preview_data, payload.service_date.isoformat(), template_bytes=template_bytes)
     filename = f"LPDH_{site}_{payload.service_date.isoformat()}.xlsx"
-    with connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """insert into lpdh_generation_log(
-                     site,service_date,filename,validation_status,validation_error_count,generated_by,payload
-                   ) values (%s,%s,%s,'OK',0,%s,%s::jsonb)""",
-                (site, payload.service_date, filename, actor, json.dumps({"preview": {"errorCount": 0}}, ensure_ascii=False)),
-            )
-            cur.execute(
-                """insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
-                   values (%s,%s,%s::jsonb,'GENERATED',1,%s,now())
-                   on conflict (site,service_date) do update
-                   set status='GENERATED',revision=lpdh_daily_state.revision+1,
-                       updated_by=excluded.updated_by,updated_at=now()""",
-                (site, payload.service_date, json.dumps(daily, ensure_ascii=False), actor),
-            )
-        conn.commit()
+    cur.execute(
+        """insert into lpdh_generation_log(
+             site,service_date,filename,validation_status,validation_error_count,generated_by,payload
+           ) values (%s,%s,%s,'OK',0,%s,%s::jsonb)""",
+        (site, payload.service_date, filename, actor, json.dumps({"preview": {"errorCount": 0}}, ensure_ascii=False)),
+    )
+    cur.execute(
+        """insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
+           values (%s,%s,%s::jsonb,'GENERATED',1,%s,now())
+           on conflict (site,service_date) do update
+           set status='GENERATED',revision=lpdh_daily_state.revision+1,
+               updated_by=excluded.updated_by,updated_at=now()""",
+        (site, payload.service_date, json.dumps(daily, ensure_ascii=False), actor),
+    )
     return {
         "filename": filename,
         "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

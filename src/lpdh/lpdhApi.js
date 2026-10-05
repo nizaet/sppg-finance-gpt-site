@@ -1,4 +1,5 @@
 import { CORE_API, readSessionToken } from "../auth/session.js";
+import { documentApi } from "../documents/documentApi.js";
 
 async function request(path, options = {}) {
   const token = readSessionToken();
@@ -34,6 +35,7 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  syncDocuments: (site, date) => documentApi.syncDaily(site, date),
   getMasters: (site) => request(`/v1/lpdh/masters?${q({ site })}`),
   saveMasters: (site, data) => request("/v1/lpdh/masters", {
     method: "PUT",

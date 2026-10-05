@@ -58,7 +58,7 @@ function Raw({ preview }) {
 }
 
 function Operational({ preview }) {
-  const rows=(preview?.operations||[]).map((x,i)=>[i+1,x.date||"",x.description||"",num(x.qty),x.unit||"",money(x.price),money(x.amount),x.invoiceNo||"",x.evidenceLink||""]);
+  const rows=(preview?.operationalGroups||preview?.operations||[]).map((x,i)=>[i+1,x.date||"",x.description||"",num(x.qty),x.unit||"",money(x.price),money(x.amount),x.invoiceNo||"",x.evidenceLink||""]);
   rows.unshift(["","","Relawan","","","",money(preview?.volunteerTotal),"",""]);
   rows.splice(1,0,["","","Insentif guru/kader","","","",money(preview?.incentiveRecipientTotal),"",""]);
   return <div className="lpdh-sheet-body"><h3>C_Operasional</h3><Table headers={["No","Tanggal","Uraian","Volume","Unit","Harga","Jumlah","No Bukti","Link"]} rows={rows}/>

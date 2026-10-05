@@ -40,6 +40,8 @@ MIGRATIONS = [
     ROOT / "schema" / "po_reminder_tempe_maja_h2_v037.sql",
     ROOT / "schema" / "finance_ledger_v011.sql",
     ROOT / "schema" / "lpdh_v038.sql",
+    ROOT / "schema" / "generated_accountant_documents_v038.sql",
+    ROOT / "schema" / "generated_document_workflow_v039.sql",
 ]
 
 

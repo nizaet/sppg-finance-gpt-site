@@ -17,7 +17,8 @@ import {
 } from "lucide-react";
 import "./lpdh.css";
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
-import { DailyPanel, DocumentsPanel, MasterPanel, normalizeDaily, normalizeMasters } from "./LpdhForms.jsx";
+import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters } from "./LpdhForms.jsx";
+import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
 import LpdhSheets, { SHEET_ORDER } from "./LpdhSheets.jsx";
 
 const SITE_LABELS = { MAJA: "Maja", CEMPLANG: "Cemplang" };
@@ -167,7 +168,9 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const requestedSite=typeof window!=="undefined" ? String(new URLSearchParams(window.location.search).get("site")||"").toUpperCase() : "";
   const initialSite=accountRole==="OWNER" && (requestedSite==="MAJA" || requestedSite==="CEMPLANG") ? requestedSite : (accountRole==="OWNER"?"MAJA":accountRole);
   const [site,setSite]=useState(initialSite);
-  const [selectedDate,setSelectedDate]=useState(todayJakarta());
+  const requestedDate = new URLSearchParams(window.location.search).get("date") || "";
+  const requestedTab = new URLSearchParams(window.location.search).get("tab") || "";
+  const [selectedDate,setSelectedDate]=useState(/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && !Number.isNaN(Date.parse(requestedDate)) ? requestedDate : todayJakarta());
   const [effectiveMonth,setEffectiveMonth]=useState(monthKeyFromDate(todayJakarta()));
   const [effectiveDates,setEffectiveDates]=useState([]);
   const [calendarItems,setCalendarItems]=useState([]);
@@ -177,7 +180,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [preview,setPreview]=useState(null);
   const [referenceRows,setReferenceRows]=useState([]);
   const [history,setHistory]=useState([]);
-  const [active,setActive]=useState("calendar");
+  const [active,setActive]=useState(["documents", "daily"].includes(requestedTab) ? requestedTab : "calendar");
   const [activeSheet,setActiveSheet]=useState("Identitas");
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState(null);
@@ -249,8 +252,8 @@ export default function LpdhWorkspace({ role, onLogout }) {
     ["calendar","Kalender LPDH",CalendarDays],
     ["service-days","Hari Pelayanan Efektif",CalendarCheck2],
     ["masters","Master Data",FolderCog],
-    ["daily","Input Harian",Files],
-    ["documents","Vendor · Invoice & Kuitansi",ReceiptText],
+    ["documents","Buat Invoice & Kuitansi",ReceiptText],
+    ["daily","Data Harian dari Dokumen",Files],
     ["review","Review LPDH / Sheet Excel",FileCheck2],
     ["generate","Generate & Riwayat",History],
   ];
@@ -273,7 +276,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>loadMasters(site)}/>}
         {active==="daily"&&<DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async()=>{await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>} 
-        {active==="documents"&&<DocumentsPanel serviceDate={selectedDate} daily={daily} preview={preview} masters={masters} onMessage={flash}/>}
+        {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={refreshPreview} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
       </section>

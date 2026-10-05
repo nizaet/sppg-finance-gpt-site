@@ -1,5 +1,6 @@
-export const OPERATION_TABS = ['today', 'po', 'receiving', 'inventory', 'calculator-data', 'menu-advisor', 'payments', 'accounting', 'vendors', 'review', 'hermes', 'chat'];
+export const OPERATION_TABS = ['today', 'po', 'receiving', 'inventory', 'calculator-data', 'menu-advisor', 'documents', 'payments', 'accounting', 'vendors', 'review', 'hermes', 'chat'];
 export const SITE_TABS = {
+  documents: ['MAJA', 'CEMPLANG'],
   po: ['MAJA', 'CEMPLANG'],
   inventory: ['MAJA', 'CEMPLANG', 'KOPERASI'],
   vendors: ['ALL', 'MAJA', 'CEMPLANG'],

@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   PackageCheck,
+  ReceiptText,
   Store,
   Sun,
   ShieldCheck,
@@ -30,6 +31,7 @@ const OperationsControlTower = lazy(() => import("./OperationsControlTower.jsx")
 const OperationsReceiving = lazy(() => import("./OperationsReceiving.jsx"));
 const OperationsInventory = lazy(() => import("./OperationsInventory.jsx"));
 const OperationsPayments = lazy(() => import("./OperationsPayments.jsx"));
+const OperationsDocuments = lazy(() => import("./OperationsDocuments.jsx"));
 const OperationsAccountantBgn = lazy(() => import("./OperationsAccountantBgn.jsx"));
 const OperationsVendorMaster = lazy(() => import("./OperationsVendorMaster.jsx"));
 const OperationsReviewQueue = lazy(() => import("./OperationsReviewQueue.jsx"));
@@ -45,6 +47,7 @@ const tabs = [
   ["inventory", "Gudang", Warehouse],
   ["calculator-data", "Data Kalkulator", FolderUp],
   ["menu-advisor", "Asisten Menu", Sparkles],
+  ["documents", "Buat Invoice & Kuitansi", ReceiptText],
   ["payments", "Invoice & Pembayaran", WalletCards],
   ["accounting", "Akuntan & BGN", FileSpreadsheet],
   ["vendors", "Vendor & Lead Time", Store],
@@ -61,6 +64,7 @@ const moduleComponents = {
   "calculator-data": OperationsCalculatorData,
   "menu-advisor": OperationsMenuPlanningAdvisor,
   payments: OperationsPayments,
+  documents: OperationsDocuments,
   accounting: OperationsAccountantBgn,
   vendors: OperationsVendorMaster,
   review: OperationsReviewQueue,
