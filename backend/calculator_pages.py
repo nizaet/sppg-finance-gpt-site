@@ -165,12 +165,14 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         var finalizeLpdhButton = document.createElement('button');
         finalizeLpdhButton.type = 'button';
         finalizeLpdhButton.className = 'railway-app-control railway-lpdh-final';
+        finalizeLpdhButton.style.cssText = 'min-height:2rem;padding:.35rem .65rem;font-size:.8rem;background:#15803d;border-color:#15803d;';
         finalizeLpdhButton.innerHTML = '<i class="fas fa-circle-check"></i><span>Finalkan untuk LPDH</span>';
         finalizeLpdhButton.addEventListener('click', async function () {{
           if (typeof window.__finalizeLpdhCurrentPlan !== 'function') {{
             alert('Modul FINAL LPDH belum siap. Muat ulang halaman lalu coba lagi.');
             return;
           }}
+          if (!window.confirm('Yakin ingin memfinalkan perencanaan hari ini? Setelah final, data ini akan menjadi dasar tarikan LPDH.')) return;
           finalizeLpdhButton.disabled = true;
           var original = finalizeLpdhButton.innerHTML;
           finalizeLpdhButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Finalisasi...</span>';
@@ -179,9 +181,9 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         }});
         var finalPlanSection = document.createElement('div');
         finalPlanSection.id = 'railwayLpdhFinalSection';
-        finalPlanSection.style.cssText = 'margin-top:1.25rem;padding:1rem;border:2px solid #16a34a;border-radius:.75rem;background:#f0fdf4;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;';
+        finalPlanSection.style.cssText = 'margin-top:1rem;padding:.7rem .85rem;border:1px solid #86efac;border-radius:.6rem;background:#f0fdf4;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;';
         var finalPlanCopy = document.createElement('div');
-        finalPlanCopy.innerHTML = '<strong style="display:block;color:#166534;font-size:1rem;">Final Perencanaan Hari Ini</strong><span style="display:block;color:#365314;font-size:.875rem;margin-top:.25rem;">Setelah difinalkan, rencana ini dapat ditarik otomatis ke LPDH.</span>';
+        finalPlanCopy.innerHTML = '<strong style="display:block;color:#166534;font-size:.9rem;">Final Perencanaan Hari Ini</strong><span style="display:block;color:#365314;font-size:.75rem;margin-top:.2rem;">Setelah final, rencana dapat ditarik ke LPDH.</span>';
         finalPlanSection.appendChild(finalPlanCopy);
         finalPlanSection.appendChild(finalizeLpdhButton);
         var shoppingOutput = document.getElementById('shoppingListOutput');
