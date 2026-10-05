@@ -177,7 +177,16 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
           try {{ await window.__finalizeLpdhCurrentPlan(); }}
           finally {{ finalizeLpdhButton.disabled = false; finalizeLpdhButton.innerHTML = original; }}
         }});
-        controls.appendChild(finalizeLpdhButton);
+        var finalPlanSection = document.createElement('div');
+        finalPlanSection.id = 'railwayLpdhFinalSection';
+        finalPlanSection.style.cssText = 'margin-top:1.25rem;padding:1rem;border:2px solid #16a34a;border-radius:.75rem;background:#f0fdf4;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;';
+        var finalPlanCopy = document.createElement('div');
+        finalPlanCopy.innerHTML = '<strong style="display:block;color:#166534;font-size:1rem;">Final Perencanaan Hari Ini</strong><span style="display:block;color:#365314;font-size:.875rem;margin-top:.25rem;">Setelah difinalkan, rencana ini dapat ditarik otomatis ke LPDH.</span>';
+        finalPlanSection.appendChild(finalPlanCopy);
+        finalPlanSection.appendChild(finalizeLpdhButton);
+        var shoppingOutput = document.getElementById('shoppingListOutput');
+        if (shoppingOutput) shoppingOutput.appendChild(finalPlanSection);
+        else controls.appendChild(finalizeLpdhButton);
 
         var lpdhWorkspaceButton = document.createElement('button');
         lpdhWorkspaceButton.type = 'button';
