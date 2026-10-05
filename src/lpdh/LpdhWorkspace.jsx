@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from "react";
 import {
   Calculator,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Database,
   FileCheck2,
@@ -25,16 +28,138 @@ const MODULES = [
 ];
 
 const SITE_LABELS = { MAJA: "Maja", CEMPLANG: "Cemplang" };
+const DATE_MODULES = new Set(["calculator", "daily", "invoice", "ceiling", "generate"]);
 
-function ModulePanel({ module }) {
+function todayJakarta() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((item) => item.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function parseDateKey(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  return { year, month, day };
+}
+
+function monthKeyFromDate(value) {
+  const { year, month } = parseDateKey(value);
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function shiftMonth(monthKey, delta) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatDateLabel(value) {
+  const { year, month, day } = parseDateKey(value);
+  if (!year || !month || !day) return value;
+  return new Intl.DateTimeFormat("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(Date.UTC(year, month - 1, day, 6)));
+}
+
+function CalendarPanel({ selectedDate, setSelectedDate, onOpenDaily }) {
+  const [monthKey, setMonthKey] = useState(monthKeyFromDate(selectedDate));
+  const [year, month] = monthKey.split("-").map(Number);
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthLabel = new Intl.DateTimeFormat("id-ID", {
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(Date.UTC(year, month - 1, 1, 6)));
+  const today = todayJakarta();
+  const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => (
+    index < firstWeekday ? null : index - firstWeekday + 1
+  ));
+
+  const pickDay = (day) => {
+    if (!day) return;
+    setSelectedDate(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+  };
+
+  return (
+    <section className="lpdh-calendar-wrap">
+      <div className="lpdh-calendar-toolbar">
+        <div>
+          <div className="lpdh-kicker">LAPORAN HARIAN</div>
+          <h2>Kalender LPDH</h2>
+          <p>Pilih tanggal pelayanan. Semua modul transaksi harian akan mengikuti tanggal ini.</p>
+        </div>
+        <div className="lpdh-calendar-month-nav">
+          <button type="button" aria-label="Bulan sebelumnya" onClick={() => setMonthKey(shiftMonth(monthKey, -1))}><ChevronLeft size={18} /></button>
+          <strong>{monthLabel}</strong>
+          <button type="button" aria-label="Bulan berikutnya" onClick={() => setMonthKey(shiftMonth(monthKey, 1))}><ChevronRight size={18} /></button>
+        </div>
+      </div>
+
+      <div className="lpdh-calendar-weekdays" aria-hidden="true">
+        {["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"].map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="lpdh-calendar-grid">
+        {cells.map((day, index) => {
+          if (!day) return <span key={`blank-${index}`} className="lpdh-calendar-empty" />;
+          const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const selected = dateKey === selectedDate;
+          const isToday = dateKey === today;
+          return (
+            <button
+              key={dateKey}
+              type="button"
+              className={`lpdh-calendar-day${selected ? " selected" : ""}${isToday ? " today" : ""}`}
+              onClick={() => pickDay(day)}
+            >
+              <span className="lpdh-calendar-day-number">{day}</span>
+              <span className="lpdh-calendar-day-status">{isToday ? "Hari ini" : "Belum diisi"}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="lpdh-selected-date">
+        <div>
+          <span>Tanggal kerja aktif</span>
+          <strong>{formatDateLabel(selectedDate)}</strong>
+        </div>
+        <button type="button" onClick={onOpenDaily}>Isi laporan tanggal ini</button>
+      </div>
+
+      <div className="lpdh-calendar-legend">
+        <span><i className="empty" /> Belum diisi</span>
+        <span><i className="draft" /> Draft</span>
+        <span><i className="ready" /> Siap generate</span>
+        <span><i className="done" /> Sudah generate</span>
+      </div>
+    </section>
+  );
+}
+
+function ModulePanel({ module, selectedDate, site }) {
   const Icon = module.icon;
   return (
     <section className="lpdh-panel">
       <div className="lpdh-panel-icon"><Icon size={22} /></div>
       <div>
-        <div className="lpdh-kicker">MODUL</div>
+        <div className="lpdh-kicker">MODUL • {SITE_LABELS[site] || site}</div>
         <h2>{module.label}</h2>
         <p>{module.note}</p>
+        {DATE_MODULES.has(module.id) && (
+          <div className="lpdh-date-context">
+            <CalendarDays size={16} />
+            <span>{formatDateLabel(selectedDate)}</span>
+          </div>
+        )}
         <div className="lpdh-stage-note">
           <ClipboardCheck size={16} />
           <span>Kerangka modul sudah aktif. Koneksi data dan import Excel dipasang pada tahap berikutnya.</span>
@@ -47,7 +172,8 @@ function ModulePanel({ module }) {
 export default function LpdhWorkspace({ role, onLogout }) {
   const accountRole = String(role || "").toUpperCase();
   const [site, setSite] = useState(accountRole === "OWNER" ? "MAJA" : accountRole);
-  const [active, setActive] = useState("dashboard");
+  const [active, setActive] = useState("calendar");
+  const [selectedDate, setSelectedDate] = useState(todayJakarta());
   const module = useMemo(() => MODULES.find((item) => item.id === active), [active]);
 
   return (
@@ -64,7 +190,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
                   key={item}
                   type="button"
                   className={site === item ? "lpdh-site-button active" : "lpdh-site-button"}
-                  onClick={() => { setSite(item); setActive("dashboard"); }}
+                  onClick={() => { setSite(item); setActive("calendar"); }}
                 >
                   {SITE_LABELS[item]}
                 </button>
@@ -80,6 +206,9 @@ export default function LpdhWorkspace({ role, onLogout }) {
 
       <div className="lpdh-layout">
         <nav className="lpdh-nav" aria-label="Menu LPDH">
+          <button type="button" className={active === "calendar" ? "active" : ""} onClick={() => setActive("calendar")}>
+            <CalendarDays size={17} /> Kalender LPDH
+          </button>
           <button type="button" className={active === "dashboard" ? "active" : ""} onClick={() => setActive("dashboard")}>
             <FileCheck2 size={17} /> Dashboard
           </button>
@@ -94,12 +223,18 @@ export default function LpdhWorkspace({ role, onLogout }) {
         </nav>
 
         <section className="lpdh-content">
-          {active === "dashboard" ? (
+          {active === "calendar" ? (
+            <CalendarPanel
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+              onOpenDaily={() => setActive("daily")}
+            />
+          ) : active === "dashboard" ? (
             <>
               <div className="lpdh-summary">
                 <div>
                   <div className="lpdh-kicker">STATUS V1</div>
-                  <h2>Kerangka LPDH aktif untuk {SITE_LABELS[site] || site}</h2>
+                  <h2>LPDH {SITE_LABELS[site] || site} • {formatDateLabel(selectedDate)}</h2>
                   <p>{accountRole === "OWNER" ? "Pilih Maja atau Cemplang di atas. Data masing-masing dapur tetap dipisahkan." : "Site mengikuti akun login. Data MAJA dan CEMPLANG tidak dicampur di tampilan ini."}</p>
                 </div>
                 <div className="lpdh-badge">Tahap 1</div>
@@ -119,7 +254,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
               </div>
             </>
           ) : (
-            <ModulePanel module={module} />
+            <ModulePanel module={module} selectedDate={selectedDate} site={site} />
           )}
         </section>
       </div>
