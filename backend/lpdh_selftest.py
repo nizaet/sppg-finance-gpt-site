@@ -3,12 +3,19 @@ from __future__ import annotations
 from io import BytesIO
 from openpyxl import load_workbook
 
-from backend.lpdh_logic import (
-    compute_preview,
-    make_master_template,
-    parse_master_workbook,
-    populate_workbook,
-)
+import importlib.util
+from pathlib import Path
+
+_LOGIC_PATH = Path(__file__).with_name("lpdh_logic.py")
+_spec = importlib.util.spec_from_file_location("lpdh_logic_standalone", _LOGIC_PATH)
+_logic = importlib.util.module_from_spec(_spec)
+assert _spec and _spec.loader
+_spec.loader.exec_module(_logic)
+
+compute_preview = _logic.compute_preview
+make_master_template = _logic.make_master_template
+parse_master_workbook = _logic.parse_master_workbook
+populate_workbook = _logic.populate_workbook
 
 
 def fixture():
