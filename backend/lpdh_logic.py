@@ -1512,7 +1512,7 @@ def parse_master_workbook(content: bytes) -> dict[str, Any]:
             continue
         type_by_group = {"KS-01":"PAUD", "KS-02":"SD/MI", "KS-03":"SD/MI", "KS-04":"SMP/MTs", "KS-05":"SMA/MA/SMK/SLB", "KS-06":"Santri", "PTK":"PTK"}
         school_type = str(row.get("Jenis Sekolah") or type_by_group.get(str(row.get("Kode Kelompok") or "").strip()) or "").strip()
-        staff = row.get("Tenaga pendidik (Besar)", row.get("Tenaga pendidik"))
+        staff = next((value for key, value in row.items() if key.casefold() in {"tenaga pendidik", "tenaga pendidik (besar)"}), None)
         result["schools"].append({
             "code": str(row.get("Kode Unit") or "").strip(), "name": name,
             "schoolType": school_type, "picName": str(row.get("Nama PIC") or "").strip(),
@@ -1650,9 +1650,14 @@ def merge_master_import(existing, parsed, filename):
         for row in parsed.get(field) or []:
             code = str(row.get("code") or "").strip().casefold()
             name = str(row.get("name") or row.get("unitName") or "").strip().casefold()
-            if any((code and code == str(old.get("code") or "").strip().casefold()) or
+            matched = next((old for old in target if (code and code == str(old.get("code") or "").strip().casefold()) or
                    (name and name == str(old.get("name") or old.get("unitName") or "").strip().casefold()) or
-                   (row.get("sourceRow") and row.get("sourceRow") == old.get("sourceRow")) for old in target):
+                   (row.get("sourceRow") and row.get("sourceRow") == old.get("sourceRow"))), None)
+            if matched is not None:
+                # Add the new staff column only if the old schema never stored it.
+                # An explicit blank/zero or edited value remains authoritative.
+                if field == "schools" and "staffLarge" in row and "staffLarge" not in matched:
+                    matched["staffLarge"] = row["staffLarge"]
                 continue
             target.append({**row, "sourceFilename": filename})
             added[field] += 1

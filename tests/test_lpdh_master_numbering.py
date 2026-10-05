@@ -64,7 +64,7 @@ class MasterAndNumberTests(unittest.TestCase):
     def test_user_split_template_legacy_headers(self):
         from openpyxl import Workbook
         wb=Workbook(); school=wb.active; school.title='Master_Sekolah'
-        school.append(['Kode Unit','Jenis Unit','Nama Sekolah / Posyandu','Kode Kelompok','Kelompok Sasaran','Porsi Kecil','Porsi Besar','Tenaga pendidik','Jenis PIC','Target PM','Nama PIC','No. HP PIC','Alamat','Status Aktif','Catatan'])
+        school.append(['Kode Unit','Jenis Unit','Nama Sekolah / Posyandu','Kode Kelompok','Kelompok Sasaran','Porsi Kecil','Porsi Besar','TENAGA PENDIDIK','Jenis PIC','Target PM','Nama PIC','No. HP PIC','Alamat','Status Aktif','Catatan'])
         school.append(['S1','Sekolah','SD Uji','KS-02','SD/MI',100,70,12,'Sekolah',182,'Guru Uji','','','Aktif',''])
         pos=wb.create_sheet('Master Posyandu')
         pos.append(['Kode Unit','Jenis Unit','Nama Sekolah / Posyandu','Kode Kelompok','Ibu Hamil','Ibu Menyusui','Anak Balita (6–59 bulan)','Jenis PIC','Target PM','Nama PIC','No. HP PIC','Alamat','Status Aktif','Catatan'])
@@ -86,6 +86,14 @@ class MasterAndNumberTests(unittest.TestCase):
         again, added, _ = logic.merge_master_import(merged,parsed,'source.xlsx')
         self.assertEqual(again['volunteers'][0]['dailyRate'],250)
         self.assertEqual(added['volunteers'],0)
+        data = {'schools':[{'code':'S1','name':'Edited school','largePortions':99}]}
+        parsed_school = {'schools':[{'code':'S1','name':'Source school','largePortions':50,'staffLarge':12}]}
+        merged,_,_=logic.merge_master_import(data,parsed_school,'source.xlsx')
+        self.assertEqual(merged['schools'][0]['largePortions'],99)
+        self.assertEqual(merged['schools'][0]['staffLarge'],12)
+        merged['schools'][0]['staffLarge']=0
+        again,_,_=logic.merge_master_import(merged,parsed_school,'source.xlsx')
+        self.assertEqual(again['schools'][0]['staffLarge'],0)
 
     def test_official_import_excludes_transactions_and_summary(self):
         wb = logic.fallback_lpdh_workbook()
