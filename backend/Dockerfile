@@ -35,6 +35,8 @@ WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
+RUN python -m py_compile backend/migrate.py backend/app.py backend/lpdh_logic.py backend/lpdh_api.py backend/calculator_pages.py \
+    && python -m backend.lpdh_selftest
 COPY legacy ./legacy
 COPY schema ./schema
 COPY parser ./parser
