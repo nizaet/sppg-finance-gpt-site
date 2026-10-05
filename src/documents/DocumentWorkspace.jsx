@@ -168,9 +168,14 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
         return;
       }
       if (current.status === "FINAL") { await reload(version); return notify("Invoice ini sudah FINAL. Gunakan Buka PDF atau Simpan ke Drive bila diperlukan."); }
-      if (!window.confirm(`Yakin finalkan ${current.documentNumber} sebesar ${money(current.total)}?\n\nIsi dokumen akan dikunci dan masuk otomatis ke data harian LPDH ${site}, tanggal ${serviceDate}.`)) return;
+      const check = await documentApi.finalizationCheck(current.id);
+      if (version !== context.current) return;
+      if (check.dailyStatus === "GENERATED") throw new Error("LPDH tanggal ini sudah digenerate. Buka data harian dan simpan sebagai draft sebelum finalisasi.");
+      const legacy = check.legacyReplacement;
+      const replacementText = legacy ? `\n\nAda ${legacy.legacyCount} penerima dalam isian lama (${money(legacy.legacyTotal)}). GANTIKAN seluruh isian lama jenis paket ini dengan ${legacy.newCount} penerima pada kuitansi (${money(legacy.newTotal)})?\n${legacy.removedCount} penerima lama tidak ada pada paket baru; ${legacy.addedCount} penerima baru. Selisih nominal ${money(legacy.newTotal-legacy.legacyTotal)}. Isian lama disimpan sebagai riwayat, tidak dihitung ganda. Paket Guru/Kader lain dan dokumen FINAL lain tidak diganti.` : "";
+      if (!window.confirm(`Yakin finalkan ${current.documentNumber} sebesar ${money(current.total)}?\n\nIsi dokumen akan dikunci dan masuk otomatis ke data harian LPDH ${site}, tanggal ${serviceDate}.${replacementText}`)) return;
       let result;
-      try { result = await documentApi.finalize(current.id); }
+      try { result = await documentApi.finalize(current.id, legacy ? {replace_legacy_snapshot:legacy.snapshotHash} : {}); }
       catch (e) { await reload(version); setShowCancelled(true); throw e; }
       await reload(version);
       if (version !== context.current) return;

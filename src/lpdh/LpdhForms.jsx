@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileUp, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
+import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -293,7 +294,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       <div className="lpdh-note">Master tersimpan per dapur. Akun YAYASAN dapat mengelola Maja dan Cemplang; akun dapur hanya site sendiri.</div>
       <div className={officialTemplate.installed ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
         <strong>{officialTemplate.installed ? "Template resmi terpasang" : "Template resmi belum diunggah"}</strong>
-        <span>{officialTemplate.installed ? officialTemplate.filename : "Fallback formula aktif. Unggah workbook resmi agar layout output persis mengikuti file sumber."}</span>
+        <span>{officialTemplate.installed ? officialTemplate.filename : "Format cadangan berformula aktif. Klik Template LPDH Resmi dan pilih workbook LPDH lengkap (Identitas, A_PM, B_BahanBaku, dan seterusnya). Import Master hanya mengisi data master, bukan memasang format output."}</span>
       </div>
     </Section>
 
@@ -442,6 +443,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   const data = normalizeDaily(daily, serviceDate);
   const [busy, setBusy] = useState(false);
   const masterData = normalizeMasters(masters);
+  const proofGroups = evidenceGroups(data);
+  const updateProofGroup = (group, field, value) => {
+    if (group.conflictingFields.includes(field) && !window.confirm(`Isian ${field === "evidenceLink" ? "link bukti" : "referensi pembayaran"} pada ${group.number} berbeda antarbaris. Samakan seluruh ${group.indexes.length} baris dengan isian baru?`)) return;
+    setDaily(applyEvidence(data, group, field, value));
+  };
 
   const update = (key, value) => setDaily({ ...data, [key]: value });
   const updateNested = (parent, key, value) => setDaily({ ...data, [parent]: { ...(data[parent] || {}), [key]: value } });
@@ -545,13 +551,17 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       <div className="lpdh-form-grid compact">
         <Field label="Nomor LPDH (otomatis, bisa diedit)" value={data.lpdhNumber} onChange={(v) => update("lpdhNumber", v)} />
         {data.volunteerReceiptBaseNo && <Field label="Nomor dasar kuitansi relawan (historis)" value={data.volunteerReceiptBaseNo} disabled />}
-        <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
+        {data.volunteerPayments.some(row=>!row.sourceDocumentId) && <>
+        <Field label="Tanggal pembayaran relawan (historis)" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
         <Field label="Ref penarikan/bank relawan" value={data.volunteerPaymentReference} onChange={(v) => update("volunteerPaymentReference", v)} />
         <Field label="Bukti bank relawan (1 untuk batch)" value={data.volunteerBatchEvidenceLink} onChange={(v) => update("volunteerBatchEvidenceLink", v)} placeholder="https://..." />
+        </>}
         {data.incentiveReceiptBaseNo && <Field label="Nomor dasar kuitansi guru/kader (historis)" value={data.incentiveReceiptBaseNo} disabled />}
-        <Field label="Tanggal pembayaran guru/kader" type="date" value={data.incentivePaymentDate} onChange={(v) => update("incentivePaymentDate", v)} />
+        {data.incentiveRecipients.some(row=>!row.sourceDocumentId) && <>
+        <Field label="Tanggal pembayaran guru/kader (historis)" type="date" value={data.incentivePaymentDate} onChange={(v) => update("incentivePaymentDate", v)} />
         <Field label="Ref penarikan/bank guru/kader" value={data.incentivePaymentReference} onChange={(v) => update("incentivePaymentReference", v)} />
         <Field label="Bukti bank guru/kader (1 untuk batch)" value={data.incentiveBatchEvidenceLink} onChange={(v) => update("incentiveBatchEvidenceLink", v)} placeholder="https://..." />
+        </>}
         {data.schoolPicOperationalProofNo && <Field label="No bukti agregat guru (historis)" value={data.schoolPicOperationalProofNo} disabled />}
         {data.cadreOperationalProofNo && <Field label="No bukti agregat kader (historis)" value={data.cadreOperationalProofNo} disabled />}
         {data.rawInvoiceNo && <Field label="No invoice bahan baku (historis)" value={data.rawInvoiceNo} disabled />}
@@ -654,11 +664,15 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </fieldset>
     </Section>
 
-    <Section title="Lengkapi bukti invoice & kuitansi" subtitle="Link bukti dan referensi pembayaran dapat dilengkapi setelah dokumen FINAL. Nilai, nomor dan penerima tetap mengikuti dokumen.">
-      {["rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"].map(key => <div key={key} className="lpdh-form-grid">{data[key].map((row, index) => <React.Fragment key={index}>
-        <Field label={`${row.invoiceNo || row.receiptNo || "Historis"} · ${row.name || row.description} · Link bukti`} value={row.evidenceLink} onChange={value => updateList(key, index, "evidenceLink", value)} placeholder="https://..."/>
-        <Field label="Referensi pembayaran" value={row.paymentReference} onChange={value => updateList(key, index, "paymentReference", value)}/>
-      </React.Fragment>)}</div>)}
+    <Section title="Lengkapi bukti invoice & kuitansi" subtitle="Satu isian per invoice/kuitansi gabungan FINAL, diterapkan ke seluruh item/penerima paket itu. Guru dan Kader tetap terpisah. Nomor dan nominal terkunci; referensi bank diisi sesuai transaksi nyata. Simpan Draft setelah melengkapi bukti.">
+      {proofGroups.map(group => <div key={group.key} className="lpdh-proof-package">
+        <h4>{group.label} · {group.number}{group.name ? ` · ${group.name}` : ""}</h4>
+        <p>{group.indexes.length} baris terkait{group.conflictingFields.length ? " · Isian lama berbeda antarbaris; tidak dipilih otomatis." : ""}</p>
+        <div className="lpdh-form-grid">
+          <Field label={`Link bukti · ${group.number}`} value={group.evidenceLink} onChange={value => updateProofGroup(group,"evidenceLink",value)} placeholder={group.conflictingFields.includes("evidenceLink") ? "Berbeda antarbaris — isi untuk menyamakan" : "https://..."}/>
+          <Field label={`Referensi pembayaran · ${group.number}`} value={group.paymentReference} onChange={value => updateProofGroup(group,"paymentReference",value)} placeholder={group.conflictingFields.includes("paymentReference") ? "Berbeda antarbaris — isi untuk menyamakan" : "Referensi bank/penarikan sebenarnya"}/>
+        </div>
+      </div>)}
     </Section>
 
     <Section title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">

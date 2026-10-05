@@ -52,6 +52,12 @@ class MasterImportIn(BaseModel):
     content_base64: str
 
 
+class OfficialTemplateIn(BaseModel):
+    site: str
+    filename: str = Field(min_length=1, max_length=200)
+    content_base64: str = Field(min_length=1, max_length=20000000)
+
+
 class CalculatorFinalIn(BaseModel):
     site: str
     service_date: date
@@ -281,6 +287,10 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
         try:
             existing = _load_daily(site, payload.service_date)
             validate_daily_financial_sources(payload.data, existing["data"])
+            # Replacement audit history is server-owned, not editable form data.
+            payload.data.pop('_replacedLegacyPayments', None)
+            if '_replacedLegacyPayments' in existing['data']:
+                payload.data['_replacedLegacyPayments'] = existing['data']['_replacedLegacyPayments']
             if existing["status"] == "GENERATED" or existing["data"].get("_historicalGeneratedSnapshot"):
                 payload.data["_historicalGeneratedSnapshot"] = True
             else:
@@ -533,13 +543,14 @@ def save_official_template(payload: OfficialTemplateIn, request: Request) -> dic
         workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=False)
         required = {"Identitas","A_PM","B_BahanBaku","C_Operasional","C1_Relawan","D_Insentif","E_Saldo","F_TopUp","G_CekPPK","H_RekapPPK","I_RegisterBukti","J_Pengesahan","Ref"}
         missing = sorted(required.difference(workbook.sheetnames))
+        workbook.close()
         if missing:
-            raise ValueError("sheet wajib tidak ada: " + ", ".join(missing))
+            raise ValueError("Gunakan workbook LPDH lengkap, bukan template impor master. Sheet wajib tidak ada: " + ", ".join(missing))
     except Exception as exc:
         raise HTTPException(400, f"Template LPDH tidak valid: {exc}") from exc
-    current = _load_master(site)["data"] or {}
-    current["_officialTemplateBase64"] = payload.content_base64
-    current["_officialTemplateFilename"] = payload.filename
+    # Patch only template metadata; a concurrent master edit must survive.
+    current = {"_officialTemplateBase64": payload.content_base64,
+               "_officialTemplateFilename": payload.filename}
     actor = _role(request)
     with connection() as conn:
         with conn.cursor() as cur:
@@ -547,7 +558,7 @@ def save_official_template(payload: OfficialTemplateIn, request: Request) -> dic
                 """insert into lpdh_site_state(site,data,revision,updated_by,updated_at)
                    values (%s,%s::jsonb,1,%s,now())
                    on conflict (site) do update
-                   set data=excluded.data,revision=lpdh_site_state.revision+1,
+                   set data=lpdh_site_state.data || excluded.data,revision=lpdh_site_state.revision+1,
                        updated_by=excluded.updated_by,updated_at=now()
                    returning revision""",
                 (site, json.dumps(current, ensure_ascii=False), actor),

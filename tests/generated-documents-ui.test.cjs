@@ -9,7 +9,9 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sppg-documents-')), 'test.cjs');
 const records = [], payloads = [], finalCalls = [], downloads = [], previews = [], cancellations = [], calendarCalls = [];
 let confirm = false;
-global.window = { addEventListener() {}, removeEventListener() {}, confirm: () => confirm, prompt: () => 'Harga keliru', open: () => { const tab = { opener: {}, location: { replace: url => previews.push(url) }, close() {} }; return tab; } };
+let replacement = null;
+const finalOptions = [], confirmations = [];
+global.window = { addEventListener() {}, removeEventListener() {}, confirm: message => { confirmations.push(message); return confirm; }, prompt: () => 'Harga keliru', open: () => { const tab = { opener: {}, location: { replace: url => previews.push(url) }, close() {} }; return tab; } };
 global.__DOCUMENT_API = {
   suggestNumber: async (site, date, type) => ({ documentNumber: `001/${type}/${site}/X/2026` }),
   master: async site => ({ profiles: { KOPERASI: { issuerName: site, recipientAddress: 'Alamat' }, YAYASAN: { issuerName: 'Yayasan', recipientAddress: 'Alamat' } }, categories: ['Gas', 'Alat kebersihan', 'Lain-lain'],
@@ -17,12 +19,13 @@ global.__DOCUMENT_API = {
     volunteers: [{ code: 'R1', name: 'Relawan Uji', role: 'Pengolah', dailyRate: 90000 }], recipients: [{ name: 'Guru Uji', recipientType: 'Guru', unitName: 'SD Uji' }, { name: 'Kader Uji', recipientType: 'Kader', unitName: 'Posyandu Uji' }] }),
   list: async site => ({ documents: structuredClone(records.filter(doc => doc.site === site)) }),
   get: async id => ({ document: structuredClone(records.find(doc => doc.id === id)) }),
+  finalizationCheck: async id => ({ status: records.find(doc => doc.id === id).status, dailyStatus: 'DRAFT', legacyReplacement: replacement }),
   saveProfile: async (site, header) => ({ profile: header.documentProfileKey, header }),
   asset: async id => ({ id, filename: 'gambar-uji.png', mimeType: 'image/png', contentBase64: 'iVBORw0KGgo=' }),
   uploadAsset: async payload => ({ id: 17, filename: payload.filename }),
   calendar: async (site, month) => { calendarCalls.push([site, month]); return { items: [{ serviceDate: '2026-10-05', draft: 2, final: 1, cancelled: 1 }] }; },
   create: async payload => { payloads.push(payload); const document = { id: records.length + 1, site: payload.site, serviceDate: payload.service_date, documentType: payload.document_type, documentNumber: payload.document_number, status: 'DRAFT', header: payload.header_payload, items: payload.items.map(x => ({ itemName: x.item_name, category: x.category_code, quantity: x.quantity, unit: x.unit, unitPrice: x.unit_price, metadata: x.metadata })), total: payload.items.reduce((sum, x) => sum + x.quantity * x.unit_price, 0) }; records.push(document); return { document }; },
-  finalize: async id => { finalCalls.push(id); records.find(doc => doc.id === id).status = 'FINAL'; return { syncedToDaily: true, driveUploadStatus: 'UPLOADED' }; },
+  finalize: async (id, options) => { finalCalls.push(id); finalOptions.push(options); records.find(doc => doc.id === id).status = 'FINAL'; return { syncedToDaily: true, driveUploadStatus: 'UPLOADED' }; },
   cancel: async (id, reason) => { cancellations.push([id, reason]); Object.assign(records.find(doc => doc.id === id), { status: 'CANCELLED', cancellationReason: reason }); return { status: 'CANCELLED' }; },
   archive: async () => ({ driveUploadStatus: 'UPLOADED' }),
   pdf: async id => ({ filename: `DOC-${id}.pdf`, mimeType: 'application/pdf', contentBase64: 'JVBERi0=' }),
@@ -100,6 +103,17 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   assert.equal(view.root.findByProps({ 'aria-label': 'Jumlah' }).props.disabled, true);
   await saveDraft();
   assert.equal(payloads[2].items[0].quantity, 1); assert.equal(payloads[2].items[0].unit, 'hari'); assert.equal(payloads[2].items[0].unit_price, 90000);
+  replacement = {snapshotHash:'a'.repeat(64),legacyCount:2,legacyTotal:100000,newCount:1,newTotal:90000,removedCount:1,addedCount:0};
+  const wageButton = () => view.root.findAllByType('tr').find(x=>label(x).includes('DOC-3')).findAllByType('button').find(x=>label(x).includes('Finalkan'));
+  confirm = false;
+  await act(async()=>wageButton().props.onClick());
+  assert.deepEqual(finalCalls,[1]);
+  confirm = true;
+  await act(async()=>wageButton().props.onClick());
+  assert.deepEqual(finalCalls,[1,3]);
+  assert.equal(finalOptions[1].replace_legacy_snapshot,replacement.snapshotHash);
+  assert.ok(confirmations.some(message=>message.includes('GANTIKAN seluruh isian lama')&&message.includes('Isian lama disimpan sebagai riwayat')));
+  replacement = null;
   await changeType('INSENTIF_GURU_KADER');
   await act(async () => button('Siapkan penerima dari master').props.onClick());
   await act(async () => { for (const input of view.root.findAllByProps({ 'aria-label': 'Harga atau nominal' })) input.props.onChange({ target: { value: '10000' } }); });
@@ -118,7 +132,7 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   const staleFinalButton = button('Finalkan');
   records[1].status = 'CANCELLED'; records[1].cancellationReason = 'Batal dari tab lain';
   await act(async () => staleFinalButton.props.onClick());
-  assert.deepEqual(finalCalls, [1], 'stale tab must not finalize a cancelled ID');
+  assert.deepEqual(finalCalls, [1,3], 'stale tab must not finalize a cancelled ID');
   assert.ok(view.root.findAllByProps({ role:'status' }).some(x => label(x).includes('sebelumnya sudah DIBATALKAN')));
   await act(async () => button('Buat ulang').props.onClick());
   const manualInput = numberInput();

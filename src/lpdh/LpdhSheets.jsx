@@ -71,8 +71,13 @@ function Volunteer({ preview }) {
 
 function Incentive({ preview, daily }) {
   const x=daily?.incentive||{}; const e=x.eligibility||{};
-  return <div className="lpdh-sheet-body"><h3>D_Insentif · Mitra/Yayasan</h3><Table headers={["Syarat","Nilai"]} rows={[
+  const missing=(preview?.pmRows||[]).filter(r=>Number(r.received)>0&&r.bastStatus!=="Terlampir");
+  return <div className="lpdh-sheet-body"><h3>D_Insentif · Mitra/Yayasan</h3>
+    <p className="lpdh-sheet-help">Sama dengan rumus Excel: PM dasar = PM diterima yang memenuhi BNBA + BAST + HPE, ditambah organoleptik dan retained sample pada HPE. Insentif dihitung hanya jika seluruh syarat layanan terpenuhi. Nilai pernyataan PPK dan pembayaran tetap diisi sesuai dokumen nyata.</p>
+    {missing.length>0&&<div className="lpdh-status-box warn"><strong>{missing.length} kelompok belum dilengkapi BAST</strong><span>{num(missing.reduce((sum,r)=>sum+Number(r.received||0),0))} PM diterima belum masuk perhitungan insentif. Lengkapi nomor dan link BAST di A_PM; angka tidak diubah menjadi 0 pada data distribusi.</span></div>}
+    <Table headers={["Syarat","Nilai"]} rows={[
     ["Hari berstatus HPE",preview?.hpeEligible?"Ya":"Tidak"],["Kontaminasi",yes(e.contamination)],["Insiden fatal",yes(e.fatalIncident)],["Suspend",yes(e.suspended)],["Terverifikasi",yes(e.verified)],["PM masuk SIPGN",yes(e.pmInputSipgn)],["PM dasar insentif",num(preview?.production?.incentivePm)],["Tarif",money(preview?.parameters?.incentiveTariff)],["Insentif dihitung",money(preview?.incentiveCalculated)],["No Pernyataan PPK",x.ppkStatementNo||""],["Nilai Pernyataan",money(x.statementAmount)],["Dibayar",money(x.paidAmount)],["Tanggal",x.paymentDate||""],["No Bukti",x.proofNo||""],["No Kuitansi",x.receiptNo||""],["Bukti",x.evidenceLink||""]
+    ,["Insentif dapat diberikan",preview?.incentiveEligible?"Ya":"Tidak"],["Kode transaksi (otomatis)",preview?.incentiveTransactionCode||""],["Referensi transaksi VA",x.vaReference||""]
   ]}/></div>;
 }
 

@@ -96,7 +96,7 @@ def merge_final_documents(daily, documents):
         for row in rows:
             saved = supplemental.get((str(row["sourceDocumentId"]), row["sourceLine"]), {})
             for field in ("evidenceLink", "paymentReference"):
-                if saved.get(field):
+                if field in saved:
                     row[field] = saved[field]
         kept = [row for row in out.get(key) or [] if not row.get("sourceDocumentId") and row.get("source") != "FINAL_KALKULATOR"]
         if any(row.get("invoiceNo") in invoice_numbers for row in kept):
@@ -144,9 +144,10 @@ def grouped_operations(rows):
         amount = sum(float(x.get("amount") or 0) for x in items)
         numbers = list(dict.fromkeys(str(x.get("invoiceNo") or "") for x in items if x.get("invoiceNo")))
         links = list(dict.fromkeys(str(x.get("evidenceLink") or "") for x in items if x.get("evidenceLink")))
+        refs = list(dict.fromkeys(str(x.get("paymentReference") or "") for x in items if x.get("paymentReference")))
         result.append({"description": category, "category": category, "qty": 1, "unit": "paket",
                        "sourceDocumentIds": list(dict.fromkeys(x["sourceDocumentId"] for x in items if x.get("sourceDocumentId"))),
                        "price": amount, "amount": amount, "date": items[0].get("date"),
-                       "invoiceNo": "; ".join(numbers), "evidenceLink": "; ".join(links),
+                       "invoiceNo": "; ".join(numbers), "evidenceLink": "; ".join(links), "paymentReference": "; ".join(refs),
                        "note": "; ".join(f"{x.get('description')}: {x.get('qty')} {x.get('unit')} ({x.get('invoiceNo') or '-'})" for x in items)})
     return result

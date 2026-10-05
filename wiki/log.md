@@ -87,3 +87,11 @@
 - Added a read-only current-form preview calculation and master-save refresh. Explicit actual values, financial source provenance and historical generated snapshots remain protected; review does not write financial/daily state or claim numbers.
 - Documented the production balance and an explicit confirmed recalculation instead of silently rewriting saved quantities. Widened BNBA controls and contained wide tables within fieldsets/cards.
 - Updated the [LPDH workflow](accounting/lpdh-document-workflow.md), [accountant workflow](accounting/accountant-workflow.md) and index. Other Operations, procurement, approval, settlement and payment workflows remain outside scope.
+
+## 2026-10-05 - LPDH template, common evidence and confirmed wage reconciliation
+
+- The operator reported a failed official-template upload, repeated proof fields and a blocked aggregate wage draft, and requested column-by-column comparison with the private accountant workbook.
+- Corrected the JSON upload contract, isolated template metadata writes and prevented filled template inputs from carrying prior financial or BAST evidence into a new output. Master import remains a separate workflow.
+- Shared proof/reference edits apply to every identified invoice/package source row, without modifying its financial values. Added a per-line workbook appendix while retaining official financial-sheet layout.
+- Added explicit snapshot-bound confirmation before replacing overlapping historical manual payment inputs with a FINAL aggregate package. Exact prior rows remain archived server-side; other subtypes, FINAL records and generated days remain protected.
+- Aligned D_Insentif calculation with its official eligibility gate. Documented BAST requirements and distinguished calculated entitlement from authentic PPK/payment evidence. Private source/app differences were recorded without overwriting live data. Other Operations modules and actual bank payment execution remain outside scope.

@@ -15,7 +15,7 @@ async function request(path, options = {}) {
   try { payload = await response.json(); } catch {}
   if (!response.ok) {
     const detail = payload?.detail;
-    const message = typeof detail === "string"
+    const message = Array.isArray(detail) ? detail.map(x => x.msg).join("; ") : typeof detail === "string"
       ? detail
       : detail?.message || payload?.message || response.statusText || "Permintaan LPDH gagal";
     const error = new Error(message);

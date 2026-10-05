@@ -313,7 +313,7 @@ def raw_rows(daily: dict[str, Any], final_plan: dict[str, Any] | None, service_d
     for row in rows:
         row["date"] = row.get("date") or default_date
         row["invoiceNo"] = row.get("invoiceNo") or default_invoice
-        row["evidenceLink"] = row.get("evidenceLink") or default_evidence
+        row["evidenceLink"] = row.get("evidenceLink") or ("" if row.get("sourceDocumentId") else default_evidence)
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"))
         row["amount"] = row["qty"] * row["price"]
@@ -354,8 +354,8 @@ def volunteer_rows(masters: dict[str, Any], daily: dict[str, Any]) -> list[dict[
         row["amount"] = row["dailyRate"] * row["workDays"]
         row["paymentMethod"] = row.get("paymentMethod") or ref.get("paymentMethod") or ""
         row["date"] = row.get("date") or daily.get("volunteerPaymentDate") or ""
-        row["evidenceLink"] = row.get("evidenceLink") or daily.get("volunteerBatchEvidenceLink") or ""
-        row["paymentReference"] = row.get("paymentReference") or daily.get("volunteerPaymentReference") or ""
+        row["evidenceLink"] = row.get("evidenceLink") or ("" if row.get("sourceDocumentId") else daily.get("volunteerBatchEvidenceLink")) or ""
+        row["paymentReference"] = row.get("paymentReference") or ("" if row.get("sourceDocumentId") else daily.get("volunteerPaymentReference")) or ""
     return rows[:60]
 
 
@@ -364,8 +364,8 @@ def incentive_recipient_rows(daily: dict[str, Any]) -> list[dict[str, Any]]:
     for row in rows:
         row["amount"] = as_number(row.get("amount"))
         row["date"] = row.get("date") or daily.get("incentivePaymentDate") or ""
-        row["evidenceLink"] = row.get("evidenceLink") or daily.get("incentiveBatchEvidenceLink") or ""
-        row["paymentReference"] = row.get("paymentReference") or daily.get("incentivePaymentReference") or ""
+        row["evidenceLink"] = row.get("evidenceLink") or ("" if row.get("sourceDocumentId") else daily.get("incentiveBatchEvidenceLink")) or ""
+        row["paymentReference"] = row.get("paymentReference") or ("" if row.get("sourceDocumentId") else daily.get("incentivePaymentReference")) or ""
     return rows
 
 
@@ -381,7 +381,7 @@ def operational_rows(masters: dict[str, Any], daily: dict[str, Any]) -> list[dic
         row["unit"] = row.get("unit") or ref.get("unit") or ""
         row["date"] = row.get("date") or default_date
         row["invoiceNo"] = row.get("invoiceNo") or default_invoice
-        row["evidenceLink"] = row.get("evidenceLink") or default_evidence
+        row["evidenceLink"] = row.get("evidenceLink") or ("" if row.get("sourceDocumentId") else default_evidence)
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"), as_number(ref.get("defaultPrice")))
         row["amount"] = row["qty"] * row["price"]
@@ -663,7 +663,14 @@ def compute_preview(
 
     incentive = daily.get("incentive") or {}
     incentive_tariff = as_number(params.get("incentiveTariff"), 2000)
-    incentive_calculated = incentive_pm * incentive_tariff
+    eligibility = incentive.get("eligibility") or {}
+    incentive_eligible = (
+        hpe_eligible and not yes(eligibility.get("contamination"))
+        and not yes(eligibility.get("fatalIncident")) and not yes(eligibility.get("suspended"))
+        and yes(eligibility.get("verified")) and yes(eligibility.get("pmInputSipgn"))
+    )
+    # D_Insentif!C16 = IF(C11="Ya", C14*C15, 0), not an unconditional payment.
+    incentive_calculated = incentive_pm * incentive_tariff if incentive_eligible else 0
     register = build_register(raw, operations, volunteers, incentive_recipients, daily)
     incentive_receipts = individual_incentive_receipts(daily, incentive_recipients)
 
@@ -737,16 +744,6 @@ def compute_preview(
             and parse_iso_date(row.get("date")) is not None
         )
         for row in volunteers
-    )
-
-    eligibility = incentive.get("eligibility") or {}
-    incentive_eligible = (
-        hpe_eligible
-        and not yes(eligibility.get("contamination"))
-        and not yes(eligibility.get("fatalIncident"))
-        and not yes(eligibility.get("suspended"))
-        and yes(eligibility.get("verified"))
-        and yes(eligibility.get("pmInputSipgn"))
     )
 
     paid = as_number(incentive.get("paidAmount"))
@@ -875,6 +872,8 @@ def compute_preview(
         "operationalPagu": op_pagu,
         "operationalStatus": "DALAM PAGU" if incentive_pm > 0 and op_per_pm <= op_pagu + 0.0001 else "MELEBIHI PAGU",
         "incentiveCalculated": incentive_calculated,
+        "incentiveEligible": incentive_eligible,
+        "incentiveTransactionCode": f"{(masters.get('identity') or {}).get('sppgId') or ''}-{service_date.replace('-', '')}-INS-001" if paid > 0 else "",
         "register": register,
         "balance": {
             "opening": opening,
@@ -1199,6 +1198,31 @@ def populate_workbook(
         pass
 
     identity = masters.get("identity") or {}
+    # An accountant's filled workbook is a layout/formula source, not a new ledger.
+    # Clear only known editable cells so unfilled rows cannot reuse old expenses.
+    from openpyxl.cell.cell import MergedCell
+    for sheet, rows, columns in [
+        ('A_PM',range(6,16),'EFGHIKLM'),
+        ('B_BahanBaku',range(6,46),'CDEFGHJKLO'),
+        ('C_Operasional',range(7,22),'CEFGIJM'),
+        ('C1_Relawan',range(6,66),'CDEFGIJK'),
+        ('E_Saldo',range(19,24),'CDEFGIJ'),
+    ]:
+        for row in rows:
+            for column in columns:
+                cell = wb[sheet][f'{column}{row}']
+                if not isinstance(cell,MergedCell):
+                    cell.value = None
+                    cell.comment = None
+                    cell.hyperlink = None
+    for row in range(19,28):
+        wb['D_Insentif'][f'C{row}'].value = None
+        wb['D_Insentif'][f'C{row}'].hyperlink = None
+    for cell in ['B5','B6','B7','E10']:
+        wb['E_Saldo'][cell].value = None
+    for cell in [*(f'B{r}' for r in range(5,16)),'B18','B19','B25','B26',*(f'{c}{r}' for r in range(36,39) for c in 'BCDF')]:
+        if not isinstance(wb['Identitas'][cell],MergedCell): wb['Identitas'][cell].value = None
+    wb['Ref']['B12'].value = None
     ws = wb["Identitas"]
     identity_cells = {
         "B5": daily.get("lpdhNumber") or identity.get("lpdhNumber"),
@@ -1291,7 +1315,7 @@ def populate_workbook(
             "C": _excel_date(item.get("date")), "D": item.get("name"), "E": item.get("category"),
             "F": as_number(item.get("qty")), "G": item.get("unit"), "H": as_number(item.get("price")),
             "J": item.get("supplier"), "K": item.get("proofNoDerived") or item.get("_baseProofNo") or "",
-            "L": item.get("evidenceLink"), "O": item.get("note"),
+            "L": item.get("evidenceLink"), "O": "; ".join(filter(None,[item.get("note"),f"Ref pembayaran: {item['paymentReference']}" if item.get('paymentReference') else ''])),
         }.items():
             _set_if(raw_ws, f"{col}{i}", value)
         if item.get("sourceDocumentId"):
@@ -1341,6 +1365,9 @@ def populate_workbook(
             special_rows[pos]["evidenceLink"] = "; ".join(dict.fromkeys(x.get("evidenceLink") or "" for x in rows if x.get("evidenceLink")))
         if any(x.get("aggregatePayment") for x in rows):
             special_rows[pos]["note"] = f"Lampiran: {len(rows)} penerima; Kuitansi gabungan"
+        references = "; ".join(dict.fromkeys(x.get('paymentReference') or '' for x in rows if x.get('paymentReference')))
+        if references:
+            special_rows[pos]['note'] = "; ".join(filter(None,[special_rows[pos]['note'],f"Ref pembayaran: {references}"]))
 
     for pos, default_name in enumerate(OPERATIONAL_DEFAULTS, start=6):
         if pos == 6:
@@ -1374,7 +1401,7 @@ def populate_workbook(
         op_ws[f"H{pos}"] = f"=ROUND(E{pos}*G{pos},2)"
         _set_if(op_ws, f"I{pos}", item.get("invoiceNo") or item.get("proofNoDerived") or item.get("_baseProofNo") or "")
         _set_if(op_ws, f"J{pos}", item.get("evidenceLink"))
-        _set_if(op_ws, f"M{pos}", item.get("note"))
+        _set_if(op_ws, f"M{pos}", "; ".join(filter(None,[item.get("note"),f"Ref pembayaran: {item['paymentReference']}" if item.get('paymentReference') else ''])))
 
     rel_ws = wb["C1_Relawan"]
     volunteer_numbered = []
@@ -1393,6 +1420,9 @@ def populate_workbook(
         _set_if(rel_ws, f"I{i}", item.get("paymentMethod"))
         _set_if(rel_ws, f"J{i}", item.get("proofNoDerived") or item.get("_baseProofNo") or "")
         _set_if(rel_ws, f"K{i}", item.get("evidenceLink"))
+        if item.get('paymentReference'):
+            from openpyxl.comments import Comment
+            rel_ws[f'J{i}'].comment = Comment(f"Referensi pembayaran: {item['paymentReference']}", 'SPPG')
 
     ins_ws = wb["D_Insentif"]
     incentive = daily.get("incentive") or {}
@@ -1454,6 +1484,26 @@ def populate_workbook(
                 break
             check_ws[f"D{idx}"] = item.get("detail")
 
+    # Official sheets have no payment-reference column on C1. Keep their layout
+    # intact and expose every source line/reference in a separate appendix.
+    evidence_rows = [(sheet,item) for sheet,key in [('B_BahanBaku','rawMaterials'),('C_Operasional','operations'),('C1_Relawan','volunteers'),('C_Operasional','incentiveRecipients')] for item in preview.get(key) or [] if item.get('sourceDocumentId')]
+    if evidence_rows:
+        title = 'Lampiran_Dokumen'
+        if title in wb.sheetnames: del wb[title]
+        appendix = wb.create_sheet(title)
+        appendix.append(['Sheet sumber','ID dokumen','Baris dokumen','Nomor invoice/kuitansi','Item/penerima','Tanggal','Nominal (Rp)','Link bukti','Referensi pembayaran'])
+        for sheet,item in evidence_rows:
+            appendix.append([sheet,f"DOC-{item['sourceDocumentId']}",item.get('sourceLine'),item.get('invoiceNo') or item.get('receiptNo'),item.get('name') or item.get('description'),_excel_date(item.get('date')),as_number(item.get('amount')),item.get('evidenceLink') or '',item.get('paymentReference') or ''])
+            # Recipient/item/reference values are literal text, never Excel formulas.
+            for cell in appendix[appendix.max_row]:
+                if isinstance(cell.value,str): cell.data_type = 's'
+        appendix.freeze_panes = 'E2'
+        appendix.sheet_view.showGridLines = False
+        from openpyxl.styles import Font, Alignment
+        for cell in appendix[1]: cell.font = Font(bold=True); cell.alignment = Alignment(wrap_text=True)
+        for column,width in {'A':21,'B':18,'C':18,'D':32,'E':40,'F':15,'G':20,'H':60,'I':36}.items(): appendix.column_dimensions[column].width=width
+        for row in appendix.iter_rows(min_row=2):
+            row[5].number_format='dd-mm-yyyy'; row[6].number_format='#,##0.00'
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()

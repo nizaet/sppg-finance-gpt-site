@@ -6,7 +6,7 @@ import json
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from backend.auth_api import session_role
@@ -15,6 +15,7 @@ from backend.generated_document_logic import OP_CATEGORIES, category_name, line_
 from backend.generated_document_settings import checked_number, pdf_filename, validate_artwork, validate_asset_refs, save_profile, reserve_numbers, load_artwork
 from backend.generated_document_reference import MAJA_OPERATION_ITEMS, MAJA_PROFILES
 from backend.document_numbering import claim_number, suggest_number, invoice_fallback
+from backend.legacy_payment_reconciliation import legacy_payment_plan, replace_legacy_payments
 
 router = APIRouter(tags=["accountant-generated-documents"])
 Site = Literal["MAJA", "CEMPLANG"]
@@ -81,6 +82,10 @@ class DailySyncIn(BaseModel):
 
 class CancelDocumentIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class FinalizeDocumentIn(BaseModel):
+    replace_legacy_snapshot: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class DocumentAssetIn(BaseModel):
@@ -151,13 +156,17 @@ def daily_lock(cur, site, service_date):
     cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"lpdh-daily:{site}:{service_date}",))
 
 
-def _sync_daily(cur, site, service_date, actor):
+def _sync_daily(cur, site, service_date, actor, replacement=None):
     daily_lock(cur, site, service_date)
     cur.execute("select data,status from lpdh_daily_state where site=%s and service_date=%s for update", (site, service_date))
     existing = cur.fetchone() or {"data": {}, "status": "DRAFT"}
     docs = load_documents(cur, site, service_date, True)
     try:
-        data = merge_final_documents(existing["data"], docs)
+        base = existing['data']
+        if replacement:
+            document, snapshot_hash = replacement
+            base = replace_legacy_payments(base, document, snapshot_hash, actor)
+        data = merge_final_documents(base, docs)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     if data == existing["data"]:
@@ -424,8 +433,28 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
     return {"ok": True, "id": document_id, "status": "CANCELLED"}
 
 
+@router.get("/accountant-documents/{document_id}/finalization-check")
+def finalization_check(document_id: int, authorization: str | None = Header(default=None)):
+    role = session_role(authorization)
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select * from generated_accountant_documents where id=%s", (document_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "dokumen tidak ditemukan")
+        if role not in {"OWNER", row['site']}:
+            raise HTTPException(403, "akses site tidak diizinkan")
+        document = _serialize_document(cur, row)
+        cur.execute("select data,status from lpdh_daily_state where site=%s and service_date=%s", (row['site'], row['service_date']))
+        existing = cur.fetchone() or {'data':{},'status':'DRAFT'}
+        plan = legacy_payment_plan(existing['data'], document) if row['status'] == 'DRAFT' else None
+        return {'status':row['status'],'dailyStatus':existing['status'],
+                'legacyReplacement':{k:v for k,v in plan.items() if k != 'indexes'} if plan else None}
+
+
 @router.patch("/accountant-documents/{document_id}/finalize")
-def finalize_document(document_id: int, authorization: str | None = Header(default=None)):
+def finalize_document(document_id: int, authorization: str | None = Header(default=None), payload: FinalizeDocumentIn | None = Body(default=None)):
     role = session_role(authorization)
     if not database_ready():
         raise HTTPException(503, "database unavailable")
@@ -445,8 +474,9 @@ def finalize_document(document_id: int, authorization: str | None = Header(defau
         except ValidationError as exc:
             raise HTTPException(422, "Draft belum lengkap. Edit kop, item, kategori, dan tarif harian sebelum finalisasi.") from exc
         validate_asset_refs(cur, doc["site"], doc["header"])
+        replacement = (doc, payload.replace_legacy_snapshot) if payload and payload.replace_legacy_snapshot and row['status'] == 'DRAFT' else None
         cur.execute("update generated_accountant_documents set status='FINAL',finalized_at=coalesce(finalized_at,now()),finalized_by=coalesce(finalized_by,%s),updated_at=now() where id=%s", (role, document_id))
-        synced = _sync_daily(cur, row["site"], row["service_date"], role)
+        synced = _sync_daily(cur, row["site"], row["service_date"], role, replacement) if replacement else _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
     return {"ok": True, "id": document_id, "status": "FINAL", "syncedToDaily": True, **synced, **_archive_document(document_id, role)}
 

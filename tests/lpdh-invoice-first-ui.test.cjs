@@ -25,15 +25,17 @@ const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lpdh-invoice-fir
   assert.equal(totalField.props.disabled, true);
   await act(async () => view.unmount());
   let changed;
-  const daily = { rawMaterials: [{ name: 'Beras Uji', qty: 2, price: 10, invoiceNo: 'INV-UJI', sourceDocumentId: 1 }], operations: [{ description: 'Manual Historis', qty: 1, price: 5, invoiceNo: 'OLD' }] };
+  const daily = { rawMaterials: [{ name: 'Beras Uji', qty: 2, price: 10, invoiceNo: 'INV-UJI', sourceDocumentId: 1 },{name:'Telur Uji',qty:1,price:20,invoiceNo:'INV-UJI',sourceDocumentId:1}], operations: [{ description: 'Manual Historis', qty: 1, price: 5, invoiceNo: 'OLD' }] };
   await act(async () => { view = create(React.createElement(DailyPanel, { site: 'MAJA', serviceDate: '2026-10-05', masters, daily, setDaily: value => { changed = value; }, api: {} })); });
   const buttons = view.root.findAllByType('button').map(label);
   assert.equal(buttons.some(x => /Tambah bahan|Terapkan invoice harian manual|Siapkan dari master|Tarik Porsi Final Kalkulator/.test(x)), false);
   assert.ok(label(view.root).includes('Manual Historis'), 'historical manual rows remain visible');
   const evidence = view.root.findAllByType('label').find(x => label(x).includes('INV-UJI') && label(x).includes('Link bukti')).findByType('input');
+  assert.equal(view.root.findAllByType('label').filter(x=>label(x).includes('INV-UJI')&&label(x).includes('Link bukti')).length,1,'one proof control per multi-item invoice');
   assert.equal(evidence.props.disabled, false, 'proof can be completed after invoice finalization');
   await act(async () => evidence.props.onChange({ target: { value: 'https://example.test/authentic.pdf' } }));
   assert.equal(changed.rawMaterials[0].evidenceLink, 'https://example.test/authentic.pdf');
+  assert.equal(changed.rawMaterials[1].evidenceLink, 'https://example.test/authentic.pdf');
   assert.equal(changed.rawMaterials[0].price, 10);
   assert.equal(changed.rawMaterials[0].invoiceNo, 'INV-UJI');
   await act(async () => view.unmount());

@@ -18,6 +18,18 @@ The operator reported saved Posyandu targets appearing in the daily form but not
 
 Production balances as distribution POP + organoleptic + retained sample + not distributed + buffer. Show that breakdown beside the stored/input production total. Recalculation is an explicit, confirmed form edit; it is not an automatic rewrite of historical quantities and does not save until the operator saves the draft. Blank defaults remain governed by the rules above. BNBA must visibly distinguish Ya, Tidak and unselected.
 
+## Official templates, evidence and confirmed legacy replacement
+
+The official-template upload accepts a complete LPDH workbook with the thirteen required financial/reference sheets. It is distinct from Import Master, which imports school/Posyandu and other master rows. Installing a format patches only the private template metadata, preserving simultaneous master edits. A filled source workbook contributes layout and formulas, not prior transaction inputs: known input ranges are cleared before populating the selected day.
+
+Each active FINAL invoice or version-2 aggregate receipt has one evidence-link and payment-reference form entry, propagated to all its source rows on explicit draft save. Historical individually numbered receipts remain individual. Differing old proof/reference values are not silently selected; harmonizing them requires confirmation. Preserve the official financial-sheet layout and expose per-source-row payment references in the generated Lampiran_Dokumen appendix; C1 also retains a reference comment on each receipt number.
+
+D_Insentif is the availability/quality payment to Mitra/Yayasan, not teacher/cadre wages. Its base follows the official A_PM eligibility calculation (received PM with BNBA and BAST on an HPE, plus eligible organoleptic/retained samples). Its calculated amount is zero when any availability/quality condition fails. PPK statements, actual paid amounts, dates and bank references are not inferred from the calculated entitlement or from example proof links in an accountant workbook.
+
+An aggregate draft overlapping positive historical manual wages/incentives may be finalized only after the operator confirms a displayed replacement summary. This replaces the entire unsourced manual list for that payment subtype, archives exact prior rows server-side and leaves other subtypes and FINAL documents untouched. Confirmation is bound to a hash of the current draft and legacy inputs; a changed snapshot is rejected. Generated daily states remain protected. Cancellation removes the active source document; it does not recreate an actual payment or restore archived manual costs automatically.
+
+The privately compared accountant workbook and earlier application snapshot contained different beneficiary counts, production inputs, one volunteer rate and D_Insentif statement/payment fields. This is diagnostic evidence, not authorization to overwrite live data. The source workbook itself retained a nonzero production reconciliation difference. Raw files, recipient identities, artwork, banking information and source proof links remain private.
+
 ## Preservation boundaries
 
 Do not silently rewrite historical FINAL documents, generated workbook snapshots, manual legacy records, actual payments, signatures, or proof links. A template/default is not a verified financial event. Missing Posyandu detail remains missing rather than receiving an invented allocation.
