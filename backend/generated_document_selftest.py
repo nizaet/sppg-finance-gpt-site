@@ -46,6 +46,20 @@ def run(output_dir=None):
     imported = merge_final_documents(initial, docs)
     assert imported["balance"] == initial["balance"], "Unrelated daily data must be preserved"
     assert merge_final_documents(imported, docs) == imported, "Repeated import must be idempotent"
+    cancelled = deepcopy(docs)
+    cancelled[1]["status"] = "CANCELLED"
+    reduced = merge_final_documents(imported, cancelled)
+    assert all(x["sourceDocumentId"] != docs[1]["id"] for x in reduced["operations"])
+    assert docs[1]["id"] not in reduced["_generatedDocumentIds"]
+    for doc in cancelled:
+        doc["status"] = "CANCELLED"
+    cleared = merge_final_documents(imported, cancelled)
+    assert all(not cleared[key] for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients")), "Cancelling last final must remove its costs"
+    assert cleared["balance"] == imported["balance"]
+    assert not cleared["_generatedDocumentIds"]
+    assert merge_final_documents(cleared, cancelled) == cleared
+    assert len(merge_final_documents(cleared, docs)["operations"]) == len(imported["operations"]), "Replacement can be imported without double count"
+    assert "DIBATALKAN" in PdfReader(BytesIO(render_document_pdf(cancelled[0]))).pages[0].extract_text()
     assert all(x["workDays"] == 1 for x in imported["volunteerPayments"])
     tampered = deepcopy(imported); tampered["operations"][0]["price"] = 9999999
     tampered["operations"][0]["evidenceLink"] = "https://example.test/new-signed.pdf"

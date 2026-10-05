@@ -30,9 +30,11 @@ auth.session_role = session_role
 db = types.ModuleType("backend.db")
 db.connection = lambda: None
 db.database_ready = lambda: True
+drive_module = types.ModuleType("backend.accountant_drive")
+drive_module.upload_accountant_artifact = lambda **kwargs: {"driveUri": "https://drive.google.com/file/d/test-archive/view"}
 # Run this test file in its own process: importing backend/__init__ would load
 # unrelated services, so install only the package and authentication/DB fixtures.
-sys.modules.update({"backend": package, "backend.auth_api": auth, "backend.db": db})
+sys.modules.update({"backend": package, "backend.auth_api": auth, "backend.db": db, "backend.accountant_drive": drive_module})
 spec = importlib.util.spec_from_file_location("backend.accountant_generated_document_api", ROOT / "backend/accountant_generated_document_api.py")
 api = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = api
@@ -73,7 +75,13 @@ class FakeConnection:
             self.items.append(dict(zip(("document_id", "item_name", "category_code", "quantity", "unit", "unit_price", "line_total", "item_payload"), params)))
             self.items[-1]["item_payload"] = json.loads(params[-1])
         elif sql.startswith("update generated_accountant_documents set status"):
-            self.row["status"] = "FINAL"
+            self.row["status"] = "CANCELLED" if "'CANCELLED'" in sql else "FINAL"
+        elif sql.startswith("update generated_accountant_documents set drive_uri"):
+            self.row["drive_uri"] = params[0]
+            self.row["drive_upload_status"] = "UPLOADED"
+        elif sql.startswith("update generated_accountant_documents set drive_upload_status"):
+            self.row["drive_upload_status"] = "FAILED"
+            self.row["drive_upload_error"] = params[0]
 
     def fetchone(self):
         return self.result
@@ -149,6 +157,63 @@ class DocumentApiTests(unittest.TestCase):
         self.conn.row["status"] = "FINAL"
         self.assertEqual(self.client.put("/v1/accountant-documents/1", json=self.payload, headers=self.headers).status_code, 409)
         self.assertFalse(self.conn.committed)
+
+    def test_cancel_requires_reason_and_site_access(self):
+        endpoint = "/v1/accountant-documents/1/cancel"
+        self.assertEqual(self.client.patch(endpoint, headers=self.headers, json={"reason": "   "}).status_code, 422)
+        self.assertEqual(self.client.patch(endpoint, headers={"Authorization": "Bearer CEMPLANG"}, json={"reason": "Koreksi"}).status_code, 403)
+        self.assertFalse(self.conn.committed)
+
+    def test_cancel_final_commits_rebuild_and_preserves_document(self):
+        self.conn.row["status"] = "FINAL"
+        with patch.object(api, "_sync_daily", return_value={}) as sync:
+            response = self.client.patch("/v1/accountant-documents/1/cancel", headers=self.headers, json={"reason": "Harga keliru"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.conn.row["status"], "CANCELLED")
+        sync.assert_called_once()
+        self.assertFalse(any(sql.startswith("delete") for sql, _ in self.conn.calls))
+        self.assertEqual(self.client.patch("/v1/accountant-documents/1/finalize", headers=self.headers).status_code, 409)
+
+    def test_cancel_generated_daily_rolls_back(self):
+        self.conn.row["status"] = "FINAL"
+        with patch.object(api, "_sync_daily", side_effect=HTTPException(409, "LPDH sudah digenerate")):
+            response = self.client.patch("/v1/accountant-documents/1/cancel", headers=self.headers, json={"reason": "Koreksi"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.conn.row["status"], "FINAL")
+        self.assertFalse(self.conn.committed)
+
+    def test_archive_only_final_and_retry_is_idempotent(self):
+        endpoint = "/v1/accountant-documents/1/archive"
+        self.assertEqual(self.client.post(endpoint, headers=self.headers).status_code, 409)
+        self.conn.row["status"] = "FINAL"
+        with patch.object(drive_module, "upload_accountant_artifact", return_value={"driveUri": "https://drive.google.com/file/d/test/view"}) as upload:
+            first = self.client.post(endpoint, headers=self.headers)
+            second = self.client.post(endpoint, headers=self.headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["driveUri"], second.json()["driveUri"])
+        upload.assert_called_once()
+        self.assertEqual(upload.call_args.kwargs["kind"], "invoice")
+        self.assertEqual(upload.call_args.kwargs["site"], "MAJA")
+        self.assertTrue(upload.call_args.kwargs["data"].startswith(b"%PDF-"))
+
+    def test_drive_failure_preserves_committed_final_and_allows_retry(self):
+        with patch.object(api, "_sync_daily", return_value={"data": {}, "imported": 1}), patch.object(drive_module, "upload_accountant_artifact", side_effect=RuntimeError("Drive unavailable")):
+            response = self.client.patch("/v1/accountant-documents/1/finalize", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["driveUploadStatus"], "FAILED")
+        self.assertEqual(self.conn.row["status"], "FINAL")
+        self.assertTrue(self.conn.committed)
+        retry = self.client.post("/v1/accountant-documents/1/archive", headers=self.headers)
+        self.assertEqual(retry.json()["driveUploadStatus"], "UPLOADED")
+
+    def test_calendar_scope_month_and_cancelled_totals(self):
+        endpoint = "/v1/accountant-documents/calendar?site=MAJA&month=2026-10"
+        self.assertEqual(self.client.get(endpoint, headers={"Authorization": "Bearer CEMPLANG"}).status_code, 403)
+        self.assertEqual(self.client.get(endpoint.replace("2026-10", "2026-13"), headers=self.headers).status_code, 422)
+        self.conn.result = [{"service_date": date(2026, 10, 5), "status": status, "count": 1, "total": amount} for status, amount in (("FINAL", 1000), ("CANCELLED", 9000), ("DRAFT", 3000))]
+        response = self.client.get(endpoint, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["items"], [{"serviceDate": "2026-10-05", "draft": 1, "final": 1, "cancelled": 1, "finalTotal": 1000}])
 
     def test_authenticated_download_returns_real_pdf(self):
         with patch.dict(sys.modules, {"backend.generated_document_pdf": pdf_module}):

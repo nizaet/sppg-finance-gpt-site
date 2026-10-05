@@ -6,7 +6,7 @@ import json
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from backend.auth_api import session_role
@@ -66,6 +66,10 @@ class DailySyncIn(BaseModel):
     service_date: date
 
 
+class CancelDocumentIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 def _authorize(authorization, site):
     role = session_role(authorization)
     if role not in {"OWNER", site}:
@@ -94,7 +98,10 @@ def _serialize_document(cur, row):
     return {"id": row["id"], "site": row["site"], "documentType": row["document_type"],
             "documentNumber": row["document_number"], "serviceDate": str(row["service_date"]),
             "status": row["status"], "header": row["header_payload"] or {},
-            "total": float(row["total_amount"]), "items": items, "finalizedAt": row.get("finalized_at")}
+            "total": float(row["total_amount"]), "items": items, "finalizedAt": row.get("finalized_at"),
+            "driveUri": row.get("drive_uri"), "driveUploadStatus": row.get("drive_upload_status"),
+            "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
+            "cancellationReason": row.get("cancellation_reason")}
 
 
 def load_documents(cur, site, service_date, final_only=False):
@@ -114,8 +121,6 @@ def _sync_daily(cur, site, service_date, actor):
     cur.execute("select data,status from lpdh_daily_state where site=%s and service_date=%s for update", (site, service_date))
     existing = cur.fetchone() or {"data": {}, "status": "DRAFT"}
     docs = load_documents(cur, site, service_date, True)
-    if not docs:
-        return {"data": existing["data"], "imported": 0}
     try:
         data = merge_final_documents(existing["data"], docs)
     except ValueError as exc:
@@ -123,7 +128,7 @@ def _sync_daily(cur, site, service_date, actor):
     if data == existing["data"]:
         return {"data": data, "imported": len(docs)}
     if existing["status"] == "GENERATED":
-        raise HTTPException(409, "LPDH tanggal ini sudah digenerate. Buka dan simpan sebagai draft sebelum menambah dokumen final.")
+        raise HTTPException(409, "LPDH tanggal ini sudah digenerate. Buka dan simpan sebagai draft sebelum menambah atau membatalkan dokumen final.")
     cur.execute("""insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
                 values (%s,%s,%s::jsonb,'DRAFT',1,%s,now()) on conflict (site,service_date) do update
                 set data=excluded.data,status='DRAFT',revision=lpdh_daily_state.revision+1,
@@ -230,6 +235,94 @@ def edit_document(document_id: int, payload: GeneratedDocumentIn, authorization:
     return {"ok": True, "document": document}
 
 
+@router.get("/accountant-documents/calendar")
+def document_calendar(site: Site, month: str = Query(pattern=r"^\d{4}-\d{2}$"), authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    try:
+        start = date.fromisoformat(month + "-01")
+        end = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    except ValueError as exc:
+        raise HTTPException(422, "Bulan tidak valid") from exc
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("""select service_date,status,count(*) as count,sum(total_amount) as total
+                    from generated_accountant_documents where site=%s and service_date>=%s and service_date<%s
+                    group by service_date,status order by service_date,status""", (site, start, end))
+        rows = cur.fetchall()
+    days = {}
+    for row in rows:
+        key = str(row["service_date"])
+        item = days.setdefault(key, {"serviceDate": key, "draft": 0, "final": 0, "cancelled": 0, "finalTotal": 0})
+        item[{"DRAFT": "draft", "FINAL": "final", "CANCELLED": "cancelled"}[row["status"]]] = int(row["count"])
+        if row["status"] == "FINAL":
+            item["finalTotal"] = float(row["total"] or 0)
+    return {"site": site, "month": month, "items": list(days.values())}
+
+
+def _archive_document(document_id, role):
+    """Use the existing accountant Drive archive, not the payment/maker ledger.
+
+    The row lock serializes normal retries and cancellation. A Drive failure never
+    undoes a committed final/daily transaction and is visible with a retry action.
+    """
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select * from generated_accountant_documents where id=%s for update", (document_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "dokumen tidak ditemukan")
+        if role not in {"OWNER", row["site"]}:
+            raise HTTPException(403, "akses site tidak diizinkan")
+        if row["status"] != "FINAL":
+            raise HTTPException(409, "Hanya dokumen FINAL aktif yang dapat diarsipkan")
+        if row.get("drive_uri"):
+            return {"driveUri": row["drive_uri"], "driveUploadStatus": "UPLOADED"}
+        document = _serialize_document(cur, row)
+        try:
+            from backend.accountant_drive import upload_accountant_artifact
+            from backend.generated_document_pdf import render_document_pdf
+            uploaded = upload_accountant_artifact(kind="invoice", site=row["site"], bucket="INVOICE",
+                filename=document["documentNumber"] + ".pdf", data=render_document_pdf(document), mime_type="application/pdf")
+        except Exception:
+            error = "PDF final sudah tersimpan di aplikasi, tetapi upload SPPG Drive gagal. Coba Simpan ke Drive lagi; bila tetap gagal periksa koneksi/izin Drive backend."
+            cur.execute("update generated_accountant_documents set drive_upload_status='FAILED',drive_upload_error=%s,updated_at=now() where id=%s", (error, document_id))
+            conn.commit()
+            return {"driveUploadStatus": "FAILED", "driveUploadError": error}
+        cur.execute("update generated_accountant_documents set drive_uri=%s,drive_upload_status='UPLOADED',drive_upload_error=null,updated_at=now() where id=%s", (uploaded["driveUri"], document_id))
+        conn.commit()
+        return {"driveUri": uploaded["driveUri"], "driveUploadStatus": "UPLOADED"}
+
+
+@router.post("/accountant-documents/{document_id}/archive")
+def archive_document(document_id: int, authorization: str | None = Header(default=None)):
+    role = session_role(authorization)
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    return {"ok": True, **_archive_document(document_id, role)}
+
+
+@router.patch("/accountant-documents/{document_id}/cancel")
+def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: str | None = Header(default=None)):
+    role = session_role(authorization)
+    if not payload.reason.strip() or len(payload.reason.strip()) < 3:
+        raise HTTPException(422, "Alasan pembatalan wajib diisi (minimal 3 karakter)")
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select * from generated_accountant_documents where id=%s for update", (document_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "dokumen tidak ditemukan")
+        if role not in {"OWNER", row["site"]}:
+            raise HTTPException(403, "akses site tidak diizinkan")
+        if row["status"] == "CANCELLED":
+            return {"ok": True, "id": document_id, "status": "CANCELLED"}
+        cur.execute("""update generated_accountant_documents set status='CANCELLED',cancelled_at=now(),cancelled_by=%s,
+                    cancellation_reason=%s,updated_at=now() where id=%s""", (role, payload.reason.strip(), document_id))
+        if row["status"] == "FINAL":
+            _sync_daily(cur, row["site"], row["service_date"], role)
+        conn.commit()
+    return {"ok": True, "id": document_id, "status": "CANCELLED"}
+
+
 @router.patch("/accountant-documents/{document_id}/finalize")
 def finalize_document(document_id: int, authorization: str | None = Header(default=None)):
     role = session_role(authorization)
@@ -242,6 +335,8 @@ def finalize_document(document_id: int, authorization: str | None = Header(defau
             raise HTTPException(404, "dokumen tidak ditemukan")
         if role not in {"OWNER", row["site"]}:
             raise HTTPException(403, "akses site tidak diizinkan")
+        if row["status"] == "CANCELLED":
+            raise HTTPException(409, "Dokumen dibatalkan tidak dapat difinalkan kembali. Buat dokumen baru dengan nomor baru.")
         doc = _serialize_document(cur, row)
         try:
             GeneratedDocumentIn(site=doc["site"], document_type=doc["documentType"], service_date=doc["serviceDate"],
@@ -251,7 +346,7 @@ def finalize_document(document_id: int, authorization: str | None = Header(defau
         cur.execute("update generated_accountant_documents set status='FINAL',finalized_at=coalesce(finalized_at,now()),finalized_by=coalesce(finalized_by,%s),updated_at=now() where id=%s", (role, document_id))
         synced = _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
-    return {"ok": True, "id": document_id, "status": "FINAL", "syncedToDaily": True, **synced}
+    return {"ok": True, "id": document_id, "status": "FINAL", "syncedToDaily": True, **synced, **_archive_document(document_id, role)}
 
 
 @router.post("/accountant-documents/sync-daily")

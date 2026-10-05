@@ -7,16 +7,19 @@ const { create, act } = require('react-test-renderer');
 const esbuild = require('esbuild');
 const root = path.resolve(__dirname, '..');
 const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sppg-documents-')), 'test.cjs');
-const records = [], payloads = [], finalCalls = [], downloads = [];
+const records = [], payloads = [], finalCalls = [], downloads = [], previews = [], cancellations = [], calendarCalls = [];
 let confirm = false;
-global.window = { confirm: () => confirm };
+global.window = { confirm: () => confirm, prompt: () => 'Harga keliru', open: () => { const tab = { opener: {}, location: { replace: url => previews.push(url) }, close() {} }; return tab; } };
 global.__DOCUMENT_API = {
   master: async site => ({ profiles: { KOPERASI: { issuerName: site, recipientAddress: 'Alamat' }, YAYASAN: { issuerName: 'Yayasan', recipientAddress: 'Alamat' } }, categories: ['Gas', 'Alat kebersihan', 'Lain-lain'],
     items: [{ recordKey: 'gas', itemName: 'Gas LPG', kind: 'OPERASIONAL', category: 'Gas', unit: 'tabung', unitPrice: 1000 }, { recordKey: 'sabun', itemName: 'Sabun', kind: 'OPERASIONAL', category: 'Alat kebersihan', unit: 'botol', unitPrice: 200 }],
     volunteers: [{ code: 'R1', name: 'Relawan Uji', role: 'Pengolah', dailyRate: 90000 }], recipients: [{ name: 'Guru Uji', recipientType: 'Guru', unitName: 'SD Uji' }, { name: 'Kader Uji', recipientType: 'Kader', unitName: 'Posyandu Uji' }] }),
   list: async site => ({ documents: records.filter(doc => doc.site === site) }),
+  calendar: async (site, month) => { calendarCalls.push([site, month]); return { items: [{ serviceDate: '2026-10-05', draft: 2, final: 1, cancelled: 1 }] }; },
   create: async payload => { payloads.push(payload); const document = { id: records.length + 1, site: payload.site, documentType: payload.document_type, documentNumber: `DOC-${records.length + 1}`, status: 'DRAFT', header: payload.header_payload, items: payload.items.map(x => ({ itemName: x.item_name, category: x.category_code, quantity: x.quantity, unit: x.unit, unitPrice: x.unit_price, metadata: x.metadata })), total: payload.items.reduce((sum, x) => sum + x.quantity * x.unit_price, 0) }; records.push(document); return { document }; },
-  finalize: async id => { finalCalls.push(id); records.find(doc => doc.id === id).status = 'FINAL'; return { syncedToDaily: true }; },
+  finalize: async id => { finalCalls.push(id); records.find(doc => doc.id === id).status = 'FINAL'; return { syncedToDaily: true, driveUploadStatus: 'UPLOADED' }; },
+  cancel: async (id, reason) => { cancellations.push([id, reason]); Object.assign(records.find(doc => doc.id === id), { status: 'CANCELLED', cancellationReason: reason }); return { status: 'CANCELLED' }; },
+  archive: async () => ({ driveUploadStatus: 'UPLOADED' }),
   pdf: async id => ({ filename: `DOC-${id}.pdf`, mimeType: 'application/pdf', contentBase64: 'JVBERi0=' }),
 };
 global.__LPDH_API = { getFinalPlan: async () => ({ plan: { payload: { shoppingListJSON: { shoppingList: [{ item: 'Beras', jumlah: 2, satuan: 'kg', harga_satuan: 15000 }] } } } }) };
@@ -51,6 +54,13 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   await addMaster('gas');
   await act(async () => button('Buat nomor & simpan draft').props.onClick());
   assert.equal(records.length, 2, 'multiple operational invoices for the same day');
+  assert.equal(button('Unduh PDF'), undefined, 'draft has no automatic download action');
+  const originalTimeout = global.setTimeout;
+  global.setTimeout = callback => { callback(); return 0; };
+  try { await act(async () => button('Buka PDF Draft').props.onClick()); } finally { global.setTimeout = originalTimeout; }
+  assert.equal(previews.length, 1); assert.ok(previews[0].startsWith('blob:'));
+  assert.equal(downloads.length, 0, 'draft preview does not trigger download');
+  assert.deepEqual(calendarCalls[0], ['MAJA', '2026-10']);
   confirm = false;
   await act(async () => button('Finalkan').props.onClick());
   assert.equal(finalCalls.length, 0, 'canceled confirmation does not finalize');
@@ -59,6 +69,15 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   assert.deepEqual(finalCalls, [1]); assert.equal(finalized, 1);
   await act(async () => button('Unduh PDF').props.onClick());
   assert.deepEqual(downloads[0], ['DOC-1.pdf', 'application/pdf', 'JVBERi0=']);
+  confirm = false;
+  await act(async () => button('Batalkan').props.onClick());
+  assert.equal(cancellations.length, 0, 'cancel requires confirmation');
+  confirm = true;
+  await act(async () => button('Batalkan').props.onClick());
+  assert.deepEqual(cancellations[0], [1, 'Harga keliru']);
+  assert.equal(view.root.findAllByType('tr').some(x => label(x).includes('DOC-1')), false, 'cancelled hidden from active register');
+  await act(async () => view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
+  assert.equal(view.root.findAllByType('tr').some(x => label(x).includes('DOC-1') && label(x).includes('DIBATALKAN')), true, 'cancelled evidence remains inspectable');
   await changeType('UPAH_RELAWAN');
   await act(async () => button('Siapkan penerima dari master').props.onClick());
   assert.equal(view.root.findByProps({ 'aria-label': 'Jumlah' }).props.disabled, true);

@@ -11,6 +11,7 @@ import { applyAppTheme } from "./theme.js";
 import { installRuntimeUiPolish } from "./runtimeUiPolish.js";
 import { installInventoryUiEnhancements } from "./operations/inventory-ui-enhancements.js";
 import "./operations/inventory-editor.css";
+import { legacyDocumentsUrl } from "./operations/navigation.js";
 
 applyAppTheme();
 installRuntimeUiPolish();
@@ -56,6 +57,11 @@ function CalculatorRedirect({ role }) {
     window.location.replace(`/dapur/${String(role).toLowerCase()}`);
   }, [role]);
   return <BootFallback text={`Membuka Kalkulator ${role}…`} />;
+}
+
+function DocumentRedirect({ url }) {
+  useEffect(() => { window.location.replace(url); }, [url]);
+  return <BootFallback text="Membuka Invoice & Kuitansi di LPDH…" />;
 }
 
 function MajaAccountantRoute() {
@@ -109,6 +115,8 @@ function CemplangAccountantRoute() {
 
 function RoutedApp({ role, config, onLogout }) {
   const normalizedRole = String(role || "OWNER").toUpperCase();
+  const documentUrl = legacyDocumentsUrl(window.location);
+  if (documentUrl) return <DocumentRedirect url={documentUrl} />;
 
   // MAJA/CEMPLANG share one login between the existing Calculator and the
   // LPDH administration workspace. The root route acts as the app chooser.

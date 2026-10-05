@@ -131,7 +131,7 @@ def render_document_pdf(document):
             canvas.setFont("Helvetica-Bold", 42)
             canvas.translate(A4[0] / 2, A4[1] / 2)
             canvas.rotate(35)
-            canvas.drawCentredString(0, 0, "DRAFT")
+            canvas.drawCentredString(0, 0, "DIBATALKAN" if document["status"] == "CANCELLED" else "DRAFT")
         canvas.restoreState()
 
     pdf.build(story, onFirstPage=page, onLaterPages=page)

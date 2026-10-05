@@ -17,9 +17,12 @@ async function request(path, options = {}) {
 export const documentApi = {
   master: site => request(`/master?${new URLSearchParams({ site })}`),
   list: (site, date) => request(`?${new URLSearchParams({ site, service_date: date })}`),
+  calendar: (site, month) => request(`/calendar?${new URLSearchParams({ site, month })}`),
   create: payload => request("", { method: "POST", body: JSON.stringify(payload) }),
   edit: (id, payload) => request(`/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   finalize: id => request(`/${id}/finalize`, { method: "PATCH" }),
+  archive: id => request(`/${id}/archive`, { method: "POST" }),
+  cancel: (id, reason) => request(`/${id}/cancel`, { method: "PATCH", body: JSON.stringify({ reason }) }),
   pdf: id => request(`/${id}/pdf`),
   syncDaily: (site, date) => request("/sync-daily", { method: "POST", body: JSON.stringify({ site, service_date: date }) }),
 };

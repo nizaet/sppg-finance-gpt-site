@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OPERATION_TABS, operationsUrl, readOperationsRoute, operationsRouteKey } from '../src/operations/navigation.js';
+import { OPERATION_TABS, operationsUrl, readOperationsRoute, operationsRouteKey, legacyDocumentsUrl } from '../src/operations/navigation.js';
 import { updateSiteState } from '../src/operations/useSiteState.js';
+
+test('document creation exists only in LPDH, old links redirect without changing payment module', () => {
+  assert.equal(OPERATION_TABS.includes('documents'), false);
+  assert.equal(OPERATION_TABS.includes('payments'), true);
+  assert.equal(legacyDocumentsUrl({pathname:'/operations/documents/',search:'?site=CEMPLANG&date=2026-10-05'}), '/lpdh?site=CEMPLANG&tab=documents&date=2026-10-05');
+  assert.equal(legacyDocumentsUrl({pathname:'/operations/documents',search:'?site=KOPERASI'}), '/lpdh?site=MAJA&tab=documents');
+  assert.equal(legacyDocumentsUrl({pathname:'/operations/payments',search:''}), null);
+});
 
 test('every module has a shareable URL that reopens the same module', () => {
   for (const tab of OPERATION_TABS) {

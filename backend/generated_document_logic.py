@@ -67,6 +67,10 @@ def merge_final_documents(daily, documents):
     out = deepcopy(daily or {})
     finalized = [doc for doc in documents if doc["status"] == "FINAL"]
     if not finalized:
+        if out.get("_generatedDocumentIds") or any(r.get("sourceDocumentId") for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients") for r in out.get(key) or []):
+            for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"):
+                out[key] = [r for r in out.get(key) or [] if not r.get("sourceDocumentId")]
+            out["_generatedDocumentIds"] = []
         return out
     incoming = {key: [] for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients")}
     invoice_numbers = {doc["documentNumber"] for doc in finalized}
