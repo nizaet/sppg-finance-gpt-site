@@ -421,7 +421,7 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
                 // Simpan form terkini ke dokumen kalkulator yang sedang diedit lebih dulu.
                 data.updatedAt = new Date();
                 if (currentPlanData && currentPlanData.createdAt) data.createdAt = currentPlanData.createdAt;
-                await setDoc(doc(db, \`artifacts/\${appId}/public/data/dailyPlans\`, currentEditingPlanId), data, { merge: true });
+                await setDoc(doc(db, 'artifacts/' + appId + '/public/data/dailyPlans', currentEditingPlanId), data, { merge: true });
                 currentPlanData = data;
 
                 const response = await fetch('/v1/lpdh/calculator-final', {
@@ -444,10 +444,10 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
                     const detail = typeof result.detail === 'string' ? result.detail : (result.detail && result.detail.message) || 'Finalisasi LPDH gagal.';
                     throw new Error(detail);
                 }
-                showMessage(\`FINAL LPDH tersimpan untuk \${data.date} · revisi \${result.revision || 1}. LPDH sekarang dapat menarik data ini.\`, "success");
+                showMessage(`FINAL LPDH tersimpan untuk ${data.date} · revisi ${result.revision || 1}. LPDH sekarang dapat menarik data ini.`, "success");
                 return result;
             } catch (error) {
-                showMessage(\`Gagal FINAL LPDH: \${error?.message || error}\`, "error");
+                showMessage(`Gagal FINAL LPDH: ${error?.message || error}`, "error");
                 throw error;
             }
         }
