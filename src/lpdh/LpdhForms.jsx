@@ -620,15 +620,21 @@ export function DocumentsPanel({ serviceDate, daily, preview, masters, onMessage
   const masterData = normalizeMasters(masters || {});
   const vendor = masterData.vendor || {};
   const assets = masterData.assets || {};
-  const groupInvoices = (rows) => Object.values((rows || []).reduce((groups, row) => {
-    const no = String(row.invoiceNo || "").trim();
+  const groupInvoices = (rows, defaultNo = "", defaultDate = "") => Object.values((rows || []).reduce((groups, row) => {
+    const no = String(row.invoiceNo || defaultNo || "").trim();
     if (!no) return groups;
     if (!groups[no]) groups[no] = { invoiceNo: no, rows: [] };
-    groups[no].rows.push(row);
+    groups[no].rows.push({ ...row, invoiceNo: no, date: row.date || defaultDate || serviceDate });
     return groups;
   }, {}));
-  const rawInvoices = useMemo(() => groupInvoices(data.rawMaterials), [data.rawMaterials]);
-  const operationalInvoices = useMemo(() => groupInvoices(data.operations), [data.operations]);
+  const rawInvoices = useMemo(
+    () => groupInvoices(data.rawMaterials, data.rawInvoiceNo, data.rawInvoiceDate),
+    [data.rawMaterials, data.rawInvoiceNo, data.rawInvoiceDate, serviceDate]
+  );
+  const operationalInvoices = useMemo(
+    () => groupInvoices(data.operations, data.operationalInvoiceNo, data.operationalInvoiceDate),
+    [data.operations, data.operationalInvoiceNo, data.operationalInvoiceDate, serviceDate]
+  );
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[char]));
 
   const printDocument = (title, rows) => {
