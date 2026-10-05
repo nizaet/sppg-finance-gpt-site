@@ -376,7 +376,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
 
   const pullFinal = () => {
     if (!finalPlan?.payload) return onSaved?.("Belum ada data FINAL dari Kalkulator untuk tanggal ini.", "error");
-    const raw = rawFromFinalPlan(finalPlan, serviceDate);
+    const raw = rawFromFinalPlan(finalPlan, serviceDate).map((row) => ({
+      ...row,
+      date: data.rawInvoiceDate || serviceDate,
+      invoiceNo: data.rawInvoiceNo || row.invoiceNo || "",
+      evidenceLink: data.rawInvoiceEvidenceLink || row.evidenceLink || "",
+    }));
     const payload = finalPlan.payload || {};
     setDaily({
       ...data,
@@ -448,6 +453,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Bukti bank guru/kader (1 untuk batch)" value={data.incentiveBatchEvidenceLink} onChange={(v) => update("incentiveBatchEvidenceLink", v)} placeholder="https://..." />
         <Field label="No bukti agregat guru (C_Operasional)" value={data.schoolPicOperationalProofNo} onChange={(v) => update("schoolPicOperationalProofNo", v)} placeholder="kosong = nomor dasar-GURU" />
         <Field label="No bukti agregat kader (C_Operasional)" value={data.cadreOperationalProofNo} onChange={(v) => update("cadreOperationalProofNo", v)} placeholder="kosong = nomor dasar-KADER" />
+        <Field label="No invoice bahan baku" value={data.rawInvoiceNo} onChange={(v) => update("rawInvoiceNo", v)} />
+        <Field label="Tanggal invoice bahan baku" type="date" value={data.rawInvoiceDate || serviceDate} onChange={(v) => update("rawInvoiceDate", v)} />
+        <Field label="Link invoice/bukti bahan" value={data.rawInvoiceEvidenceLink} onChange={(v) => update("rawInvoiceEvidenceLink", v)} placeholder="https://..." />
+        <Field label="No invoice operasional harian" value={data.operationalInvoiceNo} onChange={(v) => update("operationalInvoiceNo", v)} />
+        <Field label="Tanggal invoice operasional" type="date" value={data.operationalInvoiceDate || serviceDate} onChange={(v) => update("operationalInvoiceDate", v)} />
+        <Field label="Link invoice/bukti operasional" value={data.operationalInvoiceEvidenceLink} onChange={(v) => update("operationalInvoiceEvidenceLink", v)} placeholder="https://..." />
       </div>
     </Section>
 
@@ -472,7 +483,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="B_BahanBaku" subtitle={`Total sementara Rp ${rawTotal.toLocaleString("id-ID")}. Satu invoice boleh punya banyak barang; nomor bukti unik akan diberi suffix otomatis.`} actions={<button type="button" onClick={() => addList("rawMaterials", { date: serviceDate, name: "", category: "", qty: 0, unit: "kg", price: 0, supplier: "", invoiceNo: "", evidenceLink: "", note: "" })}><Plus size={15}/> Tambah bahan</button>}>
+    <Section title="B_BahanBaku" subtitle={`Total sementara Rp ${rawTotal.toLocaleString("id-ID")}. Satu invoice boleh punya banyak barang; nomor bukti unik akan diberi suffix otomatis.`} actions={<>
+      <button type="button" onClick={() => setDaily({...data, rawMaterials:data.rawMaterials.map((row)=>({...row,date:data.rawInvoiceDate||serviceDate,invoiceNo:data.rawInvoiceNo||row.invoiceNo||"",evidenceLink:data.rawInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian</button>
+      <button type="button" onClick={() => addList("rawMaterials", { date: data.rawInvoiceDate || serviceDate, name: "", category: "", qty: 0, unit: "kg", price: 0, supplier: "", invoiceNo: data.rawInvoiceNo || "", evidenceLink: data.rawInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah bahan</button>
+    </>}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Bahan</th><th>Kategori</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Supplier</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.rawMaterials.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("rawMaterials", index, "date", e.target.value)}/></td>
@@ -488,7 +502,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         </tr>)}{!data.rawMaterials.length && <EmptyRow colSpan={10}>Tarik data FINAL dari Kalkulator atau tambah bahan manual.</EmptyRow>}</tbody></table></div>
     </Section>
 
-    <Section title="C_Operasional" subtitle={`Belanja operasional lain Rp ${opTotal.toLocaleString("id-ID")}. Upah relawan dan insentif guru/kader dihitung terpisah lalu masuk total operasional.`} actions={<button type="button" onClick={() => addList("operations", { date: serviceDate, itemCode: "", description: "", qty: 1, unit: "unit", price: 0, invoiceNo: "", evidenceLink: "", note: "" })}><Plus size={15}/> Tambah</button>}>
+    <Section title="C_Operasional" subtitle={`Belanja operasional lain Rp ${opTotal.toLocaleString("id-ID")}. Upah relawan dan insentif guru/kader dihitung terpisah lalu masuk total operasional.`} actions={<>
+      <button type="button" onClick={() => setDaily({...data, operations:data.operations.map((row)=>({...row,date:data.operationalInvoiceDate||serviceDate,invoiceNo:data.operationalInvoiceNo||row.invoiceNo||"",evidenceLink:data.operationalInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian</button>
+      <button type="button" onClick={() => addList("operations", { date: data.operationalInvoiceDate || serviceDate, itemCode: "", description: "", qty: 1, unit: "unit", price: 0, invoiceNo: data.operationalInvoiceNo || "", evidenceLink: data.operationalInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah</button>
+    </>}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Item master</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Harga</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.operations.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("operations", index, "date", e.target.value)}/></td>

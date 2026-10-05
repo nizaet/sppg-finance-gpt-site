@@ -219,7 +219,13 @@ def raw_rows(daily: dict[str, Any], final_plan: dict[str, Any] | None, service_d
     rows = deepcopy(daily.get("rawMaterials") or [])
     if not rows:
         rows = final_plan_raw_rows(final_plan, service_date)
+    default_invoice = str(daily.get("rawInvoiceNo") or "").strip()
+    default_evidence = str(daily.get("rawInvoiceEvidenceLink") or "").strip()
+    default_date = daily.get("rawInvoiceDate") or service_date
     for row in rows:
+        row["date"] = row.get("date") or default_date
+        row["invoiceNo"] = row.get("invoiceNo") or default_invoice
+        row["evidenceLink"] = row.get("evidenceLink") or default_evidence
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"))
         row["amount"] = row["qty"] * row["price"]
@@ -275,10 +281,16 @@ def incentive_recipient_rows(daily: dict[str, Any]) -> list[dict[str, Any]]:
 def operational_rows(masters: dict[str, Any], daily: dict[str, Any]) -> list[dict[str, Any]]:
     rows = deepcopy(daily.get("operations") or [])
     master_by_code = {str(x.get("code") or ""): x for x in masters.get("operations") or []}
+    default_invoice = str(daily.get("operationalInvoiceNo") or "").strip()
+    default_evidence = str(daily.get("operationalInvoiceEvidenceLink") or "").strip()
+    default_date = daily.get("operationalInvoiceDate") or ""
     for row in rows:
         ref = master_by_code.get(str(row.get("itemCode") or ""), {})
         row["description"] = row.get("description") or ref.get("name") or ref.get("description") or ""
         row["unit"] = row.get("unit") or ref.get("unit") or ""
+        row["date"] = row.get("date") or default_date
+        row["invoiceNo"] = row.get("invoiceNo") or default_invoice
+        row["evidenceLink"] = row.get("evidenceLink") or default_evidence
         row["qty"] = as_number(row.get("qty"))
         row["price"] = as_number(row.get("price"), as_number(ref.get("defaultPrice")))
         row["amount"] = row["qty"] * row["price"]
