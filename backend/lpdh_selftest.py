@@ -154,8 +154,12 @@ def run():
 
     template = make_master_template()
     parsed = parse_master_workbook(template)
-    assert len(parsed["beneficiaries"]) == 1
-    assert len(parsed["volunteers"]) == 1
+    assert len(parsed["beneficiaries"]) == 0
+    assert len(parsed["volunteers"]) == 0, "blank template must not import invented people"
+    assert len(parsed["schools"]) == len(parsed["posyandu"]) == 0
+    template_wb = load_workbook(BytesIO(template))
+    assert template_wb["Master_Sekolah"]["F1"].value == "Porsi Kecil"
+    assert template_wb["Master_Sekolah"]["G1"].value == "Porsi Besar"
     assert len(parsed["operations"]) > 0
 
     print("LPDH SELFTEST OK: official semantics, invalid-blocking, 26 validations, formula workbook, master import")

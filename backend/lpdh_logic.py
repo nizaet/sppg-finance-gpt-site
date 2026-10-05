@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -13,9 +14,9 @@ from openpyxl import load_workbook
 from openpyxl.workbook import Workbook
 
 try:
-    from .generated_document_logic import category_name, grouped_operations, line_amount
+    from .generated_document_logic import OP_CATEGORIES, category_name, grouped_operations, line_amount
 except ImportError:
-    from generated_document_logic import category_name, grouped_operations, line_amount
+    from generated_document_logic import OP_CATEGORIES, category_name, grouped_operations, line_amount
 
 ROOT = Path(__file__).resolve().parents[1]
 LPDH_TEMPLATE = ROOT / "backend" / "templates" / "LPDH_SPPG_Format_Excel_PPK.xlsx"
@@ -147,12 +148,45 @@ def parameters(masters: dict[str, Any]) -> dict[str, Any]:
 
 def master_target_by_group(masters: dict[str, Any]) -> dict[str, float]:
     totals: dict[str, float] = defaultdict(float)
+    represented = set()
+    detailed_units = set()
+    def key(row):
+        return str(row.get("code") or row.get("unitName") or row.get("name") or "").strip().casefold()
+    for row in (masters.get("schools") or []) + (masters.get("posyandu") or []):
+        if str(row.get("status") or "Aktif").strip().lower() != "nonaktif":
+            detailed_units.add(key(row))
+    school_codes = {"PAUD": ("KS-01", None), "SD/MI": ("KS-02", "KS-03"),
+                    "SMP/MTs": (None, "KS-04"), "SMA/MA/SMK/SLB": (None, "KS-05"),
+                    "Santri": (None, "KS-06"), "PTK": (None, "PTK")}
+    for row in masters.get("schools") or []:
+        if str(row.get("status") or "Aktif").strip().lower() == "nonaktif":
+            continue
+        small_code, large_code = school_codes.get(str(row.get("schoolType") or ""), (None, None))
+        if small_code:
+            represented.add(small_code)
+            totals[small_code] += as_number(row.get("smallPortions"))
+        if large_code:
+            represented.add(large_code)
+            totals[large_code] += as_number(row.get("largePortions"))
+    for row in masters.get("posyandu") or []:
+        if str(row.get("status") or "Aktif").strip().lower() == "nonaktif":
+            continue
+        represented.update({"KS-09", "KS-07", "KS-08"})
+        totals["KS-09"] += as_number(row.get("balitaSmall"))
+        totals["KS-07"] += as_number(row.get("pregnantLarge"))
+        totals["KS-08"] += as_number(row.get("breastfeedingLarge"))
     for row in masters.get("beneficiaries") or []:
         if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
             continue
+        if key(row) and key(row) in detailed_units:
+            continue
         code = str(row.get("groupCode") or row.get("kodeKelompok") or row.get("code") or "").upper().strip()
         if code in {x[0] for x in GROUPS}:
+            represented.add(code)
             totals[code] += as_number(row.get("targetPm") if "targetPm" in row else row.get("target"))
+    for code, amount in (masters.get("groupTargets") or {}).items():
+        if code in {x[0] for x in GROUPS} and code not in represented:
+            totals[code] = as_number(amount)
     return totals
 
 
@@ -1104,7 +1138,7 @@ def populate_workbook(
     identity = masters.get("identity") or {}
     ws = wb["Identitas"]
     identity_cells = {
-        "B5": identity.get("lpdhNumber"),
+        "B5": daily.get("lpdhNumber") or identity.get("lpdhNumber"),
         "B6": identity.get("sppgId"),
         "B7": identity.get("sppgName"),
         "B8": identity.get("village"),
@@ -1365,29 +1399,80 @@ def make_master_template() -> bytes:
     ws = wb.active
     ws.title = "Petunjuk"
     ws.append(["TEMPLATE IMPORT MASTER LPDH"])
-    ws.append(["Isi sheet Master_Penerima, Master_Relawan, Master_Operasional, lalu upload ke aplikasi. Jangan ubah nama kolom."])
+    ws.append(["Isi Master_Sekolah, Master_Posyandu, Master_Relawan, dan Master_Operasional. Kolom F/G sekolah = porsi kecil/besar. Jangan isi unit contoh sebagai data nyata."])
 
-    pm = wb.create_sheet("Master_Penerima")
-    pm.append(["Kode Unit","Jenis Unit","Nama Sekolah / Posyandu","Kode Kelompok","Kelompok Sasaran","Kategori Porsi","Jenis PIC","Target PM","Nama PIC","No. HP PIC","Alamat","Status Aktif","Catatan"])
-    pm.append(["SKL-001","Sekolah","SD Contoh 01","KS-02","SD/MI Kelas 1–3","Kecil","Sekolah",220,"Nama PIC","081234567890","Alamat","Aktif",""])
+    school = wb.create_sheet("Master_Sekolah")
+    school.append(["Kode Unit","Nama Sekolah","Jenis Sekolah","Nama PIC","No. HP PIC","Porsi Kecil","Porsi Besar","Alamat","Status Aktif","Catatan"])
+    school.append(["","","SD/MI","","",None,None,"","Aktif",""])
+    posyandu = wb.create_sheet("Master_Posyandu")
+    posyandu.append(["Kode Unit","Nama Posyandu","Nama Kader","No. HP Kader","Alamat","Balita (Kecil)","Ibu Hamil (Besar)","Ibu Menyusui (Besar)","Status Aktif","Catatan"])
+    posyandu.append(["","","","","",None,None,None,"Aktif",""])
 
     rv = wb.create_sheet("Master_Relawan")
     rv.append(["Kode Relawan","Nama Relawan","Tugas","Status Aktif","Besaran Harian (Rp)","Metode Bayar Default","Nama Bank","No. Rekening","Nama Pemilik Rekening","No. HP","Catatan"])
-    rv.append(["RL-001","Contoh Relawan","Juru masak","Aktif",90000,"Transfer","BRI","1234567890","Contoh Relawan","081234567890",""])
+    rv.append(["","","","Aktif",None,"Transfer","","","","",""])
 
     op = wb.create_sheet("Master_Operasional")
     op.append(["Kode Item","Nama Item Operasional","Kategori","Satuan Default","Harga Default (Rp)","Sifat Biaya","Vendor Default","Status Aktif","Catatan"])
-    for idx, name in enumerate(OPERATIONAL_DEFAULTS[3:], 1):
-        op.append([f"OP-{idx:03d}", name, "Operasional", "unit", 0, "Rutin", "", "Aktif", ""])
+    items = [("Gas LPG 50 kg", "Gas"), ("Gas LPG 12 kg", "Gas"),
+             ("Sarung Tangan Plastik @200 pcs", OP_CATEGORIES[10]), ("Mama Lemon 650 ml", "Alat kebersihan"),
+             ("Sarung tangan Latex/Nitril (100pcs)", OP_CATEGORIES[10]), ("Tali rapia Hitam", "Lain-lain"),
+             ("Tali rapia Warna", "Lain-lain"), ("Plastik sampah 60 x 100", "Alat kebersihan"),
+             ("Plastik sampah 90x120", "Alat kebersihan"), ("Tisu hand towels", "Alat kebersihan"),
+             ("Air Galon isi Ulang", "Air minum/galon"), ("Masker 3 Play", OP_CATEGORIES[10]),
+             ("Hair Net (50pcs) - Tebal", OP_CATEGORIES[10]), ("Karbol Larist 4L", "Alat kebersihan"),
+             ("Clink Pembersih Kaca", "Alat kebersihan"), ("Tinta Printer CF400A CF401A CF402A CF403A", "ATK")]
+    for idx, (name, category) in enumerate(items, 1):
+        op.append([f"OP-{idx:03d}", name, category, "", None, "Rutin", "", "Aktif", ""])
+
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.worksheet.datavalidation import DataValidation
+    ws.append(["SD/MI: kelas 1–3 ke F (kecil), kelas 4–6 ke G (besar). PAUD kecil; SMP/SMA/Santri/PTK besar."])
+    ws.append(["Posyandu: balita 6–59 bulan kecil, ibu hamil dan menyusui besar. Harga/satuan operasional diisi sesuai master."])
+    ws.append(["Pembayaran upah dan insentif harian. Nomor LPDH di Data Harian; nomor invoice disarankan otomatis dan bisa diedit."])
+    ws.append(["Impor menambah data baru, tidak menimpa edit lama. Hapus data contoh/kosong; jangan mengubah nama sheet atau kolom."])
+    ws.column_dimensions["A"].width = 115
+    for r in range(1, 7):
+        ws.cell(r, 1).alignment = Alignment(wrap_text=True, vertical="center")
+        ws.row_dimensions[r].height = 36
+    for sheet in (school, posyandu, rv, op):
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for cell in sheet[1]:
+            cell.fill = PatternFill("solid", fgColor="163C4C")
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(wrap_text=True, vertical="center")
+            sheet.column_dimensions[cell.column_letter].width = 24 if cell.column > 1 else 18
+        sheet.row_dimensions[1].height = 44
+        for row in sheet.iter_rows(min_row=2):
+            for cell in row:
+                cell.font = Font(color="0000FF")
+                cell.alignment = Alignment(wrap_text=True, vertical="center")
+        sheet.sheet_view.showGridLines = False
+    school.column_dimensions["B"].width = 34
+    op.column_dimensions["B"].width = 45
+    op.column_dimensions["C"].width = 48
+    for col in (6, 7):
+        school.cell(1, col).fill = PatternFill("solid", fgColor="B57C00")
+    choice = DataValidation(type="list", formula1='"PAUD,SD/MI,SMP/MTs,SMA/MA/SMK/SLB,Santri,PTK"')
+    school.add_data_validation(choice)
+    choice.add("C2:C1000")
+    for sheet, columns in ((school, "FG"), (posyandu, "FGH")):
+        for col in columns:
+            whole = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="0", allow_blank=True)
+            whole.error = "Isi jumlah porsi sebagai bilangan bulat tidak negatif"
+            whole.showErrorMessage = True
+            sheet.add_data_validation(whole)
+            whole.add(f"{col}2:{col}1000")
 
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
 
 
-def parse_master_workbook(content: bytes) -> dict[str, list[dict[str, Any]]]:
+def parse_master_workbook(content: bytes) -> dict[str, Any]:
     wb = load_workbook(io.BytesIO(content), data_only=True)
-    result: dict[str, list[dict[str, Any]]] = {"beneficiaries": [], "volunteers": [], "operations": []}
+    result: dict[str, Any] = {"beneficiaries": [], "schools": [], "posyandu": [], "volunteers": [], "operations": []}
 
     def records(sheet_name: str) -> list[dict[str, Any]]:
         if sheet_name not in wb.sheetnames:
@@ -1418,8 +1503,32 @@ def parse_master_workbook(content: bytes) -> dict[str, list[dict[str, Any]]]:
             "note": str(row.get("Catatan") or "").strip(),
         })
 
+    for row in records("Master_Sekolah"):
+        if not str(row.get("Nama Sekolah") or "").strip():
+            continue
+        result["schools"].append({
+            "code": str(row.get("Kode Unit") or "").strip(), "name": str(row.get("Nama Sekolah") or "").strip(),
+            "schoolType": str(row.get("Jenis Sekolah") or "").strip(), "picName": str(row.get("Nama PIC") or "").strip(),
+            "phone": str(row.get("No. HP PIC") or "").strip(), "smallPortions": as_number(row.get("Porsi Kecil")),
+            "largePortions": as_number(row.get("Porsi Besar")), "address": str(row.get("Alamat") or "").strip(),
+            "status": str(row.get("Status Aktif") or "Aktif").strip(), "note": str(row.get("Catatan") or "").strip(),
+        })
+    for row in records("Master_Posyandu"):
+        if not str(row.get("Nama Posyandu") or "").strip():
+            continue
+        result["posyandu"].append({
+            "code": str(row.get("Kode Unit") or "").strip(), "name": str(row.get("Nama Posyandu") or "").strip(),
+            "picName": str(row.get("Nama Kader") or "").strip(), "phone": str(row.get("No. HP Kader") or "").strip(),
+            "address": str(row.get("Alamat") or "").strip(), "balitaSmall": as_number(row.get("Balita (Kecil)")),
+            "pregnantLarge": as_number(row.get("Ibu Hamil (Besar)")),
+            "breastfeedingLarge": as_number(row.get("Ibu Menyusui (Besar)")),
+            "status": str(row.get("Status Aktif") or "Aktif").strip(), "note": str(row.get("Catatan") or "").strip(),
+        })
+
     volunteer_sheet = "Master_Relawan" if "Master_Relawan" in wb.sheetnames else "Import_Relawan"
     for row in records(volunteer_sheet):
+        if not str(row.get("Nama Relawan") or "").strip():
+            continue
         result["volunteers"].append({
             "code": str(row.get("Kode Relawan") or "").strip(),
             "name": str(row.get("Nama Relawan") or "").strip(),
@@ -1447,7 +1556,94 @@ def parse_master_workbook(content: bytes) -> dict[str, list[dict[str, Any]]]:
             "note": str(row.get("Catatan") or "").strip(),
         })
 
+    if {"Identitas", "A_PM", "C1_Relawan", "C_Operasional"}.issubset(wb.sheetnames):
+        identity_ws, pm_ws, volunteer_ws, op_ws = (wb[name] for name in ("Identitas", "A_PM", "C1_Relawan", "C_Operasional"))
+        result["source"] = "OFFICIAL_LPDH"
+        result["identity"] = {key: str(identity_ws[cell].value or "").strip() for key, cell in {
+            "sppgId": "B6", "sppgName": "B7", "village": "B8", "district": "B9", "city": "B10",
+            "province": "B11", "foundation": "B12", "vaNumber": "B13", "bankName": "B14"}.items()}
+        result["numbering"] = {"lpdhSeed": str(identity_ws["B5"].value or "").strip(),
+                               "lpdhSeedDate": str(identity_ws["B15"].value or "")[:10]}
+        result["groupTargets"] = {str(pm_ws[f"A{row}"].value).strip(): as_number(pm_ws[f"E{row}"].value)
+                                  for row in range(6, 16) if str(pm_ws[f"A{row}"].value or "").strip() in {g[0] for g in GROUPS}}
+        result["signers"] = [{"name": str(identity_ws[f"B{row}"].value or "").strip(),
+                               "identityType": ("NIP" if row == 37 else "NIK"),
+                               "identityNumber": str(identity_ws[f"D{row}"].value or "").strip(), "signed": "Tidak"}
+                              for row in (36, 37, 38)]
+        for row in range(6, min(volunteer_ws.max_row + 1, 66)):
+            name = str(volunteer_ws[f"C{row}"].value or "").strip()
+            if not name:
+                continue
+            result["volunteers"].append({"code": f"RL-{row - 5:03d}", "name": name,
+                "role": str(volunteer_ws[f"D{row}"].value or "").strip(), "dailyRate": as_number(volunteer_ws[f"G{row}"].value),
+                "paymentMethod": str(volunteer_ws[f"I{row}"].value or "Transfer").strip(), "status": "Aktif",
+                "sourceRow": f"C1_Relawan!{row}"})
+        for row in range(9, 22):
+            name = str(op_ws[f"D{row}"].value or "").strip()
+            if not name:
+                continue
+            price = as_number(op_ws[f"G{row}"].value)
+            if price <= 0 or as_number(op_ws[f"E{row}"].value) <= 0:
+                continue
+            result["operations"].append({"code": f"OP-{row - 5:03d}", "name": name,
+                "category": "Gas" if name.lower().startswith("gas") else category_name(name), "unit": str(op_ws[f"F{row}"].value or "").strip(),
+                "defaultPrice": price, "costNature": "Rutin", "status": "Aktif", "sourceRow": f"C_Operasional!{row}"})
     return result
+
+
+def validate_master_portions(data):
+    for value in (data.get("groupTargets") or {}).values():
+        n = as_number(value)
+        if n < 0 or n != int(n):
+            raise ValueError("Total kelompok harus bilangan bulat tidak negatif")
+    types = {"PAUD", "SD/MI", "SMP/MTs", "SMA/MA/SMK/SLB", "Santri", "PTK"}
+    for row in data.get("schools") or []:
+        if row.get("schoolType") not in types:
+            raise ValueError("Pilih jenis sekolah yang valid: PAUD, SD/MI, SMP/MTs, SMA/MA/SMK/SLB, Santri, atau PTK")
+        small, large = as_number(row.get("smallPortions")), as_number(row.get("largePortions"))
+        if small < 0 or large < 0 or small != int(small) or large != int(large):
+            raise ValueError("Jumlah porsi sekolah harus bilangan bulat tidak negatif")
+        if row["schoolType"] == "PAUD" and large or row["schoolType"] not in {"PAUD", "SD/MI"} and small:
+            raise ValueError("Porsi tidak sesuai klausul: PAUD kecil; SMP/SMA/Santri/PTK besar; SD kelas 1–3 kecil dan 4–6 besar")
+    for row in data.get("posyandu") or []:
+        for field in ("balitaSmall", "pregnantLarge", "breastfeedingLarge"):
+            n = as_number(row.get(field))
+            if n < 0 or n != int(n):
+                raise ValueError("Jumlah porsi posyandu harus bilangan bulat tidak negatif")
+
+
+def merge_master_import(existing, parsed, filename):
+    """Only fill missing data; repeated imports must never undo an accountant edit."""
+    merged = json.loads(json.dumps(existing))
+    warnings, added = [], {}
+    for field in ("identity", "numbering", "groupTargets"):
+        target = merged.setdefault(field, {})
+        for key, value in (parsed.get(field) or {}).items():
+            if key not in target or target[key] in (None, ""):
+                target[key] = value
+            elif str(target[key]).strip() != str(value).strip() and field == "identity":
+                warnings.append(f"Identitas {key} berbeda; isian aplikasi dipertahankan")
+    if parsed.get("signers"):
+        target = merged.setdefault("signers", [])
+        while len(target) < 3:
+            target.append({"signed": "Tidak"})
+        for i, row in enumerate(parsed["signers"]):
+            for key in ("name", "identityType", "identityNumber"):
+                if not target[i].get(key): target[i][key] = row.get(key, "")
+    for field in ("beneficiaries", "schools", "posyandu", "volunteers", "operations"):
+        target = merged.setdefault(field, [])
+        added[field] = 0
+        for row in parsed.get(field) or []:
+            code = str(row.get("code") or "").strip().casefold()
+            name = str(row.get("name") or row.get("unitName") or "").strip().casefold()
+            if any((code and code == str(old.get("code") or "").strip().casefold()) or
+                   (name and name == str(old.get("name") or old.get("unitName") or "").strip().casefold()) or
+                   (row.get("sourceRow") and row.get("sourceRow") == old.get("sourceRow")) for old in target):
+                continue
+            target.append({**row, "sourceFilename": filename})
+            added[field] += 1
+    merged["_lastMasterImport"] = {"filename": filename, "source": parsed.get("source", "MASTER_TEMPLATE"), "added": added}
+    return merged, added, warnings
 
 
 def workbook_reference_rows() -> list[list[Any]]:

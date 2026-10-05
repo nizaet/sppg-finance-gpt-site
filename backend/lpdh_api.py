@@ -16,7 +16,10 @@ from backend.lpdh_logic import (
     parse_master_workbook,
     populate_workbook,
     workbook_reference_rows,
+    merge_master_import,
+    validate_master_portions,
 )
+from backend.document_numbering import claim_number, daily_number
 
 router = APIRouter(prefix="/v1/lpdh", tags=["lpdh"])
 
@@ -205,6 +208,10 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
     actor = _role(request)
     current = _load_master(site)["data"] or {}
     incoming = dict(payload.data or {})
+    try:
+        validate_master_portions(incoming)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     for protected_key in ("_officialTemplateBase64", "_officialTemplateFilename"):
         if protected_key not in incoming and protected_key in current:
             incoming[protected_key] = current[protected_key]
@@ -232,6 +239,8 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     target = _site(request, site)
     daily = _load_daily(target, service_date)
     normalized, context = _daily_with_hpe(target, service_date, daily.get("data") or {})
+    with connection() as conn, conn.cursor() as cur:
+        normalized["lpdhNumber"] = daily_number(cur, target, service_date, _load_master(target)["data"], normalized.get("lpdhNumber"))
     return {
         "site": target,
         "serviceDate": service_date,
@@ -263,10 +272,15 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
 
 
 def _save_daily_locked(payload, request, site, cur):
+    masters = _load_master(site)["data"] or {}
+    if not str(payload.data.get("lpdhNumber") or "").strip():
+        cur.execute("select data from lpdh_daily_state where site=%s and service_date=%s", (site, payload.service_date))
+        old = (cur.fetchone() or {}).get("data") or {}
+        payload.data["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, old.get("lpdhNumber"))
+    claim_number(cur, site, "LPDH", payload.data["lpdhNumber"], "DAY:" + payload.service_date.isoformat())
     requested_status = str(payload.status or "DRAFT").upper()
     status = requested_status
     if requested_status != "GENERATED":
-        masters = _load_master(site)["data"] or {}
         normalized, context = _daily_with_hpe(site, payload.service_date, payload.data or {})
         final_plan = _load_final_plan(site, payload.service_date)
         if final_plan and context["effective"]:
@@ -417,15 +431,21 @@ def import_master(payload: MasterImportIn, request: Request) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(400, f"File master tidak dapat dibaca: {exc}") from exc
 
-    existing = _load_master(site)["data"] or {}
-    merged = dict(existing)
-    for key in ("beneficiaries", "volunteers", "operations"):
-        if parsed.get(key):
-            merged[key] = parsed[key]
+    source_name = str((parsed.get("identity") or {}).get("sppgName") or "").upper()
+    if parsed.get("source") == "OFFICIAL_LPDH" and site not in source_name:
+        raise HTTPException(422, "Nama dapur workbook tidak cocok dengan dapur tujuan. Pilih dapur yang benar.")
+    try:
+        validate_master_portions(parsed)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     actor = _role(request)
     with connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", ("lpdh-master:" + site,))
+            cur.execute("select data from lpdh_site_state where site=%s for update", (site,))
+            existing = (cur.fetchone() or {}).get("data") or {}
+            merged, added, warnings = merge_master_import(existing, parsed, payload.filename)
             cur.execute(
                 """insert into lpdh_site_state(site,data,revision,updated_by,updated_at)
                    values (%s,%s::jsonb,1,%s,now())
@@ -441,7 +461,9 @@ def import_master(payload: MasterImportIn, request: Request) -> dict[str, Any]:
     return {
         "site": site,
         "filename": payload.filename,
-        "imported": {key: len(parsed.get(key) or []) for key in ("beneficiaries", "volunteers", "operations")},
+        "imported": added,
+        "groupTargets": len(parsed.get("groupTargets") or {}),
+        "warnings": warnings,
         "revision": revision,
     }
 
@@ -451,7 +473,7 @@ def master_template(request: Request, site: str = Query()) -> dict[str, Any]:
     _site(request, site)
     content = make_master_template()
     return {
-        "filename": "Template_Import_Master_LPDH.xlsx",
+        "filename": "Template_Import_Master_LPDH_Sekolah_Posyandu_v2.xlsx",
         "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "contentBase64": encode_bytes(content),
     }
@@ -586,6 +608,7 @@ def _generate_locked(payload, request, site, cur):
     masters = _load_master(site)["data"] or {}
     daily_state = _load_daily(site, payload.service_date)
     daily, context = _daily_with_hpe(site, payload.service_date, daily_state["data"] or {})
+    daily["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, daily.get("lpdhNumber"))
     final_plan = _load_final_plan(site, payload.service_date)
     if not final_plan:
         raise HTTPException(409, {"message": "Data Kalkulator belum berstatus FINAL untuk tanggal ini"})
@@ -602,6 +625,8 @@ def _generate_locked(payload, request, site, cur):
                 "issues": issues,
             },
         )
+
+    claim_number(cur, site, "LPDH", daily["lpdhNumber"], "DAY:" + payload.service_date.isoformat())
 
     template_bytes = None
     stored_template = masters.get("_officialTemplateBase64")
@@ -622,7 +647,7 @@ def _generate_locked(payload, request, site, cur):
         """insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
            values (%s,%s,%s::jsonb,'GENERATED',1,%s,now())
            on conflict (site,service_date) do update
-           set status='GENERATED',revision=lpdh_daily_state.revision+1,
+           set data=excluded.data,status='GENERATED',revision=lpdh_daily_state.revision+1,
                updated_by=excluded.updated_by,updated_at=now()""",
         (site, payload.service_date, json.dumps(daily, ensure_ascii=False), actor),
     )

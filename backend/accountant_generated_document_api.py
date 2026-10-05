@@ -14,6 +14,7 @@ from backend.db import connection, database_ready
 from backend.generated_document_logic import OP_CATEGORIES, category_name, line_amount, merge_final_documents, receipt_number
 from backend.generated_document_settings import checked_number, pdf_filename, validate_artwork, validate_asset_refs, save_profile, reserve_numbers, load_artwork
 from backend.generated_document_reference import MAJA_OPERATION_ITEMS, MAJA_PROFILES
+from backend.document_numbering import claim_number, suggest_number, invoice_fallback
 
 router = APIRouter(tags=["accountant-generated-documents"])
 Site = Literal["MAJA", "CEMPLANG"]
@@ -196,6 +197,9 @@ def master_items(site: Site, authorization: str | None = Header(default=None)):
     recipients = [{"name": x.get("picName") or "", "recipientType": "Kader" if x.get("picType") in {"3B", "Posyandu", "Kader"} or x.get("unitType") == "Posyandu" or x.get("groupCode") in {"KS-07", "KS-08", "KS-09"} else "Guru",
                    "unitName": x.get("unitName") or x.get("name") or ""}
                   for x in data.get("beneficiaries") or [] if x.get("picName") and str(x.get("status") or "Aktif").lower() != "nonaktif"]
+    for field, kind in (("schools", "Guru"), ("posyandu", "Kader")):
+        recipients.extend({"name": x["picName"], "recipientType": kind, "unitName": x.get("name") or ""}
+                          for x in data.get(field) or [] if x.get("picName") and str(x.get("status") or "Aktif").lower() != "nonaktif")
     return {"site": site, "items": raw + ops, "categories": OP_CATEGORIES, "profiles": profiles,
             "volunteers": [x for x in data.get("volunteers") or [] if str(x.get("status") or "Aktif").lower() != "nonaktif"], "recipients": recipients}
 
@@ -255,6 +259,16 @@ def _save_items(cur, document_id, payload):
                      line_amount(item.quantity, item.unit_price), json.dumps(item.metadata, ensure_ascii=False)))
 
 
+@router.get("/accountant-documents/number-suggestion")
+def number_suggestion(site: Site, document_type: Literal["BAHAN_BAKU", "OPERASIONAL"],
+                      service_date: date, authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select data from lpdh_site_state where site=%s", (site,))
+        data = (cur.fetchone() or {}).get("data") or {}
+        return {"documentNumber": suggest_number(cur, site, document_type, invoice_fallback(data, site, document_type, service_date))}
+
+
 @router.post("/accountant-documents")
 def generate_document(payload: GeneratedDocumentIn, authorization: str | None = Header(default=None)):
     role = _authorize(authorization, payload.site)
@@ -277,6 +291,7 @@ def generate_document(payload: GeneratedDocumentIn, authorization: str | None = 
                     values (%s,%s,%s,%s,%s::jsonb,%s,%s,%s) returning *""",
                     (payload.site, payload.document_type, number, payload.service_date, json.dumps(payload.header_payload, ensure_ascii=False), total, payload.request_key, digest))
         row = cur.fetchone()
+        claim_number(cur, payload.site, payload.document_type, number, "DOC:" + str(row["id"]))
         reserve_numbers(cur, row["id"], payload)
         _save_items(cur, row["id"], payload)
         save_profile(cur, payload.site, payload.header_payload, role)
@@ -297,6 +312,7 @@ def edit_document(document_id: int, payload: GeneratedDocumentIn, authorization:
             raise HTTPException(409, "Hanya isi draft yang dapat diedit. Site, jenis, tanggal, dan dokumen final terkunci.")
         validate_asset_refs(cur, payload.site, payload.header_payload)
         reserve_numbers(cur, document_id, payload)
+        claim_number(cur, payload.site, payload.document_type, payload.document_number, "DOC:" + str(document_id))
         cur.execute("delete from generated_accountant_document_items where document_id=%s", (document_id,))
         _save_items(cur, document_id, payload)
         total = sum(line_amount(x.quantity, x.unit_price) for x in payload.items)

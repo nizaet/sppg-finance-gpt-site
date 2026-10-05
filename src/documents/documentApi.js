@@ -15,6 +15,7 @@ async function request(path, options = {}) {
 }
 
 export const documentApi = {
+  suggestNumber: (site, date, type) => request(`/number-suggestion?${new URLSearchParams({ site, service_date: date, document_type: type })}`),
   master: site => request(`/master?${new URLSearchParams({ site })}`),
   get: id => request(`/${id}`),
   uploadAsset: payload => request("/assets", { method: "POST", body: JSON.stringify(payload) }),

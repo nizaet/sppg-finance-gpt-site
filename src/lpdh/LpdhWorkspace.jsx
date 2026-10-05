@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarCheck2,
   CalendarDays,
@@ -184,6 +184,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [activeSheet,setActiveSheet]=useState("Identitas");
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState(null);
+  const dailyRead = useRef(0);
 
   const flash=(text,type="success")=>{setMessage({text,type});window.clearTimeout(window.__lpdhFlash);window.__lpdhFlash=window.setTimeout(()=>setMessage(null),6000);};
 
@@ -200,7 +201,10 @@ export default function LpdhWorkspace({ role, onLogout }) {
   },[site]);
 
   const loadDaily=useCallback(async(targetSite=site,date=selectedDate)=>{
-    const r=await lpdhApi.getDaily(targetSite,date); setDaily(normalizeDaily(r.data||{},date)); setFinalPlan(r.finalPlan||null); return r;
+    const version = ++dailyRead.current;
+    const r=await lpdhApi.getDaily(targetSite,date);
+    if (version === dailyRead.current) { setDaily(normalizeDaily(r.data||{},date)); setFinalPlan(r.finalPlan||null); }
+    return r;
   },[site,selectedDate]);
 
   const refreshPreview=useCallback(async(targetSite=site,date=selectedDate)=>{
@@ -274,8 +278,8 @@ export default function LpdhWorkspace({ role, onLogout }) {
       <section className="lpdh-content">
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
-        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>loadMasters(site)}/>}
-        {active==="daily"&&<DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async()=>{await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>} 
+        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>Promise.all([loadMasters(site),refreshPreview()])}/>}
+        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async()=>{await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
         {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={refreshPreview} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}

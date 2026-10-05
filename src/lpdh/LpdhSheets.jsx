@@ -41,7 +41,7 @@ function Petunjuk() {
 function Identity({ masters, daily, serviceDate }) {
   const i=masters?.identity||{}; const s=masters?.signers||[];
   const rows=[
-    ["Nomor LPDH",i.lpdhNumber||""],["ID SPPG",i.sppgId||""],["Nama SPPG",i.sppgName||""],["Desa/Kelurahan",i.village||""],["Kecamatan",i.district||""],["Kab/Kota",i.city||""],["Provinsi",i.province||""],["Yayasan",i.foundation||""],["VA",i.vaNumber||""],["Bank",i.bankName||""],["Tanggal Pelayanan",serviceDate],["Status Hari",daily?.dayStatus||""],["HPE ke",daily?.hpeNumber||""],["Tanggal Upload",daily?.upload?.date||""],["Jam Upload",daily?.upload?.time||""]
+    ["Nomor LPDH",daily?.lpdhNumber||i.lpdhNumber||""],["ID SPPG",i.sppgId||""],["Nama SPPG",i.sppgName||""],["Desa/Kelurahan",i.village||""],["Kecamatan",i.district||""],["Kab/Kota",i.city||""],["Provinsi",i.province||""],["Yayasan",i.foundation||""],["VA",i.vaNumber||""],["Bank",i.bankName||""],["Tanggal Pelayanan",serviceDate],["Status Hari",daily?.dayStatus||""],["HPE ke",daily?.hpeNumber||""],["Tanggal Upload",daily?.upload?.date||""],["Jam Upload",daily?.upload?.time||""]
   ];
   return <div className="lpdh-sheet-body"><h3>Identitas</h3><Table headers={["Field","Nilai"]} rows={rows}/><h4>Pengesah</h4><Table headers={["Nama","Jenis ID","Nomor","Tanda tangan"]} rows={s.slice(0,3).map(x=>[x.name||"",x.identityType||"",x.identityNumber||"",yes(x.signed)])}/></div>;
 }

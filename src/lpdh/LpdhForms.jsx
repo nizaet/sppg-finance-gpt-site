@@ -90,6 +90,9 @@ export function normalizeMasters(value = {}) {
     identityType: signerTypes[index],
   }));
   data.beneficiaries = Array.isArray(data.beneficiaries) ? data.beneficiaries : [];
+  data.schools = Array.isArray(data.schools) ? data.schools : [];
+  data.posyandu = Array.isArray(data.posyandu) ? data.posyandu : [];
+  data.groupTargets = data.groupTargets || {};
   data.volunteers = Array.isArray(data.volunteers) ? data.volunteers : [];
   data.operations = Array.isArray(data.operations) ? data.operations : [];
   data.vendor = data.vendor || {};
@@ -175,6 +178,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     try {
       await api.saveMasters(site, data);
       onSaved?.("Master data tersimpan di cloud.");
+    } catch (error) { onSaved?.(error.message || "Master gagal disimpan", "error");
     } finally { setBusy(false); }
   };
 
@@ -192,8 +196,10 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     try {
       const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
       const result = await api.importMaster(site, file.name, contentBase64);
-      onSaved?.(`Import selesai: ${result.imported.beneficiaries || 0} penerima, ${result.imported.volunteers || 0} relawan, ${result.imported.operations || 0} operasional.`);
+      onSaved?.(`Import ditambahkan: ${result.imported.schools || 0} sekolah, ${result.imported.posyandu || 0} posyandu, ${result.imported.beneficiaries || 0} penerima lama, ${result.imported.volunteers || 0} relawan, ${result.imported.operations || 0} operasional; ${result.groupTargets || 0} total kelompok. ${result.warnings?.length ? "Identitas berbeda: isian aplikasi dipertahankan. " + result.warnings.join("; ") : "Isian lama tidak ditimpa."}`);
       await onReload?.();
+    } catch (error) {
+      onSaved?.(error.message || "Import gagal", "error");
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -245,7 +251,6 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
 
     <Section title="Identitas SPPG & Rekening">
       <div className="lpdh-form-grid">
-        <Field label="Nomor LPDH" value={data.identity.lpdhNumber} onChange={(v) => updateIdentity("lpdhNumber", v)} />
         <Field label="ID SPPG" value={data.identity.sppgId} onChange={(v) => updateIdentity("sppgId", v)} />
         <Field label="Nama SPPG" value={data.identity.sppgName} onChange={(v) => updateIdentity("sppgName", v)} />
         <Field label="Yayasan" value={data.identity.foundation} onChange={(v) => updateIdentity("foundation", v)} />
@@ -286,7 +291,36 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
         </tr>)}</tbody></table></div>
     </Section>
 
-    <Section title="Master Penerima Manfaat" subtitle="Sekolah dan Posyandu digabung. Target PM akan diagregasi ke A_PM berdasarkan Kode Kelompok." actions={
+    <Section title="Master Sekolah" subtitle="Kolom F = porsi kecil; G = porsi besar. SD kelas 1–3 kecil, kelas 4–6 besar; PAUD kecil; SMP/SMA/Santri/PTK besar." actions={<button type="button" onClick={() => addList("schools", { code: "", name: "", schoolType: "SD/MI", smallPortions: 0, largePortions: 0, status: "Aktif" })}><Plus size={15}/> Tambah sekolah</button>}>
+      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Sekolah</th><th>Jenis</th><th>Porsi Kecil (F)</th><th>Porsi Besar (G)</th><th>PIC</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
+        {data.schools.map((row, index) => <tr key={index}>
+          <td><input value={row.code || ""} onChange={e => updateList("schools", index, "code", e.target.value)}/></td>
+          <td><input value={row.name || ""} onChange={e => updateList("schools", index, "name", e.target.value)}/></td>
+          <td><select value={row.schoolType || "SD/MI"} onChange={e => { const list = clone(data.schools); list[index] = { ...row, schoolType: e.target.value, smallPortions: ["PAUD", "SD/MI"].includes(e.target.value) ? row.smallPortions : 0, largePortions: e.target.value === "PAUD" ? 0 : row.largePortions }; setMasters({ ...data, schools: list }); }}>{["PAUD", "SD/MI", "SMP/MTs", "SMA/MA/SMK/SLB", "Santri", "PTK"].map(t => <option key={t}>{t}</option>)}</select></td>
+          <td><input aria-label={`Porsi kecil sekolah ${index + 1}`} type="number" min="0" step="1" disabled={!["PAUD", "SD/MI"].includes(row.schoolType)} value={row.smallPortions ?? ""} onChange={e => updateList("schools", index, "smallPortions", numValue(e.target.value))}/></td>
+          <td><input aria-label={`Porsi besar sekolah ${index + 1}`} type="number" min="0" step="1" disabled={row.schoolType === "PAUD"} value={row.largePortions ?? ""} onChange={e => updateList("schools", index, "largePortions", numValue(e.target.value))}/></td>
+          {["picName", "phone", "address"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("schools", index, key, e.target.value)}/></td>)}
+          <td><select value={row.status || "Aktif"} onChange={e => updateList("schools", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
+          <td><button type="button" className="icon danger" onClick={() => deleteList("schools", index)}><Trash2 size={14}/></button></td>
+        </tr>)}{!data.schools.length && <EmptyRow colSpan={10}/>}</tbody></table></div>
+    </Section>
+
+    <Section title="Master Posyandu" subtitle="Balita 6–59 bulan selalu kecil; ibu hamil dan ibu menyusui selalu besar." actions={<button type="button" onClick={() => addList("posyandu", { code: "", name: "", balitaSmall: 0, pregnantLarge: 0, breastfeedingLarge: 0, status: "Aktif" })}><Plus size={15}/> Tambah posyandu</button>}>
+      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Posyandu</th><th>Balita Kecil</th><th>Ibu Hamil Besar</th><th>Ibu Menyusui Besar</th><th>Kader</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
+        {data.posyandu.map((row, index) => <tr key={index}>
+          {["code", "name"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("posyandu", index, key, e.target.value)}/></td>)}
+          {["balitaSmall", "pregnantLarge", "breastfeedingLarge"].map(key => <td key={key}><input type="number" min="0" step="1" value={row[key] ?? ""} onChange={e => updateList("posyandu", index, key, numValue(e.target.value))}/></td>)}
+          {["picName", "phone", "address"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("posyandu", index, key, e.target.value)}/></td>)}
+          <td><select value={row.status || "Aktif"} onChange={e => updateList("posyandu", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
+          <td><button type="button" className="icon danger" onClick={() => deleteList("posyandu", index)}><Trash2 size={14}/></button></td>
+        </tr>)}{!data.posyandu.length && <EmptyRow colSpan={10}/>}</tbody></table></div>
+    </Section>
+
+    <Section title="Total Kelompok dari Workbook" subtitle="Fallback sementara ketika belum ada rincian sekolah/posyandu. Rincian aktif menggantikan total ini per kelompok, tidak dijumlah dua kali.">
+      <div className="lpdh-form-grid">{GROUP_DEFAULTS.map(group => <Field key={group.code} label={`${group.label} · ${group.portion}`} type="number" value={data.groupTargets[group.code]} onChange={value => setMasters({ ...data, groupTargets: { ...data.groupTargets, [group.code]: value } })}/>)}</div>
+    </Section>
+
+    <Section title="Master Penerima Lama" subtitle="Data format lama tetap dapat dipakai. Untuk data baru gunakan Master Sekolah dan Master Posyandu di atas." actions={
       <button type="button" onClick={() => addList("beneficiaries", { code: "", unitType: "Sekolah", unitName: "", groupCode: "KS-01", groupName: "", portionCategory: "Kecil", picType: "Sekolah", targetPm: 0, picName: "", phone: "", address: "", status: "Aktif", note: "" })}><Plus size={15}/> Tambah</button>
     }>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode Unit</th><th>Jenis</th><th>Nama Unit</th><th>Kode Kelompok</th><th>Target PM</th><th>PIC</th><th>Status</th><th></th></tr></thead>
@@ -454,6 +488,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <span>{preview?.effective ? `HPE ke-${preview?.hpeNumber || 1} minggu ini · otomatis dari kalender pelayanan` : "Tanggal ini tidak dapat digenerate. Atur dari tab Hari Pelayanan Efektif."}</span>
       </div>
       <div className="lpdh-form-grid compact">
+        <Field label="Nomor LPDH (otomatis, bisa diedit)" value={data.lpdhNumber} onChange={(v) => update("lpdhNumber", v)} />
         <Field label="Nomor dasar kuitansi relawan" value={data.volunteerReceiptBaseNo} onChange={(v) => update("volunteerReceiptBaseNo", v)} placeholder="mis. RL/0410/2026" />
         <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
         <Field label="Ref penarikan/bank relawan" value={data.volunteerPaymentReference} onChange={(v) => update("volunteerPaymentReference", v)} />
@@ -474,9 +509,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     <Section title="A_PM · Penerima Manfaat & Distribusi">
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
+      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
-          <td><strong>{row.code}</strong></td><td>{row.label}</td>
+          <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>
+          <td>{preview?.pmRows?.find(x => x.code === row.code)?.targetPm ?? masterData.groupTargets[row.code] ?? 0}</td>
           <td><input type="number" value={row.distributed ?? ""} onChange={(e) => updatePmRow(index, "distributed", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.received ?? ""} onChange={(e) => updatePmRow(index, "received", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.notReceived ?? ""} onChange={(e) => updatePmRow(index, "notReceived", numValue(e.target.value))}/></td>

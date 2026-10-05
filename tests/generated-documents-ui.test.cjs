@@ -11,6 +11,7 @@ const records = [], payloads = [], finalCalls = [], downloads = [], previews = [
 let confirm = false;
 global.window = { addEventListener() {}, removeEventListener() {}, confirm: () => confirm, prompt: () => 'Harga keliru', open: () => { const tab = { opener: {}, location: { replace: url => previews.push(url) }, close() {} }; return tab; } };
 global.__DOCUMENT_API = {
+  suggestNumber: async (site, date, type) => ({ documentNumber: `001/${type}/${site}/X/2026` }),
   master: async site => ({ profiles: { KOPERASI: { issuerName: site, recipientAddress: 'Alamat' }, YAYASAN: { issuerName: 'Yayasan', recipientAddress: 'Alamat' } }, categories: ['Gas', 'Alat kebersihan', 'Lain-lain'],
     items: [{ recordKey: 'gas', itemName: 'Gas LPG', kind: 'OPERASIONAL', category: 'Gas', unit: 'tabung', unitPrice: 1000 }, { recordKey: 'sabun', itemName: 'Sabun', kind: 'OPERASIONAL', category: 'Alat kebersihan', unit: 'botol', unitPrice: 200 }],
     volunteers: [{ code: 'R1', name: 'Relawan Uji', role: 'Pengolah', dailyRate: 90000 }], recipients: [{ name: 'Guru Uji', recipientType: 'Guru', unitName: 'SD Uji' }, { name: 'Kader Uji', recipientType: 'Kader', unitName: 'Posyandu Uji' }] }),
@@ -46,7 +47,7 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   const typeSelect = () => view.root.findAllByType('select').find(x => x.findAllByType('option').some(o => o.props.value === 'OPERASIONAL'));
   const changeType = async value => { confirm = true; await act(async () => typeSelect().props.onChange({ target: { value } })); };
   const saveDraft = async () => {
-    const input = view.root.findAllByType('label').find(x => /Nomor invoice \(manual\)|Nomor paket kuitansi \(manual\)/.test(label(x))).findByType('input');
+    const input = view.root.findAllByType('label').find(x => /Nomor invoice|Nomor paket kuitansi/.test(label(x))).findByType('input');
     await act(async () => input.props.onChange({ target: { value: `DOC-${payloads.length + 1}` } }));
     await act(async () => { view.root.findAllByType('input').filter(x => String(x.props['aria-label'] || '').startsWith('Nomor kuitansi baris')).forEach((x, index) => x.props.onChange({ target: { value: `KWT-${payloads.length + 1}-${index + 1}` } })); });
     await act(async () => button('Simpan draft').props.onClick());
@@ -58,8 +59,11 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
     await act(async () => button('Tambah item master').props.onClick());
   };
   await addMaster('gas'); await addMaster('sabun');
+  const numberInput = () => view.root.findAllByType('label').find(x => /Nomor invoice|Nomor paket kuitansi/.test(label(x))).findByType('input');
+  assert.equal(numberInput().props.value, '001/OPERASIONAL/MAJA/X/2026', 'invoice gets editable numeric-prefix suggestion');
+  await act(async () => numberInput().props.onChange({ target: { value: '' } }));
   await act(async () => button('Simpan draft').props.onClick());
-  assert.equal(payloads.length, 0, 'manual number required, never generated automatically');
+  assert.equal(payloads.length, 0, 'a manually cleared number still blocks saving');
   await saveDraft();
   assert.equal(payloads[0].document_number, 'DOC-1');
   assert.equal(payloads[0].items.length, 2);
@@ -111,8 +115,9 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   assert.deepEqual(finalCalls, [1], 'stale tab must not finalize a cancelled ID');
   assert.ok(view.root.findAllByProps({ role:'status' }).some(x => label(x).includes('sebelumnya sudah DIBATALKAN')));
   await act(async () => button('Buat ulang').props.onClick());
-  const manualInput = view.root.findAllByType('label').find(x => label(x).includes('Nomor invoice (manual)')).findByType('input');
-  assert.equal(manualInput.props.value, '', 'replacement never reuses cancelled number');
+  const manualInput = numberInput();
+  assert.notEqual(manualInput.props.value, 'DOC-1', 'replacement never reuses cancelled number');
+  assert.match(manualInput.props.value, /^001\//, 'replacement receives a fresh suggestion');
   assert.equal(view.root.findAllByProps({ 'aria-label':'Nama baris 1' })[0].props.value, 'Gas LPG');
   await saveDraft();
   assert.equal(payloads[5].document_number, 'DOC-6');
@@ -124,6 +129,12 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   assert.equal(view.root.findAllByType('img').some(x => x.props.alt === 'Tanda tangan penerbit'), true, 'saved defaults survive type change');
   await act(async () => view.update(render('CEMPLANG')));
   assert.equal(view.root.findAllByType('tr').some(x => label(x).includes('DOC-1')), false, 'register must not leak across sites');
+  let resolveNumber;
+  global.__DOCUMENT_API.suggestNumber = () => new Promise(resolve => { resolveNumber = resolve; });
+  await changeType('OPERASIONAL');
+  await act(async () => numberInput().props.onChange({ target: { value: '099/OP/MANUAL/X/2026' } }));
+  await act(async () => resolveNumber({ documentNumber:'002/OP/AUTO/X/2026' }));
+  assert.equal(numberInput().props.value, '099/OP/MANUAL/X/2026', 'late suggestion must not overwrite manual edit');
   await act(async () => view.unmount());
   console.log('PASS document UI: multi-item/master categories, multiple daily invoices, confirmation, real PDF download, one-day wages/incentives, final calculator import, site isolation');
 })().catch(error => { console.error(error); process.exitCode = 1; });

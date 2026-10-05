@@ -61,7 +61,7 @@ export const lpdhApi = {
   }),
   history: (site) => request(`/v1/lpdh/history?${q({ site })}`),
   reference: (site) => request(`/v1/lpdh/reference?${q({ site })}`),
-  masterTemplate: (site) => request(`/v1/lpdh/master-template?${q({ site })}`),
+  masterTemplate: (site) => request(`/v1/lpdh/master-template?${q({ site })}`, { cache: "no-store" }),
   importMaster: (site, filename, contentBase64) => request("/v1/lpdh/import-master", {
     method: "POST",
     body: JSON.stringify({ site, filename, content_base64: contentBase64 }),

@@ -35,6 +35,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const documentReads = useRef(0);
   const requestKey = useRef(uuid());
   const submitLock = useRef(false);
+  const numberEdited = useRef(false);
+  const numberReads = useRef(0);
   const receipts = type === "UPAH_RELAWAN" || type === "INSENTIF_GURU_KADER";
   const total = lines.reduce((sum, row) => sum + Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100, 0);
   const options = (master?.items || []).filter(x => x.kind === type);
@@ -45,6 +47,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     const readVersion = ++documentReads.current;
     setLoading(true); setMaster(null); setDocuments([]); setLines([]); setEditing(null); setHeader({}); setMessage(null); setDocumentNumber("");
     setType("BAHAN_BAKU"); setProfile("KOPERASI"); requestKey.current = uuid();
+    numberEdited.current = false;
     Promise.allSettled([documentApi.master(site), documentApi.list(site, serviceDate)]).then(results => {
       if (version !== context.current) return;
       if (results[0].status === "fulfilled") {
@@ -57,6 +60,15 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     });
     return () => { context.current++; };
   }, [site, serviceDate]);
+
+  useEffect(() => {
+    const version = ++numberReads.current;
+    if (editing || receipts || loading || numberEdited.current) return;
+    documentApi.suggestNumber(site, serviceDate, type).then(result => {
+      if (version === numberReads.current && !numberEdited.current) setDocumentNumber(result.documentNumber);
+    }).catch(error => notify(error.message, true));
+    return () => { numberReads.current++; };
+  }, [site, serviceDate, type, editing, loading, calendarRevision]);
 
   useEffect(() => {
     const refresh = () => {
@@ -82,6 +94,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (version === context.current && readVersion === documentReads.current) { setDocuments(result.documents || []); setCalendarRevision(x => x + 1); }
   };
   const reset = nextType => {
+    numberEdited.current = false; numberReads.current++;
     setType(nextType); setLines([]); setEditing(null); setSelected(""); setDocumentNumber(""); requestKey.current = uuid();
     const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
     setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile });
@@ -130,11 +143,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (version !== context.current) return;
     setMaster(old => ({ ...old, profiles: { ...old?.profiles, [profile]: { ...header, documentProfileKey: profile, evidenceLink: "", paymentReference: "" } } }));
     setHeader(old => ({ ...old, evidenceLink: "", paymentReference: "" }));
+    numberEdited.current = false; numberReads.current++;
     setLines([]); setEditing(null); setDocumentNumber(""); requestKey.current = uuid(); await reload(version);
     notify(`${result.document.documentNumber} tersimpan sebagai DRAFT. Buka PDF di tab baru untuk memeriksa, lalu finalkan agar masuk data harian.`);
   });
   const edit = doc => {
     if (lines.length && !window.confirm("Buka draft ini dan kosongkan perubahan yang belum disimpan?")) return;
+    numberEdited.current = true; numberReads.current++;
     setEditing(doc); setType(doc.documentType); setLines(doc.items); setHeader(doc.header); setDocumentNumber(doc.documentNumber); setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI")); requestKey.current = uuid();
   };
   const finalize = doc => {
@@ -161,7 +176,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const recreate = doc => {
     if ((lines.length || documentNumber) && !window.confirm("Salin item dokumen dibatalkan? Isian yang belum disimpan akan diganti.")) return;
-    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "" });
+    numberEdited.current = false; numberReads.current++;
+    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setCalendarRevision(x => x + 1); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "" });
     setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI"));
     setLines(doc.items.map(x => ({ ...x, metadata: { ...x.metadata, receiptNo: "" } }))); requestKey.current = uuid();
     notify("Item disalin sebagai isian baru, belum disimpan. Isi nomor dokumen dan nomor kuitansi baru, lalu Simpan draft. Riwayat lama tetap dibatalkan.");
@@ -231,7 +247,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       {message && <div role="status" className={`doc-message${message.error ? " error" : ""}`}>{message.text}</div>}
       <fieldset disabled={busy || loading} className="doc-form">
         <div className="doc-grid">
-          <Field label={receipts ? "Nomor paket kuitansi (manual)" : "Nomor invoice (manual)"} value={documentNumber} onChange={setDocumentNumber}/>
+          <Field label={receipts ? "Nomor paket kuitansi (manual)" : "Nomor invoice (otomatis, bisa diedit)"} value={documentNumber} onChange={value => { numberEdited.current = true; numberReads.current++; setDocumentNumber(value); }}/>
           <Field label="Tanggal pembayaran / pelayanan" type="date" value={serviceDate} onChange={changeDate}/>
           <Field label="Jenis dokumen"><select value={type} disabled={Boolean(editing)} onChange={e => chooseType(e.target.value)}>{Object.entries(TYPES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
           <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], documentProfileKey: next, evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{["KOPERASI", "YAYASAN"].map(key => <option key={key}>{key}</option>)}</select></Field>

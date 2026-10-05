@@ -57,6 +57,7 @@ class FakeConnection:
         self.numbers = {}
         self.profiles = {}
         self.assets = {}
+        self.serials = []
 
     @contextmanager
     def cursor(self):
@@ -64,7 +65,17 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if sql.startswith("select * from generated_accountant_documents where id"):
+        if sql.startswith("select owner_key,full_number from document_number_serials"):
+            self.result = next((x for x in self.serials if x["site"] == params[0] and x["namespace"] == params[1] and (x["normalized_number"] == params[2] or x["serial"] is not None and x["serial"] == params[3])), None)
+        elif sql.startswith("select full_number from document_number_serials"):
+            rows = [x for x in self.serials if x["site"] == params[0] and x["namespace"] == params[1] and x["serial"] is not None]
+            self.result = max(rows, key=lambda x: x["serial"]) if rows else None
+        elif sql.startswith("insert into document_number_serials"):
+            self.serials.append(dict(zip(("site", "namespace", "serial", "full_number", "normalized_number", "owner_key"), params)))
+        elif sql.startswith("update document_number_serials"):
+            for x in self.serials:
+                if x["site"] == params[1] and x["namespace"] == params[2] and x["owner_key"] == params[3] and x["serial"] == params[4]: x["full_number"] = params[0]
+        elif sql.startswith("select * from generated_accountant_documents where id"):
             self.result = deepcopy(self.row) if params[0] == 1 else None
         elif sql.startswith("select * from generated_accountant_documents where request_key"):
             self.result = deepcopy(self.row) if self.row.get("request_key") == params[0] else None
@@ -131,13 +142,13 @@ class DocumentApiTests(unittest.TestCase):
         self.conn = FakeConnection()
         @contextmanager
         def connection():
-            original = deepcopy((self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets))
+            original = deepcopy((self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets, self.conn.serials))
             self.conn.committed = False
             try:
                 yield self.conn
             finally:
                 if not self.conn.committed:
-                    self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets = original
+                    self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets, self.conn.serials = original
         self.patcher = patch.object(api, "connection", connection)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)

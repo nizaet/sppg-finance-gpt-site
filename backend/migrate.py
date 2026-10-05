@@ -44,6 +44,7 @@ MIGRATIONS = [
     ROOT / "schema" / "generated_document_workflow_v039.sql",
     ROOT / "schema" / "generated_document_lifecycle_v040.sql",
     ROOT / "schema" / "generated_document_manual_settings_v041.sql",
+    ROOT / "schema" / "document_number_serials_v042.sql",
 ]
 
 
