@@ -21,3 +21,5 @@ Accountant evidence and generated files should be stored in Google Drive raw evi
 ## LPDH operator document flow
 
 The operator-confirmed [LPDH document-first workflow](lpdh-document-workflow.md) supplies new daily workbook expenses from active FINAL invoices and aggregate wage/incentive packages. It preserves recipient detail and historical snapshots. This does not replace the approval and settlement stages above or equate a document FINAL status with a bank payment.
+
+LPDH Review may calculate unsaved form edits without writing them to the ledger. Workbook generation uses the explicitly saved daily state; reviewing or reconciling a production total is not finalization, approval, or payment.

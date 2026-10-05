@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import "./lpdh.css";
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
-import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters } from "./LpdhForms.jsx";
+import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets } from "./LpdhForms.jsx";
 import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
 import LpdhSheets, { SHEET_ORDER } from "./LpdhSheets.jsx";
 
@@ -136,7 +136,7 @@ function ServiceDaysPanel({ site, effectiveDates, monthKey, setMonthKey, onSave,
 
 function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet }) {
   return <div className="lpdh-review">
-    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW SEBELUM GENERATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa di sini sebelum file dibuat.</p></div>
+    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW SEBELUM GENERATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa di sini sebelum file dibuat.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Review mengikuti isian Data Harian saat ini, termasuk perubahan belum disimpan. Simpan Draft sebelum Generate Excel.</p>}</div>
       <div className={preview?.ready?"lpdh-readiness ready":"lpdh-readiness blocked"}>{preview?.ready?<FileCheck2 size={18}/>:<ClipboardCheck size={18}/>}<span>{preview?.ready?"SIAP GENERATE":`${preview?.errorCount ?? "-"} PERIKSA`}</span></div>
     </div>
     <div className="lpdh-sheet-tabs">{SHEET_ORDER.map((sheet)=><button key={sheet} className={activeSheet===sheet?"active":""} type="button" onClick={()=>setActiveSheet(sheet)}>{sheet}</button>)}</div>
@@ -185,6 +185,11 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState(null);
   const dailyRead = useRef(0);
+  const previewRead = useRef(0);
+  const dailyRef = useRef(daily);
+  const viewContext = useRef("");
+  dailyRef.current = daily;
+  viewContext.current = `${site}|${selectedDate}`;
 
   const flash=(text,type="success")=>{setMessage({text,type});window.clearTimeout(window.__lpdhFlash);window.__lpdhFlash=window.setTimeout(()=>setMessage(null),6000);};
 
@@ -197,18 +202,23 @@ export default function LpdhWorkspace({ role, onLogout }) {
   },[site,effectiveMonth]);
 
   const loadMasters=useCallback(async(targetSite=site)=>{
-    const r=await lpdhApi.getMasters(targetSite); setMasters(normalizeMasters(r.data||{})); return r;
+    const r=await lpdhApi.getMasters(targetSite);
+    if (viewContext.current.startsWith(`${targetSite}|`)) setMasters(normalizeMasters(r.data||{}));
+    return r;
   },[site]);
 
   const loadDaily=useCallback(async(targetSite=site,date=selectedDate)=>{
     const version = ++dailyRead.current;
     const r=await lpdhApi.getDaily(targetSite,date);
-    if (version === dailyRead.current) { setDaily(normalizeDaily(r.data||{},date)); setFinalPlan(r.finalPlan||null); }
+    if (version === dailyRead.current && viewContext.current === `${targetSite}|${date}`) { setDaily(normalizeDaily(r.data||{},date)); setFinalPlan(r.finalPlan||null); }
     return r;
   },[site,selectedDate]);
 
-  const refreshPreview=useCallback(async(targetSite=site,date=selectedDate)=>{
-    const r=await lpdhApi.preview(targetSite,date); setPreview(r); return r;
+  const refreshPreview=useCallback(async(targetSite=site,date=selectedDate,draft)=>{
+    const version = ++previewRead.current;
+    const r = draft === undefined ? await lpdhApi.preview(targetSite,date) : await lpdhApi.previewDraft(targetSite,date,draft);
+    if (version === previewRead.current && viewContext.current === `${targetSite}|${date}`) setPreview(r);
+    return r;
   },[site,selectedDate]);
 
   const boot=useCallback(async()=>{
@@ -233,6 +243,27 @@ export default function LpdhWorkspace({ role, onLogout }) {
   },[selectedDate]);
 
   const changeSite=(next)=>{setSite(next);setActive("calendar");setPreview(null);};
+
+  const reloadMasterTargets=async()=>{
+    const context = `${site}|${selectedDate}`;
+    const result = await loadMasters(site);
+    if (viewContext.current !== context) return;
+    const next = syncDailyMasterTargets(dailyRef.current, normalizeMasters(result.data || {}), selectedDate);
+    setDaily(next);
+    await refreshPreview(site,selectedDate,next);
+  };
+
+  const changePanel=async(id)=>{
+    if (busy) return;
+    if (id !== "review" && id !== "generate") return setActive(id);
+    const context = `${site}|${selectedDate}`;
+    setBusy(true);
+    try {
+      await refreshPreview(site,selectedDate,id === "review" ? dailyRef.current : undefined);
+      if (viewContext.current === context) setActive(id);
+    } catch (error) { if (viewContext.current === context) flash(error.message || "Review gagal diperbarui", "error"); }
+    finally { if (viewContext.current === context) setBusy(false); }
+  };
 
   const saveEffective=async(month,dates)=>{
     setBusy(true); try{await lpdhApi.saveEffectiveDays(site,month,dates);setEffectiveDates(dates);flash(`${dates.length} Hari Pelayanan Efektif tersimpan.`);await Promise.all([refreshPreview(),loadCalendar(site,month)]);}catch(e){flash(e.message,"error");}finally{setBusy(false);}
@@ -271,18 +302,18 @@ export default function LpdhWorkspace({ role, onLogout }) {
     {message&&<div className={`lpdh-flash ${message.type}`}>{message.text}</div>}
 
     <div className="lpdh-layout">
-      <nav className="lpdh-nav" aria-label="Menu LPDH">{nav.map(([id,label,Icon])=><button key={id} type="button" className={active===id?"active":""} onClick={()=>setActive(id)}><Icon size={17}/>{label}</button>)}
+      <nav className="lpdh-nav" aria-label="Menu LPDH">{nav.map(([id,label,Icon])=><button key={id} type="button" className={active===id?"active":""} onClick={()=>changePanel(id)}><Icon size={17}/>{label}</button>)}
         <div className="lpdh-nav-date"><span>Tanggal aktif</span><input type="date" value={selectedDate} onChange={(e)=>setSelectedDate(e.target.value)}/><small>{effectiveDates.includes(selectedDate)?"HPE aktif":"Bukan HPE"}</small></div>
       </nav>
 
       <section className="lpdh-content">
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
-        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={()=>Promise.all([loadMasters(site),refreshPreview()])}/>}
-        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async()=>{await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
+        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets}/>}
+        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
         {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
-        {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={refreshPreview} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
+        {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
       </section>
     </div>
   </main>;

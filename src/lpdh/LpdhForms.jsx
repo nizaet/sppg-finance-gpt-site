@@ -142,6 +142,35 @@ export function normalizeDaily(value = {}, serviceDate = "") {
   return data;
 }
 
+export function productionBreakdown(daily = {}) {
+  const production = daily.pm?.production || {};
+  const parts = {
+    distributed: (daily.pm?.rows || []).reduce((sum, row) => sum + (Number(row.distributed) || 0), 0),
+    organoleptic: Number(production.organoleptic) || 0,
+    retainedSample: Number(production.retainedSample) || 0,
+    notDistributed: Number(production.notDistributed) || 0,
+    buffer: Number(production.buffer) || 0,
+  };
+  return { ...parts, total: Object.values(parts).reduce((sum, value) => sum + value, 0) };
+}
+
+export function syncDailyMasterTargets(value, masters, serviceDate) {
+  const data = normalizeDaily(value, serviceDate);
+  if (data._historicalGeneratedSnapshot) return data;
+  const targets = aggregateMasterTargets(masters);
+  data.pm.rows = data.pm.rows.map(row => {
+    const next = { ...row, targetPm: targets[row.code] };
+    for (const field of ["distributed", "received"]) if (next[field] == null || next[field] === "") next[field] = targets[row.code];
+    if (next.bnba == null || next.bnba === "") next.bnba = "Ya";
+    return next;
+  });
+  for (const [field, defaultValue] of [["organoleptic", 3], ["retainedSample", 2]]) {
+    if (data.pm.production[field] == null || data.pm.production[field] === "") data.pm.production[field] = defaultValue;
+  }
+  if (data.pm.production.produced == null || data.pm.production.produced === "") data.pm.production.produced = productionBreakdown(data).total;
+  return data;
+}
+
 export function rawFromFinalPlan(finalPlan, serviceDate) {
   const shopping = finalPlan?.payload?.shoppingListJSON?.shoppingList || [];
   return shopping.slice(0, 40).map((item) => ({
@@ -195,6 +224,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     setBusy(true);
     try {
       await api.saveMasters(site, data);
+      await onReload?.();
       onSaved?.("Master data tersimpan di cloud.");
     } catch (error) { onSaved?.(error.message || "Master gagal disimpan", "error");
     } finally { setBusy(false); }
@@ -416,6 +446,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   const update = (key, value) => setDaily({ ...data, [key]: value });
   const updateNested = (parent, key, value) => setDaily({ ...data, [parent]: { ...(data[parent] || {}), [key]: value } });
   const updateProduction = (key, value) => setDaily({ ...data, pm: { ...data.pm, production: { ...data.pm.production, [key]: value } } });
+  const production = productionBreakdown(data);
+  const recalculateProduction = () => {
+    if (data.pm.production.produced != null && data.pm.production.produced !== "" && Number(data.pm.production.produced) !== production.total
+      && !window.confirm(`Ganti total produksi ${data.pm.production.produced} menjadi ${production.total} sesuai rincian isian saat ini? Perubahan belum disimpan.`)) return;
+    updateProduction("produced", production.total);
+  };
   const updatePmRow = (index, key, value) => {
     const rows = clone(data.pm.rows); rows[index] = { ...rows[index], [key]: value };
     setDaily({ ...data, pm: { ...data.pm, rows } });
@@ -452,9 +488,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     try {
       await api.saveDaily(site, serviceDate, data, "DRAFT");
       const result = await api.syncDocuments(site, serviceDate);
-      setDaily(normalizeDaily(result.data || {}, serviceDate));
+      const next = normalizeDaily(result.data || {}, serviceDate);
+      setDaily(next);
       onSaved?.(result.imported ? `${result.imported} dokumen FINAL ditarik tanpa menggandakan biaya.` : "Belum ada dokumen FINAL. Buat dan finalkan invoice/kuitansi terlebih dahulu.");
-      await onPreview?.();
+      await onPreview?.(next);
     } catch (error) { onSaved?.(error.message, "error"); }
     finally { setBusy(false); }
   };
@@ -482,7 +519,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     try {
       await api.saveDaily(site, serviceDate, data, "DRAFT");
       onSaved?.("Draft harian tersimpan di cloud.");
-      await onPreview?.();
+      await onPreview?.(data);
     } finally { setBusy(false); }
   };
 
@@ -526,12 +563,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
           <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>
-          <td>{preview?.pmRows?.find(x => x.code === row.code)?.targetPm ?? row.targetPm ?? aggregateMasterTargets(masterData)[row.code]}</td>
+          <td>{row.targetPm ?? aggregateMasterTargets(masterData)[row.code]}</td>
           <td><input type="number" value={row.distributed ?? ""} onChange={(e) => updatePmRow(index, "distributed", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.received ?? ""} onChange={(e) => updatePmRow(index, "received", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.notReceived ?? ""} onChange={(e) => updatePmRow(index, "notReceived", numValue(e.target.value))}/></td>
           <td><input value={row.reason || ""} onChange={(e) => updatePmRow(index, "reason", e.target.value)}/></td>
-          <td><select value={row.bnba || ""} onChange={(e) => updatePmRow(index, "bnba", e.target.value)}><option value="">—</option><option>Ya</option><option>Tidak</option></select></td>
+          <td><select className="lpdh-bnba-select" aria-label={`BNBA ${row.code}`} value={row.bnba === true || row.bnba === "Ya" ? "Ya" : row.bnba === false || row.bnba === "Tidak" ? "Tidak" : ""} onChange={(e) => updatePmRow(index, "bnba", e.target.value)}><option value="">— pilih —</option><option>Ya</option><option>Tidak</option></select></td>
           <td><input value={row.bastNo || ""} onChange={(e) => updatePmRow(index, "bastNo", e.target.value)}/></td>
           <td><input value={row.bastLink || ""} onChange={(e) => updatePmRow(index, "bastLink", e.target.value)} placeholder="https://..."/></td>
         </tr>)}</tbody></table></div>
@@ -541,6 +578,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Retained sample" type="number" value={data.pm.production.retainedSample} onChange={(v) => updateProduction("retainedSample", v)} />
         <Field label="Tidak didistribusikan" type="number" value={data.pm.production.notDistributed} onChange={(v) => updateProduction("notDistributed", v)} />
         <Field label="Buffer" type="number" value={data.pm.production.buffer} onChange={(v) => updateProduction("buffer", v)} />
+      </div>
+      <div className="lpdh-note lpdh-production-note">
+        <p>Total produksi = distribusi POP + organoleptik + retained sample + tidak didistribusikan + buffer.</p>
+        <p>Rincian saat ini: {production.distributed.toLocaleString("id-ID")} + {production.organoleptic} + {production.retainedSample} + {production.notDistributed} + {production.buffer} = <strong>{production.total.toLocaleString("id-ID")}</strong>.</p>
+        {Number(data.pm.production.produced) !== production.total && <p>Total tersimpan/isian {Number(data.pm.production.produced || 0).toLocaleString("id-ID")} berbeda dari rincian. Tidak diubah otomatis.</p>}
+        <button type="button" onClick={recalculateProduction}>Hitung ulang total produksi</button>
       </div>
     </Section>
 

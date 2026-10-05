@@ -80,3 +80,10 @@
 - New daily wage/teacher/cadre packages each use one aggregate cover, one printed receipt number, and a complete recipient appendix starting on the next page. One package occupies one evidence-register entry; per-recipient calculations remain detailed. Historical individually numbered receipts keep their meaning.
 - Reviewed the privately supplied incentive PDF as a layout reference. Its transaction amount, banking data, artwork, and Insentif Mitra classification are not copied into a new transaction or public documentation.
 - Added the [LPDH document-first workflow](accounting/lpdh-document-workflow.md) and connected it to the existing accountant/BGN workflow. Approval, actual payments, internal settlements, and other Operations modules are outside this change.
+
+## 2026-10-05 - LPDH current-form review and layout correction
+
+- The operator's three screenshots demonstrated Posyandu values present in the daily form but zero in a stale review, a retained old production value, clipped BNBA text, and tables overflowing cards. The operator approved the scoped correction and production deployment; the screenshots remain private source evidence, not public repository assets.
+- Added a read-only current-form preview calculation and master-save refresh. Explicit actual values, financial source provenance and historical generated snapshots remain protected; review does not write financial/daily state or claim numbers.
+- Documented the production balance and an explicit confirmed recalculation instead of silently rewriting saved quantities. Widened BNBA controls and contained wide tables within fieldsets/cards.
+- Updated the [LPDH workflow](accounting/lpdh-document-workflow.md), [accountant workflow](accounting/accountant-workflow.md) and index. Other Operations, procurement, approval, settlement and payment workflows remain outside scope.

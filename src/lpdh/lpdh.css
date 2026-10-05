@@ -43,6 +43,13 @@
 }
 .lpdh-nav button.active{background:#e8f5ee;color:#0f5138}
 .lpdh-content{min-width:0}
+/* Fieldset defaults to min-content and otherwise pushes wide tables outside cards. */
+.lpdh-form-section fieldset{min-inline-size:0;min-width:0;max-width:100%;box-sizing:border-box}
+.lpdh-form-section .lpdh-table-wrap{width:100%;min-width:0;box-sizing:border-box}
+.lpdh-data-table select.lpdh-bnba-select{min-width:96px;width:96px;padding-right:24px}
+.lpdh-production-note{margin-top:12px}
+.lpdh-production-note p{margin:0 0 7px}
+.lpdh-production-note button{border:1px solid #cddbd3;background:#fff;color:#24543f;border-radius:9px;padding:8px 12px;font-weight:750;cursor:pointer}
 .lpdh-summary,.lpdh-panel{
   background:#fff;border:1px solid #d7e2dc;border-radius:16px;padding:22px;
 }

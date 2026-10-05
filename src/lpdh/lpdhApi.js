@@ -55,6 +55,10 @@ export const lpdhApi = {
   }),
   getFinalPlan: (site, date) => request(`/v1/lpdh/calculator-final?${q({ site, date })}`),
   preview: (site, date) => request(`/v1/lpdh/preview?${q({ site, date })}`),
+  previewDraft: (site, serviceDate, data) => request("/v1/lpdh/preview", {
+    method: "POST",
+    body: JSON.stringify({ site, service_date: serviceDate, data }),
+  }),
   generate: (site, serviceDate) => request("/v1/lpdh/generate", {
     method: "POST",
     body: JSON.stringify({ site, service_date: serviceDate }),

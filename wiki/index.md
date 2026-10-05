@@ -12,7 +12,7 @@
 ## Accounting
 - [Costing](accounting/costing.md)
 - [Accountant Workflow](accounting/accountant-workflow.md)
-- [LPDH Document-First Workflow](accounting/lpdh-document-workflow.md)
+- [LPDH Document-First Workflow](accounting/lpdh-document-workflow.md) — detailed master targets, current-form review, production reconciliation and daily document packages.
 - [Internal Cash Reimbursement](accounting/internal-reimbursement.md)
 - [BGN Workflow](accounting/bgn-workflow.md)
 

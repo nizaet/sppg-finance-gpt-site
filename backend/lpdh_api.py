@@ -620,6 +620,33 @@ def preview(request: Request, site: str = Query(), service_date: date = Query(al
     return compute_preview(masters, daily, service_date.isoformat(), context["effective"], final_plan)
 
 
+@router.post("/preview")
+def preview_draft(payload: DailyStateIn, request: Request) -> dict[str, Any]:
+    """Calculate the current form without saving, claiming numbers or finalizing."""
+    _require_db()
+    target = _site(request, payload.site)
+    masters = _load_master(target)["data"] or {}
+    existing = _load_daily(target, payload.service_date)
+    incoming = dict(payload.data)
+    # Historical provenance is trusted only from the stored daily state.
+    incoming.pop("_historicalGeneratedSnapshot", None)
+    if existing["status"] == "GENERATED" or existing["data"].get("_historicalGeneratedSnapshot"):
+        incoming["_historicalGeneratedSnapshot"] = True
+    try:
+        validate_daily_financial_sources(incoming, existing["data"])
+        daily = normalize_daily_draft(masters, incoming)
+        if existing["status"] != "GENERATED":
+            from backend.accountant_generated_document_api import load_documents
+            from backend.generated_document_logic import merge_final_documents
+            with connection() as conn, conn.cursor() as cur:
+                daily = merge_final_documents(daily, load_documents(cur, target, payload.service_date, True))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    daily, context = _daily_with_hpe(target, payload.service_date, daily)
+    result = compute_preview(masters, daily, payload.service_date.isoformat(), context["effective"], _load_final_plan(target, payload.service_date))
+    return {**result, "previewSource": "CURRENT_FORM"}
+
+
 @router.post("/generate")
 def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
     _require_db()
