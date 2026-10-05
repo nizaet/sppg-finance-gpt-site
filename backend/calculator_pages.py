@@ -183,7 +183,7 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         lpdhWorkspaceButton.type = 'button';
         lpdhWorkspaceButton.className = 'railway-app-control';
         lpdhWorkspaceButton.innerHTML = '<i class="fas fa-file-excel"></i><span>LPDH</span>';
-        lpdhWorkspaceButton.addEventListener('click', function () {{ window.location.assign('/lpdh'); }});
+        lpdhWorkspaceButton.addEventListener('click', function () {{ window.location.assign('/lpdh?site=' + encodeURIComponent(String(window.__legacyUnitId || '').toUpperCase())); }});
         controls.appendChild(lpdhWorkspaceButton);
 
         var themeButton = document.createElement('button');
