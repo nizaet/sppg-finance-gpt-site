@@ -303,6 +303,14 @@ def assign_document_numbers(rows: list[dict[str, Any]], base_key: str, explicit_
     return cloned
 
 
+def service_date_from_rows(rows: list[dict[str, Any]]) -> str:
+    for row in rows:
+        value = str(row.get("date") or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def build_register(
     raw: list[dict[str, Any]],
     operations: list[dict[str, Any]],
@@ -351,26 +359,33 @@ def build_register(
         entries.append({
             "source": "C1_Relawan",
             "code": f"RL-{idx:03d}",
-            "proofNo": row.get("proofNoDerived") or row.get("_baseProofNo") or "",
-            "date": row.get("date") or "",
-            "amount": as_number(row.get("amount")),
-            "link": row.get("evidenceLink") or "",
-        })
-
-    incentive_base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
-    incentive_numbered = []
-    for row in incentive_recipients:
-        copy = deepcopy(row)
-        copy["receiptBase"] = copy.get("receiptNo") or incentive_base
-        incentive_numbered.append(copy)
-    incentive_numbered = assign_document_numbers(incentive_numbered, "receiptBase")
-    for idx, row in enumerate(incentive_numbered, 1):
-        if as_number(row.get("amount")) <= 0:
+            "proofNo": row.get("proofNoDerived"    incentive_base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
+    school_rows = [
+        x for x in incentive_recipients
+        if str(x.get("type") or "").strip().lower() in {"guru", "sekolah", "penanggung jawab satuan pendidikan"}
+    ]
+    cadre_rows = [
+        x for x in incentive_recipients
+        if str(x.get("type") or "").strip().lower() in {"kader", "posyandu", "kader posyandu"}
+    ]
+    for code, rows, suffix, explicit_key in [
+        ("OP-002", school_rows, "GURU", "schoolPicOperationalProofNo"),
+        ("OP-003", cadre_rows, "KADER", "cadreOperationalProofNo"),
+    ]:
+        amount = sum(as_number(x.get("amount")) for x in rows)
+        if amount <= 0:
             continue
+        proof = str(daily.get(explicit_key) or (f"{incentive_base}-{suffix}" if incentive_base else "")).strip()
         entries.append({
             "source": "C_Operasional",
-            "code": f"IN-OP-{idx:03d}",
-            "proofNo": row.get("proofNoDerived") or row.get("_baseProofNo") or "",
+            "code": code,
+            "proofNo": proof,
+            "date": daily.get("incentivePaymentDate") or service_date_from_rows(rows),
+            "amount": amount,
+            "link": daily.get("incentiveBatchEvidenceLink") or "",
+        })
+
+) or row.get("_baseProofNo") or "",
             "date": row.get("date") or "",
             "amount": as_number(row.get("amount")),
             "link": row.get("evidenceLink") or "",
@@ -579,7 +594,7 @@ def compute_preview(
         buffer_ok = True
         buffer_status = "BELUM DITETAPKAN"
     else:
-        buffer_ok = produced > 0 and (buffer_qty / produced) <= as_number(buffer_limit) / 100
+        buffer_ok = produced > 0 and (buffer_qty / produced) <= as_number(buffer_limit)
         buffer_status = "OK" if buffer_ok else "PERIKSA"
 
     checks = [
@@ -751,6 +766,8 @@ def fallback_lpdh_workbook() -> Workbook:
         ws.cell(rr, 17, f'=IF(C{rr}="Kecil",Ref!B6,Ref!B7)*IF(Ref!B14="Ya",Identitas!B21,1)')
     for col in [5, 6, 7, 8, 10, 15]:
         ws.cell(16, col, f"=SUM({ws.cell(6,col).coordinate}:{ws.cell(15,col).coordinate})")
+    ws["P16"] = '=IF(E16>0,O16/E16,"")'
+    ws["Q16"] = '=IF(F16>0,SUMPRODUCT(F6:F15,Q6:Q15)/F16,0)'
     for cell, label in [("B19","Total Diproduksi"),("B20","Total Didistribusikan"),("B21","Organoleptik"),("B22","Retained Sample"),("B23","Tidak Didistribusikan"),("B24","Buffer"),("B25","Total Alokasi"),("B26","Selisih Produksi"),("B27","Buffer %")]:
         ws[cell] = label
     ws["C20"] = "=F16"; ws["C25"] = "=SUM(C20:C24)"; ws["C26"] = "=C19-C25"; ws["C27"] = '=IF(C19=0,0,C24/C19)'
@@ -758,6 +775,9 @@ def fallback_lpdh_workbook() -> Workbook:
     ws["B45"] = "Organoleptik"; ws["C45"] = '=IF(Identitas!B20="Ya",C21,0)'
     ws["B46"] = "Retained Sample"; ws["C46"] = '=IF(Identitas!B20="Ya",C22,0)'
     ws["B47"] = "PM Dasar Insentif"; ws["C47"] = "=SUM(C44:C46)"
+    ws["B50"] = "Kelompok sasaran yang menerima porsi"; ws["C50"] = '=COUNTIF(G6:G15,">0")'
+    ws["B51"] = "Kelompok dengan bukti BAST ter-link"; ws["C51"] = '=COUNTIF(N6:N15,"Terlampir")'
+    ws["B52"] = "Kelompok tanpa link bukti BAST"; ws["C52"] = "=C50-C51"
 
     ws = wb["B_BahanBaku"]
     headers = ["No","Kode Unik","Tanggal","Bahan","Kategori","Volume","Unit","Harga Satuan","Jumlah","Supplier","Nomor Bukti/Nota","Link Bukti","Status No","Status Tanggal","Catatan"]
@@ -809,27 +829,41 @@ def fallback_lpdh_workbook() -> Workbook:
     for rr in range(6, 66):
         ws.cell(rr, 1, rr - 5)
         ws.cell(rr, 2, f'=IF(C{rr}="","","ID-"&TEXT(E{rr},"yyyymmdd")&"-RL-"&TEXT(A{rr},"000"))')
-        ws.cell(rr, 8, f'=IFERROR(F{rr}*G{rr},0)')
-        ws.cell(rr, 12, f'=IF(J{rr}="","BELUM ADA",IF(COUNTIF($J$6:$J$65,J{rr})=1,"UNIK","DUPLIKAT"))')
-        ws.cell(rr, 13, f'=IF(H{rr}=0,"OK",IF(AND(E{rr}>=Identitas!B32,E{rr}<=Identitas!B33),"OK","PERIKSA"))')
-        ws.cell(rr, 14, f'=IF(H{rr}=0,"OK",IF(AND(J{rr}<>"",LEFT(K{rr},8)="https://"),"LENGKAP","PERIKSA"))')
-    ws["G66"] = "TOTAL"; ws["H66"] = "=SUM(H6:H65)"
+        ws.cell(rr, 8, f'=IF(OR(F{rr}="",G{rr}=""),0,F{rr}*G{rr})')
+        ws.cell(rr, 12, f'=IF(J{rr}="","",IF(COUNTIF(I_RegisterBukti!$C$5:$C$130,J{rr})>1,"DUPLIKAT","Unik"))')
+        ws.cell(rr, 13, f'=IF(C{rr}="","",IF(E{rr}="","TANGGAL KOSONG",IF(AND(E{rr}>=Identitas!$B$32,E{rr}<=Identitas!$B$33),"Sesuai","DI LUAR PERIODE")))')
+        ws.cell(rr, 14, f'=IF(N(H{rr})=0,"",IF(AND(J{rr}<>"",LEFT(K{rr},8)="https://"),"Lengkap","BELUM LENGKAP"))')
+    ws["A66"] = "JUMLAH"; ws["C66"] = '=COUNTIF(H6:H65,">0")'; ws["H66"] = "=SUM(H6:H65)"
 
     ws = wb["D_Insentif"]
-    for rr, label in {
-        5:"Hari Pelayanan Efektif",6:"Kontaminasi",7:"Insiden Fatal",8:"Suspend",9:"Verifikasi",10:"PM masuk SIPGN",11:"Kelayakan",
-        14:"PM Dasar Insentif",15:"Tarif",16:"Insentif Dihitung",19:"No Pernyataan PPK",20:"Nilai Pernyataan",
-        21:"Nilai Dibayar",22:"Tanggal Bayar",23:"No Bukti",24:"No Kuitansi",25:"Kuitansi Ditandatangani",
-        26:"Link Bukti",27:"Ref Transaksi VA",31:"Selisih Dibayar vs Pernyataan",32:"Status No Bukti",33:"Status Tanggal",34:"Status Bukti",
-    }.items():
-        ws[f"B{rr}"] = label
-    ws["C5"] = "=Identitas!B20"
-    ws["C11"] = '=IF(AND(C5="Ya",C6="Tidak",C7="Tidak",C8="Tidak",C9="Ya",C10="Ya"),"DAPAT DIBERIKAN","TIDAK/BELUM")'
-    ws["C14"] = "=A_PM!C47"; ws["C15"] = "=Ref!B5"; ws["C16"] = "=C14*C15"
+    labels = {
+        5:"Hari berstatus HPE (Identitas)",6:"Terjadi kontaminasi makanan/gagal penyaluran",
+        7:"Terjadi kejadian fatal (keracunan)",8:"SPPG dalam status suspend",
+        9:"Hasil verifikasi ketersediaan dan mutu layanan memenuhi",
+        10:"Data penerima manfaat telah diinput pada SIPGN",11:"Insentif dapat diberikan",
+        14:"PM dihitung (A_PM)",15:"Tarif per PM per HPE (Rp)",16:"Insentif dihitung hari ini (Rp)",
+        19:"Nomor pernyataan besaran Insentif dari PPK",20:"Nilai pernyataan PPK (Rp)",
+        21:"Nominal Insentif dibayarkan hari ini (Rp)",22:"Tanggal pembayaran",
+        23:"Nomor bukti pembayaran (unik)",24:"Nomor kuitansi",
+        25:"Kuitansi ditandatangani Mitra (Ya/Tidak)",26:"Link PDF bukti bayar (Cloud SIPGN)",
+        27:"Referensi transaksi VA (maker: Mitra; approver: Kepala SPPG)",28:"Kode unik transaksi (otomatis)",
+        31:"Selisih pembayaran thd pernyataan PPK (Rp)",32:"Status nomor bukti",
+        33:"Status tanggal pembayaran",34:"Status bukti autentik (nomor bukti, kuitansi bertanda tangan, link PDF)",
+    }
+    for rr, label in labels.items():
+        ws[f"A{rr}"] = label
+    ws["B5"] = "=Identitas!B20"; ws["C5"] = '=IF(B5="Ya","Ya","Tidak")'
+    for rr in (6,7,8):
+        ws[f"C{rr}"] = f'=IF(B{rr}="Tidak","Ya","Tidak")'
+    for rr in (9,10):
+        ws[f"C{rr}"] = f'=IF(B{rr}="Ya","Ya","Tidak")'
+    ws["C11"] = '=IF(COUNTIF(C5:C10,"Tidak")=0,"Ya","Tidak")'
+    ws["C14"] = "=A_PM!C47"; ws["C15"] = "=Ref!B5"; ws["C16"] = '=IF(C11="Ya",C14*C15,0)'
+    ws["C28"] = '=IF(C23="","",Identitas!$B$6&"-"&TEXT(Identitas!$B$15,"yyyymmdd")&"-INS-001")'
     ws["C31"] = "=C21-C20"
-    ws["C32"] = '=IF(C23="","BELUM ADA",IF(COUNTIF(I_RegisterBukti!C:C,C23)=1,"UNIK","DUPLIKAT"))'
-    ws["C33"] = '=IF(C21=0,"OK",IF(AND(C22>=Identitas!B32,C22<=Identitas!B33),"OK","PERIKSA"))'
-    ws["C34"] = '=IF(C21=0,"OK",IF(AND(C23<>"",C24<>"",C25="Ya",LEFT(C26,8)="https://"),"LENGKAP","PERIKSA"))'
+    ws["C32"] = '=IF(C23="","",IF(COUNTIF(I_RegisterBukti!$C$5:$C$130,C23)>1,"DUPLIKAT","Unik"))'
+    ws["C33"] = '=IF(N(C21)=0,"",IF(C22="","TANGGAL KOSONG",IF(AND(C22>=Identitas!$B$32,C22<=Identitas!$B$33),"Sesuai","DI LUAR PERIODE")))'
+    ws["C34"] = '=IF(N(C21)=0,"",IF(AND(C23<>"",C24<>"",C25="Ya",LEFT(C26,8)="https://"),"Lengkap","BELUM LENGKAP"))'
 
     ws = wb["E_Saldo"]
     for rr, label in [(5,"Bahan Baku"),(6,"Operasional"),(7,"Insentif")]:
@@ -1299,9 +1333,7 @@ def parse_master_workbook(content: bytes) -> dict[str, list[dict[str, Any]]]:
 
 
 def workbook_reference_rows() -> list[list[Any]]:
-    if not LPDH_TEMPLATE.is_file():
-        return []
-    wb = load_workbook(LPDH_TEMPLATE, data_only=False, read_only=True)
+    wb = load_lpdh_workbook()
     ws = wb["Ref"]
     rows = []
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=min(ws.max_column, 4), values_only=True):
