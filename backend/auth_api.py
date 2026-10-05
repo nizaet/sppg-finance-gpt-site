@@ -47,9 +47,9 @@ def auth_config() -> dict[str, Any]:
         "secretReady": secret_ready,
         "ownerReady": owner_ready,
         "rolePolicy": {
-            "OWNER": ["CALCULATOR_MAJA", "CALCULATOR_CEMPLANG", "OPERATIONS", "ACCOUNTANT_MAJA", "ACCOUNTANT_CEMPLANG"],
-            "MAJA": ["CALCULATOR_MAJA"],
-            "CEMPLANG": ["CALCULATOR_CEMPLANG"],
+            "OWNER": ["CALCULATOR_MAJA", "CALCULATOR_CEMPLANG", "OPERATIONS", "ACCOUNTANT_MAJA", "ACCOUNTANT_CEMPLANG", "LPDH_MAJA", "LPDH_CEMPLANG"],
+            "MAJA": ["CALCULATOR_MAJA", "LPDH_MAJA"],
+            "CEMPLANG": ["CALCULATOR_CEMPLANG", "LPDH_CEMPLANG"],
         },
         "calculatorUrls": {
             "MAJA": _env("SPPG_MAJA_CALCULATOR_URL") or "/dapur/maja",
