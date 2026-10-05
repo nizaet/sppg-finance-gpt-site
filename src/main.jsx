@@ -130,6 +130,14 @@ function RoutedApp({ role, config, onLogout }) {
     return <CalculatorGateway role="OWNER" config={config} />;
   }
 
+  if (isLpdhRoute) {
+    return (
+      <Suspense fallback={<BootFallback text="Menyiapkan LPDH YAYASAN…" />}>
+        <LpdhApp role="OWNER" onLogout={onLogout} />
+      </Suspense>
+    );
+  }
+
   return (
     <Suspense fallback={<BootFallback />}>
       {isOperationsRoute

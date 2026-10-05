@@ -45,7 +45,8 @@ function ModulePanel({ module }) {
 }
 
 export default function LpdhWorkspace({ role, onLogout }) {
-  const site = String(role || "").toUpperCase();
+  const accountRole = String(role || "").toUpperCase();
+  const [site, setSite] = useState(accountRole === "OWNER" ? "MAJA" : accountRole);
   const [active, setActive] = useState("dashboard");
   const module = useMemo(() => MODULES.find((item) => item.id === active), [active]);
 
@@ -53,9 +54,23 @@ export default function LpdhWorkspace({ role, onLogout }) {
     <main className="lpdh-page">
       <header className="lpdh-header">
         <div>
-          <div className="lpdh-kicker">SPPG {site}</div>
+          <div className="lpdh-kicker">{accountRole === "OWNER" ? "YAYASAN • " : ""}SPPG {site}</div>
           <h1>LPDH & Administrasi {SITE_LABELS[site] || site}</h1>
-          <p>Workspace awal untuk menyiapkan data sampai menjadi Excel LPDH.</p>
+          <p>{accountRole === "OWNER" ? "Akun YAYASAN dapat memeriksa MAJA dan CEMPLANG dari workspace yang sama." : "Workspace awal untuk menyiapkan data sampai menjadi Excel LPDH."}</p>
+          {accountRole === "OWNER" && (
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }} aria-label="Pilih dapur LPDH">
+              {["MAJA", "CEMPLANG"].map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={site === item ? "lpdh-site-button active" : "lpdh-site-button"}
+                  onClick={() => { setSite(item); setActive("dashboard"); }}
+                >
+                  {SITE_LABELS[item]}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="lpdh-header-actions">
           <button type="button" className="lpdh-secondary" onClick={() => window.location.assign("/")}>Pilih aplikasi</button>
@@ -85,7 +100,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
                 <div>
                   <div className="lpdh-kicker">STATUS V1</div>
                   <h2>Kerangka LPDH aktif untuk {SITE_LABELS[site] || site}</h2>
-                  <p>Site mengikuti akun login. Data MAJA dan CEMPLANG tidak dicampur di tampilan ini.</p>
+                  <p>{accountRole === "OWNER" ? "Pilih Maja atau Cemplang di atas. Data masing-masing dapur tetap dipisahkan." : "Site mengikuti akun login. Data MAJA dan CEMPLANG tidak dicampur di tampilan ini."}</p>
                 </div>
                 <div className="lpdh-badge">Tahap 1</div>
               </div>

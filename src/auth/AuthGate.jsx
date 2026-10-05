@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Calculator, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, WalletCards, Workflow } from "lucide-react";
+import { Calculator, FileSpreadsheet, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, WalletCards, Workflow } from "lucide-react";
 import { authApi, clearSession, readSessionRole, readSessionToken, storeSession } from "./session.js";
 import "./auth.css";
 import { invalidateReads } from "../operations/readCache.js";
@@ -92,6 +92,7 @@ function ConfigurationLocked({ config }) {
 
 function SessionBar({ role, config, onLogout }) {
   const operations = () => { window.location.href = "/operations"; };
+  const lpdh = () => { window.location.href = "/lpdh"; };
   const accountantMaja = () => { window.location.href = config?.accountantUrls?.MAJA || "/accountant/maja"; };
   const accountantCemplang = () => { window.location.href = config?.accountantUrls?.CEMPLANG || "/accountant/cemplang"; };
   const calculatorSites = role === "OWNER" ? ["MAJA", "CEMPLANG"] : [role];
@@ -105,6 +106,7 @@ function SessionBar({ role, config, onLogout }) {
         </a>
       ))}
       {role === "OWNER" && <button type="button" onClick={operations}><Workflow size={14} /> Pusat Operasional</button>}
+      {role === "OWNER" && <button type="button" onClick={lpdh}><FileSpreadsheet size={14} /> LPDH Maja/Cemplang</button>}
       {role === "OWNER" && <button type="button" onClick={accountantMaja}><WalletCards size={14} /> Akuntan Maja</button>}
       {role === "OWNER" && <button type="button" onClick={accountantCemplang}><WalletCards size={14} /> Akuntan Cemplang</button>}
       <button type="button" className="danger" onClick={onLogout}><LogOut size={14} /> Keluar</button>
