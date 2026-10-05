@@ -18,6 +18,9 @@ from backend.lpdh_logic import (
     workbook_reference_rows,
     merge_master_import,
     validate_master_portions,
+    master_target_by_group,
+    normalize_daily_draft,
+    validate_daily_financial_sources,
 )
 from backend.document_numbering import claim_number, daily_number
 
@@ -197,6 +200,7 @@ def get_masters(request: Request, site: str = Query()) -> dict[str, Any]:
     result = _load_master(target)
     public_data = dict(result.get("data") or {})
     public_data.pop("_officialTemplateBase64", None)
+    public_data["groupTargetAggregate"] = master_target_by_group(public_data)
     result = {**result, "data": public_data}
     return {"site": target, **result}
 
@@ -215,6 +219,9 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
     for protected_key in ("_officialTemplateBase64", "_officialTemplateFilename"):
         if protected_key not in incoming and protected_key in current:
             incoming[protected_key] = current[protected_key]
+    # The original workbook totals are read-only import history.
+    incoming["groupTargets"] = current.get("groupTargets") or {}
+    incoming.pop("groupTargetAggregate", None)
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -238,7 +245,14 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     _require_db()
     target = _site(request, site)
     daily = _load_daily(target, service_date)
-    normalized, context = _daily_with_hpe(target, service_date, daily.get("data") or {})
+    masters = _load_master(target)["data"]
+    normalized = normalize_daily_draft(masters, daily.get("data") or {}, daily["status"])
+    if daily["status"] != "GENERATED":
+        from backend.accountant_generated_document_api import load_documents
+        from backend.generated_document_logic import merge_final_documents
+        with connection() as conn, conn.cursor() as cur:
+            normalized = merge_final_documents(normalized, load_documents(cur, target, service_date, True))
+    normalized, context = _daily_with_hpe(target, service_date, normalized)
     with connection() as conn, conn.cursor() as cur:
         normalized["lpdhNumber"] = daily_number(cur, target, service_date, _load_master(target)["data"], normalized.get("lpdhNumber"))
     return {
@@ -258,11 +272,20 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     requested_status = str(payload.status or "DRAFT").upper()
     if requested_status not in {"DRAFT", "READY", "GENERATED"}:
         raise HTTPException(400, "status daily tidak valid")
+    if requested_status == "GENERATED":
+        raise HTTPException(422, "Gunakan Generate LPDH untuk menyimpan snapshot final")
     from backend.accountant_generated_document_api import daily_lock, load_documents
     from backend.generated_document_logic import merge_final_documents
     with connection() as conn, conn.cursor() as cur:
         daily_lock(cur, site, payload.service_date)
         try:
+            existing = _load_daily(site, payload.service_date)
+            validate_daily_financial_sources(payload.data, existing["data"])
+            if existing["status"] == "GENERATED" or existing["data"].get("_historicalGeneratedSnapshot"):
+                payload.data["_historicalGeneratedSnapshot"] = True
+            else:
+                payload.data.pop("_historicalGeneratedSnapshot", None)
+            payload.data = normalize_daily_draft(_load_master(site)["data"], payload.data, "DRAFT")
             payload.data = merge_final_documents(payload.data, load_documents(cur, site, payload.service_date, True))
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -585,7 +608,13 @@ def preview(request: Request, site: str = Query(), service_date: date = Query(al
     _require_db()
     target = _site(request, site)
     masters = _load_master(target)["data"] or {}
-    raw_daily = _load_daily(target, service_date)["data"] or {}
+    daily_state = _load_daily(target, service_date)
+    raw_daily = normalize_daily_draft(masters, daily_state["data"] or {}, daily_state["status"])
+    if daily_state["status"] != "GENERATED":
+        from backend.accountant_generated_document_api import load_documents
+        from backend.generated_document_logic import merge_final_documents
+        with connection() as conn, conn.cursor() as cur:
+            raw_daily = merge_final_documents(raw_daily, load_documents(cur, target, service_date, True))
     daily, context = _daily_with_hpe(target, service_date, raw_daily)
     final_plan = _load_final_plan(target, service_date)
     return compute_preview(masters, daily, service_date.isoformat(), context["effective"], final_plan)
@@ -607,7 +636,12 @@ def _generate_locked(payload, request, site, cur):
     actor = _role(request)
     masters = _load_master(site)["data"] or {}
     daily_state = _load_daily(site, payload.service_date)
-    daily, context = _daily_with_hpe(site, payload.service_date, daily_state["data"] or {})
+    from backend.accountant_generated_document_api import load_documents
+    from backend.generated_document_logic import merge_final_documents
+    raw_daily = normalize_daily_draft(masters, daily_state["data"] or {}, daily_state["status"])
+    if daily_state["status"] != "GENERATED":
+        raw_daily = merge_final_documents(raw_daily, load_documents(cur, site, payload.service_date, True))
+    daily, context = _daily_with_hpe(site, payload.service_date, raw_daily)
     daily["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, daily.get("lpdhNumber"))
     final_plan = _load_final_plan(site, payload.service_date)
     if not final_plan:
@@ -636,6 +670,7 @@ def _generate_locked(payload, request, site, cur):
         except Exception:
             template_bytes = None
     content = populate_workbook(masters, daily, preview_data, payload.service_date.isoformat(), template_bytes=template_bytes)
+    daily["_historicalGeneratedSnapshot"] = True
     filename = f"LPDH_{site}_{payload.service_date.isoformat()}.xlsx"
     cur.execute(
         """insert into lpdh_generation_log(

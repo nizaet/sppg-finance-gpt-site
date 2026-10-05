@@ -1,0 +1,41 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const React = require('react');
+const { create, act } = require('react-test-renderer');
+const esbuild = require('esbuild');
+const root = path.resolve(__dirname, '..');
+const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lpdh-invoice-first-')), 'test.cjs');
+
+(async () => {
+  await esbuild.build({ entryPoints: [path.join(root, 'src/lpdh/LpdhForms.jsx')], outfile: output, bundle: true, platform: 'node', format: 'cjs', plugins: [{ name: 'react-fixture', setup(build) {
+    build.onResolve({ filter: /^react$/ }, () => ({ path: require.resolve('react'), external: true }));
+    build.onResolve({ filter: /lpdhApi\.js$/ }, () => ({ path: 'lpdh', namespace: 'fixture' }));
+    build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const arrayBufferToBase64=()=>""; export const downloadBase64=()=>{};', loader: 'js' }));
+  } }] });
+  const { MasterPanel, DailyPanel, aggregateMasterTargets } = require(output);
+  const masters = { schools: [{ name: 'SD Uji', schoolType: 'SD/MI', smallPortions: 10, largePortions: 20, staffLarge: 3 }, { name: 'Nonaktif', schoolType: 'PAUD', smallPortions: 99, status: 'Nonaktif' }], posyandu: [{ name: 'Pos Uji', balitaSmall: 4, pregnantLarge: 2, breastfeedingLarge: 1 }], groupTargets: { 'KS-02': 999 } };
+  assert.equal(Object.values(aggregateMasterTargets(masters)).reduce((a, b) => a + b, 0), 40);
+  let view;
+  await act(async () => { view = create(React.createElement(MasterPanel, { site: 'MAJA', masters, api: { officialTemplateStatus: async () => ({ installed: false }) }, setMasters() {} })); });
+  const label = node => node.children.map(x => typeof x === 'string' ? x : label(x)).join('');
+  const totalField = view.root.findAllByType('label').find(x => label(x).includes('Total seluruh kelompok')).findByType('input');
+  assert.equal(totalField.props.value, '40');
+  assert.equal(totalField.props.disabled, true);
+  await act(async () => view.unmount());
+  let changed;
+  const daily = { rawMaterials: [{ name: 'Beras Uji', qty: 2, price: 10, invoiceNo: 'INV-UJI', sourceDocumentId: 1 }], operations: [{ description: 'Manual Historis', qty: 1, price: 5, invoiceNo: 'OLD' }] };
+  await act(async () => { view = create(React.createElement(DailyPanel, { site: 'MAJA', serviceDate: '2026-10-05', masters, daily, setDaily: value => { changed = value; }, api: {} })); });
+  const buttons = view.root.findAllByType('button').map(label);
+  assert.equal(buttons.some(x => /Tambah bahan|Terapkan invoice harian manual|Siapkan dari master|Tarik Porsi Final Kalkulator/.test(x)), false);
+  assert.ok(label(view.root).includes('Manual Historis'), 'historical manual rows remain visible');
+  const evidence = view.root.findAllByType('label').find(x => label(x).includes('INV-UJI') && label(x).includes('Link bukti')).findByType('input');
+  assert.equal(evidence.props.disabled, false, 'proof can be completed after invoice finalization');
+  await act(async () => evidence.props.onChange({ target: { value: 'https://example.test/authentic.pdf' } }));
+  assert.equal(changed.rawMaterials[0].evidenceLink, 'https://example.test/authentic.pdf');
+  assert.equal(changed.rawMaterials[0].price, 10);
+  assert.equal(changed.rawMaterials[0].invoiceNo, 'INV-UJI');
+  await act(async () => view.unmount());
+  console.log('PASS LPDH UI: readonly detail aggregate, invoice-first creation, visible manual history, editable authentic proof');
+})().catch(error => { console.error(error); process.exitCode = 1; });

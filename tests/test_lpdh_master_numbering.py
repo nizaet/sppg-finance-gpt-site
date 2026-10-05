@@ -59,7 +59,7 @@ class MasterAndNumberTests(unittest.TestCase):
         with self.assertRaises(ValueError): logic.validate_master_portions({'schools':[{'schoolType':'Santri','smallPortions':1}]})
         data = {'schools':[{'schoolType':'SD/MI','smallPortions':0,'largePortions':0}], 'groupTargets':{'KS-02':100,'KS-03':70,'PTK':10}}
         self.assertEqual(logic.master_target_by_group(data)['KS-02'],0)
-        self.assertEqual(logic.master_target_by_group(data)['PTK'],10)
+        self.assertEqual(logic.master_target_by_group(data)['PTK'],0)
 
     def test_user_split_template_legacy_headers(self):
         from openpyxl import Workbook

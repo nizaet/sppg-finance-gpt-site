@@ -112,6 +112,8 @@ class FakeConnection:
             self.row.update(site=params[0], document_type=params[1], document_number=params[2], service_date=params[3], header_payload=json.loads(params[4]), total_amount=params[5], request_key=params[6], request_hash=params[7])
             self.items = []
             self.result = deepcopy(self.row)
+        elif sql.startswith("delete from generated_accountant_document_items"):
+            self.items = []
         elif "insert into generated_accountant_document_items" in sql:
             self.items.append(dict(zip(("document_id", "item_name", "category_code", "quantity", "unit", "unit_price", "line_total", "item_payload"), params)))
             self.items[-1]["item_payload"] = json.loads(params[-1])
@@ -203,15 +205,52 @@ class DocumentApiTests(unittest.TestCase):
         self.assertEqual(self.conn.row['document_number'], 'INV/MAJA/001')
 
     def test_receipts_use_manual_individual_numbers_and_reject_duplicates(self):
+        # Grandfather existing drafts, but no new legacy-shaped packages.
         self.payload['document_type'] = 'UPAH_RELAWAN'
+        self.conn.row['document_type'] = 'UPAH_RELAWAN'
         self.payload['items'] = [{'item_name': 'Relawan Uji A', 'quantity': 1, 'unit': 'hari', 'unit_price': 1000, 'metadata': {'receiptNo':'KWT/101'}}, {'item_name': 'Relawan Uji B', 'quantity': 1, 'unit': 'hari', 'unit_price': 1000, 'metadata': {'receiptNo':'kwt/101'}}]
-        self.assertEqual(self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers).status_code, 409)
+        self.assertEqual(self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers).status_code, 422)
+        self.assertEqual(self.client.put('/v1/accountant-documents/1', json=self.payload, headers=self.headers).status_code, 409)
         self.assertFalse(self.conn.committed)
         self.payload['items'][1]['metadata']['receiptNo'] = 'KWT/102'
-        response = self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers)
+        response = self.client.put('/v1/accountant-documents/1', json=self.payload, headers=self.headers)
         self.assertEqual(response.status_code, 200, response.text)
         doc = response.json()['document']
         self.assertEqual([api.receipt_number(doc, i) for i in range(2)], ['KWT/101', 'KWT/102'])
+
+    def test_new_aggregate_common_number_and_server_subtype_validation(self):
+        self.payload['document_type'] = 'INSENTIF_GURU_KADER'
+        self.payload['header_payload'].update(paymentSnapshotVersion=2, recipientSubtype='Guru')
+        self.payload['items'] = [{'item_name': name, 'quantity': 1, 'unit': 'hari', 'unit_price': 1000, 'metadata': {'recipientType':'Guru'}} for name in ('Guru A', 'Guru B')]
+        self.payload['items'][1]['metadata']['recipientType'] = 'Kader'
+        self.assertEqual(self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers).status_code, 422)
+        self.payload['items'][1]['metadata']['recipientType'] = 'Guru'
+        response = self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        doc = response.json()['document']
+        self.assertEqual([api.receipt_number(doc, i) for i in range(2)], [self.payload['document_number']] * 2)
+        self.assertEqual(len(self.conn.numbers), 1)
+
+    def test_daily_api_rejects_unsourced_financial_injection(self):
+        from backend import lpdh_api as daily_api
+        request = types.SimpleNamespace(state=types.SimpleNamespace(sppg_role="MAJA"))
+        existing = {"data": {}, "status": "DRAFT"}
+        with patch.object(daily_api, "connection", api.connection), patch.object(daily_api, "_load_daily", return_value=existing), patch.object(daily_api, "_load_master", return_value={"data": {}}), patch.object(api, "load_documents", return_value=[]), patch.object(daily_api, "_save_daily_locked", return_value={"saved": True}) as save:
+            for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"):
+                payload = daily_api.DailyStateIn(site="MAJA", service_date="2026-10-05", data={key: [{"name": "Injected", "qty": 1, "price": 10}]})
+                with self.assertRaises(HTTPException) as rejected:
+                    daily_api.save_daily(payload, request)
+                self.assertEqual(rejected.exception.status_code, 409)
+            save.assert_not_called()
+            # A fabricated source id is discarded by the canonical FINAL document rebuild.
+            payload = daily_api.DailyStateIn(site="MAJA", service_date="2026-10-05", data={"operations": [{"sourceDocumentId": 999, "price": 999}]})
+            daily_api.save_daily(payload, request)
+            self.assertEqual(payload.data["operations"], [])
+            forged = daily_api.DailyStateIn(site="MAJA", service_date="2026-10-05", data={"_historicalGeneratedSnapshot": True, "pm": {"rows": [{"code": "KS-02", "targetPm": 999}]}})
+            daily_api.save_daily(forged, request)
+            self.assertNotIn("_historicalGeneratedSnapshot", forged.data)
+            self.assertEqual(forged.data["_dailyWorkflowVersion"], 2)
+            self.assertEqual(forged.data["pm"]["rows"][1]["targetPm"], 0)
 
     def test_private_artwork_upload_validation_and_site_isolation(self):
         stream = BytesIO(); Image.new('RGB', (40, 20), 'white').save(stream, format='PNG')

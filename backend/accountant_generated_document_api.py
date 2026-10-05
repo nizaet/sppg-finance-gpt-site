@@ -51,12 +51,19 @@ class GeneratedDocumentIn(BaseModel):
                 raise ValueError("Kuitansi dibayar harian: jumlah hari harus 1")
             if self.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"} and item.unit.lower() != "hari":
                 raise ValueError("Satuan kuitansi harian harus hari")
-            if self.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
+            if self.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"} and self.header_payload.get("paymentSnapshotVersion") != 2:
                 item.metadata["receiptNo"] = checked_number(item.metadata.get("receiptNo"))
             if self.document_type == "INSENTIF_GURU_KADER" and item.metadata.get("recipientType") not in {"Guru", "Kader"}:
                 raise ValueError("Pilih jenis penerima Guru atau Kader")
             if self.document_type == "OPERASIONAL" and item.category_code not in OP_CATEGORIES:
                 raise ValueError("Pilih kategori operasional sesuai kolom C workbook")
+        version = self.header_payload.get("paymentSnapshotVersion")
+        if version not in (None, 2) or isinstance(version, bool):
+            raise ValueError("Versi snapshot pembayaran tidak valid")
+        if self.document_type == "INSENTIF_GURU_KADER" and version == 2:
+            subtype = self.header_payload.get("recipientSubtype")
+            if subtype not in {"Guru", "Kader"} or any(item.metadata.get("recipientType") != subtype for item in self.items):
+                raise ValueError("Paket Guru dan Kader harus terpisah; semua penerima wajib sesuai jenis paket")
         if sum(line_amount(item.quantity, item.unit_price) for item in self.items) >= 1000000000000000:
             raise ValueError("Total dokumen melebihi batas nilai yang dapat disimpan")
         if any(not str(self.header_payload.get(key) or "").strip() for key in ("issuerName", "recipientName", "recipientAddress", "senderSignatory")):
@@ -272,6 +279,8 @@ def number_suggestion(site: Site, document_type: Literal["BAHAN_BAKU", "OPERASIO
 @router.post("/accountant-documents")
 def generate_document(payload: GeneratedDocumentIn, authorization: str | None = Header(default=None)):
     role = _authorize(authorization, payload.site)
+    if payload.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"} and payload.header_payload.get("paymentSnapshotVersion") != 2:
+        raise HTTPException(422, "Kuitansi baru harus menggunakan satu nomor paket dan lampiran penerima")
     digest = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude={"request_key"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     with connection() as conn, conn.cursor() as cur:
         if payload.request_key:
@@ -310,6 +319,10 @@ def edit_document(document_id: int, payload: GeneratedDocumentIn, authorization:
             raise HTTPException(404, "dokumen tidak ditemukan")
         if row["status"] != "DRAFT" or row["document_type"] != payload.document_type or row["service_date"] != payload.service_date:
             raise HTTPException(409, "Hanya isi draft yang dapat diedit. Site, jenis, tanggal, dan dokumen final terkunci.")
+        if (row.get("header_payload") or {}).get("paymentSnapshotVersion") != payload.header_payload.get("paymentSnapshotVersion"):
+            raise HTTPException(409, "Versi kuitansi historis tidak dapat diubah")
+        if (row.get("header_payload") or {}).get("paymentSnapshotVersion") == 2 and row["document_type"] == "INSENTIF_GURU_KADER" and row["header_payload"].get("recipientSubtype") != payload.header_payload.get("recipientSubtype"):
+            raise HTTPException(409, "Jenis paket Guru atau Kader yang tersimpan tidak dapat diubah")
         validate_asset_refs(cur, payload.site, payload.header_payload)
         reserve_numbers(cur, document_id, payload)
         claim_number(cur, payload.site, payload.document_type, payload.document_number, "DOC:" + str(document_id))

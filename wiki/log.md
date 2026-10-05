@@ -72,3 +72,11 @@
 - The PO action scope is now described consistently as overdue seven days plus today and tomorrow. The UI no longer advertises or requests a misleading 21-day action horizon.
 - Operations, PO Vendor, Gudang, Accountant/BGN, and legacy Calculator layouts received Fold/mobile containment rules: one-column forms, wrapping actions, viewport-safe modals, and explicit touch scrolling for wide tables, calendars, tabs, and navigation controls.
 - No planning, PO, receipt, stock, or financial transaction was changed by this maintenance.
+
+## 2026-10-05 - LPDH aggregate targets and daily document packages
+
+- The operator requested detailed active school/Posyandu targets as the authoritative group totals, including large-portion school staff/PTK, with an overall total and editable initial distribution/received values. Initial BNBA is Ya, organoleptic 3, and retained samples 2. Defaults are not proof of distribution or receipt.
+- New daily expenses must come from active FINAL invoices/kuitansi for the selected site/date. Several operational invoices remain independently numbered and traceable. Historical manual rows, prior generated snapshots, and final documents are preserved.
+- New daily wage/teacher/cadre packages each use one aggregate cover, one printed receipt number, and a complete recipient appendix starting on the next page. One package occupies one evidence-register entry; per-recipient calculations remain detailed. Historical individually numbered receipts keep their meaning.
+- Reviewed the privately supplied incentive PDF as a layout reference. Its transaction amount, banking data, artwork, and Insentif Mitra classification are not copied into a new transaction or public documentation.
+- Added the [LPDH document-first workflow](accounting/lpdh-document-workflow.md) and connected it to the existing accountant/BGN workflow. Approval, actual payments, internal settlements, and other Operations modules are outside this change.

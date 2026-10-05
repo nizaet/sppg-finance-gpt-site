@@ -24,7 +24,16 @@ def line_amount(quantity, price):
     return float((Decimal(str(quantity)) * Decimal(str(price))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+AGGREGATE_PAYMENT_VERSION = 2
+
+
+def aggregate_payment(document):
+    return document.get("documentType") in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"} and (document.get("header") or {}).get("paymentSnapshotVersion") == AGGREGATE_PAYMENT_VERSION
+
+
 def receipt_number(document, index):
+    if aggregate_payment(document):
+        return document["documentNumber"]
     manual = str((document["items"][index].get("metadata") or {}).get("receiptNo") or "").strip()
     if manual:
         return manual
@@ -44,6 +53,7 @@ def document_rows(document):
             "sourceDocumentId": document["id"], "sourceLine": index + 1,
             "evidenceLink": header.get("evidenceLink") or "",
             "paymentReference": header.get("paymentReference") or "",
+            "aggregatePayment": aggregate_payment(document),
         }
         if kind in {"BAHAN_BAKU", "OPERASIONAL"}:
             rows.append({**common, "name": item["itemName"], "description": item["itemName"],
@@ -88,8 +98,7 @@ def merge_final_documents(daily, documents):
             for field in ("evidenceLink", "paymentReference"):
                 if saved.get(field):
                     row[field] = saved[field]
-        kept = [row for row in out.get(key) or [] if not row.get("sourceDocumentId")
-                and row.get("source") != "FINAL_KALKULATOR"]
+        kept = [row for row in out.get(key) or [] if not row.get("sourceDocumentId") and row.get("source") != "FINAL_KALKULATOR"]
         if any(row.get("invoiceNo") in invoice_numbers for row in kept):
             raise ValueError("Nomor invoice final sudah diisi manual pada data harian. Hapus baris manual yang sama sebelum menarik dokumen.")
         if key in {"volunteerPayments", "incentiveRecipients"}:
@@ -107,7 +116,7 @@ def merge_final_documents(daily, documents):
         out[key] = kept + rows
     if len(out["rawMaterials"]) > 40 or len(out["volunteerPayments"]) > 60:
         raise ValueError("Jumlah baris melebihi kapasitas workbook (40 bahan atau 60 relawan). Gabungkan item sebelum finalisasi.")
-    register_count = sum(1 if d["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"} else len(d["items"]) for d in finalized)
+    register_count = sum(1 if d["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"} or aggregate_payment(d) else len(d["items"]) for d in finalized)
     register_count += sum(1 for key in incoming for r in out[key] if not r.get("sourceDocumentId"))
     register_count += len(out.get("topups") or [])
     if float((out.get("incentive") or {}).get("paidAmount") or 0) > 0:
@@ -136,6 +145,7 @@ def grouped_operations(rows):
         numbers = list(dict.fromkeys(str(x.get("invoiceNo") or "") for x in items if x.get("invoiceNo")))
         links = list(dict.fromkeys(str(x.get("evidenceLink") or "") for x in items if x.get("evidenceLink")))
         result.append({"description": category, "category": category, "qty": 1, "unit": "paket",
+                       "sourceDocumentIds": list(dict.fromkeys(x["sourceDocumentId"] for x in items if x.get("sourceDocumentId"))),
                        "price": amount, "amount": amount, "date": items[0].get("date"),
                        "invoiceNo": "; ".join(numbers), "evidenceLink": "; ".join(links),
                        "note": "; ".join(f"{x.get('description')}: {x.get('qty')} {x.get('unit')} ({x.get('invoiceNo') or '-'})" for x in items)})

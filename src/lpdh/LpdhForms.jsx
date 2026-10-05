@@ -101,6 +101,24 @@ export function normalizeMasters(value = {}) {
   return data;
 }
 
+export function aggregateMasterTargets(masters = {}) {
+  const totals = Object.fromEntries(GROUP_DEFAULTS.map(group => [group.code, 0]));
+  const active = row => !["nonaktif", "inactive"].includes(String(row.status || "Aktif").trim().toLowerCase());
+  const codes = { PAUD: ["KS-01", null], "SD/MI": ["KS-02", "KS-03"], "SMP/MTs": [null, "KS-04"], "SMA/MA/SMK/SLB": [null, "KS-05"], Santri: [null, "KS-06"], PTK: [null, "PTK"] };
+  (masters.schools || []).filter(active).forEach(row => {
+    const [small, large] = codes[row.schoolType] || [];
+    if (small) totals[small] += Number(row.smallPortions) || 0;
+    if (large) totals[large] += Number(row.largePortions) || 0;
+    totals.PTK += Number(row.staffLarge) || 0;
+  });
+  (masters.posyandu || []).filter(active).forEach(row => {
+    totals["KS-09"] += Number(row.balitaSmall) || 0;
+    totals["KS-07"] += Number(row.pregnantLarge) || 0;
+    totals["KS-08"] += Number(row.breastfeedingLarge) || 0;
+  });
+  return totals;
+}
+
 export function normalizeDaily(value = {}, serviceDate = "") {
   const data = clone(value || {}) || {};
   data.pm = data.pm || {};
@@ -317,8 +335,8 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
         </tr>)}{!data.posyandu.length && <EmptyRow colSpan={10}/>}</tbody></table></div>
     </Section>
 
-    <Section title="Total Kelompok dari Workbook" subtitle="Fallback sementara ketika belum ada rincian sekolah/posyandu. Rincian aktif menggantikan total ini per kelompok, tidak dijumlah dua kali.">
-      <div className="lpdh-form-grid">{GROUP_DEFAULTS.map(group => <Field key={group.code} label={`${group.label} · ${group.portion}`} type="number" value={data.groupTargets[group.code]} onChange={value => setMasters({ ...data, groupTargets: { ...data.groupTargets, [group.code]: value } })}/>)}</div>
+    <Section title="Total Kelompok dari Master Sekolah & Posyandu" subtitle="Jumlah otomatis dari sekolah dan posyandu aktif. Tenaga pendidik masuk PTK besar. Total impor lama disimpan sebagai riwayat.">
+      <div className="lpdh-form-grid">{GROUP_DEFAULTS.map(group => <Field key={group.code} label={`${group.label} · ${group.portion}`} type="number" disabled value={aggregateMasterTargets(data)[group.code]}/>)}<Field label="Total seluruh kelompok" type="number" disabled value={Object.values(aggregateMasterTargets(data)).reduce((sum, n) => sum + n, 0)}/></div>
     </Section>
 
     <Section title="Master Penerima Lama" subtitle="Data format lama tetap dapat dipakai. Untuk data baru gunakan Master Sekolah dan Master Posyandu di atas." actions={
@@ -477,7 +495,6 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   return <div className="lpdh-stack">
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
-      <button type="button" onClick={pullFinal} disabled={!finalPlan?.payload}><Download size={15}/> Tarik Porsi Final Kalkulator</button>
       <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Draft</button>
     </>}>
       <div className={finalPlan?.payload ? "lpdh-status-box ok" : "lpdh-status-box warn"}>
@@ -490,30 +507,26 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
       <div className="lpdh-form-grid compact">
         <Field label="Nomor LPDH (otomatis, bisa diedit)" value={data.lpdhNumber} onChange={(v) => update("lpdhNumber", v)} />
-        <Field label="Nomor dasar kuitansi relawan" value={data.volunteerReceiptBaseNo} onChange={(v) => update("volunteerReceiptBaseNo", v)} placeholder="mis. RL/0410/2026" />
+        {data.volunteerReceiptBaseNo && <Field label="Nomor dasar kuitansi relawan (historis)" value={data.volunteerReceiptBaseNo} disabled />}
         <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
         <Field label="Ref penarikan/bank relawan" value={data.volunteerPaymentReference} onChange={(v) => update("volunteerPaymentReference", v)} />
         <Field label="Bukti bank relawan (1 untuk batch)" value={data.volunteerBatchEvidenceLink} onChange={(v) => update("volunteerBatchEvidenceLink", v)} placeholder="https://..." />
-        <Field label="Nomor dasar kuitansi guru/kader" value={data.incentiveReceiptBaseNo} onChange={(v) => update("incentiveReceiptBaseNo", v)} placeholder="mis. IK/0410/2026" />
+        {data.incentiveReceiptBaseNo && <Field label="Nomor dasar kuitansi guru/kader (historis)" value={data.incentiveReceiptBaseNo} disabled />}
         <Field label="Tanggal pembayaran guru/kader" type="date" value={data.incentivePaymentDate} onChange={(v) => update("incentivePaymentDate", v)} />
         <Field label="Ref penarikan/bank guru/kader" value={data.incentivePaymentReference} onChange={(v) => update("incentivePaymentReference", v)} />
         <Field label="Bukti bank guru/kader (1 untuk batch)" value={data.incentiveBatchEvidenceLink} onChange={(v) => update("incentiveBatchEvidenceLink", v)} placeholder="https://..." />
-        <Field label="No bukti agregat guru (C_Operasional)" value={data.schoolPicOperationalProofNo} onChange={(v) => update("schoolPicOperationalProofNo", v)} placeholder="kosong = nomor dasar-GURU" />
-        <Field label="No bukti agregat kader (C_Operasional)" value={data.cadreOperationalProofNo} onChange={(v) => update("cadreOperationalProofNo", v)} placeholder="kosong = nomor dasar-KADER" />
-        <Field label="No invoice bahan baku" value={data.rawInvoiceNo} onChange={(v) => update("rawInvoiceNo", v)} />
-        <Field label="Tanggal invoice bahan baku" type="date" value={data.rawInvoiceDate || serviceDate} onChange={(v) => update("rawInvoiceDate", v)} />
-        <Field label="Link invoice/bukti bahan" value={data.rawInvoiceEvidenceLink} onChange={(v) => update("rawInvoiceEvidenceLink", v)} placeholder="https://..." />
-        <Field label="No invoice operasional harian" value={data.operationalInvoiceNo} onChange={(v) => update("operationalInvoiceNo", v)} />
-        <Field label="Tanggal invoice operasional" type="date" value={data.operationalInvoiceDate || serviceDate} onChange={(v) => update("operationalInvoiceDate", v)} />
-        <Field label="Link invoice/bukti operasional" value={data.operationalInvoiceEvidenceLink} onChange={(v) => update("operationalInvoiceEvidenceLink", v)} placeholder="https://..." />
+        {data.schoolPicOperationalProofNo && <Field label="No bukti agregat guru (historis)" value={data.schoolPicOperationalProofNo} disabled />}
+        {data.cadreOperationalProofNo && <Field label="No bukti agregat kader (historis)" value={data.cadreOperationalProofNo} disabled />}
+        {data.rawInvoiceNo && <Field label="No invoice bahan baku (historis)" value={data.rawInvoiceNo} disabled />}
+        {data.operationalInvoiceNo && <Field label="No invoice operasional (historis)" value={data.operationalInvoiceNo} disabled />}
       </div>
     </Section>
 
-    <Section title="A_PM · Penerima Manfaat & Distribusi">
+    <Section title="A_PM · Penerima Manfaat & Distribusi" subtitle="Isian awal distribusi dan penerimaan mengikuti target master, BNBA Ya, organoleptik 3 dan retained sample 2. Periksa dan edit sesuai realisasi; nomor dan link BAST tetap wajib dilengkapi.">
       <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
           <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>
-          <td>{preview?.pmRows?.find(x => x.code === row.code)?.targetPm ?? masterData.groupTargets[row.code] ?? 0}</td>
+          <td>{preview?.pmRows?.find(x => x.code === row.code)?.targetPm ?? row.targetPm ?? aggregateMasterTargets(masterData)[row.code]}</td>
           <td><input type="number" value={row.distributed ?? ""} onChange={(e) => updatePmRow(index, "distributed", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.received ?? ""} onChange={(e) => updatePmRow(index, "received", numValue(e.target.value))}/></td>
           <td><input type="number" value={row.notReceived ?? ""} onChange={(e) => updatePmRow(index, "notReceived", numValue(e.target.value))}/></td>
@@ -531,10 +544,8 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="B_BahanBaku" subtitle={`Total sementara Rp ${rawTotal.toLocaleString("id-ID")}. Nomor dan nilai dokumen FINAL terkunci; satu invoice boleh memuat banyak barang.`} actions={<>
-      <button type="button" onClick={() => setDaily({...data, rawMaterials:data.rawMaterials.map((row)=>row.sourceDocumentId ? row : ({...row,date:data.rawInvoiceDate||serviceDate,invoiceNo:data.rawInvoiceNo||row.invoiceNo||"",evidenceLink:data.rawInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian manual</button>
-      <button type="button" onClick={() => addList("rawMaterials", { date: data.rawInvoiceDate || serviceDate, name: "", category: "", qty: 0, unit: "kg", price: 0, supplier: "", invoiceNo: data.rawInvoiceNo || "", evidenceLink: data.rawInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah bahan</button>
-    </>}>
+    <Section title="B_BahanBaku" subtitle={`Total Rp ${rawTotal.toLocaleString("id-ID")}. Buat invoice lalu finalkan pada tab Buat Invoice & Kuitansi. Baris manual historis tetap ditampilkan.`}>
+      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Bahan</th><th>Kategori</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Supplier</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.rawMaterials.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("rawMaterials", index, "date", e.target.value)}/></td>
@@ -547,13 +558,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.invoiceNo || ""} onChange={(e) => updateList("rawMaterials", index, "invoiceNo", e.target.value)} placeholder="Nomor dasar invoice"/></td>
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("rawMaterials", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" onClick={() => deleteList("rawMaterials", index)} type="button"><Trash2 size={14}/></button></td>
-        </tr>)}{!data.rawMaterials.length && <EmptyRow colSpan={10}>Tarik data FINAL dari Kalkulator atau tambah bahan manual.</EmptyRow>}</tbody></table></div>
+        </tr>)}{!data.rawMaterials.length && <EmptyRow colSpan={10}>Finalkan invoice bahan baku agar otomatis masuk di sini.</EmptyRow>}</tbody></table></div>
+      </fieldset>
     </Section>
 
-    <Section title="C_Operasional" subtitle={`Belanja operasional lain Rp ${opTotal.toLocaleString("id-ID")}. Upah relawan dan insentif guru/kader dihitung terpisah lalu masuk total operasional.`} actions={<>
-      <button type="button" onClick={() => setDaily({...data, operations:data.operations.map((row)=>row.sourceDocumentId ? row : ({...row,date:data.operationalInvoiceDate||serviceDate,invoiceNo:data.operationalInvoiceNo||row.invoiceNo||"",evidenceLink:data.operationalInvoiceEvidenceLink||row.evidenceLink||""}))})}>Terapkan invoice harian manual</button>
-      <button type="button" onClick={() => addList("operations", { date: data.operationalInvoiceDate || serviceDate, itemCode: "", description: "", qty: 1, unit: "unit", price: 0, invoiceNo: data.operationalInvoiceNo || "", evidenceLink: data.operationalInvoiceEvidenceLink || "", note: "" })}><Plus size={15}/> Tambah</button>
-    </>}>
+    <Section title="C_Operasional" subtitle={`Belanja operasional Rp ${opTotal.toLocaleString("id-ID")}. Semua invoice FINAL masuk otomatis. Baris manual historis tetap ditampilkan.`}>
+      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Item master</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Harga</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.operations.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("operations", index, "date", e.target.value)}/></td>
@@ -566,9 +576,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("operations", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" onClick={() => deleteList("operations", index)} type="button"><Trash2 size={14}/></button></td>
         </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></table></div>
+      </fieldset>
     </Section>
 
-    <Section title="C1_Relawan" subtitle={`Total upah harian relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Buat kuitansi per penerima di tab Buat Invoice & Kuitansi; pembayaran 1 hari.`} actions={<button type="button" onClick={prepareVolunteers}><RefreshCw size={15}/> Siapkan dari master</button>}>
+    <Section title="C1_Relawan" subtitle={`Total upah harian relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Buat paket kuitansi harian di tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
+      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Nama</th><th>Tugas</th><th>Tgl Bayar</th><th>Hari Kerja</th><th>Tarif/Hari</th><th>Jumlah</th><th>Metode</th><th>Kuitansi override</th><th>Link Bukti</th></tr></thead>
         <tbody>{data.volunteerPayments.map((row, index) => <tr key={row.volunteerCode || index}>
           <td>{row.name}</td><td>{row.role}</td>
@@ -579,10 +591,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><select value={row.paymentMethod || "Transfer"} onChange={(e) => updateList("volunteerPayments", index, "paymentMethod", e.target.value)}><option>Transfer</option><option>Tunai</option><option>Lainnya</option></select></td>
           <td><input value={row.receiptNo || ""} onChange={(e) => updateList("volunteerPayments", index, "receiptNo", e.target.value)} placeholder="kosong = pakai nomor dasar"/></td>
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("volunteerPayments", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
-        </tr>)}{!data.volunteerPayments.length && <EmptyRow colSpan={9}>Klik “Siapkan dari master”.</EmptyRow>}</tbody></table></div>
+        </tr>)}{!data.volunteerPayments.length && <EmptyRow colSpan={9}>Finalkan paket kuitansi relawan.</EmptyRow>}</tbody></table></div>
+      </fieldset>
     </Section>
 
-    <Section title="Insentif Guru / Kader (bagian operasional)" subtitle={`Total Rp ${recipientTotal.toLocaleString("id-ID")}. Satu nomor dasar kuitansi dapat dipecah otomatis per penerima.`} actions={<button type="button" onClick={() => addList("incentiveRecipients", { type: "Guru", name: "", unitName: "", date: serviceDate, amount: 0, receiptNo: "", evidenceLink: "" })}><Plus size={15}/> Tambah penerima</button>}>
+    <Section title="Insentif Guru / Kader (bagian operasional)" subtitle={`Total Rp ${recipientTotal.toLocaleString("id-ID")}. Buat paket Guru dan Kader terpisah pada tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
+      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Jenis</th><th>Nama</th><th>Sekolah/Posyandu</th><th>Tgl</th><th>Nilai</th><th>Kuitansi override</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.incentiveRecipients.map((row,index)=><tr key={index}>
           <td><select value={row.type || "Guru"} onChange={(e)=>updateList("incentiveRecipients",index,"type",e.target.value)}><option>Guru</option><option>Kader</option></select></td>
@@ -594,6 +608,14 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("incentiveRecipients",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("incentiveRecipients",index)}><Trash2 size={14}/></button></td>
         </tr>)}{!data.incentiveRecipients.length&&<EmptyRow colSpan={8}/>}</tbody></table></div>
+      </fieldset>
+    </Section>
+
+    <Section title="Lengkapi bukti invoice & kuitansi" subtitle="Link bukti dan referensi pembayaran dapat dilengkapi setelah dokumen FINAL. Nilai, nomor dan penerima tetap mengikuti dokumen.">
+      {["rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"].map(key => <div key={key} className="lpdh-form-grid">{data[key].map((row, index) => <React.Fragment key={index}>
+        <Field label={`${row.invoiceNo || row.receiptNo || "Historis"} · ${row.name || row.description} · Link bukti`} value={row.evidenceLink} onChange={value => updateList(key, index, "evidenceLink", value)} placeholder="https://..."/>
+        <Field label="Referensi pembayaran" value={row.paymentReference} onChange={value => updateList(key, index, "paymentReference", value)}/>
+      </React.Fragment>)}</div>)}
     </Section>
 
     <Section title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">

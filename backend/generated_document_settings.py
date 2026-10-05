@@ -69,7 +69,7 @@ def save_profile(cur, site, header, actor):
 
 def reserve_numbers(cur, document_id, payload):
     numbers = [(checked_number(payload.document_number), "DOCUMENT")]
-    if payload.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
+    if payload.document_type in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"} and payload.header_payload.get("paymentSnapshotVersion") != 2:
         numbers += [(checked_number(item.metadata.get("receiptNo")), "RECEIPT") for item in payload.items]
     normalized = [number.casefold() for number, _ in numbers]
     if len(set(normalized)) != len(normalized):

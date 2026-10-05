@@ -9,12 +9,12 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.utils import ImageReader
-from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 try:
-    from .generated_document_logic import receipt_number
+    from .generated_document_logic import aggregate_payment, receipt_number
 except ImportError:
-    from generated_document_logic import receipt_number
+    from generated_document_logic import aggregate_payment, receipt_number
 
 ASSETS = Path(__file__).with_name("document_assets")
 MONTHS = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
@@ -76,12 +76,25 @@ def header(document, title, number=None, width=523, artwork=None):
     return table
 
 
+class SenderArtwork(Flowable):
+    """A fixed signing area: stamp partially overlaps the sender signature."""
+    def __init__(self, artwork=None):
+        super().__init__()
+        self.width, self.height = 134, 58
+        self.artwork = artwork or {}
+
+    def draw(self):
+        for field, x, y, width, height in (("signatureAssetId", 30, 5, 96, 48), ("stampAssetId", 8, 0, 58, 58)):
+            data = self.artwork.get(field)
+            if data:
+                self.canv.drawImage(ImageReader(BytesIO(data)), x, y, width, height, preserveAspectRatio=True, anchor="c", mask="auto")
+
+
 def signatures(document, recipient=None, width=523, artwork=None):
     h = document["header"]
     sender_name = h.get("senderSignatory") or ""
     # Artwork is loaded from authenticated private storage, never public assets.
-    sender = Table([[uploaded_image(artwork, "stampAssetId", 48, 48), uploaded_image(artwork, "signatureAssetId", 82, 48)]], colWidths=[50, 84])
-    sender.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    sender = SenderArtwork(artwork)
     receiver_name = recipient if recipient is not None else h.get("recipientSignatory") or "________________"
     # Individual recipients sign after printing. Do not reuse another person's signature.
     receiver = uploaded_image(artwork, "recipientSignatureAssetId", 100, 48) if recipient is None else Spacer(100, 48)
@@ -119,6 +132,29 @@ def invoice_story(document, width, artwork=None):
     return story
 
 
+def aggregate_payment_story(document, width, artwork=None):
+    subtype = document["header"].get("recipientSubtype") or "Relawan"
+    title = "KUITANSI UPAH RELAWAN" if document["documentType"] == "UPAH_RELAWAN" else "KUITANSI INSENTIF " + subtype.upper()
+    # Reuse the invoice cover layout with exactly one daily package line.
+    cover = {**document, "items": [{"itemName": title + " — " + date_label(document["serviceDate"]),
+             "quantity": 1, "unit": "hari", "unitPrice": document["total"], "lineTotal": document["total"]}]}
+    story = invoice_story(cover, width, artwork)
+    story[0] = header(document, title, width=width, artwork=artwork)
+    story += [PageBreak(), header(document, "LAMPIRAN DAFTAR PENERIMA", width=width, artwork=artwork), Spacer(1, 10),
+              p("Pembayaran harian tanggal " + date_label(document["serviceDate"]) + ". Tanda tangan penerima diisi setelah pembayaran diterima."), Spacer(1, 8)]
+    data = [[p(x, True, TA_CENTER) for x in ("No", "Nama Penerima", "Unit / Tugas", "Jumlah", "Tanda Terima")]]
+    for index, item in enumerate(document["items"], 1):
+        metadata = item.get("metadata") or {}
+        data.append([p(index), p(item["itemName"]), p(metadata.get("role") or metadata.get("unitName") or ""),
+                     p(money(item["lineTotal"]), align=TA_RIGHT), p("\n\n________________\nTanggal: __________")])
+    data.append([p("Total", True), "", "", p(money(document["total"]), True, TA_RIGHT), ""])
+    table = Table(data, colWidths=[width * .05, width * .27, width * .24, width * .20, width * .24], repeatRows=1)
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), .55, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")), ("SPAN", (0, -1), (2, -1)),
+                              ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    return story + [table]
+
+
 def render_document_pdf(document, artwork=None):
     output = BytesIO()
     pdf = SimpleDocTemplate(output, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32,
@@ -126,6 +162,8 @@ def render_document_pdf(document, artwork=None):
     width = A4[0] - 72
     if document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"}:
         story = invoice_story(document, width, artwork)
+    elif aggregate_payment(document):
+        story = aggregate_payment_story(document, width, artwork)
     else:
         story = []
         for index, item in enumerate(document["items"]):

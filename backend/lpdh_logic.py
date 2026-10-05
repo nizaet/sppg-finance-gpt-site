@@ -147,54 +147,100 @@ def parameters(masters: dict[str, Any]) -> dict[str, Any]:
 
 
 def master_target_by_group(masters: dict[str, Any]) -> dict[str, float]:
-    totals: dict[str, float] = defaultdict(float)
-    represented = set()
-    detailed_units = set()
-    def key(row):
-        return str(row.get("code") or row.get("unitName") or row.get("name") or "").strip().casefold()
-    for row in (masters.get("schools") or []) + (masters.get("posyandu") or []):
-        if str(row.get("status") or "Aktif").strip().lower() != "nonaktif":
-            detailed_units.add(key(row))
+    # Workbook totals remain stored as import history, never an extra target layer.
+    totals: dict[str, float] = {code: 0.0 for code, *_ in GROUPS}
     school_codes = {"PAUD": ("KS-01", None), "SD/MI": ("KS-02", "KS-03"),
                     "SMP/MTs": (None, "KS-04"), "SMA/MA/SMK/SLB": (None, "KS-05"),
                     "Santri": (None, "KS-06"), "PTK": (None, "PTK")}
     for row in masters.get("schools") or []:
-        if str(row.get("status") or "Aktif").strip().lower() == "nonaktif":
+        if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
             continue
         small_code, large_code = school_codes.get(str(row.get("schoolType") or ""), (None, None))
         if small_code:
-            represented.add(small_code)
             totals[small_code] += as_number(row.get("smallPortions"))
         if large_code:
-            represented.add(large_code)
             totals[large_code] += as_number(row.get("largePortions"))
         if "staffLarge" in row:
-            represented.add("PTK")
             totals["PTK"] += as_number(row.get("staffLarge"))
     for row in masters.get("posyandu") or []:
-        if str(row.get("status") or "Aktif").strip().lower() == "nonaktif":
+        if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
             continue
-        represented.update({"KS-09", "KS-07", "KS-08"})
         totals["KS-09"] += as_number(row.get("balitaSmall"))
         totals["KS-07"] += as_number(row.get("pregnantLarge"))
         totals["KS-08"] += as_number(row.get("breastfeedingLarge"))
-    for row in masters.get("beneficiaries") or []:
-        if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
-            continue
-        if key(row) and key(row) in detailed_units:
-            continue
-        code = str(row.get("groupCode") or row.get("kodeKelompok") or row.get("code") or "").upper().strip()
-        if code in {x[0] for x in GROUPS}:
-            represented.add(code)
-            totals[code] += as_number(row.get("targetPm") if "targetPm" in row else row.get("target"))
-    for code, amount in (masters.get("groupTargets") or {}).items():
-        if code in {x[0] for x in GROUPS} and code not in represented:
-            totals[code] = as_number(amount)
     return totals
+
+
+def normalize_daily_draft(masters, daily, status="DRAFT"):
+    out = deepcopy(daily or {})
+    if status == "GENERATED" or out.get("_historicalGeneratedSnapshot"):
+        out["_historicalGeneratedSnapshot"] = True
+        return out
+    out["_dailyWorkflowVersion"] = 2
+    out["_documentWorkflow"] = True
+    targets = master_target_by_group(masters)
+    pm = out.setdefault("pm", {})
+    by_code = {str(row.get("code") or row.get("groupCode") or "").upper(): row for row in pm.get("rows") or []}
+    rows = []
+    for code, *_ in GROUPS:
+        row = deepcopy(by_code.get(code, {}))
+        row.update(code=code, targetPm=targets[code])
+        for field in ("distributed", "received"):
+            if row.get(field) in (None, ""):
+                row[field] = targets[code]
+        if row.get("bnba") in (None, ""):
+            row["bnba"] = "Ya"
+        rows.append(row)
+    pm["rows"] = rows
+    production = pm.setdefault("production", {})
+    for field, value in (("organoleptic", 3), ("retainedSample", 2)):
+        if production.get(field) in (None, ""):
+            production[field] = value
+    if production.get("produced") in (None, ""):
+        production["produced"] = sum(as_number(row.get("distributed")) for row in rows) + sum(as_number(production.get(field)) for field in ("organoleptic", "retainedSample", "notDistributed", "buffer"))
+    return out
+
+
+def validate_daily_financial_sources(incoming, existing):
+    """New expense entries must originate from a FINAL invoice, including API callers."""
+    for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"):
+        historical = [row for row in (existing or {}).get(key) or [] if not row.get("sourceDocumentId")]
+        submitted = [row for row in (incoming or {}).get(key) or [] if not row.get("sourceDocumentId")]
+        protected = lambda rows: [{field: value for field, value in row.items() if field not in {"evidenceLink", "paymentReference"}} for row in rows]
+        if protected(submitted) != protected(historical):
+            raise ValueError("Biaya dan pembayaran baru wajib berasal dari invoice/kuitansi FINAL. Nilai dan identitas baris manual historis dipertahankan; bukti dapat dilengkapi.")
 
 
 def merged_pm_rows(masters: dict[str, Any], daily: dict[str, Any], effective: bool) -> list[dict[str, Any]]:
     targets = master_target_by_group(masters)
+    if daily.get("_historicalGeneratedSnapshot") and daily.get("_dailyWorkflowVersion") != 2:
+        # Old generated states may have omitted targetPm and relied on workbook
+        # fallback. Preserve that historical calculation without enabling it for drafts.
+        represented, units = set(), set()
+        unit_key = lambda row: str(row.get("code") or row.get("unitName") or row.get("name") or "").strip().casefold()
+        codes = {"PAUD": {"KS-01"}, "SD/MI": {"KS-02", "KS-03"}, "SMP/MTs": {"KS-04"}, "SMA/MA/SMK/SLB": {"KS-05"}, "Santri": {"KS-06"}, "PTK": {"PTK"}}
+        for row in masters.get("schools") or []:
+            if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
+                continue
+            units.add(unit_key(row))
+            represented.update(codes.get(row.get("schoolType"), set()))
+            if "staffLarge" in row:
+                represented.add("PTK")
+        for row in masters.get("posyandu") or []:
+            if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"}:
+                continue
+            units.add(unit_key(row))
+            represented.update({"KS-07", "KS-08", "KS-09"})
+        for row in masters.get("beneficiaries") or []:
+            if str(row.get("status") or "Aktif").strip().lower() in {"nonaktif", "inactive"} or unit_key(row) in units:
+                continue
+            code = str(row.get("groupCode") or row.get("kodeKelompok") or row.get("code") or "").upper().strip()
+            if code in targets:
+                represented.add(code)
+                targets[code] += as_number(row.get("targetPm") if "targetPm" in row else row.get("target"))
+        for code, amount in (masters.get("groupTargets") or {}).items():
+            if code in targets and code not in represented:
+                targets[code] = as_number(amount)
     supplied = daily.get("pm", {}).get("rows") or []
     supplied_by_code = {
         str(row.get("code") or row.get("groupCode") or "").upper().strip(): row
@@ -203,7 +249,7 @@ def merged_pm_rows(masters: dict[str, Any], daily: dict[str, Any], effective: bo
     result: list[dict[str, Any]] = []
     for code, label, portion, pic in GROUPS:
         source = supplied_by_code.get(code, {})
-        target = as_number(source.get("targetPm"), targets.get(code, 0))
+        target = targets.get(code, 0) if daily.get("_dailyWorkflowVersion") == 2 and not daily.get("_historicalGeneratedSnapshot") else as_number(source.get("targetPm"), targets.get(code, 0))
         distributed = as_number(source.get("distributed"))
         received = as_number(source.get("received"))
         not_received = as_number(source.get("notReceived"))
@@ -259,7 +305,7 @@ def final_plan_raw_rows(final_plan: dict[str, Any] | None, service_date: str) ->
 
 def raw_rows(daily: dict[str, Any], final_plan: dict[str, Any] | None, service_date: str) -> list[dict[str, Any]]:
     rows = deepcopy(daily.get("rawMaterials") or [])
-    if not rows and not daily.get("_documentWorkflow"):
+    if not rows and daily.get("_historicalGeneratedSnapshot") and not daily.get("_documentWorkflow"):
         rows = final_plan_raw_rows(final_plan, service_date)
     default_invoice = str(daily.get("rawInvoiceNo") or "").strip()
     default_evidence = str(daily.get("rawInvoiceEvidenceLink") or "").strip()
@@ -422,6 +468,18 @@ def build_register(
                     invoice_groups[key]["link"] = ""
     entries.extend(invoice_groups.values())
 
+    payment_groups = {}
+    for source, rows in (("C1_Relawan", volunteers), ("C_Operasional", incentive_recipients)):
+        for row in rows:
+            if row.get("sourceDocumentId") and row.get("aggregatePayment") and as_number(row.get("amount")) > 0:
+                key = (source, row["sourceDocumentId"])
+                payment_groups.setdefault(key, {"source": source, "sourceDocumentId": row["sourceDocumentId"], "code": f"DOC-{row['sourceDocumentId']}",
+                    "proofNo": row.get("receiptNo") or "", "date": row.get("date") or "", "amount": 0, "link": row.get("evidenceLink") or ""})
+                payment_groups[key]["amount"] += as_number(row.get("amount"))
+                if not https_url(row.get("evidenceLink")):
+                    payment_groups[key]["link"] = ""
+    entries.extend(payment_groups.values())
+
     raw_numbered = assign_document_numbers([x for x in raw if not x.get("sourceDocumentId")], "invoiceNo")
     for idx, row in enumerate(raw_numbered, 1):
         if as_number(row.get("amount")) <= 0 and not row.get("_baseProofNo"):
@@ -480,7 +538,7 @@ def build_register(
         })
 
     for idx, row in enumerate(incentive_recipients, 1):
-        if row.get("sourceDocumentId") and as_number(row.get("amount")) > 0:
+        if row.get("sourceDocumentId") and not row.get("aggregatePayment") and as_number(row.get("amount")) > 0:
             entries.append({"source": "C_Operasional", "code": f"IK-{idx:03d}", "proofNo": row.get("receiptNo") or "",
                             "date": row.get("date") or "", "amount": as_number(row.get("amount")), "link": row.get("evidenceLink") or ""})
 
@@ -488,6 +546,8 @@ def build_register(
     volunteer_base = str(daily.get("volunteerReceiptBaseNo") or "").strip()
     volunteer_for_number = []
     for row in volunteers:
+        if row.get("sourceDocumentId") and row.get("aggregatePayment"):
+            continue
         copy = deepcopy(row)
         copy["receiptBase"] = copy.get("receiptNo") or volunteer_base
         volunteer_for_number.append(copy)
@@ -1279,6 +1339,8 @@ def populate_workbook(
         if any(x.get("sourceDocumentId") for x in rows):
             special_rows[pos]["proofNo"] = "; ".join(dict.fromkeys(x.get("receiptNo") or "" for x in rows if x.get("receiptNo")))
             special_rows[pos]["evidenceLink"] = "; ".join(dict.fromkeys(x.get("evidenceLink") or "" for x in rows if x.get("evidenceLink")))
+        if any(x.get("aggregatePayment") for x in rows):
+            special_rows[pos]["note"] = f"Lampiran: {len(rows)} penerima; Kuitansi gabungan"
 
     for pos, default_name in enumerate(OPERATIONAL_DEFAULTS, start=6):
         if pos == 6:

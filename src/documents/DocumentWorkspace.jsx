@@ -38,6 +38,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const numberEdited = useRef(false);
   const numberReads = useRef(0);
   const receipts = type === "UPAH_RELAWAN" || type === "INSENTIF_GURU_KADER";
+  const legacyReceipts = receipts && Boolean(editing) && editing.header?.paymentSnapshotVersion !== 2;
+  const subtype = header.recipientSubtype || "Guru";
   const total = lines.reduce((sum, row) => sum + Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100, 0);
   const options = (master?.items || []).filter(x => x.kind === type);
   const notify = (text, error = false) => setMessage({ text, error });
@@ -97,7 +99,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     numberEdited.current = false; numberReads.current++;
     setType(nextType); setLines([]); setEditing(null); setSelected(""); setDocumentNumber(""); requestKey.current = uuid();
     const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
-    setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile });
+    setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile, ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? { paymentSnapshotVersion: 2, recipientSubtype: "Guru" } : {}) });
   };
   const chooseType = next => {
     if (next === type) return;
@@ -116,7 +118,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (type === "UPAH_RELAWAN") rows = (master?.volunteers || []).map(x => ({ ...blank(type), itemName: x.name, unitPrice: Number(x.dailyRate) || 0, metadata: { volunteerCode: x.code || x.name, role: x.role || "" } }));
     else {
       const unique = new Map();
-      (master?.recipients || []).forEach(x => unique.set(`${x.name.toLowerCase()}:${x.recipientType}`, x));
+      (master?.recipients || []).filter(x => legacyReceipts || x.recipientType === subtype).forEach(x => unique.set(`${x.name.toLowerCase()}:${x.recipientType}`, x));
       rows = [...unique.values()].map(x => ({ ...blank(type), itemName: x.name, metadata: { recipientType: x.recipientType, unitName: x.unitName } }));
     }
     if (!rows.length) return notify("Master penerima masih kosong. Tambah penerima manual atau lengkapi Master Data LPDH.", true);
@@ -136,9 +138,10 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (!documentNumber.trim()) throw new Error("Isi nomor invoice atau nomor paket kuitansi secara manual terlebih dahulu.");
     if (!lines.length) throw new Error("Tambahkan item atau penerima terlebih dahulu.");
     if (lines.some(x => !x.itemName.trim() || !x.unit.trim() || Number(x.quantity) <= 0 || Number(x.unitPrice) <= 0)) throw new Error("Nama, satuan, jumlah, dan harga/nominal positif wajib diisi pada setiap baris.");
-    if (receipts && lines.some(x => !x.metadata?.receiptNo?.trim())) throw new Error("Isi nomor kuitansi manual untuk setiap penerima.");
+    if (legacyReceipts && lines.some(x => !x.metadata?.receiptNo?.trim())) throw new Error("Isi nomor kuitansi manual untuk setiap penerima historis.");
+    if (type === "INSENTIF_GURU_KADER" && !legacyReceipts && lines.some(x => x.metadata?.recipientType !== subtype)) throw new Error("Penerima wajib sesuai paket Guru atau Kader.");
     const payload = { site, service_date: serviceDate, document_type: type, request_key: requestKey.current,
-      document_number: documentNumber.trim(), header_payload: { ...header, documentProfileKey: profile }, items: lines.map(x => ({ item_name: x.itemName, category_code: x.category, quantity: Number(x.quantity), unit: x.unit, unit_price: Number(x.unitPrice), metadata: x.metadata || {} })) };
+      document_number: documentNumber.trim(), header_payload: { ...header, documentProfileKey: profile, ...(receipts && !legacyReceipts ? { paymentSnapshotVersion: 2, recipientSubtype: subtype } : {}) }, items: lines.map(x => ({ item_name: x.itemName, category_code: x.category, quantity: Number(x.quantity), unit: x.unit, unit_price: Number(x.unitPrice), metadata: x.metadata || {} })) };
     const result = editing ? await documentApi.edit(editing.id, payload) : await documentApi.create(payload);
     if (version !== context.current) return;
     setMaster(old => ({ ...old, profiles: { ...old?.profiles, [profile]: { ...header, documentProfileKey: profile, evidenceLink: "", paymentReference: "" } } }));
@@ -177,7 +180,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const recreate = doc => {
     if ((lines.length || documentNumber) && !window.confirm("Salin item dokumen dibatalkan? Isian yang belum disimpan akan diganti.")) return;
     numberEdited.current = false; numberReads.current++;
-    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setCalendarRevision(x => x + 1); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "" });
+    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setCalendarRevision(x => x + 1); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "", ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(doc.documentType) ? { paymentSnapshotVersion: 2, recipientSubtype: doc.header.recipientSubtype || doc.items[0]?.metadata?.recipientType || "Guru" } : {}) });
     setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI"));
     setLines(doc.items.map(x => ({ ...x, metadata: { ...x.metadata, receiptNo: "" } }))); requestKey.current = uuid();
     notify("Item disalin sebagai isian baru, belum disimpan. Isi nomor dokumen dan nomor kuitansi baru, lalu Simpan draft. Riwayat lama tetap dibatalkan.");
@@ -250,7 +253,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <Field label={receipts ? "Nomor paket kuitansi (manual)" : "Nomor invoice (otomatis, bisa diedit)"} value={documentNumber} onChange={value => { numberEdited.current = true; numberReads.current++; setDocumentNumber(value); }}/>
           <Field label="Tanggal pembayaran / pelayanan" type="date" value={serviceDate} onChange={changeDate}/>
           <Field label="Jenis dokumen"><select value={type} disabled={Boolean(editing)} onChange={e => chooseType(e.target.value)}>{Object.entries(TYPES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
-          <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], documentProfileKey: next, evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{["KOPERASI", "YAYASAN"].map(key => <option key={key}>{key}</option>)}</select></Field>
+          <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], documentProfileKey: next, paymentSnapshotVersion: header.paymentSnapshotVersion, recipientSubtype: header.recipientSubtype, evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{["KOPERASI", "YAYASAN"].map(key => <option key={key}>{key}</option>)}</select></Field>
+          {type === "INSENTIF_GURU_KADER" && !legacyReceipts && <Field label="Jenis paket insentif"><select aria-label="Jenis paket insentif" value={subtype} disabled={Boolean(editing)} onChange={e => { if (lines.length && !window.confirm("Ganti paket dan kosongkan penerima yang belum disimpan?")) return; setHeader(old => ({ ...old, recipientSubtype: e.target.value })); setLines([]); }}><option>Guru</option><option>Kader</option></select></Field>}
         </div>
         <details className="doc-details" open={!header.issuerName || !header.recipientAddress}>
           <summary>Kop, alamat, rekening & penandatangan {site === "MAJA" ? "(terisi dari contoh Maja)" : "(lengkapi data Cemplang)"}</summary>
@@ -268,12 +272,12 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           {!receipts && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={addSelected} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
           {type === "BAHAN_BAKU" && <button type="button" onClick={pullPlan}>Tarik Final Kalkulator</button>}
           {receipts && <button type="button" onClick={prepare}>Siapkan penerima dari master</button>}
-          <button type="button" onClick={() => setLines(rows => [...rows, blank(type)])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
+          <button type="button" onClick={() => setLines(rows => [...rows, { ...blank(type), metadata: { recipientType: subtype } }])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
         </div>
-        <p className="doc-hint">{receipts ? "Pembayaran satu hari per penerima. Satu file PDF memuat seluruh kuitansi jenis ini; nomor setiap penerima berbeda." : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>
-        <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? "Nama penerima & nomor kuitansi manual" : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
+        <p className="doc-hint">{receipts ? (legacyReceipts ? "Kuitansi historis mempertahankan nomor tiap penerima." : "Satu nomor kuitansi untuk total pembayaran harian. Halaman berikutnya memuat semua penerima dan kolom tanda terima kosong. Paket Guru dan Kader terpisah.") : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>
+        <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? (legacyReceipts ? "Nama penerima & nomor kuitansi manual" : "Nama penerima") : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
           {lines.map((row, index) => <tr key={index}>
-            <td><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{receipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
+            <td><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{legacyReceipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
             <td>{type === "OPERASIONAL" ? <select aria-label={`Kategori baris ${index + 1}`} value={row.category} onChange={e => update(index, "category", e.target.value)}>{(master?.categories || ["Lain-lain"]).map(x => <option key={x}>{x}</option>)}</select> : type === "INSENTIF_GURU_KADER" ? <><select aria-label="Jenis penerima" value={row.metadata?.recipientType || "Guru"} onChange={e => updateMetadata(index, "recipientType", e.target.value)}><option>Guru</option><option>Kader</option></select><input placeholder="Sekolah / posyandu" value={row.metadata?.unitName || ""} onChange={e => updateMetadata(index, "unitName", e.target.value)}/></> : type === "UPAH_RELAWAN" ? <input placeholder="Tugas" value={row.metadata?.role || ""} onChange={e => updateMetadata(index, "role", e.target.value)}/> : <input value={row.category} onChange={e => update(index, "category", e.target.value)}/>}</td>
             <td><input type="number" aria-label="Jumlah" step="0.0001" min="0.0001" disabled={receipts} value={row.quantity} onChange={e => update(index, "quantity", e.target.value)}/></td>
             <td><input aria-label="Satuan" disabled={receipts} value={row.unit} onChange={e => update(index, "unit", e.target.value)}/></td>
@@ -289,7 +293,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     <section className="doc-card"><div className="doc-heading"><div><h3>Register Invoice & Kuitansi · {serviceDate}</h3><p>Beberapa invoice operasional per hari. Final masuk data harian dan diarsipkan ke Drive; pembatalan menyimpan riwayat, bukan menghapus bukti.</p></div>{onOpenDaily && <button type="button" onClick={onOpenDaily}>Buka Data Harian</button>}</div>
       <label className="doc-history-toggle"><input type="checkbox" checked={showCancelled} onChange={e => setShowCancelled(e.target.checked)}/> Tampilkan riwayat dibatalkan</label>
       <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id}>
-        <td><strong>{doc.documentNumber}</strong></td><td>{TYPES[doc.documentType]}</td><td>{doc.items.length}</td><td className="doc-money">{money(doc.total)}</td>
+        <td><strong>{doc.documentNumber}</strong></td><td>{doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td>{doc.items.length}</td><td className="doc-money">{money(doc.total)}</td>
         <td><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
           {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri ? "Tersimpan di Drive" : "Belum tersimpan di Drive"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}

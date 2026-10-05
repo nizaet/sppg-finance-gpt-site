@@ -12,6 +12,7 @@
 ## Accounting
 - [Costing](accounting/costing.md)
 - [Accountant Workflow](accounting/accountant-workflow.md)
+- [LPDH Document-First Workflow](accounting/lpdh-document-workflow.md)
 - [Internal Cash Reimbursement](accounting/internal-reimbursement.md)
 - [BGN Workflow](accounting/bgn-workflow.md)
 
