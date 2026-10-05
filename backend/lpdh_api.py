@@ -343,7 +343,54 @@ def reference(request: Request, site: str = Query()) -> dict[str, Any]:
     return {"sheet": "Ref", "rows": workbook_reference_rows()}
 
 
-@router.get("/calculator-final")
+
+
+@router.get("/official-template")
+def official_template_status(request: Request, site: str = Query()) -> dict[str, Any]:
+    _require_db()
+    target = _site(request, site)
+    masters = _load_master(target)["data"] or {}
+    return {
+        "site": target,
+        "installed": bool(masters.get("_officialTemplateBase64")),
+        "filename": masters.get("_officialTemplateFilename") or None,
+    }
+
+
+@router.put("/official-template")
+def save_official_template(payload: OfficialTemplateIn, request: Request) -> dict[str, Any]:
+    _require_db()
+    site = _site(request, payload.site)
+    try:
+        raw = base64.b64decode(payload.content_base64, validate=True)
+        from openpyxl import load_workbook
+        import io
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=False)
+        required = {"Identitas","A_PM","B_BahanBaku","C_Operasional","C1_Relawan","D_Insentif","E_Saldo","F_TopUp","G_CekPPK","H_RekapPPK","I_RegisterBukti","J_Pengesahan","Ref"}
+        missing = sorted(required.difference(workbook.sheetnames))
+        if missing:
+            raise ValueError("sheet wajib tidak ada: " + ", ".join(missing))
+    except Exception as exc:
+        raise HTTPException(400, f"Template LPDH tidak valid: {exc}") from exc
+    current = _load_master(site)["data"] or {}
+    current["_officialTemplateBase64"] = payload.content_base64
+    current["_officialTemplateFilename"] = payload.filename
+    actor = _role(request)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """insert into lpdh_site_state(site,data,revision,updated_by,updated_at)
+                   values (%s,%s::jsonb,1,%s,now())
+                   on conflict (site) do update
+                   set data=excluded.data,revision=lpdh_site_state.revision+1,
+                       updated_by=excluded.updated_by,updated_at=now()
+                   returning revision""",
+                (site, json.dumps(current, ensure_ascii=False), actor),
+            )
+            revision = cur.fetchone()["revision"]
+        conn.commit()
+    return {"site": site, "installed": True, "filename": payload.filename, "revision": revision}
+\n\n@router.get("/calculator-final")
 def get_calculator_final(request: Request, site: str = Query(), service_date: date = Query(alias="date")) -> dict[str, Any]:
     _require_db()
     target = _site(request, site)
@@ -420,7 +467,14 @@ def generate(payload: GenerateIn, request: Request) -> dict[str, Any]:
             },
         )
 
-    content = populate_workbook(masters, daily, preview_data, payload.service_date.isoformat())
+    template_bytes = None
+    stored_template = masters.get("_officialTemplateBase64")
+    if stored_template:
+        try:
+            template_bytes = base64.b64decode(stored_template, validate=True)
+        except Exception:
+            template_bytes = None
+    content = populate_workbook(masters, daily, preview_data, payload.service_date.isoformat(), template_bytes=template_bytes)
     filename = f"LPDH_{site}_{payload.service_date.isoformat()}.xlsx"
     with connection() as conn:
         with conn.cursor() as cur:

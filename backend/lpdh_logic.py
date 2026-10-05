@@ -663,10 +663,9 @@ def populate_workbook(
     daily: dict[str, Any],
     preview: dict[str, Any],
     service_date: str,
+    template_bytes: bytes | None = None,
 ) -> bytes:
-    if not LPDH_TEMPLATE.is_file():
-        raise FileNotFoundError(f"LPDH template missing: {LPDH_TEMPLATE}")
-    wb = load_workbook(LPDH_TEMPLATE, data_only=False)
+    wb = load_lpdh_workbook(template_bytes)
     try:
         wb.calculation.calcMode = "auto"
         wb.calculation.fullCalcOnLoad = True

@@ -162,6 +162,30 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
           }});
           applyPanelState();
         }}
+        var finalizeLpdhButton = document.createElement('button');
+        finalizeLpdhButton.type = 'button';
+        finalizeLpdhButton.className = 'railway-app-control railway-lpdh-final';
+        finalizeLpdhButton.innerHTML = '<i class="fas fa-circle-check"></i><span>Finalkan untuk LPDH</span>';
+        finalizeLpdhButton.addEventListener('click', async function () {
+          if (typeof window.__finalizeLpdhCurrentPlan !== 'function') {
+            alert('Modul FINAL LPDH belum siap. Muat ulang halaman lalu coba lagi.');
+            return;
+          }
+          finalizeLpdhButton.disabled = true;
+          var original = finalizeLpdhButton.innerHTML;
+          finalizeLpdhButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Finalisasi...</span>';
+          try { await window.__finalizeLpdhCurrentPlan(); }
+          finally { finalizeLpdhButton.disabled = false; finalizeLpdhButton.innerHTML = original; }
+        });
+        controls.appendChild(finalizeLpdhButton);
+
+        var lpdhWorkspaceButton = document.createElement('button');
+        lpdhWorkspaceButton.type = 'button';
+        lpdhWorkspaceButton.className = 'railway-app-control';
+        lpdhWorkspaceButton.innerHTML = '<i class="fas fa-file-excel"></i><span>LPDH</span>';
+        lpdhWorkspaceButton.addEventListener('click', function () { window.location.assign('/lpdh'); });
+        controls.appendChild(lpdhWorkspaceButton);
+
         var themeButton = document.createElement('button');
         themeButton.type = 'button';
         themeButton.className = 'railway-app-control';
@@ -379,7 +403,63 @@ def render_calculator_html(unit: str, role: str, app_id: str, database_id: str, 
         "if (!db) db = getFirestore(app);",
         "if (!db) db = (window.__firestoreDatabaseId && window.__firestoreDatabaseId !== '(default)') ? getFirestore(app, window.__firestoreDatabaseId) : getFirestore(app);",
     )
-    shared_master_replacements = [
+
+    lpdh_finalize_hook = """        async function finalizeCurrentPlanForLpdh() {
+            const data = getPlanDataFromForm();
+            if (!validatePlanData(data)) return;
+            if (!currentEditingPlanId) {
+                showMessage("Simpan rencana terlebih dahulu sebelum FINAL untuk LPDH.", "error");
+                throw new Error("Rencana belum disimpan");
+            }
+            const sessionToken = sessionStorage.getItem('sppg_session_token_v1') || localStorage.getItem('sppg_session_token_v1') || '';
+            if (!sessionToken) {
+                showMessage("Sesi Railway tidak ditemukan. Silakan login ulang.", "error");
+                throw new Error("Sesi Railway tidak ditemukan");
+            }
+            try {
+                // FINAL harus merepresentasikan angka yang terlihat saat tombol ditekan.
+                // Simpan form terkini ke dokumen kalkulator yang sedang diedit lebih dulu.
+                data.updatedAt = new Date();
+                if (currentPlanData && currentPlanData.createdAt) data.createdAt = currentPlanData.createdAt;
+                await setDoc(doc(db, \`artifacts/\${appId}/public/data/dailyPlans\`, currentEditingPlanId), data, { merge: true });
+                currentPlanData = data;
+
+                const response = await fetch('/v1/lpdh/calculator-final', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + sessionToken,
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        site: String(window.__legacyUnitId || '').toUpperCase(),
+                        service_date: data.date,
+                        source_plan_id: currentEditingPlanId,
+                        plan_name: data.planName || '',
+                        payload: data
+                    })
+                });
+                const result = await response.json().catch(function () { return {}; });
+                if (!response.ok || !result.finalized) {
+                    const detail = typeof result.detail === 'string' ? result.detail : (result.detail && result.detail.message) || 'Finalisasi LPDH gagal.';
+                    throw new Error(detail);
+                }
+                showMessage(\`FINAL LPDH tersimpan untuk \${data.date} · revisi \${result.revision || 1}. LPDH sekarang dapat menarik data ini.\`, "success");
+                return result;
+            } catch (error) {
+                showMessage(\`Gagal FINAL LPDH: \${error?.message || error}\`, "error");
+                throw error;
+            }
+        }
+        window.__finalizeLpdhCurrentPlan = finalizeCurrentPlanForLpdh;
+
+"""
+    html = html.replace(
+        "        async function saveDailyPlan() {",
+        lpdh_finalize_hook + "        async function saveDailyPlan() {",
+        1,
+    )
+\n    shared_master_replacements = [
         (
             '                showMessage("Resep berhasil disimpan.", "success");',
             '                await window.__syncSharedCalculatorMaster("RECIPES", "UPSERT", recipeId, { id: recipeId, ...recipeData });\n                showMessage("Resep tersimpan dan tersinkron ke Maja + Cemplang.", "success");',
