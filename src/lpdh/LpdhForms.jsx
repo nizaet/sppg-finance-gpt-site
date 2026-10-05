@@ -389,12 +389,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       volunteerCode: v.code || v.name,
       name: v.name,
       role: v.role || "",
-      date: existing[v.code || v.name]?.date || serviceDate,
+      date: existing[v.code || v.name]?.date || data.volunteerPaymentDate || serviceDate,
       workDays: existing[v.code || v.name]?.workDays ?? 1,
       dailyRate: existing[v.code || v.name]?.dailyRate ?? v.dailyRate ?? 0,
       paymentMethod: existing[v.code || v.name]?.paymentMethod || v.paymentMethod || "Transfer",
       receiptNo: existing[v.code || v.name]?.receiptNo || "",
-      evidenceLink: existing[v.code || v.name]?.evidenceLink || "",
+      evidenceLink: existing[v.code || v.name]?.evidenceLink || data.volunteerBatchEvidenceLink || "",
     }));
     setDaily({ ...data, volunteerPayments: rows });
     onSaved?.(`${rows.length} relawan aktif disiapkan untuk pembayaran.`);
@@ -428,7 +428,13 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Status hari" value={data.dayStatus} onChange={(v) => update("dayStatus", v)} />
         <Field label="HPE ke-" type="number" value={data.hpeNumber} onChange={(v) => update("hpeNumber", v)} />
         <Field label="Nomor dasar kuitansi relawan" value={data.volunteerReceiptBaseNo} onChange={(v) => update("volunteerReceiptBaseNo", v)} placeholder="mis. RL/0410/2026" />
+        <Field label="Tanggal pembayaran relawan" type="date" value={data.volunteerPaymentDate} onChange={(v) => update("volunteerPaymentDate", v)} />
+        <Field label="Ref penarikan/bank relawan" value={data.volunteerPaymentReference} onChange={(v) => update("volunteerPaymentReference", v)} />
+        <Field label="Bukti bank relawan (1 untuk batch)" value={data.volunteerBatchEvidenceLink} onChange={(v) => update("volunteerBatchEvidenceLink", v)} placeholder="https://..." />
         <Field label="Nomor dasar kuitansi guru/kader" value={data.incentiveReceiptBaseNo} onChange={(v) => update("incentiveReceiptBaseNo", v)} placeholder="mis. IK/0410/2026" />
+        <Field label="Tanggal pembayaran guru/kader" type="date" value={data.incentivePaymentDate} onChange={(v) => update("incentivePaymentDate", v)} />
+        <Field label="Ref penarikan/bank guru/kader" value={data.incentivePaymentReference} onChange={(v) => update("incentivePaymentReference", v)} />
+        <Field label="Bukti bank guru/kader (1 untuk batch)" value={data.incentiveBatchEvidenceLink} onChange={(v) => update("incentiveBatchEvidenceLink", v)} placeholder="https://..." />
       </div>
     </Section>
 

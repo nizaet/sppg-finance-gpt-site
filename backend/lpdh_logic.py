@@ -256,6 +256,9 @@ def volunteer_rows(masters: dict[str, Any], daily: dict[str, Any]) -> list[dict[
         row["workDays"] = as_number(row.get("workDays"))
         row["amount"] = row["dailyRate"] * row["workDays"]
         row["paymentMethod"] = row.get("paymentMethod") or ref.get("paymentMethod") or ""
+        row["date"] = row.get("date") or daily.get("volunteerPaymentDate") or ""
+        row["evidenceLink"] = row.get("evidenceLink") or daily.get("volunteerBatchEvidenceLink") or ""
+        row["paymentReference"] = row.get("paymentReference") or daily.get("volunteerPaymentReference") or ""
     return rows[:60]
 
 
@@ -263,6 +266,9 @@ def incentive_recipient_rows(daily: dict[str, Any]) -> list[dict[str, Any]]:
     rows = deepcopy(daily.get("incentiveRecipients") or [])
     for row in rows:
         row["amount"] = as_number(row.get("amount"))
+        row["date"] = row.get("date") or daily.get("incentivePaymentDate") or ""
+        row["evidenceLink"] = row.get("evidenceLink") or daily.get("incentiveBatchEvidenceLink") or ""
+        row["paymentReference"] = row.get("paymentReference") or daily.get("incentivePaymentReference") or ""
     return rows
 
 
