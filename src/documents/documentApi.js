@@ -16,6 +16,10 @@ async function request(path, options = {}) {
 
 export const documentApi = {
   master: site => request(`/master?${new URLSearchParams({ site })}`),
+  get: id => request(`/${id}`),
+  uploadAsset: payload => request("/assets", { method: "POST", body: JSON.stringify(payload) }),
+  asset: id => request(`/assets/${id}`),
+  saveProfile: (site, header) => request("/profile", { method: "PUT", body: JSON.stringify({ site, header_payload: header }) }),
   list: (site, date) => request(`?${new URLSearchParams({ site, service_date: date })}`),
   calendar: (site, month) => request(`/calendar?${new URLSearchParams({ site, month })}`),
   create: payload => request("", { method: "POST", body: JSON.stringify(payload) }),

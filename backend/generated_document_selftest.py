@@ -46,6 +46,16 @@ def run(output_dir=None):
     imported = merge_final_documents(initial, docs)
     assert imported["balance"] == initial["balance"], "Unrelated daily data must be preserved"
     assert merge_final_documents(imported, docs) == imported, "Repeated import must be idempotent"
+    manual_docs = deepcopy(docs)
+    manual_docs[0]['documentNumber'] = 'INV/MAJA/001'
+    manual_docs[3]['items'][0]['metadata']['receiptNo'] = 'KWT/REL/101'
+    manual_docs[3]['items'][1]['metadata']['receiptNo'] = 'KWT/REL/102'
+    manual_daily = merge_final_documents(initial, manual_docs)
+    manual_preview = compute_preview(masters, manual_daily, service_date, True, final_plan)
+    manual_workbook = load_workbook(BytesIO(populate_workbook(masters, manual_daily, manual_preview, service_date)), data_only=False)
+    assert manual_workbook['B_BahanBaku']['K6'].value == 'INV/MAJA/001'
+    assert manual_workbook['C1_Relawan']['J6'].value == 'KWT/REL/101'
+    assert 'KWT/REL/101' in PdfReader(BytesIO(render_document_pdf(manual_docs[3]))).pages[0].extract_text()
     cancelled = deepcopy(docs)
     cancelled[1]["status"] = "CANCELLED"
     reduced = merge_final_documents(imported, cancelled)

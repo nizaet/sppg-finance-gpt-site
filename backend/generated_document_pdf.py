@@ -8,6 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 try:
@@ -45,26 +46,45 @@ def asset_profile(document):
     return profile if document.get("site") == "MAJA" and profile in {"maja-koperasi", "maja-yayasan"} else ""
 
 
-def header(document, title, number=None, width=523):
+def uploaded_image(artwork, field, width, height):
+    data = (artwork or {}).get(field)
+    return Image(BytesIO(data), width=width, height=height, kind="proportional") if data else Spacer(width, height)
+
+
+def header(document, title, number=None, width=523, artwork=None):
     h = document["header"]
     profile = asset_profile(document)
+    kop_data = (artwork or {}).get("letterheadAssetId")
+    wide_kop = False
+    if kop_data:
+        image_width, image_height = ImageReader(BytesIO(kop_data)).getSize()
+        wide_kop = image_width >= 3 * image_height
     logo = image("maja-koperasi-0.png" if profile == "maja-koperasi" else "maja-yayasan-1.png", 48, 48) if profile else Spacer(48, 48)
+    if wide_kop:
+        logo = Spacer(48, 48)
+    if kop_data and not wide_kop:
+        logo = uploaded_image(artwork, "letterheadAssetId", 48, 48)
     company = [p(h.get("issuerName"), True, size=9), p(h.get("issuerSubtitle")), p(h.get("issuerAddress"))]
     meta = [p(title, True, size=11), p(f"Nomor: {number or document['documentNumber']}"), p(f"Tanggal: {date_label(document['serviceDate'])}"), p(document["status"], True)]
     table = Table([[logo, company, meta]], colWidths=[58, width - 250, 192])
     table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6)]))
+    if wide_kop:
+        # A wide uploaded kop is printed across the page, not as a tiny logo.
+        kop = Table([[uploaded_image(artwork, "letterheadAssetId", width, 90)], [table]], colWidths=[width])
+        kop.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        return kop
     return table
 
 
-def signatures(document, recipient=None, width=523):
+def signatures(document, recipient=None, width=523, artwork=None):
     h = document["header"]
     sender_name = h.get("senderSignatory") or ""
-    # Do not distribute personal signature/stamp images in the public repo.
-    # Operator signs the printed final PDF and attaches the signed evidence.
-    sender = Spacer(140, 55)
+    # Artwork is loaded from authenticated private storage, never public assets.
+    sender = Table([[uploaded_image(artwork, "stampAssetId", 48, 48), uploaded_image(artwork, "signatureAssetId", 82, 48)]], colWidths=[50, 84])
+    sender.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     receiver_name = recipient if recipient is not None else h.get("recipientSignatory") or "________________"
     # Individual recipients sign after printing. Do not reuse another person's signature.
-    receiver = Spacer(125, 55)
+    receiver = uploaded_image(artwork, "recipientSignatureAssetId", 100, 48) if recipient is None else Spacer(100, 48)
     result = Table([
         [p("Metode Pembayaran", True), p("Penerima", align=TA_CENTER), p("Hormat Kami", align=TA_CENTER)],
         [[p(h.get("paymentMethod") or "Transfer"), p("Bank: " + str(h.get("bankName") or "")),
@@ -76,10 +96,10 @@ def signatures(document, recipient=None, width=523):
     return result
 
 
-def invoice_story(document, width):
+def invoice_story(document, width, artwork=None):
     h = document["header"]
     title = "INVOICE BAHAN BAKU" if document["documentType"] == "BAHAN_BAKU" else "INVOICE OPERASIONAL"
-    story = [header(document, title, width=width), Spacer(1, 9)]
+    story = [header(document, title, width=width, artwork=artwork), Spacer(1, 9)]
     info = Table([
         [p("Penerima: " + str(h.get("recipientName") or "")), p("Pengirim: " + str(h.get("senderName") or h.get("issuerName") or ""))],
         [p("Nama Perusahaan: " + str(h.get("recipientCompany") or "")), p("Nama Perusahaan: " + str(h.get("senderCompany") or ""))],
@@ -95,29 +115,29 @@ def invoice_story(document, width):
     table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), .55, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")), ("SPAN", (0, -1), (3, -1)),
                                ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
-    story += [table, Spacer(1, 12), KeepTogether([signatures(document, width=width)])]
+    story += [table, Spacer(1, 12), KeepTogether([signatures(document, width=width, artwork=artwork)])]
     return story
 
 
-def render_document_pdf(document):
+def render_document_pdf(document, artwork=None):
     output = BytesIO()
     pdf = SimpleDocTemplate(output, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32,
                             title=document["documentNumber"], author=document["header"].get("issuerName") or "SPPG")
     width = A4[0] - 72
     if document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"}:
-        story = invoice_story(document, width)
+        story = invoice_story(document, width, artwork)
     else:
         story = []
         for index, item in enumerate(document["items"]):
             metadata = item.get("metadata") or {}
             title = "KUITANSI UPAH RELAWAN" if document["documentType"] == "UPAH_RELAWAN" else "KUITANSI INSENTIF " + str(metadata.get("recipientType") or "Guru").upper()
             detail = metadata.get("role") or metadata.get("unitName") or ""
-            receipt = [header(document, title, receipt_number(document, index), width - 18), Spacer(1, 12),
+            receipt = [header(document, title, receipt_number(document, index), width - 18, artwork), Spacer(1, 12),
                        p("Telah diterima dari: " + str(document["header"].get("recipientName") or "")),
                        p("Nama penerima: " + item["itemName"], True, size=10), p("Unit / Tugas: " + str(detail)),
                        p("Untuk pembayaran harian tanggal " + date_label(document["serviceDate"]) + " (1 hari)."), Spacer(1, 8),
                        p("Jumlah diterima: " + money(item["lineTotal"]), True, size=12), Spacer(1, 12),
-                       signatures(document, recipient=item["itemName"], width=width - 18)]
+                       signatures(document, recipient=item["itemName"], width=width - 18, artwork=artwork)]
             box = Table([[receipt]], colWidths=[width])
             box.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .65, colors.black), ("LEFTPADDING", (0, 0), (-1, -1), 9), ("RIGHTPADDING", (0, 0), (-1, -1), 9), ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9)]))
             story += [KeepTogether([box]), Spacer(1, 14)]

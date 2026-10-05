@@ -4,6 +4,7 @@ import { documentApi } from "./documentApi.js";
 import { downloadBase64, lpdhApi } from "../lpdh/lpdhApi.js";
 import "./documents.css";
 import DocumentCalendar from "./DocumentCalendar.jsx";
+import DocumentAssets from "./DocumentAssets.jsx";
 
 const TYPES = { BAHAN_BAKU: "Invoice Bahan Baku", OPERASIONAL: "Invoice Operasional", UPAH_RELAWAN: "Kuitansi Upah Relawan", INSENTIF_GURU_KADER: "Kuitansi Insentif Guru / Kader" };
 const money = value => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 2 }).format(Number(value) || 0);
@@ -21,6 +22,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const [documents, setDocuments] = useState([]);
   const [lines, setLines] = useState([]);
   const [header, setHeader] = useState({});
+  const [documentNumber, setDocumentNumber] = useState("");
   const [profile, setProfile] = useState("KOPERASI");
   const [selected, setSelected] = useState("");
   const [editing, setEditing] = useState(null);
@@ -30,6 +32,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const [calendarRevision, setCalendarRevision] = useState(0);
   const [showCancelled, setShowCancelled] = useState(false);
   const context = useRef(0);
+  const documentReads = useRef(0);
   const requestKey = useRef(uuid());
   const submitLock = useRef(false);
   const receipts = type === "UPAH_RELAWAN" || type === "INSENTIF_GURU_KADER";
@@ -39,19 +42,31 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
 
   useEffect(() => {
     const version = ++context.current;
-    setLoading(true); setMaster(null); setDocuments([]); setLines([]); setEditing(null); setHeader({}); setMessage(null);
+    const readVersion = ++documentReads.current;
+    setLoading(true); setMaster(null); setDocuments([]); setLines([]); setEditing(null); setHeader({}); setMessage(null); setDocumentNumber("");
     setType("BAHAN_BAKU"); setProfile("KOPERASI"); requestKey.current = uuid();
     Promise.allSettled([documentApi.master(site), documentApi.list(site, serviceDate)]).then(results => {
       if (version !== context.current) return;
       if (results[0].status === "fulfilled") {
-        setMaster(results[0].value); setHeader(results[0].value.profiles?.KOPERASI || {});
+        setMaster(results[0].value); setHeader({ ...results[0].value.profiles?.KOPERASI, documentProfileKey: "KOPERASI" });
       }
-      if (results[1].status === "fulfilled") setDocuments(results[1].value.documents || []);
+      if (results[1].status === "fulfilled" && readVersion === documentReads.current) setDocuments(results[1].value.documents || []);
       const failed = results.find(x => x.status === "rejected");
       if (failed) notify(failed.reason.message, true);
       setLoading(false);
     });
     return () => { context.current++; };
+  }, [site, serviceDate]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (submitLock.current || document.visibilityState === "hidden") return;
+      const version = context.current;
+      const readVersion = ++documentReads.current;
+      documentApi.list(site, serviceDate).then(result => { if (version === context.current && readVersion === documentReads.current) { setDocuments(result.documents || []); setCalendarRevision(x => x + 1); } }).catch(() => {});
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [site, serviceDate]);
 
   const run = async action => {
@@ -62,16 +77,17 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     finally { submitLock.current = false; setBusy(false); }
   };
   const reload = async version => {
+    const readVersion = ++documentReads.current;
     const result = await documentApi.list(site, serviceDate);
-    if (version === context.current) { setDocuments(result.documents || []); setCalendarRevision(x => x + 1); }
+    if (version === context.current && readVersion === documentReads.current) { setDocuments(result.documents || []); setCalendarRevision(x => x + 1); }
   };
   const reset = nextType => {
-    setType(nextType); setLines([]); setEditing(null); setSelected(""); requestKey.current = uuid();
+    setType(nextType); setLines([]); setEditing(null); setSelected(""); setDocumentNumber(""); requestKey.current = uuid();
     const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
-    const available = master?.profiles?.[nextProfile] ? nextProfile : "KOPERASI";
-    setProfile(available); setHeader(master?.profiles?.[available] || {});
+    setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile });
   };
   const chooseType = next => {
+    if (next === type) return;
     if ((lines.length || editing) && !window.confirm("Ganti jenis dokumen? Perubahan yang belum disimpan akan dikosongkan.")) return;
     reset(next);
   };
@@ -104,27 +120,66 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     notify("Daftar belanja ditarik sebagai rancangan invoice. Sesuaikan realisasi dan harga sebelum menyimpan.");
   });
   const save = () => run(async version => {
+    if (!documentNumber.trim()) throw new Error("Isi nomor invoice atau nomor paket kuitansi secara manual terlebih dahulu.");
     if (!lines.length) throw new Error("Tambahkan item atau penerima terlebih dahulu.");
     if (lines.some(x => !x.itemName.trim() || !x.unit.trim() || Number(x.quantity) <= 0 || Number(x.unitPrice) <= 0)) throw new Error("Nama, satuan, jumlah, dan harga/nominal positif wajib diisi pada setiap baris.");
+    if (receipts && lines.some(x => !x.metadata?.receiptNo?.trim())) throw new Error("Isi nomor kuitansi manual untuk setiap penerima.");
     const payload = { site, service_date: serviceDate, document_type: type, request_key: requestKey.current,
-      header_payload: header, items: lines.map(x => ({ item_name: x.itemName, category_code: x.category, quantity: Number(x.quantity), unit: x.unit, unit_price: Number(x.unitPrice), metadata: x.metadata || {} })) };
+      document_number: documentNumber.trim(), header_payload: { ...header, documentProfileKey: profile }, items: lines.map(x => ({ item_name: x.itemName, category_code: x.category, quantity: Number(x.quantity), unit: x.unit, unit_price: Number(x.unitPrice), metadata: x.metadata || {} })) };
     const result = editing ? await documentApi.edit(editing.id, payload) : await documentApi.create(payload);
     if (version !== context.current) return;
-    setLines([]); setEditing(null); requestKey.current = uuid(); await reload(version);
+    setMaster(old => ({ ...old, profiles: { ...old?.profiles, [profile]: { ...header, documentProfileKey: profile, evidenceLink: "", paymentReference: "" } } }));
+    setHeader(old => ({ ...old, evidenceLink: "", paymentReference: "" }));
+    setLines([]); setEditing(null); setDocumentNumber(""); requestKey.current = uuid(); await reload(version);
     notify(`${result.document.documentNumber} tersimpan sebagai DRAFT. Buka PDF di tab baru untuk memeriksa, lalu finalkan agar masuk data harian.`);
   });
   const edit = doc => {
     if (lines.length && !window.confirm("Buka draft ini dan kosongkan perubahan yang belum disimpan?")) return;
-    setEditing(doc); setType(doc.documentType); setLines(doc.items); setHeader(doc.header); setProfile(doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI"); requestKey.current = uuid();
+    setEditing(doc); setType(doc.documentType); setLines(doc.items); setHeader(doc.header); setDocumentNumber(doc.documentNumber); setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI")); requestKey.current = uuid();
   };
   const finalize = doc => {
-    if (!window.confirm(`Yakin finalkan ${doc.documentNumber} sebesar ${money(doc.total)}?\n\nIsi dokumen akan dikunci dan masuk otomatis ke data harian LPDH ${site}, tanggal ${serviceDate}.`)) return;
     run(async version => {
-      const result = await documentApi.finalize(doc.id); await reload(version);
+      ++documentReads.current;
+      const current = (await documentApi.get(doc.id)).document;
+      if (version !== context.current) return;
+      if (current.site !== site || current.serviceDate !== serviceDate) throw new Error("Tanggal/dapur dokumen berubah. Refresh register.");
+      setDocuments(rows => rows.map(row => row.id === current.id ? current : row));
+      if (current.status === "CANCELLED") {
+        setShowCancelled(true);
+        notify(`Invoice ${current.documentNumber} sebelumnya sudah DIBATALKAN${current.cancellationReason ? `: ${current.cancellationReason}` : ""}. Klik Buat ulang pada riwayat tersebut, isi nomor baru, simpan draft, lalu finalkan dokumen penggantinya. Klik Finalkan tidak membatalkan invoice.`, true);
+        return;
+      }
+      if (current.status === "FINAL") { await reload(version); return notify("Invoice ini sudah FINAL. Gunakan Buka PDF atau Simpan ke Drive bila diperlukan."); }
+      if (!window.confirm(`Yakin finalkan ${current.documentNumber} sebesar ${money(current.total)}?\n\nIsi dokumen akan dikunci dan masuk otomatis ke data harian LPDH ${site}, tanggal ${serviceDate}.`)) return;
+      let result;
+      try { result = await documentApi.finalize(current.id); }
+      catch (e) { await reload(version); setShowCancelled(true); throw e; }
+      await reload(version);
       if (version !== context.current) return;
       await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.driveUploadStatus === "UPLOADED" ? "PDF final tersimpan di SPPG Drive." : result.driveUploadError || "Upload Drive belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED");
     });
   };
+  const recreate = doc => {
+    if ((lines.length || documentNumber) && !window.confirm("Salin item dokumen dibatalkan? Isian yang belum disimpan akan diganti.")) return;
+    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "" });
+    setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI"));
+    setLines(doc.items.map(x => ({ ...x, metadata: { ...x.metadata, receiptNo: "" } }))); requestKey.current = uuid();
+    notify("Item disalin sebagai isian baru, belum disimpan. Isi nomor dokumen dan nomor kuitansi baru, lalu Simpan draft. Riwayat lama tetap dibatalkan.");
+  };
+  const saveDefault = () => run(async version => {
+    const result = await documentApi.saveProfile(site, { ...header, documentProfileKey: profile });
+    if (version !== context.current) return;
+    setMaster(old => ({ ...old, profiles: { ...old?.profiles, [result.profile]: result.header } }));
+    notify(`Data kop ${result.profile} ${site} disimpan sebagai default, berlaku sampai diisi ulang. Nomor, item, nominal, dan bukti transaksi tidak menjadi default.`);
+  });
+  const uploadAsset = (file, kind, field) => run(async version => {
+    if (file.size > 5 * 1024 * 1024) throw new Error("Ukuran gambar maksimal 5 MB.");
+    const content = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("Gambar tidak dapat dibaca")); reader.readAsDataURL(file); });
+    const result = await documentApi.uploadAsset({ site, asset_kind: kind, filename: file.name, content_base64: content });
+    if (version !== context.current) return;
+    setHeader(old => ({ ...old, [field]: result.id }));
+    notify("Gambar diunggah privat. Simpan data kop sebagai default atau Simpan draft untuk memakai gambar ini.");
+  });
   const download = doc => run(async version => {
     const result = await documentApi.pdf(doc.id);
     if (version !== context.current) return;
@@ -176,13 +231,17 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       {message && <div role="status" className={`doc-message${message.error ? " error" : ""}`}>{message.text}</div>}
       <fieldset disabled={busy || loading} className="doc-form">
         <div className="doc-grid">
+          <Field label={receipts ? "Nomor paket kuitansi (manual)" : "Nomor invoice (manual)"} value={documentNumber} onChange={setDocumentNumber}/>
           <Field label="Tanggal pembayaran / pelayanan" type="date" value={serviceDate} onChange={changeDate}/>
           <Field label="Jenis dokumen"><select value={type} disabled={Boolean(editing)} onChange={e => chooseType(e.target.value)}>{Object.entries(TYPES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
-          <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{Object.keys(master?.profiles || { KOPERASI: {} }).map(key => <option key={key}>{key}</option>)}</select></Field>
+          <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], documentProfileKey: next, evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{["KOPERASI", "YAYASAN"].map(key => <option key={key}>{key}</option>)}</select></Field>
         </div>
         <details className="doc-details" open={!header.issuerName || !header.recipientAddress}>
           <summary>Kop, alamat, rekening & penandatangan {site === "MAJA" ? "(terisi dari contoh Maja)" : "(lengkapi data Cemplang)"}</summary>
           <div className="doc-grid">{[["issuerName", "Nama penerbit"], ["issuerAddress", "Alamat penerbit"], ["senderName", "Nama pengirim"], ["senderCompany", "Perusahaan pengirim"], ["recipientName", "Nama penerima / dapur"], ["recipientAddress", "Alamat penerima"], ["bankName", "Bank"], ["accountNumber", "Nomor rekening"], ["accountName", "Atas nama rekening"], ["senderSignatory", "Penandatangan penerbit"], ["recipientSignatory", "Penandatangan dapur"]].map(([key, label]) => <Field key={key} label={label} value={header[key]} onChange={v => setHeader({ ...header, [key]: v })}/>)}</div>
+          <DocumentAssets header={header} site={site} disabled={busy || loading} onUpload={uploadAsset} onRemove={field => setHeader(old => ({ ...old, [field]: null }))}/>
+          <button type="button" onClick={saveDefault} disabled={busy || loading}>Simpan data kop sebagai default</button>
+          <p className="doc-hint">Data identitas, rekening, stempel dan TTD ini juga menjadi default saat draft disimpan. Tanggal, nomor, item dan nominal transaksi tetap diisi tiap dokumen.</p>
         </details>
         <div className="doc-grid">
           <Field label="Metode pembayaran"><select value={header.paymentMethod || "Transfer"} onChange={e => setHeader({ ...header, paymentMethod: e.target.value })}><option>Transfer</option><option>Tunai</option><option>Lainnya</option></select></Field>
@@ -196,9 +255,9 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <button type="button" onClick={() => setLines(rows => [...rows, blank(type)])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
         </div>
         <p className="doc-hint">{receipts ? "Pembayaran satu hari per penerima. Satu file PDF memuat seluruh kuitansi jenis ini; nomor setiap penerima berbeda." : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>
-        <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? "Nama penerima" : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
+        <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? "Nama penerima & nomor kuitansi manual" : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
           {lines.map((row, index) => <tr key={index}>
-            <td><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/></td>
+            <td><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{receipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
             <td>{type === "OPERASIONAL" ? <select aria-label={`Kategori baris ${index + 1}`} value={row.category} onChange={e => update(index, "category", e.target.value)}>{(master?.categories || ["Lain-lain"]).map(x => <option key={x}>{x}</option>)}</select> : type === "INSENTIF_GURU_KADER" ? <><select aria-label="Jenis penerima" value={row.metadata?.recipientType || "Guru"} onChange={e => updateMetadata(index, "recipientType", e.target.value)}><option>Guru</option><option>Kader</option></select><input placeholder="Sekolah / posyandu" value={row.metadata?.unitName || ""} onChange={e => updateMetadata(index, "unitName", e.target.value)}/></> : type === "UPAH_RELAWAN" ? <input placeholder="Tugas" value={row.metadata?.role || ""} onChange={e => updateMetadata(index, "role", e.target.value)}/> : <input value={row.category} onChange={e => update(index, "category", e.target.value)}/>}</td>
             <td><input type="number" aria-label="Jumlah" step="0.0001" min="0.0001" disabled={receipts} value={row.quantity} onChange={e => update(index, "quantity", e.target.value)}/></td>
             <td><input aria-label="Satuan" disabled={receipts} value={row.unit} onChange={e => update(index, "unit", e.target.value)}/></td>
@@ -208,7 +267,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           </tr>)}
           {!lines.length && <tr><td colSpan="7" className="doc-empty">{loading ? "Memuat master dan register…" : "Pilih item/penerima untuk memulai dokumen."}</td></tr>}
         </tbody></table></div>
-        <div className="doc-bottom"><strong>Total {money(total)}</strong><div className="doc-actions">{editing && <button type="button" onClick={() => reset(type)}>Selesai edit</button>}<button type="button" className="primary" disabled={!lines.length || loading || busy} onClick={save}><Save size={15}/> {editing ? "Simpan perubahan draft" : "Buat nomor & simpan draft"}</button></div></div>
+        <div className="doc-bottom"><strong>Total {money(total)}</strong><div className="doc-actions">{editing && <button type="button" onClick={() => reset(type)}>Selesai edit</button>}<button type="button" className="primary" disabled={!lines.length || loading || busy} onClick={save}><Save size={15}/> {editing ? "Simpan perubahan draft" : "Simpan draft"}</button></div></div>
       </fieldset>
     </section>
     <section className="doc-card"><div className="doc-heading"><div><h3>Register Invoice & Kuitansi · {serviceDate}</h3><p>Beberapa invoice operasional per hari. Final masuk data harian dan diarsipkan ke Drive; pembatalan menyimpan riwayat, bukan menghapus bukti.</p></div>{onOpenDaily && <button type="button" onClick={onOpenDaily}>Buka Data Harian</button>}</div>
@@ -218,12 +277,14 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
         <td><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
           {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri ? "Tersimpan di Drive" : "Belum tersimpan di Drive"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}
+          {doc.cancelledAt && <small>Dibatalkan: {new Date(doc.cancelledAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</small>}
         </td>
         <td><div className="doc-actions">
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
           {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button>{doc.driveUri ? <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">Buka SPPG Drive</a> : <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
           {doc.status !== "CANCELLED" && <button type="button" disabled={busy} onClick={() => cancel(doc)}><Trash2 size={14}/> Batalkan</button>}
+          {doc.status === "CANCELLED" && <button type="button" disabled={busy} onClick={() => recreate(doc)}>Buat ulang</button>}
         </div></td></tr>)}{!documents.some(doc => showCancelled || doc.status !== "CANCELLED") && <tr><td colSpan="6" className="doc-empty">Belum ada dokumen aktif pada tanggal ini.</td></tr>}</tbody></table></div>
     </section>
   </div>;

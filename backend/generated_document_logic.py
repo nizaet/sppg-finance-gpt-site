@@ -25,6 +25,10 @@ def line_amount(quantity, price):
 
 
 def receipt_number(document, index):
+    manual = str((document["items"][index].get("metadata") or {}).get("receiptNo") or "").strip()
+    if manual:
+        return manual
+    # Preserve numbers on historical documents created before manual numbering.
     return f"{document['documentNumber']}-{index + 1:03d}"
 
 

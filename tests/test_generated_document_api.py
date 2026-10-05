@@ -8,11 +8,13 @@ import unittest
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 package = types.ModuleType("backend")
@@ -52,6 +54,9 @@ class FakeConnection:
         self.row = {"id": 1, "site": "MAJA", "document_type": "OPERASIONAL", "document_number": "INV-OPS-MAJA-20261005-001", "service_date": date(2026, 10, 5), "status": "DRAFT", "header_payload": {"issuerName": "Penerbit", "recipientName": "Dapur", "recipientAddress": "Alamat", "senderSignatory": "Pengirim"}, "total_amount": 1000}
         self.items = [{"item_name": "Gas", "category_code": "Gas", "quantity": 1, "unit": "tabung", "unit_price": 1000, "line_total": 1000, "item_payload": {}}]
         self.result = None
+        self.numbers = {}
+        self.profiles = {}
+        self.assets = {}
 
     @contextmanager
     def cursor(self):
@@ -65,8 +70,33 @@ class FakeConnection:
             self.result = deepcopy(self.row) if self.row.get("request_key") == params[0] else None
         elif sql.startswith("select item_name"):
             self.result = deepcopy(self.items)
+        elif sql.startswith("select data from lpdh_site_state"):
+            self.result = {"data": {}}
+        elif "from calculator_master_catalog" in sql:
+            self.result = []
         elif sql.startswith("select count(*)"):
             self.result = {"n": 1}
+        elif sql.startswith("select document_id from generated_accountant_document_numbers"):
+            self.result = {"document_id": self.numbers[params[0]]} if params[0] in self.numbers else None
+        elif sql.startswith("delete from generated_accountant_document_numbers"):
+            self.numbers = {key: owner for key, owner in self.numbers.items() if owner != params[0]}
+        elif sql.startswith("insert into generated_accountant_document_numbers"):
+            self.numbers[params[0]] = params[1]
+        elif sql.startswith("insert into generated_document_profiles"):
+            self.profiles[(params[0], params[1])] = json.loads(params[2])
+        elif sql.startswith("select profile_key,header_payload"):
+            self.result = [{"profile_key": key[1], "header_payload": header} for key, header in self.profiles.items() if key[0] == params[0]]
+        elif sql.startswith("insert into generated_document_assets"):
+            asset_id = len(self.assets) + 1
+            self.assets[asset_id] = dict(zip(("site","asset_kind","filename","mime_type","content","created_by"), params))
+            self.result = {"id": asset_id}
+        elif "from generated_document_assets where id" in sql:
+            self.result = deepcopy(self.assets.get(params[0]))
+            if self.result and len(params) > 1 and (self.result['site'] != params[1] or self.result['asset_kind'] != params[2]):
+                self.result = None
+        elif sql.startswith("update generated_accountant_documents set document_number"):
+            self.row.update(document_number=params[0], header_payload=json.loads(params[1]), total_amount=params[2])
+            self.result = deepcopy(self.row)
         elif sql.startswith("insert into generated_accountant_documents"):
             self.row.update(site=params[0], document_type=params[1], document_number=params[2], service_date=params[3], header_payload=json.loads(params[4]), total_amount=params[5], request_key=params[6], request_hash=params[7])
             self.items = []
@@ -101,17 +131,18 @@ class DocumentApiTests(unittest.TestCase):
         self.conn = FakeConnection()
         @contextmanager
         def connection():
-            original = deepcopy(self.conn.row)
+            original = deepcopy((self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets))
+            self.conn.committed = False
             try:
                 yield self.conn
             finally:
                 if not self.conn.committed:
-                    self.conn.row = original
+                    self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets = original
         self.patcher = patch.object(api, "connection", connection)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.headers = {"Authorization": "Bearer MAJA"}
-        self.payload = {"site": "MAJA", "document_type": "OPERASIONAL", "service_date": "2026-10-05", "header_payload": self.conn.row["header_payload"], "request_key": "test-request-001", "items": [{"item_name": "Gas", "category_code": "Gas", "quantity": 1, "unit": "tabung", "unit_price": 1000}]}
+        self.payload = {"site": "MAJA", "document_type": "OPERASIONAL", "document_number": "INV/MAJA/001", "service_date": "2026-10-05", "header_payload": self.conn.row["header_payload"], "request_key": "test-request-001", "items": [{"item_name": "Gas", "category_code": "Gas", "quantity": 1, "unit": "tabung", "unit_price": 1000}]}
 
     def test_authentication_and_site_scope(self):
         self.assertEqual(self.client.post("/v1/accountant-documents", json=self.payload).status_code, 401)
@@ -132,11 +163,83 @@ class DocumentApiTests(unittest.TestCase):
     def test_create_is_idempotent_and_conflicting_retry_rejected(self):
         first = self.client.post("/v1/accountant-documents", json=self.payload, headers=self.headers)
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertTrue(first.json()["document"]["documentNumber"].endswith("002"))
+        self.assertEqual(first.json()["document"]["documentNumber"], "INV/MAJA/001")
         second = self.client.post("/v1/accountant-documents", json=self.payload, headers=self.headers)
         self.assertEqual(first.json()["document"], second.json()["document"])
         self.payload["items"][0]["unit_price"] = 2000
         self.assertEqual(self.client.post("/v1/accountant-documents", json=self.payload, headers=self.headers).status_code, 409)
+
+    def test_manual_number_required_and_duplicate_reserved_history_rejected(self):
+        missing = deepcopy(self.payload); missing.pop('document_number')
+        self.assertEqual(self.client.post('/v1/accountant-documents', json=missing, headers=self.headers).status_code, 422)
+        for number in ('=SUM(A1)', '../folder', '  ', '@formula'):
+            payload = {**self.payload, 'document_number': number}
+            self.assertEqual(self.client.post('/v1/accountant-documents', json=payload, headers=self.headers).status_code, 422)
+        self.conn.numbers['inv/maja/001'] = 42
+        payload = {**self.payload, 'document_number': ' inv/MAJA/001 '}
+        response = self.client.post('/v1/accountant-documents', json=payload, headers=self.headers)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertFalse(self.conn.committed)
+
+    def test_draft_manual_number_can_change_but_final_number_is_locked(self):
+        response = self.client.put('/v1/accountant-documents/1', json=self.payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['document']['documentNumber'], 'INV/MAJA/001')
+        self.assertEqual(self.conn.numbers['inv/maja/001'], 1)
+        self.conn.row['status'] = 'FINAL'
+        self.payload['document_number'] = 'INV/MAJA/002'
+        self.assertEqual(self.client.put('/v1/accountant-documents/1', json=self.payload, headers=self.headers).status_code, 409)
+        self.assertEqual(self.conn.row['document_number'], 'INV/MAJA/001')
+
+    def test_receipts_use_manual_individual_numbers_and_reject_duplicates(self):
+        self.payload['document_type'] = 'UPAH_RELAWAN'
+        self.payload['items'] = [{'item_name': 'Relawan Uji A', 'quantity': 1, 'unit': 'hari', 'unit_price': 1000, 'metadata': {'receiptNo':'KWT/101'}}, {'item_name': 'Relawan Uji B', 'quantity': 1, 'unit': 'hari', 'unit_price': 1000, 'metadata': {'receiptNo':'kwt/101'}}]
+        self.assertEqual(self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers).status_code, 409)
+        self.assertFalse(self.conn.committed)
+        self.payload['items'][1]['metadata']['receiptNo'] = 'KWT/102'
+        response = self.client.post('/v1/accountant-documents', json=self.payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        doc = response.json()['document']
+        self.assertEqual([api.receipt_number(doc, i) for i in range(2)], ['KWT/101', 'KWT/102'])
+
+    def test_private_artwork_upload_validation_and_site_isolation(self):
+        stream = BytesIO(); Image.new('RGB', (40, 20), 'white').save(stream, format='PNG')
+        payload = {'site': 'MAJA', 'asset_kind':'SIGNATURE', 'filename':'ttd-uji.png', 'content_base64':base64.b64encode(stream.getvalue()).decode()}
+        self.assertEqual(self.client.post('/v1/accountant-documents/assets', json=payload).status_code, 401)
+        self.assertEqual(self.client.post('/v1/accountant-documents/assets', json={**payload,'content_base64':'not base64'}, headers=self.headers).status_code, 422)
+        response = self.client.post('/v1/accountant-documents/assets', json=payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        asset_id = response.json()['id']
+        endpoint = f'/v1/accountant-documents/assets/{asset_id}'
+        self.assertEqual(self.client.get(endpoint, headers={'Authorization':'Bearer CEMPLANG'}).status_code, 403)
+        image = self.client.get(endpoint, headers=self.headers)
+        self.assertEqual(image.headers['cache-control'], 'private, no-store')
+        self.assertEqual(base64.b64decode(image.json()['contentBase64']), stream.getvalue(), 'original evidence bytes preserved')
+        wrong_site = {'site':'CEMPLANG','header_payload':{'signatureAssetId':asset_id}}
+        self.assertEqual(self.client.put('/v1/accountant-documents/profile', json=wrong_site, headers={'Authorization':'Bearer CEMPLANG'}).status_code, 422)
+        wrong_kind = {'site':'MAJA','header_payload':{'stampAssetId':asset_id}}
+        self.assertEqual(self.client.put('/v1/accountant-documents/profile', json=wrong_kind, headers=self.headers).status_code, 422)
+
+    def test_saved_defaults_persist_and_never_copy_transaction_values(self):
+        header = {**self.payload['header_payload'], 'documentProfileKey':'YAYASAN','evidenceLink':'https://example.test/evidence','paymentReference':'payment-123'}
+        response = self.client.put('/v1/accountant-documents/profile', json={'site':'MAJA','header_payload':header}, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        result = self.client.get('/v1/accountant-documents/master?site=MAJA', headers=self.headers)
+        saved = result.json()['profiles']['YAYASAN']
+        self.assertEqual(saved['issuerName'], header['issuerName'])
+        self.assertNotIn('evidenceLink', saved)
+        self.assertNotIn('paymentReference', saved)
+        self.assertFalse(any('lpdh_daily_state' in sql or 'update generated_accountant_documents' in sql for sql,_ in self.conn.calls))
+
+    def test_status_read_is_scoped_and_cancellation_cannot_be_finalized(self):
+        self.conn.row['status'] = 'CANCELLED'
+        self.conn.row['cancellation_reason'] = 'Salah tanggal'
+        response = self.client.get('/v1/accountant-documents/1', headers=self.headers)
+        self.assertEqual(response.json()['document']['status'], 'CANCELLED')
+        self.assertEqual(response.json()['document']['cancellationReason'], 'Salah tanggal')
+        self.assertEqual(self.client.get('/v1/accountant-documents/1', headers={'Authorization':'Bearer CEMPLANG'}).status_code, 403)
+        self.assertEqual(self.client.patch('/v1/accountant-documents/1/finalize', headers=self.headers).status_code, 409)
+        self.assertFalse(self.conn.committed)
 
     def test_finalization_import_failure_rolls_back(self):
         with patch.object(api, "_sync_daily", side_effect=HTTPException(409, "duplicate daily payment")):
