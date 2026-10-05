@@ -605,9 +605,10 @@ function deriveNumbers(rows, base, overrideKey = "receiptNo") {
   const seen = {};
   return active.map((x) => {
     seen[x.base] = (seen[x.base] || 0) + 1;
+    const width = Math.max(2, String(count[x.base] || 1).length);
     return {
       ...x.row,
-      generatedNo: count[x.base] > 1 ? `${x.base}-${String(seen[x.base]).padStart(3, "0")}` : x.base,
+      generatedNo: count[x.base] > 1 ? `${x.base}-${String(seen[x.base]).padStart(width, "0")}` : x.base,
     };
   });
 }

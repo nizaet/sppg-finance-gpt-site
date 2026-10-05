@@ -315,6 +315,28 @@ def assign_document_numbers(rows: list[dict[str, Any]], base_key: str, explicit_
     return cloned
 
 
+def individual_incentive_receipts(
+    daily: dict[str, Any],
+    incentive_recipients: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    base = str(daily.get("incentiveReceiptBaseNo") or "").strip()
+    prepared = []
+    for row in incentive_recipients:
+        if as_number(row.get("amount")) <= 0:
+            continue
+        item = deepcopy(row)
+        item["receiptBase"] = item.get("receiptNo") or base
+        prepared.append(item)
+    numbered = assign_document_numbers(prepared, "receiptBase")
+    return [
+        {
+            **row,
+            "generatedReceiptNo": row.get("proofNoDerived") or row.get("_baseProofNo") or "",
+        }
+        for row in numbered
+    ]
+
+
 def service_date_from_rows(rows: list[dict[str, Any]]) -> str:
     for row in rows:
         value = str(row.get("date") or "").strip()
@@ -510,6 +532,7 @@ def compute_preview(
     incentive_tariff = as_number(params.get("incentiveTariff"), 2000)
     incentive_calculated = incentive_pm * incentive_tariff
     register = build_register(raw, operations, volunteers, incentive_recipients, daily)
+    incentive_receipts = individual_incentive_receipts(daily, incentive_recipients)
 
     balance = daily.get("balance") or {}
     opening = {
@@ -548,8 +571,20 @@ def compute_preview(
         return bool(tx and valid_from and valid_to and valid_from <= tx <= valid_to)
 
     evidence_missing = [r for r in register if as_number(r.get("amount")) > 0 and not https_url(r.get("link"))]
-    duplicates = [r for r in register if r.get("proofStatus") == "DUPLIKAT"]
     invalid_dates = [r for r in register if not register_date_ok(r)]
+    proof_universe = [
+        str(r.get("proofNo") or "").strip()
+        for r in register
+        if str(r.get("proofNo") or "").strip()
+    ] + [
+        str(r.get("generatedReceiptNo") or "").strip()
+        for r in incentive_receipts
+        if str(r.get("generatedReceiptNo") or "").strip()
+    ]
+    proof_counts = Counter(value.upper() for value in proof_universe)
+    duplicate_numbers = sorted({value for value in proof_universe if proof_counts[value.upper()] > 1})
+    missing_incentive_receipts = [r for r in incentive_receipts if not str(r.get("generatedReceiptNo") or "").strip()]
+    duplicates = [r for r in register if r.get("proofStatus") == "DUPLIKAT"]
 
     identity = masters.get("identity") or {}
     required_identity = ["sppgId", "sppgName", "vaNumber"]
@@ -641,7 +676,7 @@ def compute_preview(
         ("11", "Biaya bahan per porsi dalam pagu setelah indeks kemahalan", produced > 0 and raw_per_portion <= weighted_raw_pagu + 0.0001, "PERIKSA", f"Biaya/porsi Rp{raw_per_portion:,.0f}; pagu Rp{weighted_raw_pagu:,.0f}."),
         ("12", "Biaya operasional per PM dalam pagu setelah indeks kemahalan", incentive_pm > 0 and op_per_pm <= op_pagu + 0.0001, "PERIKSA", f"Operasional/PM Rp{op_per_pm:,.0f}; pagu Rp{op_pagu:,.0f}."),
         ("13", "Setiap transaksi bernilai memiliki link bukti autentik", len(evidence_missing) == 0, "PERIKSA", f"{len(evidence_missing)} transaksi belum punya link HTTPS."),
-        ("14", "Nomor bukti transaksi tidak duplikat", len(duplicates) == 0, "PERIKSA", f"{len(duplicates)} baris memakai nomor bukti duplikat."),
+        ("14", "Nomor bukti transaksi tidak duplikat", len(duplicate_numbers) == 0 and len(missing_incentive_receipts) == 0, "PERIKSA", (f"Duplikat: {', '.join(duplicate_numbers[:5])}." if duplicate_numbers else f"{len(missing_incentive_receipts)} kuitansi guru/kader belum memiliki nomor dasar.")),
         ("15", "Tanggal transaksi sesuai periode kegiatan/produksi", len(invalid_dates) == 0, "PERIKSA", f"{len(invalid_dates)} transaksi di luar periode {valid_from} s.d. {valid_to}."),
         ("16", "Pembayaran insentif relawan lengkap (nominatif, nomor bukti, link bukti bayar)", volunteer_complete, "PERIKSA", "Ada relawan tanpa nomor kuitansi, tanggal, atau link bukti."),
         ("17", "Syarat pemberian Insentif terpenuhi", incentive_eligible, "PERIKSA", "Syarat Insentif Ketersediaan dan Mutu Layanan belum terpenuhi."),
@@ -698,6 +733,7 @@ def compute_preview(
         "operations": operations,
         "volunteers": volunteers,
         "incentiveRecipients": incentive_recipients,
+        "incentiveReceipts": incentive_receipts,
         "volunteerTotal": volunteer_total,
         "incentiveRecipientTotal": incentive_recipient_total,
         "operationalTotal": operational_total,
