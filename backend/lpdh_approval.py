@@ -68,7 +68,7 @@ def attach_approval(daily, archive, digest, actor, timestamp):
     if not link.startswith('https://'):
         raise ValueError('Drive tidak mengembalikan link PDF pengesahan yang valid.')
     previous = out.get('_approval')
-    if previous and previous.get('hash') != digest:
+    if previous and (previous.get('hash') != digest or previous.get('status') != 'FINAL'):
         out.setdefault('_approvalHistory', []).append(previous)
     out['_approval'] = {'status': 'FINAL', 'hash': digest, 'pdfLink': link,
                         'folderId': archive.get('folderId'), 'finalizedBy': actor,
@@ -79,6 +79,22 @@ def attach_approval(daily, archive, digest, actor, timestamp):
     old_auto = (previous or {}).get('pdfLink')
     if not inc.get('evidenceLink') or inc.get('evidenceLink') == old_auto:
         inc['evidenceLink'] = link
+    return out
+
+
+def cancel_approval(daily, actor, timestamp, reason):
+    out = copy.deepcopy(daily)
+    current = out.get('_approval') or {}
+    if current.get('status') != 'FINAL':
+        raise ValueError('Pengesahan tidak berstatus FINAL.')
+    cancelled = {**current, 'status': 'CANCELLED', 'cancelledBy': actor,
+                 'cancelledAt': timestamp, 'cancelReason': reason}
+    out.setdefault('_approvalHistory', []).append(cancelled)
+    out['_approval'] = cancelled
+    inc = out.setdefault('incentive', {})
+    for field in ('approvalEvidenceLink', 'evidenceLink'):
+        if inc.get(field) == current.get('pdfLink'):
+            inc[field] = ''
     return out
 
 

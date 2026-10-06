@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { lpdhApi } from './lpdhApi.js';
 
-export default function ApprovalActions({ site, serviceDate, daily, onSaved }) {
+export default function ApprovalActions({ site, serviceDate, daily, onSaved, onOpenIssue }) {
   const [printed, setPrinted] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -38,13 +38,28 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved }) {
     finally { operationLock.current = false; if (alive.current) setBusy(false); }
   };
   const approval = daily?._approval;
+  const cancel = async () => {
+    if (operationLock.current) return;
+    const reason = window.prompt('Alasan membatalkan pengesahan? PDF lama tetap tersimpan sebagai riwayat.');
+    if (!reason?.trim() || !window.confirm('Batalkan pengesahan ini? Link otomatis di D_Insentif akan dilepas; bukti manual dan arsip Drive tetap aman.')) return;
+    operationLock.current = true; setBusy(true);
+    try {
+      await lpdhApi.approvalCancel(site, serviceDate, approval.hash, reason.trim());
+      setPrinted(null); await onSaved?.();
+      if (alive.current) setMessage('Pengesahan dibatalkan. Perbaiki data, simpan, lalu buka pratinjau untuk finalkan kembali. Arsip lama tetap tersimpan.');
+    } catch (error) { if (alive.current) setMessage(error.message); }
+    finally { operationLock.current = false; if (alive.current) setBusy(false); }
+  };
   return <div className="lpdh-status-box" style={{display:'block'}}>
     <p>PDF cetak memakai data terakhir yang disimpan dan sheet J_Pengesahan pada template resmi, beserta TTD dan stempel dari Master → Pengesah. Simpan Draft Data Harian serta Simpan Semua Master sebelum mencetak perubahan.</p>
     <div className="lpdh-inline-actions">
+      <button type="button" onClick={() => onOpenIssue?.({no:24})}>Unggah TTD &amp; Stempel — Master Pengesah</button>
       <button type="button" disabled={busy} onClick={preview}>Buka Pratinjau Cetak</button>
       <button type="button" className="primary" disabled={busy || !printed} onClick={finalize}>Finalkan Pengesahan &amp; Simpan ke Drive</button>
+      {approval?.status === 'FINAL' && <button type="button" disabled={busy} onClick={cancel}>Batalkan Pengesahan</button>}
       {approval?.pdfLink && <a href={approval.pdfLink} target="_blank" rel="noopener noreferrer">PDF pengesahan di Drive</a>}
     </div>
+    {approval?.status === 'CANCELLED' && <p>Pengesahan dibatalkan: {approval.cancelReason}. PDF lama adalah arsip, bukan pengesahan aktif.</p>}
     {message && <p role="status">{message}</p>}
   </div>;
 }

@@ -22,7 +22,7 @@ from backend.lpdh_logic import (
     validate_daily_financial_sources,
 )
 from backend.document_numbering import claim_number, daily_number, suggest_number
-from backend.lpdh_approval import incentive_defaults, approval_hash, attach_approval, render_approval, ASSETS
+from backend.lpdh_approval import incentive_defaults, approval_hash, attach_approval, cancel_approval, render_approval, ASSETS
 from backend.lpdh_template import prepare_template, fill_template, source_hash, VERSION as TEMPLATE_VERSION
 
 TEMPLATE_KEYS = ('_officialTemplateBase64', '_officialTemplateFilename',
@@ -83,6 +83,10 @@ class ApprovalIn(BaseModel):
     site: str
     service_date: date
     expected_hash: str | None = Field(default=None, max_length=64)
+
+
+class ApprovalCancelIn(ApprovalIn):
+    reason: str = Field(min_length=1, max_length=500)
 
 
 def _with_incentive_defaults(cur, site, service_date, masters, daily, context, reserve=False):
@@ -904,7 +908,7 @@ def approval_finalize(payload: ApprovalIn, request: Request):
         if not context['effective']:
             raise HTTPException(409, 'Pengesahan final harus menggunakan tanggal HPE.')
         current = data.get('_approval') or {}
-        if current.get('hash') == digest and current.get('pdfLink'):
+        if current.get('status') == 'FINAL' and current.get('hash') == digest and current.get('pdfLink'):
             return {'saved': True, 'approval': current, 'alreadyFinal': True}
         if len(masters.get('signers') or []) < 3 or any(not str(s.get('name') or '').strip() for s in masters['signers'][:3]):
             raise HTTPException(422, 'Lengkapi nama tiga pengesah pada Master → Pengesah.')
@@ -925,3 +929,31 @@ def approval_finalize(payload: ApprovalIn, request: Request):
             (site, payload.service_date, json.dumps(data, ensure_ascii=False), _role(request)))
         conn.commit()
     return {'saved': True, 'approval': data['_approval'], 'evidenceLink': data['incentive'].get('evidenceLink')}
+
+
+@router.post('/approval/cancel')
+def approval_cancel(payload: ApprovalCancelIn, request: Request):
+    _require_db()
+    site = _site(request, payload.site)
+    from backend.accountant_generated_document_api import daily_lock
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(422, 'Isi alasan pembatalan pengesahan.')
+    with connection() as conn, conn.cursor() as cur:
+        daily_lock(cur, site, payload.service_date)
+        state = _load_daily(site, payload.service_date)
+        if state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot'):
+            raise HTTPException(409, 'Snapshot LPDH terkunci; arsip lama tidak boleh diubah.')
+        current = state['data'].get('_approval') or {}
+        if not payload.expected_hash or current.get('hash') != payload.expected_hash:
+            raise HTTPException(409, 'Pengesahan berubah. Muat ulang sebelum membatalkan.')
+        if current.get('status') == 'CANCELLED':
+            return {'saved': True, 'approval': current, 'alreadyCancelled': True}
+        if current.get('status') != 'FINAL':
+            raise HTTPException(409, 'Hanya pengesahan FINAL yang dapat dibatalkan.')
+        data = cancel_approval(state['data'], _role(request), datetime.now(timezone.utc).isoformat(), reason)
+        cur.execute("""update lpdh_daily_state set data=%s::jsonb,
+            revision=revision+1,updated_by=%s,updated_at=now() where site=%s and service_date=%s""",
+            (json.dumps(data, ensure_ascii=False), _role(request), site, payload.service_date))
+        conn.commit()
+    return {'saved': True, 'approval': data['_approval']}

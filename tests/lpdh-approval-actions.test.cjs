@@ -15,12 +15,13 @@ const text = n => n.children.map(x => typeof x === 'string' ? x : text(x)).join(
   }}]});
   let confirmed=false, calls=0, refreshed=0, error=false;
   const tab={document:{body:{}},location:{},close(){}};
-  global.window={open:()=>tab,confirm:()=>confirmed};
+  global.window={open:()=>tab,confirm:()=>confirmed,prompt:()=> 'Koreksi TTD'};
   const oldTimeout=global.setTimeout;
   global.setTimeout=(fn,delay,...args)=>delay===300000?oldTimeout(fn,delay,...args).unref():oldTimeout(fn,delay,...args);
   global.approvalApi={
     approvalPreview:async()=>({hash:'printed-hash',contentBase64:'cGRm',validation:{ready:false}}),
     approvalFinalize:async(site,day,hash)=>{assert.equal(site,'MAJA');assert.equal(day,'2026-10-05');assert.equal(hash,'printed-hash');calls++;if(error)throw Error('Drive belum tersimpan');},
+    approvalCancel:async(site,day,hash,reason)=>{assert.equal(hash,'final-hash');assert.equal(reason,'Koreksi TTD');calls++;if(error)throw Error('Pembatalan gagal');},
     saveDaily:()=>{throw Error('Preview must not save or finalize real daily data');}
   };
   const Component=require(output).default;
@@ -34,6 +35,15 @@ const text = n => n.children.map(x => typeof x === 'string' ? x : text(x)).join(
   await act(async()=>button('Finalkan').props.onClick());assert.equal(refreshed,0);assert.ok(text(view.root).includes('Drive belum tersimpan'));
   error=false;
   await act(async()=>button('Finalkan').props.onClick());assert.equal(refreshed,1);assert.ok(text(view.root).includes('link masuk ke D_Insentif'));
+  let opened=false;
+  await act(async()=>view.update(React.createElement(Component,{site:'MAJA',serviceDate:'2026-10-05',daily:{_approval:{status:'FINAL',hash:'final-hash'}},onSaved:()=>refreshed++,onOpenIssue:issue=>{assert.equal(issue.no,24);opened=true;}})));
+  await act(async()=>button('Unggah TTD').props.onClick());assert.ok(opened);
+  confirmed=false;const before=calls;
+  await act(async()=>button('Batalkan').props.onClick());assert.equal(calls,before);
+  confirmed=true;error=true;
+  await act(async()=>button('Batalkan').props.onClick());assert.equal(refreshed,1);assert.ok(text(view.root).includes('Pembatalan gagal'));
+  error=false;
+  await act(async()=>button('Batalkan').props.onClick());assert.equal(refreshed,2);assert.equal(button('Finalkan').props.disabled,true);
   await act(async()=>view.unmount());global.setTimeout=oldTimeout;
   console.log('PASS approval UI: read-only PDF preview, explicit confirmation, correct printed hash, failed Drive remains non-final, refresh after success');
 })().catch(error=>{console.error(error);process.exitCode=1;});

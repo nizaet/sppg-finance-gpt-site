@@ -138,7 +138,7 @@ export default function LpdhSheets({ activeSheet, masters, daily, preview, servi
     case "G_CekPPK": return <Checks preview={preview} onOpenIssue={onOpenIssue}/>;
     case "H_RekapPPK": return <Rekap preview={preview} masters={masters} daily={daily} serviceDate={serviceDate}/>;
     case "I_RegisterBukti": return <Register preview={preview}/>;
-    case "J_Pengesahan": return <><ApprovalActions key={`${site}|${serviceDate}`} site={site} serviceDate={serviceDate} daily={daily} onSaved={onApprovalSaved}/><Approval preview={preview} masters={masters} serviceDate={serviceDate}/></>;
+    case "J_Pengesahan": return <><ApprovalActions key={`${site}|${serviceDate}`} site={site} serviceDate={serviceDate} daily={daily} onSaved={onApprovalSaved} onOpenIssue={onOpenIssue}/><Approval preview={preview} masters={masters} serviceDate={serviceDate}/></>;
     case "Ref": return <Ref preview={preview} referenceRows={referenceRows}/>;
     default: return null;
   }

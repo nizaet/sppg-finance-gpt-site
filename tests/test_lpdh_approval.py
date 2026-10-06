@@ -10,13 +10,52 @@ from types import SimpleNamespace
 
 import test_generated_document_api as fixture
 from backend import lpdh_api as api
-from backend.lpdh_approval import incentive_defaults, attach_approval, approval_hash, print_copy, render_approval
+from backend.lpdh_approval import incentive_defaults, attach_approval, cancel_approval, approval_hash, print_copy, render_approval
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 from fastapi import HTTPException
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_cancel_keeps_archive_and_manual_proof_and_can_refinalize(self):
+        final = attach_approval({'incentive': {}}, {'driveUri': 'https://drive.example/a'}, 'hash', 'OWNER', 'now')
+        cancelled = cancel_approval(final, 'OWNER', 'later', 'Koreksi TTD')
+        self.assertEqual(final['_approval']['status'], 'FINAL')
+        self.assertEqual(cancelled['_approval']['status'], 'CANCELLED')
+        self.assertEqual(cancelled['_approvalHistory'][0]['pdfLink'], 'https://drive.example/a')
+        self.assertEqual(cancelled['incentive']['evidenceLink'], '')
+        self.assertEqual(cancelled['incentive']['approvalEvidenceLink'], '')
+        final['incentive']['evidenceLink'] = 'https://manual.example/proof'
+        self.assertEqual(cancel_approval(final, 'OWNER', 'later', 'Koreksi')['incentive']['evidenceLink'], 'https://manual.example/proof')
+        again = attach_approval(cancelled, {'driveUri': 'https://drive.example/b'}, 'hash', 'OWNER', 'again')
+        self.assertEqual(again['_approval']['status'], 'FINAL')
+        with self.assertRaises(ValueError): cancel_approval(cancelled, 'OWNER', 'later', 'again')
+
+    def test_cancel_endpoint_lock_stale_snapshot_and_retry(self):
+        request = SimpleNamespace(state=SimpleNamespace(sppg_role='OWNER'))
+        original = attach_approval({'incentive': {}}, {'driveUri': 'https://drive.example/a'}, 'a'*64, 'OWNER', 'now')
+        state = {'status': 'DRAFT', 'data': original}
+        writes = []; commits = []; locks = []
+        @contextmanager
+        def connection(): yield SimpleNamespace(cursor=lambda: cursor(), commit=lambda: commits.append(True))
+        @contextmanager
+        def cursor(): yield SimpleNamespace(execute=lambda *args: writes.append(args))
+        payload = api.ApprovalCancelIn(site='MAJA', service_date=date(2026,10,5), expected_hash='a'*64, reason='Koreksi')
+        with patch.object(api, 'connection', connection), patch.object(api, '_load_daily', return_value=state), patch.object(fixture.api, 'daily_lock', lambda *a: locks.append(a)):
+            self.assertEqual(api.approval_cancel(payload, request)['approval']['status'], 'CANCELLED')
+            self.assertEqual(len(commits), 1); self.assertEqual(len(locks), 1)
+            payload.expected_hash = 'b'*64
+            with self.assertRaises(HTTPException) as err: api.approval_cancel(payload, request)
+            self.assertEqual(err.exception.status_code, 409)
+            payload.expected_hash = 'a'*64; state['status'] = 'GENERATED'
+            with self.assertRaises(HTTPException): api.approval_cancel(payload, request)
+            state['status'] = 'DRAFT'; state['data'] = cancel_approval(original, 'OWNER', 'later', 'Koreksi')
+            self.assertTrue(api.approval_cancel(payload, request)['alreadyCancelled'])
+            self.assertEqual(len(commits), 1)
+        with self.assertRaises(HTTPException) as err:
+            api.approval_cancel(payload, SimpleNamespace(state=SimpleNamespace(sppg_role='CEMPLANG')))
+        self.assertEqual(err.exception.status_code, 403)
+
     def test_defaults_update_automatic_values_and_preserve_manual_zero(self):
         result = incentive_defaults({}, 5572000, '2026-10-05', 'MAJA', '001/KW/2026')
         self.assertEqual(result['incentive']['paymentDate'], '2026-10-05')

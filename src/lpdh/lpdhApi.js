@@ -35,6 +35,7 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  approvalCancel: (site, serviceDate, expectedHash, reason) => request('/v1/lpdh/approval/cancel', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash, reason }) }),
   approvalPreview: (site, serviceDate) => request('/v1/lpdh/approval/preview', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate }) }),
   approvalFinalize: (site, serviceDate, expectedHash) => request('/v1/lpdh/approval/finalize', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash }) }),
   previousRoutine: (site, date, sourceDate) => documentApi.previousRoutine(site, date, sourceDate),
