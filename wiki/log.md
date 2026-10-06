@@ -111,3 +111,8 @@
 - Added last-saved number anchors, collision skipping and persistent canceled-number claims, without resetting suffixes or counters. Existing numbering lacks a dedicated edit timestamp; upgrade uses last saved record once, and subsequent explicit number saves take precedence.
 - Added authenticated FINAL Excel exports from the same PDF snapshot, full aggregate recipient appendices, typed values/literal identifiers, private artwork, paired site/year/month/date Drive folders, stable artifact keys, complete/partial statuses and missing-file retry. Old archives and existing Operations destinations remain intact.
 - Added synthetic backend, UI, scope, numbering, collision, read-only copy, generated/concurrent guards, export/appendix/artwork and partial retry regressions. Verified synthetic Excel layout and build; actual production financial documents are not finalized for testing. Updated the [LPDH workflow](accounting/lpdh-document-workflow.md) and index.
+
+## 2026-10-06 - Guard initial numbering against unrelated archive timestamps
+
+- Finalization/archive retries update a document's general updated_at even when its number is unchanged. Added a bounded upgrade correction that initializes untouched bootstrap anchors from the latest retained number claim matching the current document/day number, not the latest upload attempt.
+- Preserve all serial claims, document numbers, historical financial data, and operator anchors saved after the first upgrade. Originally backfilled claims use document creation/service date only to break timestamp ties; missing pre-claim edit history is not invented. Added a migration guard regression and clarified the [LPDH workflow](accounting/lpdh-document-workflow.md).

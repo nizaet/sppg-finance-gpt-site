@@ -46,6 +46,7 @@ MIGRATIONS = [
     ROOT / "schema" / "generated_document_manual_settings_v041.sql",
     ROOT / "schema" / "document_number_serials_v042.sql",
     ROOT / "schema" / "document_routine_archives_v043.sql",
+    ROOT / "schema" / "document_number_anchor_seed_v044.sql",
 ]
 
 

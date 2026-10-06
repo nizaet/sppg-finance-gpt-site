@@ -32,6 +32,14 @@ def doc(kind='OPERASIONAL', subtype=None):
 
 
 class RoutineTests(unittest.TestCase):
+    def test_upgrade_anchors_use_number_claim_not_archive_timestamp_and_keep_operator_edits(self):
+        migration=(ROOT/'schema/document_number_anchor_seed_v044.sql').read_text(encoding='utf-8')
+        self.assertIn('c.created_at desc',migration)
+        self.assertNotIn('d.updated_at',migration)
+        self.assertIn('document_number_anchors.selected_at <=',migration)
+        self.assertIn("migration_name='schema/document_routine_archives_v043.sql'",migration)
+        self.assertIn('btrim(d.document_number)',migration,'only current document numbers, not abandoned old claims')
+
     def test_multi_operational_documents_retained_not_collapsed(self):
         first=doc(); second=doc(); second['documentNumber']='231/OP/TEST/X/2026'
         raw=doc('BAHAN_BAKU'); wages=doc('UPAH_RELAWAN'); canceled=doc(); canceled['status']='CANCELLED'
