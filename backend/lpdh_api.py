@@ -880,6 +880,8 @@ def approval_preview(payload: ApprovalIn, request: Request):
     try:
         pdf = render_approval(content, masters.get('assets') or {})
     except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception('LPDH approval print failed (%s)', type(exc).__name__)
         raise HTTPException(422, 'Pratinjau pengesahan belum berhasil dicetak. Data tidak difinalkan.') from exc
     return {'filename': f'J_Pengesahan_{site}_{payload.service_date}.pdf',
             'mimeType': 'application/pdf', 'contentBase64': encode_bytes(pdf),
