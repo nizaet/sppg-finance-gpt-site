@@ -84,7 +84,10 @@ def attach_approval(daily, archive, digest, actor, timestamp):
 
 def print_copy(content, assets):
     """Hide other sheets only in the print copy; references remain available."""
-    from backend.generated_document_settings import validate_artwork
+    if __package__:
+        from .generated_document_settings import validate_artwork
+    else:
+        from generated_document_settings import validate_artwork
     wb = load_workbook(BytesIO(content), keep_links=False)
     # Never evaluate network/DDE formulas supplied in an uploaded workbook.
     import re
