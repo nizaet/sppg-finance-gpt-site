@@ -35,6 +35,8 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  approvalPreview: (site, serviceDate) => request('/v1/lpdh/approval/preview', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate }) }),
+  approvalFinalize: (site, serviceDate, expectedHash) => request('/v1/lpdh/approval/finalize', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash }) }),
   previousRoutine: (site, date, sourceDate) => documentApi.previousRoutine(site, date, sourceDate),
   syncDocuments: (site, date) => documentApi.syncDaily(site, date),
   getMasters: (site) => request(`/v1/lpdh/masters?${q({ site })}`),

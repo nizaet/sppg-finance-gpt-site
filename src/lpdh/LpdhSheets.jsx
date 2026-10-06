@@ -1,5 +1,6 @@
 import React from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import ApprovalActions from './ApprovalActions.jsx';
 
 export const SHEET_ORDER = [
   "Petunjuk",
@@ -123,7 +124,7 @@ function Ref({ preview, referenceRows }) {
   return <div className="lpdh-sheet-body"><h3>Ref</h3><Table headers={["Parameter","Nilai"]} rows={main}/>{referenceRows?.length>0&&<><h4>Referensi workbook resmi</h4><Table headers={["A","B","C","D"]} rows={referenceRows.slice(0,214).map(r=>r.map(v=>v==null?"":String(v)))}/></>}</div>;
 }
 
-export default function LpdhSheets({ activeSheet, masters, daily, preview, serviceDate, referenceRows, onOpenIssue }) {
+export default function LpdhSheets({ activeSheet, masters, daily, preview, serviceDate, referenceRows, onOpenIssue, site, onApprovalSaved }) {
   switch(activeSheet){
     case "Petunjuk": return <Petunjuk/>;
     case "Identitas": return <Identity masters={masters} daily={daily} serviceDate={serviceDate}/>;
@@ -137,7 +138,7 @@ export default function LpdhSheets({ activeSheet, masters, daily, preview, servi
     case "G_CekPPK": return <Checks preview={preview} onOpenIssue={onOpenIssue}/>;
     case "H_RekapPPK": return <Rekap preview={preview} masters={masters} daily={daily} serviceDate={serviceDate}/>;
     case "I_RegisterBukti": return <Register preview={preview}/>;
-    case "J_Pengesahan": return <Approval preview={preview} masters={masters} serviceDate={serviceDate}/>;
+    case "J_Pengesahan": return <><ApprovalActions key={`${site}|${serviceDate}`} site={site} serviceDate={serviceDate} daily={daily} onSaved={onApprovalSaved}/><Approval preview={preview} masters={masters} serviceDate={serviceDate}/></>;
     case "Ref": return <Ref preview={preview} referenceRows={referenceRows}/>;
     default: return null;
   }

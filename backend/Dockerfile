@@ -32,11 +32,14 @@ RUN cp dist-cemplang/index.html dist-maja/index-cemplang.html \
 
 FROM python:3.12-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-calc fonts-crosextra-carlito \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 RUN python -m py_compile backend/migrate.py backend/app.py backend/lpdh_logic.py backend/lpdh_api.py backend/calculator_pages.py \
-    && python backend/lpdh_selftest.py && python backend/generated_document_selftest.py
+    && python backend/lpdh_selftest.py && python backend/generated_document_selftest.py \
+    && python backend/lpdh_approval_selftest.py
 COPY legacy ./legacy
 COPY schema ./schema
 COPY parser ./parser

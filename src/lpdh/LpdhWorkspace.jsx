@@ -134,13 +134,13 @@ function ServiceDaysPanel({ site, effectiveDates, monthKey, setMonthKey, onSave,
   </section>;
 }
 
-function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet, onOpenIssue }) {
+function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet, onOpenIssue, site, onApprovalSaved }) {
   return <div className="lpdh-review">
     <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW ISIAN TEMPLATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa sebelum template diisi dan diunduh.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Review mengikuti isian Data Harian saat ini, termasuk perubahan belum disimpan. Simpan Draft sebelum mengisi template untuk unduhan.</p>}</div>
       <div className={preview?.ready?"lpdh-readiness ready":"lpdh-readiness blocked"}>{preview?.ready?<FileCheck2 size={18}/>:<ClipboardCheck size={18}/>}<span>{preview?.ready?"SIAP UNDUH TERVALIDASI":`${preview?.errorCount ?? "-"} PERIKSA`}</span></div>
     </div>
     <div className="lpdh-sheet-tabs">{SHEET_ORDER.map((sheet)=><button key={sheet} className={activeSheet===sheet?"active":""} type="button" onClick={()=>setActiveSheet(sheet)}>{sheet}</button>)}</div>
-    <LpdhSheets activeSheet={activeSheet} masters={masters} daily={daily} preview={preview} serviceDate={serviceDate} referenceRows={referenceRows} onOpenIssue={onOpenIssue}/>
+    <LpdhSheets activeSheet={activeSheet} masters={masters} daily={daily} preview={preview} serviceDate={serviceDate} referenceRows={referenceRows} onOpenIssue={onOpenIssue} site={site} onApprovalSaved={onApprovalSaved}/>
   </div>;
 }
 
@@ -329,7 +329,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
           setDaily(next);
           flash(`Isian PM dari ${result.sourceDate} tersimpan sebagai draft; periksa realisasi hari ini. Bukti dan pembayaran lama tidak disalin.`);
         }} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
-        {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet} onOpenIssue={openIssue}/>}
+        {active==="review"&&<ReviewPanel site={site} onApprovalSaved={async()=>{await loadDaily();await refreshPreview();}} masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet} onOpenIssue={openIssue}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan} onOpenIssue={openIssue}/>}
       </section>
     </div>

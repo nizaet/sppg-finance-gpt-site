@@ -426,6 +426,9 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
     </Section>
 
     <Section tabKey="signers" tabLabel="Pengesah" title="Pengesah" subtitle="Tiga baris ini dipakai juga pada J_Pengesahan.">
+      <div className="lpdh-asset-grid">
+        {[["approvalFinanceSignature","TTD Pengawas Keuangan"],["approvalSppgSignature","TTD Kepala SPPG"],["approvalFoundationSignature","TTD Yayasan"],["approvalSppgStamp","Stempel SPPG"],["approvalFoundationStamp","Stempel Yayasan"]].map(([key,label])=><label key={key} className="lpdh-asset-upload"><span>{label}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>uploadImageAsset(key,e.target.files?.[0])}/>{data.assets[key]&&<img src={data.assets[key]} alt={label}/>}</label>)}
+      </div>
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Peran</th><th>Nama</th><th>Jenis ID</th><th>Nomor ID</th><th>Ditandatangani</th></tr></thead>
         <tbody>{data.signers.slice(0, 3).map((row, index) => <tr key={index}>
           <td>{["Pengawas Keuangan SPPG","Kepala SPPG","Perwakilan Mitra/Yayasan"][index]}</td>
@@ -559,7 +562,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   };
 
   const update = (key, value) => setDaily({ ...data, [key]: value });
-  const updateNested = (parent, key, value) => setDaily({ ...data, [parent]: { ...(data[parent] || {}), [key]: value } });
+  const updateNested = (parent, key, value) => {
+    const nested = { ...(data[parent] || {}), [key]: value };
+    if (parent === "incentive" && ["statementAmount","paidAmount"].includes(key)) nested._automaticAmounts = (nested._automaticAmounts || []).filter(field=>field !== key);
+    setDaily({ ...data, [parent]: nested });
+  };
   const updateProduction = (key, value) => setDaily({ ...data, pm: { ...data.pm, production: { ...data.pm.production, [key]: value } } });
   const production = productionBreakdown(data);
   const recalculateProduction = () => {
@@ -795,6 +802,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     <Section tabKey="incentive" tabLabel="D · Insentif Yayasan" title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">
+      <p>Nilai kosong mengikuti insentif dihitung; tetap bisa diedit. Tanggal default mengikuti HPE, bukan tanggal unduhan. Nomor bukti dibuat sistem dan nomor kuitansi berlanjut saat disimpan.</p>
+      <button type="button" onClick={()=>{
+        if (!window.confirm("Terapkan kembali nilai insentif dihitung dan tanggal HPE? Nilai manual pada tiga isian ini akan diganti.")) return;
+        setDaily({...data,incentive:{...data.incentive,statementAmount:preview?.incentiveCalculated??0,paidAmount:preview?.incentiveCalculated??0,paymentDate:serviceDate,receiptSigned:"Ya",_automaticAmounts:["statementAmount","paidAmount"]}});
+      }}>Terapkan nilai hitung &amp; tanggal HPE</button>
       <div className="lpdh-form-grid">
         <YesNo label="Ada kontaminasi?" value={data.incentive.eligibility.contamination} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,contamination:v}}})}/>
         <YesNo label="Ada insiden fatal?" value={data.incentive.eligibility.fatalIncident} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,fatalIncident:v}}})}/>
@@ -809,6 +821,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="No kuitansi" value={data.incentive.receiptNo} onChange={(v)=>updateNested("incentive","receiptNo",v)}/>
         <YesNo label="Kuitansi ditandatangani?" value={data.incentive.receiptSigned} onChange={(v)=>updateNested("incentive","receiptSigned",v)}/>
         <Field label="Link bukti" value={data.incentive.evidenceLink} onChange={(v)=>updateNested("incentive","evidenceLink",v)} placeholder="https://..."/>
+        {data.incentive.approvalEvidenceLink && <p><a href={data.incentive.approvalEvidenceLink} target="_blank" rel="noopener noreferrer">PDF J_Pengesahan di Drive</a> · Dokumen pengesahan, bukan verifikasi transfer.</p>}
         <Field label="Referensi transaksi VA" value={data.incentive.vaReference} onChange={(v)=>updateNested("incentive","vaReference",v)}/>
       </div>
     </Section>

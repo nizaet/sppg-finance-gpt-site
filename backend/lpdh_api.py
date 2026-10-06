@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,7 +21,8 @@ from backend.lpdh_logic import (
     normalize_daily_draft,
     validate_daily_financial_sources,
 )
-from backend.document_numbering import claim_number, daily_number
+from backend.document_numbering import claim_number, daily_number, suggest_number
+from backend.lpdh_approval import incentive_defaults, approval_hash, attach_approval, render_approval, ASSETS
 from backend.lpdh_template import prepare_template, fill_template, source_hash, VERSION as TEMPLATE_VERSION
 
 TEMPLATE_KEYS = ('_officialTemplateBase64', '_officialTemplateFilename',
@@ -76,6 +77,29 @@ class GenerateIn(BaseModel):
     site: str
     service_date: date
     draft_only: bool = False
+
+
+class ApprovalIn(BaseModel):
+    site: str
+    service_date: date
+    expected_hash: str | None = Field(default=None, max_length=64)
+
+
+def _with_incentive_defaults(cur, site, service_date, masters, daily, context, reserve=False):
+    if daily.get('_historicalGeneratedSnapshot'):
+        return daily
+    preview = compute_preview(masters, daily, service_date.isoformat(), context['effective'], _load_final_plan(site, service_date))
+    inc = daily.get('incentive') or {}
+    owner = 'DAY:' + service_date.isoformat()
+    cur.execute("select full_number from document_number_serials where site=%s and namespace='D_INS_RECEIPT' and owner_key=%s order by created_at desc limit 1", (site, owner))
+    own = cur.fetchone()
+    roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'][service_date.month - 1]
+    receipt = inc.get('receiptNo') or (own or {}).get('full_number') or suggest_number(cur, site, 'D_INS_RECEIPT', f'001/KW-INS/SPPG-{site}/{roman}/{service_date.year}')
+    result = incentive_defaults(daily, preview['incentiveCalculated'], service_date.isoformat(), site, receipt)
+    if reserve:
+        claim_number(cur, site, 'D_INS_RECEIPT', result['incentive']['receiptNo'], owner)
+        claim_number(cur, site, 'D_INS_PROOF', result['incentive']['proofNo'], owner)
+    return result
 
 
 def _require_db() -> None:
@@ -228,6 +252,10 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
     incoming = dict(payload.data or {})
     try:
         validate_master_portions(incoming)
+        from backend.generated_document_settings import validate_artwork
+        for key in ASSETS:
+            if (incoming.get('assets') or {}).get(key):
+                validate_artwork(str(incoming['assets'][key]).split(',', 1)[-1])
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     for protected_key in TEMPLATE_KEYS:
@@ -275,6 +303,8 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     normalized, context = _daily_with_hpe(target, service_date, normalized)
     with connection() as conn, conn.cursor() as cur:
         normalized["lpdhNumber"] = daily_number(cur, target, service_date, _load_master(target)["data"], normalized.get("lpdhNumber"))
+        if daily['status'] != 'GENERATED':
+            normalized = _with_incentive_defaults(cur, target, service_date, masters, normalized, context)
     return {
         "site": target,
         "serviceDate": service_date,
@@ -305,6 +335,16 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
             if payload.expected_revision is not None and existing['revision'] != payload.expected_revision:
                 raise HTTPException(409, "Data harian berubah saat penarikan. Refresh dan periksa kembali sebelum menarik.")
             validate_daily_financial_sources(payload.data, existing["data"])
+            for protected in ('_approval', '_approvalHistory'):
+                payload.data.pop(protected, None)
+                if protected in existing['data']:
+                    payload.data[protected] = existing['data'][protected]
+            prior_approval = existing['data'].get('_approval') or {}
+            if prior_approval.get('pdfLink'):
+                inc = payload.data.setdefault('incentive', {})
+                inc['approvalEvidenceLink'] = prior_approval['pdfLink']
+                if not inc.get('evidenceLink'):
+                    inc['evidenceLink'] = prior_approval['pdfLink']
             # Replacement audit history is server-owned, not editable form data.
             payload.data.pop('_replacedLegacyPayments', None)
             if '_replacedLegacyPayments' in existing['data']:
@@ -333,6 +373,8 @@ def _save_daily_locked(payload, request, site, cur):
     status = requested_status
     if requested_status != "GENERATED":
         normalized, context = _daily_with_hpe(site, payload.service_date, payload.data or {})
+        payload.data = _with_incentive_defaults(cur, site, payload.service_date, masters, normalized, context, reserve=True)
+        normalized = payload.data
         final_plan = _load_final_plan(site, payload.service_date)
         if final_plan and context["effective"]:
             validation = compute_preview(
@@ -655,6 +697,9 @@ def preview(request: Request, site: str = Query(), service_date: date = Query(al
             raw_daily = merge_final_documents(raw_daily, load_documents(cur, target, service_date, True))
     daily, context = _daily_with_hpe(target, service_date, raw_daily)
     final_plan = _load_final_plan(target, service_date)
+    if daily_state['status'] != 'GENERATED':
+        initial = compute_preview(masters, daily, service_date.isoformat(), context['effective'], final_plan)
+        daily = incentive_defaults(daily, initial['incentiveCalculated'], service_date.isoformat(), target)
     return compute_preview(masters, daily, service_date.isoformat(), context["effective"], final_plan)
 
 
@@ -681,6 +726,9 @@ def preview_draft(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     daily, context = _daily_with_hpe(target, payload.service_date, daily)
+    if existing['status'] != 'GENERATED':
+        initial = compute_preview(masters, daily, payload.service_date.isoformat(), context['effective'], _load_final_plan(target, payload.service_date))
+        daily = incentive_defaults(daily, initial['incentiveCalculated'], payload.service_date.isoformat(), target)
     result = compute_preview(masters, daily, payload.service_date.isoformat(), context["effective"], _load_final_plan(target, payload.service_date))
     return {**result, "previewSource": "CURRENT_FORM"}
 
@@ -707,6 +755,8 @@ def _generate_locked(payload, request, site, cur):
     if daily_state["status"] != "GENERATED":
         raw_daily = merge_final_documents(raw_daily, load_documents(cur, site, payload.service_date, True))
     daily, context = _daily_with_hpe(site, payload.service_date, raw_daily)
+    if daily_state['status'] != 'GENERATED':
+        daily = _with_incentive_defaults(cur, site, payload.service_date, masters, daily, context)
     if not payload.draft_only:
         daily["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, daily.get("lpdhNumber"))
     final_plan = _load_final_plan(site, payload.service_date)
@@ -795,3 +845,81 @@ def history(request: Request, site: str = Query(), limit: int = Query(default=50
             )
             rows = cur.fetchall()
     return {"site": target, "items": rows}
+
+
+def _approval_inputs(cur, site, service_date):
+    from backend.accountant_generated_document_api import load_documents
+    from backend.generated_document_logic import merge_final_documents
+    masters = _load_master(site)['data'] or {}
+    state = _load_daily(site, service_date)
+    if state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot'):
+        raise HTTPException(409, 'Snapshot LPDH sudah terkunci. Pengesahan tidak boleh mengubah arsip lama.')
+    data = normalize_daily_draft(masters, state['data'])
+    data = merge_final_documents(data, load_documents(cur, site, service_date, True))
+    data, context = _daily_with_hpe(site, service_date, data)
+    data = _with_incentive_defaults(cur, site, service_date, masters, data, context)
+    preview_data = compute_preview(masters, data, service_date.isoformat(), context['effective'], _load_final_plan(site, service_date))
+    source = masters.get('_officialTemplateBase64')
+    if not source:
+        raise HTTPException(422, 'Unggah template LPDH resmi sebelum mencetak J_Pengesahan.')
+    try:
+        prepared = prepare_template(base64.b64decode(source, validate=True))
+        content = fill_template(prepared, masters, data, preview_data, service_date.isoformat())
+    except Exception as exc:
+        raise HTTPException(422, 'Template belum dapat dicetak. Periksa pemetaan template resmi.') from exc
+    digest = approval_hash(masters, data, service_date.isoformat(), preview_data)
+    return masters, data, preview_data, content, digest, context
+
+
+@router.post('/approval/preview')
+def approval_preview(payload: ApprovalIn, request: Request):
+    _require_db()
+    site = _site(request, payload.site)
+    with connection() as conn, conn.cursor() as cur:
+        masters, data, preview_data, content, digest, context = _approval_inputs(cur, site, payload.service_date)
+    try:
+        pdf = render_approval(content, masters.get('assets') or {})
+    except Exception as exc:
+        raise HTTPException(422, 'Pratinjau pengesahan belum berhasil dicetak. Data tidak difinalkan.') from exc
+    return {'filename': f'J_Pengesahan_{site}_{payload.service_date}.pdf',
+            'mimeType': 'application/pdf', 'contentBase64': encode_bytes(pdf),
+            'hash': digest, 'validation': {'ready': preview_data['ready'], 'errorCount': preview_data['errorCount']}}
+
+
+@router.post('/approval/finalize')
+def approval_finalize(payload: ApprovalIn, request: Request):
+    _require_db()
+    site = _site(request, payload.site)
+    if not payload.expected_hash:
+        raise HTTPException(422, 'Buka pratinjau cetak sebelum finalisasi pengesahan.')
+    from backend.accountant_generated_document_api import daily_lock
+    from backend.accountant_drive import upload_accountant_artifact
+    with connection() as conn, conn.cursor() as cur:
+        daily_lock(cur, site, payload.service_date)
+        masters, data, preview_data, content, digest, context = _approval_inputs(cur, site, payload.service_date)
+        if digest != payload.expected_hash:
+            raise HTTPException(409, 'Data atau template berubah. Buka dan cetak pratinjau terbaru sebelum Finalkan.')
+        if not context['effective']:
+            raise HTTPException(409, 'Pengesahan final harus menggunakan tanggal HPE.')
+        current = data.get('_approval') or {}
+        if current.get('hash') == digest and current.get('pdfLink'):
+            return {'saved': True, 'approval': current, 'alreadyFinal': True}
+        if len(masters.get('signers') or []) < 3 or any(not str(s.get('name') or '').strip() for s in masters['signers'][:3]):
+            raise HTTPException(422, 'Lengkapi nama tiga pengesah pada Master → Pengesah.')
+        owner = 'DAY:' + payload.service_date.isoformat()
+        claim_number(cur, site, 'D_INS_RECEIPT', data['incentive']['receiptNo'], owner)
+        claim_number(cur, site, 'D_INS_PROOF', data['incentive']['proofNo'], owner)
+        try:
+            pdf = render_approval(content, masters.get('assets') or {})
+            archive = upload_accountant_artifact(kind='invoice', filename=f'J_Pengesahan_{site}_{payload.service_date}_{digest[:12]}.pdf',
+                data=pdf, mime_type='application/pdf', site=site, service_date=payload.service_date.isoformat(),
+                artifact_key=f'lpdh-approval-{site}-{payload.service_date}-{digest}')
+            data = attach_approval(data, archive, digest, _role(request), datetime.now(timezone.utc).isoformat())
+        except Exception as exc:
+            raise HTTPException(502, 'PDF pengesahan belum tersimpan di Drive. Status FINAL dan link D_Insentif tidak diubah; silakan ulangi.') from exc
+        cur.execute("""insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
+            values (%s,%s,%s::jsonb,'DRAFT',1,%s,now()) on conflict (site,service_date) do update
+            set data=excluded.data,revision=lpdh_daily_state.revision+1,updated_by=excluded.updated_by,updated_at=now()""",
+            (site, payload.service_date, json.dumps(data, ensure_ascii=False), _role(request)))
+        conn.commit()
+    return {'saved': True, 'approval': data['_approval'], 'evidenceLink': data['incentive'].get('evidenceLink')}
