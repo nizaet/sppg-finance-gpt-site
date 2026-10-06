@@ -94,7 +94,8 @@ def print_copy(content, assets):
     for sheet in wb:
         for row in sheet:
             for cell in row:
-                if cell.data_type == 'f' and re.search(r'WEBSERVICE\s*\(|RTD\s*\(|DDE\s*\(|\[[0-9]+\]|^[=+].*\|.*!', str(cell.value), re.I):
+                expression = re.sub(r'"(?:[^"]|"")*"', '""', str(cell.value))
+                if cell.data_type == 'f' and re.search(r'WEBSERVICE\s*\(|RTD\s*\(|DDE\s*\(|\[[0-9]+\]|^[=+].*\|.*!', expression, re.I):
                     raise ValueError('Template cetak tidak boleh memakai rumus sumber eksternal.')
     if 'J_Pengesahan' not in wb.sheetnames:
         raise ValueError('Template tidak memiliki sheet J_Pengesahan.')

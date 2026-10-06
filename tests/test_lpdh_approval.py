@@ -59,6 +59,12 @@ class ApprovalTests(unittest.TestCase):
         self.assertEqual(printed['J_Pengesahan'].sheet_state, 'visible')
         self.assertEqual(len(printed['J_Pengesahan']._images), 1)
         self.assertEqual(load_workbook(BytesIO(raw))['Identitas'].sheet_state, 'visible')
+        wb['Identitas']['A1'] = '=_xlfn.TEXTJOIN(" | ",TRUE(),Identitas!B6:B7)'
+        valid = BytesIO(); wb.save(valid)
+        self.assertTrue(print_copy(valid.getvalue(), {}))
+        wb['Identitas']['A1'] = "=cmd|'external'!A0"
+        dde = BytesIO(); wb.save(dde)
+        with self.assertRaises(ValueError): print_copy(dde.getvalue(), {})
         wb['Identitas']['A1'] = '=WEBSERVICE("https://example.com")'
         bad = BytesIO(); wb.save(bad)
         with self.assertRaises(ValueError): print_copy(bad.getvalue(), {})
