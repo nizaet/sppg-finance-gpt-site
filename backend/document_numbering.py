@@ -64,7 +64,7 @@ def invoice_fallback(masters, site, kind, service_date):
         return "001" + configured
     if split_number(configured):
         return configured
-    code = {"BAHAN_BAKU": "BB", "OPERASIONAL": "OP", "UPAH_RELAWAN": "UPAH", "INSENTIF_GURU_KADER": "INS"}[kind]
+    code = {"BAHAN_BAKU": "BB", "OPERASIONAL": "OP", "UPAH_RELAWAN": "UPAH", "INSENTIF_GURU_KADER": "INS", "INSENTIF_MITRA": "INS-MITRA"}[kind]
     roman = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][service_date.month - 1]
     return f"001/{code}/SPPG-{site}/{roman}/{service_date.year}"
 

@@ -112,6 +112,8 @@ def signatures(document, recipient=None, width=523, artwork=None):
 def invoice_story(document, width, artwork=None):
     h = document["header"]
     title = "INVOICE BAHAN BAKU" if document["documentType"] == "BAHAN_BAKU" else "INVOICE OPERASIONAL"
+    if document['documentType'] == 'INSENTIF_MITRA':
+        title = 'INVOICE INSENTIF MITRA / YAYASAN'
     story = [header(document, title, width=width, artwork=artwork), Spacer(1, 9)]
     info = Table([
         [p("Penerima: " + str(h.get("recipientName") or "")), p("Pengirim: " + str(h.get("senderName") or h.get("issuerName") or ""))],
@@ -171,7 +173,7 @@ def render_document_pdf(document, artwork=None):
         story[0] = header(document, 'INVOICE UPAH DAN INSENTIF HARIAN', width=width, artwork=artwork)
         for title, section in sections:
             story += [PageBreak()] + aggregate_payment_story(section, width, artwork)
-    elif document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"}:
+    elif document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL", "INSENTIF_MITRA"}:
         story = invoice_story(document, width, artwork)
     elif aggregate_payment(document):
         story = aggregate_payment_story(document, width, artwork)

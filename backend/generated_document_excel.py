@@ -134,6 +134,8 @@ def render_document_excel(document, artwork=None, _workbook=None, _prefix=''):
              'KUITANSI INSENTIF ' + str(document['header'].get('recipientSubtype') or 'GURU / KADER').upper() if receipt else
              'INVOICE BAHAN BAKU' if kind == 'BAHAN_BAKU' else 'INVOICE OPERASIONAL')
     combined = is_payment_package(document)
+    if kind == 'INSENTIF_MITRA':
+        title = 'INVOICE INSENTIF MITRA / YAYASAN'
     if combined:
         title = 'INVOICE UPAH DAN INSENTIF HARIAN'
     ws, row = base_sheet(wb, 'Invoice Utama' if combined else _prefix or ('Kuitansi' if receipt else 'Invoice'), document, title, artwork)

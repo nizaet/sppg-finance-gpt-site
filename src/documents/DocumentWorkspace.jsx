@@ -6,7 +6,7 @@ import "./documents.css";
 import DocumentCalendar from "./DocumentCalendar.jsx";
 import DocumentAssets from "./DocumentAssets.jsx";
 
-const TYPES = { BAHAN_BAKU: "Invoice Bahan Baku", OPERASIONAL: "Invoice Operasional", UPAH_RELAWAN: "Kuitansi Upah Relawan", INSENTIF_GURU_KADER: "Kuitansi Insentif Guru / Kader" };
+const TYPES = { BAHAN_BAKU: "Invoice Bahan Baku", OPERASIONAL: "Invoice Operasional", UPAH_RELAWAN: "Kuitansi Upah Relawan", INSENTIF_GURU_KADER: "Kuitansi Insentif Guru / Kader", INSENTIF_MITRA: "Invoice Insentif Mitra / Yayasan" };
 const money = value => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 2 }).format(Number(value) || 0);
 export const todayJakarta = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const uuid = () => globalThis.crypto?.randomUUID?.() || `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -124,14 +124,29 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     numberEdited.current = false; numberReads.current++;
     setType(nextType); setLines([]); setEditing(null); setSelected(""); setItemSearch(""); setLineSearch(""); setDocumentNumber(""); requestKey.current = uuid();
     setActiveRoutine(null);
-    const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
+    const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER", "INSENTIF_MITRA"].includes(nextType) ? "YAYASAN" : "KOPERASI";
     setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile, ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? { paymentSnapshotVersion: 2, recipientSubtype: "Guru" } : {}) });
   };
   const chooseType = next => {
     if (next === type) return;
     if ((lines.length || editing) && !window.confirm("Ganti jenis dokumen? Perubahan yang belum disimpan akan dikosongkan.")) return;
     reset(next);
+    if (next === 'INSENTIF_MITRA') pullMitra(true);
   };
+  const pullMitra = (initial = false) => run(async version => {
+    if (!initial && lines.length && !window.confirm('Ganti nilai draft dengan insentif dihitung pada D_Insentif tanggal ini?')) return;
+    const preview = await lpdhApi.preview(site, serviceDate);
+    if (version !== context.current) return;
+    if (!(preview.incentiveCalculated > 0)) throw new Error('Nilai D_Insentif masih nol. Periksa PM dan syarat insentif pada Data Harian.');
+    setLines([{itemName:`Insentif Mitra / Yayasan · ${serviceDate}`,category:'Insentif Mitra',quantity:1,unit:'hari',unitPrice:preview.incentiveCalculated,metadata:{source:'D_INSENTIF',sourceDate:serviceDate}}]);
+    notify('Nilai ditarik dari D_Insentif yang tersimpan. Periksa sebelum Simpan draft.');
+  });
+  const exportMaker = doc => run(async version => {
+    if (!window.confirm(`Export ${doc.documentNumber} senilai ${money(doc.total)} ke Data Maker ${site}? Satu Maker memakai total invoice utama. Ini tidak melakukan pembayaran. Dokumen yang sudah diekspor perlu dibatalkan melalui alur Maker terlebih dahulu.`)) return;
+    const result = await documentApi.exportMaker(doc.id);
+    await reload(version);
+    notify(`${result.duplicate ? 'Sudah ada' : 'Berhasil masuk'} Data Maker #${result.maker_id}; tidak membuat ekspor ganda.`);
+  });
   const update = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const updateMetadata = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, metadata: { ...row.metadata, [key]: value } } : row));
   const addSelected = (key = selected) => {
@@ -338,6 +353,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <p className="doc-hint">Bahan baku masak tetap dari Final Kalkulator hari ini. Relawan dari master aktif. Nomor baru, bukti bayar, BAST, referensi transaksi dan status FINAL lama tidak disalin. Setiap invoice operasional tetap terpisah.</p>
         </details>
         {routineQueue.length > 0 && <div className="doc-details"><strong>Antrean tarikan · {routineQueue.length} belum disimpan</strong><div className="doc-actions">{routineQueue.map((entry, index)=><button type="button" key={entry.key} aria-pressed={entry.key===activeRoutine} disabled={entry.key===activeRoutine} onClick={()=>{if(lines.length&&!window.confirm("Pindah rancangan? Perubahan rancangan aktif yang belum disimpan akan dikosongkan."))return;activateRoutine(entry);}}>{index+1}. {entry.header.recipientSubtype || TYPES[entry.documentType]} · {entry.sourceNumber || "Master relawan"}</button>)}</div><p className="doc-hint">Periksa dan Simpan draft setiap rancangan. Nomor berikutnya muncul setelah nomor sebelumnya disimpan.</p></div>}
+        <div className="doc-actions" role="group" aria-label="Tab jenis invoice">{Object.entries(TYPES).map(([key,label])=><button type="button" key={key} aria-pressed={type===key} className={type===key?'primary':''} onClick={()=>chooseType(key)}>{label}</button>)}</div>
         <div className="doc-grid">
           <Field label={receipts ? "Nomor paket kuitansi (otomatis, bisa diedit)" : "Nomor invoice (otomatis, bisa diedit)"} value={documentNumber} onChange={value => { numberEdited.current = true; numberReads.current++; setDocumentNumber(value); }}/>
           <Field label="Tanggal pembayaran / pelayanan" type="date" value={serviceDate} onChange={changeDate}/>
@@ -359,13 +375,15 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <Field label="Link bukti autentik / PDF bertanda tangan" value={header.evidenceLink} onChange={v => setHeader({ ...header, evidenceLink: v })}/>
         </div>
         <div className="doc-actions">
-          {!receipts && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={() => addSelected()} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
+          {!receipts && type !== 'INSENTIF_MITRA' && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={() => addSelected()} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
+          {type === 'INSENTIF_MITRA' && <button type="button" onClick={() => pullMitra()}>Tarik nilai D_Insentif</button>}
           {type === "BAHAN_BAKU" && <button type="button" onClick={pullPlan}>Tarik Final Kalkulator</button>}
           {receipts && <button type="button" onClick={prepare}>Siapkan penerima dari master</button>}
           {combinedPayments && <button type="button" onClick={excludeFinalRecipients}>Keluarkan penerima yang sudah FINAL</button>}
-          <button type="button" onClick={() => setLines(rows => [...rows, { ...blank(type), metadata: { recipientType: combinedPayments ? 'Relawan' : subtype } }])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
+          {type !== 'INSENTIF_MITRA' && <button type="button" onClick={() => setLines(rows => [...rows, { ...blank(type), metadata: { recipientType: combinedPayments ? 'Relawan' : subtype } }])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>}
         </div>
         <p className="doc-hint">{receipts ? (legacyReceipts ? "Kuitansi historis mempertahankan nomor tiap penerima." : combinedPayments ? "Satu nomor untuk invoice utama, rincian upah relawan, insentif guru, insentif kader dan lampiran penerima. Guru: 0–100 PM Rp20.000; 101–500 Rp30.000; di atas 500 Rp40.000, termasuk tenaga pendidik. Kader: Rp1.000 per PM Posyandu. Periksa nominal sebelum final." : "Satu nomor kuitansi untuk total pembayaran harian. Halaman berikutnya memuat semua penerima dan kolom tanda terima kosong. Paket Guru dan Kader terpisah.") : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>
+        {type === 'INSENTIF_MITRA' && <p className="doc-message">Nilai awal mengikuti hasil D_Insentif tanggal aktif. Kop Yayasan tersimpan sebagai default; nomor berlanjut dari invoice Mitra terakhir. PDF FINAL di Drive menjadi link bukti pada D_Insentif, bukan biaya C_Operasional.</p>}
         {searchable && !receipts && <div className="doc-search-items">
           <Field label="Cari item dari master" type="search" value={itemSearch} onChange={setItemSearch}/>
           {itemSearch.trim() && <>
@@ -416,6 +434,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
           {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
+          {doc.status === 'FINAL' && <button type="button" disabled={busy || Boolean(doc.makerId) || !doc.driveUri} onClick={() => exportMaker(doc)}>{doc.makerId ? `Sudah di Data Maker #${doc.makerId}` : 'Export ke Data Maker'}</button>}
           {doc.status !== "CANCELLED" && <button type="button" disabled={busy} onClick={() => cancel(doc)}><Trash2 size={14}/> Batalkan</button>}
           {doc.status === "CANCELLED" && <button type="button" disabled={busy} onClick={() => recreate(doc)}>Buat ulang</button>}
         </div></td></tr>)}{!documents.some(doc => showCancelled || doc.status !== "CANCELLED") && <tr><td colSpan="6" className="doc-empty">Belum ada dokumen aktif pada tanggal ini.</td></tr>}</tbody></table></div>

@@ -21,11 +21,11 @@ from openpyxl.utils.units import pixels_to_EMU, points_to_pixels
 from pypdf import PdfReader
 
 ASSETS = {
-    'approvalFinanceSignature': ('B29', 130, 42),
-    'approvalSppgSignature': ('D29', 130, 42),
-    'approvalFoundationSignature': ('F29', 130, 42),
-    'approvalSppgStamp': ('D31', 65, 30),
-    'approvalFoundationStamp': ('F31', 65, 30),
+    'approvalSppgStamp': ('D29', 90, 80),
+    'approvalFoundationStamp': ('F29', 90, 80),
+    'approvalFinanceSignature': ('B29', 170, 72),
+    'approvalSppgSignature': ('D29', 170, 72),
+    'approvalFoundationSignature': ('F29', 170, 72),
 }
 
 
@@ -146,19 +146,20 @@ def print_copy(content, assets):
         column, row = coordinate_from_string(anchor)
         col_index = column_index_from_string(column) - 1
         col_width = int((ws.column_dimensions[column].width or 13) * 7 + 5)
-        row_height = points_to_pixels(ws.row_dimensions[row].height or ws.sheet_format.defaultRowHeight or 15)
-        next_height = points_to_pixels(ws.row_dimensions[row + 1].height or ws.sheet_format.defaultRowHeight or 15)
-        area_height = row_height + next_height
+        area_height = sum(points_to_pixels(ws.row_dimensions[r].height or ws.sheet_format.defaultRowHeight or 15) for r in range(row,33))
         factor = min(width / image.width, min(height, area_height - 4) / image.height, (col_width - 12) / image.width)
         image.width *= factor
         image.height *= factor
+        stamp = key.endswith('Stamp')
+        center = col_width * (0.42 if stamp else 0.57)
         marker = AnchorMarker(col=col_index, row=row-1,
-            colOff=pixels_to_EMU(max(0, (col_width-image.width)/2)),
+            colOff=pixels_to_EMU(max(0, min(col_width-image.width, center-image.width/2))),
             rowOff=pixels_to_EMU(max(0, (area_height-image.height)/2)))
         image.anchor = OneCellAnchor(_from=marker, ext=XDRPositiveSize2D(pixels_to_EMU(image.width), pixels_to_EMU(image.height)))
         # Replace the placeholder only on the disposable print copy.
-        if key.endswith('Stamp') and str(ws[anchor].value or '').strip().lower().startswith('(cap '):
-            ws[anchor] = None
+        placeholder = f'{column}31'
+        if stamp and str(ws[placeholder].value or '').strip().lower().startswith('(cap '):
+            ws[placeholder] = None
         ws.add_image(image)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True

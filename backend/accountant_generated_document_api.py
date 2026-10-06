@@ -20,7 +20,7 @@ from backend.payment_package import incentive_default
 
 router = APIRouter(tags=["accountant-generated-documents"])
 Site = Literal["MAJA", "CEMPLANG"]
-DocumentType = Literal["BAHAN_BAKU", "OPERASIONAL", "INSENTIF_GURU_KADER", "UPAH_RELAWAN"]
+DocumentType = Literal["BAHAN_BAKU", "OPERASIONAL", "INSENTIF_GURU_KADER", "UPAH_RELAWAN", "INSENTIF_MITRA"]
 
 
 class DocumentItemIn(BaseModel):
@@ -44,6 +44,9 @@ class GeneratedDocumentIn(BaseModel):
     @model_validator(mode="after")
     def validate_document(self):
         self.document_number = checked_number(self.document_number)
+        if self.document_type == 'INSENTIF_MITRA':
+            if len(self.items) != 1 or self.items[0].quantity != 1 or self.header_payload.get('documentProfileKey') != 'YAYASAN':
+                raise ValueError('Invoice Mitra memakai kop Yayasan dan satu nilai insentif harian.')
         if any(isinstance(value, str) and len(value) > 1000 for value in self.header_payload.values()):
             raise ValueError("Isian kop/alamat/bukti maksimal 1000 karakter per kolom")
         for item in self.items:
@@ -144,6 +147,9 @@ def _serialize_document(cur, row):
             "driveUri": row.get("drive_uri"), "driveExcelUri": row.get("drive_excel_uri"), "driveUploadStatus": row.get("drive_upload_status"),
             "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
             "cancellationReason": row.get("cancellation_reason")}
+    cur.execute('select maker_id from generated_document_maker_exports where document_id=%s', (row['id'],))
+    exported = cur.fetchone()
+    document['makerId'] = exported['maker_id'] if exported else None
     if row["document_type"] in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
         for index, item in enumerate(items):
             item["metadata"] = {**item["metadata"], "receiptNo": receipt_number(document, index)}
@@ -488,6 +494,24 @@ def archive_document(document_id: int, authorization: str | None = Header(defaul
     return {"ok": True, **_archive_document(document_id, role)}
 
 
+@router.post('/accountant-documents/{document_id}/export-maker')
+def export_document_maker(document_id: int, authorization: str | None = Header(default=None)):
+    role = session_role(authorization)
+    if not database_ready():
+        raise HTTPException(503, 'database unavailable')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('select * from generated_accountant_documents where id=%s for update', (document_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, 'Dokumen tidak ditemukan')
+        if role not in {'OWNER',row['site']}:
+            raise HTTPException(403, 'akses site tidak diizinkan')
+        from backend.generated_document_maker import export_snapshot
+        result = export_snapshot(cur,_serialize_document(cur,row),role)
+        conn.commit()
+        return {'ok':True,**result}
+
+
 @router.patch("/accountant-documents/{document_id}/cancel")
 def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: str | None = Header(default=None)):
     role = session_role(authorization)
@@ -504,6 +528,10 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
             raise HTTPException(403, "akses site tidak diizinkan")
         if row["status"] == "CANCELLED":
             return {"ok": True, "id": document_id, "status": "CANCELLED"}
+        cur.execute('select m.status from generated_document_maker_exports e join bgn_makers m on m.id=e.maker_id where e.document_id=%s', (document_id,))
+        maker = cur.fetchone()
+        if maker and maker['status'] not in {'CANCELLED','REJECTED'}:
+            raise HTTPException(409, 'Dokumen sudah masuk Data Maker. Selesaikan pembatalan pada Data Maker terlebih dahulu agar nominal pending tidak tertinggal.')
         cur.execute("""update generated_accountant_documents set status='CANCELLED',cancelled_at=now(),cancelled_by=%s,
                     cancellation_reason=%s,updated_at=now() where id=%s""", (role, payload.reason.strip(), document_id))
         if row["status"] == "FINAL":

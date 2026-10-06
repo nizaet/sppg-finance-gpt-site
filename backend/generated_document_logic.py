@@ -84,6 +84,26 @@ def merge_final_documents(daily, documents):
     """Rebuild sourced rows; preserve unrelated data and refuse duplicate payments."""
     out = deepcopy(daily or {})
     finalized = [doc for doc in documents if doc["status"] == "FINAL"]
+    mitra = [doc for doc in finalized if doc['documentType'] == 'INSENTIF_MITRA']
+    if len(mitra) > 1:
+        raise ValueError('Satu hari hanya boleh memiliki satu invoice insentif Mitra FINAL aktif.')
+    incentive = out.setdefault('incentive', {})
+    prior = incentive.get('_invoiceEvidence') or {}
+    if mitra:
+        doc = mitra[0]
+        link = doc.get('driveUri') or ''
+        if not prior:
+            prior = {'previousLink': incentive.get('evidenceLink', ''), 'previousReceipt': incentive.get('receiptNo', '')}
+        if link:
+            incentive['evidenceLink'] = link
+        incentive['receiptNo'] = doc['documentNumber']
+        incentive['_invoiceEvidence'] = {**prior, 'documentId': doc['id'], 'link': link, 'number': doc['documentNumber']}
+    elif prior:
+        if incentive.get('evidenceLink') == prior.get('link'):
+            incentive['evidenceLink'] = prior.get('previousLink', '')
+        if incentive.get('receiptNo') == prior.get('number'):
+            incentive['receiptNo'] = prior.get('previousReceipt', '')
+        incentive.pop('_invoiceEvidence', None)
     if not finalized:
         if out.get("_generatedDocumentIds") or any(r.get("sourceDocumentId") for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients") for r in out.get(key) or []):
             for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients"):
@@ -93,6 +113,8 @@ def merge_final_documents(daily, documents):
     incoming = {key: [] for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients")}
     invoice_numbers = {doc["documentNumber"] for doc in finalized}
     for doc in finalized:
+        if doc['documentType'] == 'INSENTIF_MITRA':
+            continue  # D_Insentif evidence only; never count this again in C_Operasional.
         if is_payment_package(doc):
             for title, section in payment_sections(doc):
                 key, rows = document_rows(section)

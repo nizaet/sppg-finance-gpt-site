@@ -29,6 +29,7 @@ export const documentApi = {
   finalizationCheck: id => request(`/${id}/finalization-check`),
   finalize: (id, options = {}) => request(`/${id}/finalize`, { method: "PATCH", body: JSON.stringify(options) }),
   archive: id => request(`/${id}/archive`, { method: "POST" }),
+  exportMaker: id => request(`/${id}/export-maker`, { method: "POST" }),
   cancel: (id, reason) => request(`/${id}/cancel`, { method: "PATCH", body: JSON.stringify({ reason }) }),
   pdf: id => request(`/${id}/pdf`),
   excel: id => request(`/${id}/excel`),

@@ -47,6 +47,7 @@ MIGRATIONS = [
     ROOT / "schema" / "document_number_serials_v042.sql",
     ROOT / "schema" / "document_routine_archives_v043.sql",
     ROOT / "schema" / "document_number_anchor_seed_v044.sql",
+    ROOT / "schema" / "lpdh_mitra_maker_v045.sql",
 ]
 
 

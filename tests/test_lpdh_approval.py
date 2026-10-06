@@ -133,8 +133,11 @@ class ApprovalTests(unittest.TestCase):
             anchor = image.anchor
             x = EMU_to_pixels(anchor._from.colOff); y = EMU_to_pixels(anchor._from.rowOff)
             w = EMU_to_pixels(anchor.ext.cx); h = EMU_to_pixels(anchor.ext.cy)
-            self.assertAlmostEqual(x+w/2, 215/2, delta=1)
-            self.assertGreaterEqual(y,0); self.assertLessEqual(y+h,48)
+            self.assertGreaterEqual(x,0); self.assertLessEqual(x+w,215)
+            self.assertGreaterEqual(y,0); self.assertLessEqual(y+h,96)
+        # Stamp and signature share the same signing zone, drawn stamp first.
+        self.assertEqual([image.anchor._from.row for image in result._images], [28]*5)
+        self.assertGreater(EMU_to_pixels(result._images[0].anchor.ext.cx),65)
         self.assertEqual(load_workbook(BytesIO(source.getvalue())).active['D31'].value, '(cap SPPG)')
 
     def test_finalize_failure_stale_and_idempotence(self):

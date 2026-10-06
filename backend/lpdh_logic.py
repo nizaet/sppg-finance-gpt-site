@@ -143,6 +143,8 @@ def valid_id(identity_type: Any, number: Any) -> bool:
 def parameters(masters: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(DEFAULT_PARAMETERS)
     out.update(masters.get("parameters") or {})
+    if out.get('noIndexCompensation'):
+        out.update(cityIndex=1, applyIndexRaw=False, applyIndexOp=False, operationalPerPm=3000)
     return out
 
 

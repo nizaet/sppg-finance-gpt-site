@@ -59,6 +59,7 @@ class FakeConnection:
         self.assets = {}
         self.serials = []
         self.anchors = {}
+        self.maker_exports = {}
 
     @contextmanager
     def cursor(self):
@@ -66,7 +67,9 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if sql.startswith("select full_number from document_number_anchors"):
+        if 'from generated_document_maker_exports' in sql:
+            self.result = self.maker_exports.get(params[0])
+        elif sql.startswith("select full_number from document_number_anchors"):
             self.result = self.anchors.get(tuple(params))
         elif sql.startswith("insert into document_number_anchors"):
             self.anchors[tuple(params[:2])] = {'full_number':params[2]}
