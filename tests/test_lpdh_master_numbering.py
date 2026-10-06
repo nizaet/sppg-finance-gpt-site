@@ -47,6 +47,20 @@ class Cursor:
 
 
 class MasterAndNumberTests(unittest.TestCase):
+    def test_staff_teacher_header_alias(self):
+        from openpyxl import Workbook
+        for header in ('TENAGA PENDIDIK/GURU', 'Tenaga Pendidik / Guru'):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Master_Sekolah'
+            ws.append(['Kode Unit', 'Nama Sekolah', 'Jenis Sekolah', header])
+            ws.append(['TEST-1', 'Sekolah Uji', 'SD/MI', 12])
+            ws.append(['TEST-2', 'Sekolah Nol', 'SD/MI', 0])
+            content = BytesIO()
+            wb.save(content)
+            rows = logic.parse_master_workbook(content.getvalue())['schools']
+            self.assertEqual([row['staffLarge'] for row in rows], [12, 0])
+
     def test_school_columns_roundtrip(self):
         wb = load_workbook(BytesIO(logic.make_master_template()))
         self.assertEqual(wb['Master_Sekolah']['F1'].value, 'Porsi Kecil')

@@ -1624,7 +1624,10 @@ def parse_master_workbook(content: bytes) -> dict[str, Any]:
             continue
         type_by_group = {"KS-01":"PAUD", "KS-02":"SD/MI", "KS-03":"SD/MI", "KS-04":"SMP/MTs", "KS-05":"SMA/MA/SMK/SLB", "KS-06":"Santri", "PTK":"PTK"}
         school_type = str(row.get("Jenis Sekolah") or type_by_group.get(str(row.get("Kode Kelompok") or "").strip()) or "").strip()
-        staff = next((value for key, value in row.items() if key.casefold() in {"tenaga pendidik", "tenaga pendidik (besar)"}), None)
+        staff = next((value for key, value in row.items() if " ".join(key.casefold().split()) in {
+            "tenaga pendidik", "tenaga pendidik (besar)", "tenaga pendidik/guru",
+            "tenaga pendidik / guru",
+        }), None)
         result["schools"].append({
             "code": str(row.get("Kode Unit") or "").strip(), "name": name,
             "schoolType": school_type, "picName": str(row.get("Nama PIC") or "").strip(),

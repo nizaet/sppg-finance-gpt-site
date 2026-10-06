@@ -230,7 +230,7 @@ button.icon{padding:7px;border-radius:8px;border:1px solid #ddd;background:#fff;
   .lpdh-responsive-form-table,.lpdh-responsive-form-table.wide,.lpdh-responsive-form-table.extra-wide{display:block;min-width:0;width:100%;background:transparent}
   .lpdh-responsive-form-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   .lpdh-responsive-form-table tbody{display:grid;gap:12px}
-  .lpdh-responsive-form-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px;border:1px solid #d7e2dc;border-radius:12px;background:#fff;min-width:0}
+  .lpdh-responsive-form-table tbody tr{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;padding:12px;border:1px solid #d7e2dc;border-radius:12px;background:#fff;min-width:0}
   .lpdh-responsive-form-table td{display:block;border:0;padding:0;min-width:0;overflow-wrap:anywhere}
   .lpdh-responsive-form-table td::before{content:attr(data-label);display:block;margin-bottom:5px;color:#64736c;font-size:11px;font-weight:800;line-height:1.4}
   .lpdh-responsive-form-table td.lpdh-empty-cell{grid-column:1/-1}
@@ -244,9 +244,12 @@ button.icon{padding:7px;border-radius:8px;border:1px solid #ddd;background:#fff;
   .lpdh-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
   .lpdh-form-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .lpdh-form-tabs button{min-width:0;padding:10px 7px}
-  .lpdh-responsive-form-table tbody tr{grid-template-columns:1fr;padding:12px}
+  .lpdh-responsive-form-table tbody tr{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
+  .lpdh-tabbed-form .lpdh-form-section{padding:10px}
+  .lpdh-tabbed-form .lpdh-form-grid,.lpdh-tabbed-form .lpdh-form-grid.compact{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .lpdh-responsive-form-table td[data-label="Nama"],.lpdh-responsive-form-table td[data-label="Nama sekolah"],.lpdh-responsive-form-table td[data-label="Nama posyandu"],.lpdh-responsive-form-table td[data-label="Alamat"],.lpdh-responsive-form-table td[data-label="Link bukti"]{grid-column:1/-1}
   .lpdh-tabbed-form .lpdh-field input,.lpdh-tabbed-form .lpdh-field select{min-height:44px;font-size:16px}
-  .lpdh-tabbed-form .lpdh-inline-actions button{flex:1 1 100%;min-height:44px}
+  .lpdh-tabbed-form .lpdh-inline-actions button{flex:1 1 120px;min-height:44px}
   .lpdh-tabbed-form .lpdh-sticky-save{flex-wrap:wrap;bottom:calc(8px + env(safe-area-inset-bottom))}
   .lpdh-tabbed-form .lpdh-sticky-save button{flex:1 1 130px;min-height:44px}
   .lpdh-header h1{font-size:26px;overflow-wrap:anywhere}

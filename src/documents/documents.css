@@ -32,7 +32,10 @@ html[data-app-theme="dark"] .ops-workspace .doc-workspace{--doc-bg:#22272f;--doc
   .lpdh-page .doc-calendar-grid small{overflow-wrap:anywhere}
 }
 @media(max-width:620px){
-  .lpdh-page .doc-grid,.lpdh-page .doc-table tbody tr,.doc-search-results{grid-template-columns:1fr}
+  .lpdh-page .doc-grid,.lpdh-page .doc-table tbody tr{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .lpdh-page .doc-table tbody tr{padding:10px}
+  .lpdh-page .doc-table td[data-label="Item"],.lpdh-page .doc-table td[data-label="Nama"],.lpdh-page .doc-table td[data-label="Penerima"]{grid-column:1/-1}
+  .doc-search-results{grid-template-columns:1fr}
   .lpdh-page .doc-workspace .doc-actions{width:100%}
   .lpdh-page .doc-workspace .doc-actions button{flex:1 1 130px}
   .lpdh-page .doc-context{flex-wrap:wrap}
