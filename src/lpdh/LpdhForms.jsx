@@ -294,7 +294,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       <div className="lpdh-note">Master tersimpan per dapur. Akun YAYASAN dapat mengelola Maja dan Cemplang; akun dapur hanya site sendiri.</div>
       <div className={officialTemplate.installed ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
         <strong>{officialTemplate.installed ? "Template resmi terpasang" : "Template resmi belum diunggah"}</strong>
-        <span>{officialTemplate.installed ? officialTemplate.filename : "Format cadangan berformula aktif. Klik Template LPDH Resmi dan pilih workbook LPDH lengkap (Identitas, A_PM, B_BahanBaku, dan seterusnya). Import Master hanya mengisi data master, bukan memasang format output."}</span>
+        <span>{officialTemplate.installed ? `${officialTemplate.filename} · Unduhan mengisi sel input kuning pada salinan template server; rumus dan format tetap ikut. Template baru dapat diunggah lewat tombol Template LPDH Resmi dan diperiksa sebelum mengganti acuan.` : "Unggah workbook LPDH lengkap lewat Template LPDH Resmi. Unduhan mengisi salinan template server, bukan membuat rumus dari awal. Import Master hanya mengisi data master, bukan memasang format output."}</span>
       </div>
     </Section>
 

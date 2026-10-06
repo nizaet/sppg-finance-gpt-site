@@ -95,3 +95,11 @@
 - Shared proof/reference edits apply to every identified invoice/package source row, without modifying its financial values. Added a per-line workbook appendix while retaining official financial-sheet layout.
 - Added explicit snapshot-bound confirmation before replacing overlapping historical manual payment inputs with a FINAL aggregate package. Exact prior rows remain archived server-side; other subtypes, FINAL records and generated days remain protected.
 - Aligned D_Insentif calculation with its official eligibility gate. Documented BAST requirements and distinguished calculated entitlement from authentic PPK/payment evidence. Private source/app differences were recorded without overwriting live data. Other Operations modules and actual bank payment execution remain outside scope.
+
+## 2026-10-06 - Operator-authorized server template and fill-only Excel downloads
+
+- The operator requested that downloads copy a stored Excel template and fill yellow inputs while retaining formulas, then explicitly authorized one-time preparation of a server copy. Future template upload must remain supported; mapping changes require joint adjustment, not silent substitutions.
+- Added private original/prepared template separation, source hashes and prior-version retention on atomic replacement. The original workbook is immutable and never a public repository asset. New/unmapped input cells and shifted headers are rejected before installation.
+- Prepared document-level register slots once for shared aggregate invoice/receipt numbers. The stored template includes a source-row appendix and retained financial formulas. Download patches input values only, preserving non-input cells and non-worksheet ZIP parts; missing/corrupt templates block instead of invoking a rebuilt fallback.
+- Added synthetic formula/array-formula, style, mapping, capacity, literal-text, shared-reference and cached-template regressions. Read-only acceptance with the private accountant workbook verifies original immutability and formula/style preservation; native Excel recalculation remains an operator/open-in-Excel check.
+- Updated the [LPDH workflow](accounting/lpdh-document-workflow.md) and index. No actual receipt, payment, generated historical daily state or unrelated Operations workflow was changed.

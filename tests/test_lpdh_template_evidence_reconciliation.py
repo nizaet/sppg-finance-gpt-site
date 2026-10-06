@@ -14,6 +14,7 @@ from backend import lpdh_api
 from backend.legacy_payment_reconciliation import legacy_payment_plan, replace_legacy_payments
 from backend.lpdh_logic import compute_preview, populate_workbook
 from backend.generated_document_logic import merge_final_documents
+from test_lpdh_fill_only_template import synthetic_template
 
 
 def document():
@@ -119,7 +120,8 @@ class TemplateTests(unittest.TestCase):
         wb = Workbook(); wb.remove(wb.active)
         for name in names: wb.create_sheet(name)
         output = BytesIO(); wb.save(output)
-        return {'site': 'MAJA', 'filename': 'synthetic.xlsx', 'content_base64': base64.b64encode(output.getvalue()).decode()}
+        content = synthetic_template() if 'A_PM' in names else output.getvalue()
+        return {'site': 'MAJA', 'filename': 'synthetic.xlsx', 'content_base64': base64.b64encode(content).decode()}
 
     def test_json_body_upload_valid_and_does_not_overwrite_master(self):
         names = ['Identitas','A_PM','B_BahanBaku','C_Operasional','C1_Relawan','D_Insentif','E_Saldo','F_TopUp','G_CekPPK','H_RekapPPK','I_RegisterBukti','J_Pengesahan','Ref']
@@ -127,7 +129,10 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         sql, params = self.cur.calls[-1]
         self.assertIn('lpdh_site_state.data || excluded.data', sql)
-        self.assertEqual(set(json.loads(params[1])), {'_officialTemplateBase64', '_officialTemplateFilename'})
+        self.assertEqual(set(json.loads(params[1])), {'_officialTemplateBase64', '_officialTemplateFilename',
+            '_preparedTemplateBase64','_preparedTemplateVersion','_preparedTemplateSourceHash'})
+        self.assertTrue(response.json()['fillOnly'])
+        self.assertIn('_officialTemplateHistory',sql)
 
     def test_invalid_or_master_workbook_no_write_site_guard(self):
         for payload in (self.payload(['Master_Sekolah']), {'site':'MAJA','filename':'bad.xlsx','content_base64':'not base64'}):

@@ -14,7 +14,6 @@ from backend.lpdh_logic import (
     encode_bytes,
     make_master_template,
     parse_master_workbook,
-    populate_workbook,
     workbook_reference_rows,
     merge_master_import,
     validate_master_portions,
@@ -23,6 +22,11 @@ from backend.lpdh_logic import (
     validate_daily_financial_sources,
 )
 from backend.document_numbering import claim_number, daily_number
+from backend.lpdh_template import prepare_template, fill_template, source_hash, VERSION as TEMPLATE_VERSION
+
+TEMPLATE_KEYS = ('_officialTemplateBase64', '_officialTemplateFilename',
+                 '_preparedTemplateBase64', '_preparedTemplateVersion',
+                 '_preparedTemplateSourceHash', '_officialTemplateHistory')
 
 router = APIRouter(prefix="/v1/lpdh", tags=["lpdh"])
 
@@ -205,7 +209,8 @@ def get_masters(request: Request, site: str = Query()) -> dict[str, Any]:
     target = _site(request, site)
     result = _load_master(target)
     public_data = dict(result.get("data") or {})
-    public_data.pop("_officialTemplateBase64", None)
+    for key in TEMPLATE_KEYS:
+        public_data.pop(key, None)
     public_data["groupTargetAggregate"] = master_target_by_group(public_data)
     result = {**result, "data": public_data}
     return {"site": target, **result}
@@ -222,9 +227,11 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
         validate_master_portions(incoming)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    for protected_key in ("_officialTemplateBase64", "_officialTemplateFilename"):
-        if protected_key not in incoming and protected_key in current:
+    for protected_key in TEMPLATE_KEYS:
+        if protected_key in current:
             incoming[protected_key] = current[protected_key]
+        else:
+            incoming.pop(protected_key, None)
     # The original workbook totals are read-only import history.
     incoming["groupTargets"] = current.get("groupTargets") or {}
     incoming.pop("groupTargetAggregate", None)
@@ -234,7 +241,11 @@ def save_masters(payload: MasterStateIn, request: Request) -> dict[str, Any]:
                 """insert into lpdh_site_state(site,data,revision,updated_by,updated_at)
                    values (%s,%s::jsonb,1,%s,now())
                    on conflict (site) do update
-                   set data=excluded.data,
+                   set data=excluded.data || coalesce((select jsonb_object_agg(key,value)
+                       from jsonb_each(lpdh_site_state.data) where key in (
+                           '_officialTemplateBase64','_officialTemplateFilename',
+                           '_preparedTemplateBase64','_preparedTemplateVersion',
+                           '_preparedTemplateSourceHash','_officialTemplateHistory')),'{}'::jsonb),
                        revision=lpdh_site_state.revision+1,
                        updated_by=excluded.updated_by,
                        updated_at=now()
@@ -529,6 +540,8 @@ def official_template_status(request: Request, site: str = Query()) -> dict[str,
         "site": target,
         "installed": bool(masters.get("_officialTemplateBase64")),
         "filename": masters.get("_officialTemplateFilename") or None,
+        "fillOnly": masters.get('_preparedTemplateVersion') == TEMPLATE_VERSION,
+        "templateVersion": masters.get('_preparedTemplateVersion'),
     }
 
 
@@ -538,19 +551,15 @@ def save_official_template(payload: OfficialTemplateIn, request: Request) -> dic
     site = _site(request, payload.site)
     try:
         raw = base64.b64decode(payload.content_base64, validate=True)
-        from openpyxl import load_workbook
-        import io
-        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=False)
-        required = {"Identitas","A_PM","B_BahanBaku","C_Operasional","C1_Relawan","D_Insentif","E_Saldo","F_TopUp","G_CekPPK","H_RekapPPK","I_RegisterBukti","J_Pengesahan","Ref"}
-        missing = sorted(required.difference(workbook.sheetnames))
-        workbook.close()
-        if missing:
-            raise ValueError("Gunakan workbook LPDH lengkap, bukan template impor master. Sheet wajib tidak ada: " + ", ".join(missing))
+        prepared = prepare_template(raw)
     except Exception as exc:
         raise HTTPException(400, f"Template LPDH tidak valid: {exc}") from exc
     # Patch only template metadata; a concurrent master edit must survive.
     current = {"_officialTemplateBase64": payload.content_base64,
-               "_officialTemplateFilename": payload.filename}
+               "_officialTemplateFilename": payload.filename,
+               "_preparedTemplateBase64": encode_bytes(prepared),
+               "_preparedTemplateVersion": TEMPLATE_VERSION,
+               "_preparedTemplateSourceHash": source_hash(raw)}
     actor = _role(request)
     with connection() as conn:
         with conn.cursor() as cur:
@@ -558,14 +567,25 @@ def save_official_template(payload: OfficialTemplateIn, request: Request) -> dic
                 """insert into lpdh_site_state(site,data,revision,updated_by,updated_at)
                    values (%s,%s::jsonb,1,%s,now())
                    on conflict (site) do update
-                   set data=lpdh_site_state.data || excluded.data,revision=lpdh_site_state.revision+1,
+                   set data=lpdh_site_state.data || excluded.data || jsonb_build_object(
+                       '_officialTemplateHistory',
+                       coalesce(lpdh_site_state.data->'_officialTemplateHistory','[]'::jsonb) ||
+                       case when lpdh_site_state.data ? '_officialTemplateBase64' then
+                         jsonb_build_array(jsonb_build_object(
+                           'filename',lpdh_site_state.data->'_officialTemplateFilename',
+                           'sourceBase64',lpdh_site_state.data->'_officialTemplateBase64',
+                           'preparedBase64',lpdh_site_state.data->'_preparedTemplateBase64',
+                           'sourceHash',lpdh_site_state.data->'_preparedTemplateSourceHash',
+                           'replacedAt',now())) else '[]'::jsonb end),
+                       revision=lpdh_site_state.revision+1,
                        updated_by=excluded.updated_by,updated_at=now()
                    returning revision""",
                 (site, json.dumps(current, ensure_ascii=False), actor),
             )
             revision = cur.fetchone()["revision"]
         conn.commit()
-    return {"site": site, "installed": True, "filename": payload.filename, "revision": revision}
+    return {"site": site, "installed": True, "filename": payload.filename, "revision": revision,
+            "fillOnly": True, "templateVersion": TEMPLATE_VERSION}
 
 
 @router.get("/calculator-final")
@@ -700,21 +720,37 @@ def _generate_locked(payload, request, site, cur):
 
     claim_number(cur, site, "LPDH", daily["lpdhNumber"], "DAY:" + payload.service_date.isoformat())
 
-    template_bytes = None
     stored_template = masters.get("_officialTemplateBase64")
-    if stored_template:
-        try:
-            template_bytes = base64.b64decode(stored_template, validate=True)
-        except Exception:
-            template_bytes = None
-    content = populate_workbook(masters, daily, preview_data, payload.service_date.isoformat(), template_bytes=template_bytes)
+    if not stored_template:
+        raise HTTPException(409, 'Unggah Template LPDH Resmi terlebih dahulu. Unduhan hanya mengisi salinan template server, bukan membuat workbook cadangan.')
+    try:
+        raw_template = base64.b64decode(stored_template, validate=True)
+        digest = source_hash(raw_template)
+        if (masters.get('_preparedTemplateVersion') != TEMPLATE_VERSION or
+                masters.get('_preparedTemplateSourceHash') != digest or not masters.get('_preparedTemplateBase64')):
+            # One-time upgrade of an already installed private template, inside
+            # the existing transaction. Never overwrite its original bytes.
+            template_bytes = prepare_template(raw_template)
+            metadata = {'_preparedTemplateBase64':encode_bytes(template_bytes),
+                        '_preparedTemplateVersion':TEMPLATE_VERSION,'_preparedTemplateSourceHash':digest}
+            cur.execute('update lpdh_site_state set data=data || %s::jsonb where site=%s and data->>\'_officialTemplateBase64\'=%s',
+                        (json.dumps(metadata),site,stored_template))
+            if getattr(cur,'rowcount',1) == 0:
+                raise ValueError('Template baru dipasang saat unduhan disiapkan. Ulangi unduhan agar memakai template terbaru.')
+        else:
+            template_bytes = base64.b64decode(masters['_preparedTemplateBase64'],validate=True)
+        content = fill_template(template_bytes, masters, daily, preview_data, payload.service_date.isoformat())
+    except Exception as exc:
+        raise HTTPException(409, f'Template LPDH belum dapat diisi: {exc}. Template asli dan data harian tidak diubah.') from exc
     daily["_historicalGeneratedSnapshot"] = True
     filename = f"LPDH_{site}_{payload.service_date.isoformat()}.xlsx"
     cur.execute(
         """insert into lpdh_generation_log(
              site,service_date,filename,validation_status,validation_error_count,generated_by,payload
            ) values (%s,%s,%s,'OK',0,%s,%s::jsonb)""",
-        (site, payload.service_date, filename, actor, json.dumps({"preview": {"errorCount": 0}}, ensure_ascii=False)),
+        (site, payload.service_date, filename, actor, json.dumps({"preview": {"errorCount": 0},
+            "template": {"sourceHash":digest,"version":TEMPLATE_VERSION,
+                         "filename":masters.get('_officialTemplateFilename')}}, ensure_ascii=False)),
     )
     cur.execute(
         """insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
