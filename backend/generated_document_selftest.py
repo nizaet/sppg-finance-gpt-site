@@ -40,6 +40,26 @@ def run(output_dir=None):
     service_date, masters, initial, final_plan = fixture()
     initial.update(rawMaterials=[], operations=[], volunteerPayments=[], incentiveRecipients=[])
     docs = fixtures()
+    archived = deepcopy(docs)
+    for doc in archived:
+        doc['header']['evidenceLink'] = ''
+        doc['driveUri'] = f"https://drive.google.com/file/d/test-{doc['id']}/view"
+    before_archive = deepcopy(archived)
+    for doc in before_archive:
+        doc.pop('driveUri')
+    blank_daily = merge_final_documents(initial, before_archive)
+    auto_daily = merge_final_documents(blank_daily, archived)
+    for key in ('rawMaterials', 'operations', 'volunteerPayments', 'incentiveRecipients'):
+        assert all(row['evidenceLink'] == f"https://drive.google.com/file/d/test-{row['sourceDocumentId']}/view" for row in auto_daily[key]), 'Every document line inherits its own archived PDF'
+    auto_preview = compute_preview(masters, auto_daily, service_date, True, final_plan)
+    auto_workbook = load_workbook(BytesIO(populate_workbook(masters, auto_daily, auto_preview, service_date)), data_only=False)
+    assert auto_workbook['B_BahanBaku']['L6'].value.endswith('test-1/view')
+    assert auto_workbook['C1_Relawan']['K6'].value.endswith('test-4/view')
+    assert auto_workbook['C1_Relawan']['K7'].value.endswith('test-4/view')
+    assert auto_workbook['C_Operasional']['J7'].value.endswith('test-5/view')
+    assert auto_workbook['C_Operasional']['J8'].value.endswith('test-5/view')
+    auto_daily['volunteerPayments'][0]['evidenceLink'] = 'https://example.test/manual-signed.pdf'
+    assert merge_final_documents(auto_daily, archived)['volunteerPayments'][0]['evidenceLink'].endswith('manual-signed.pdf'), 'Preserve manually completed evidence'
     draft_only = deepcopy(docs[0]); draft_only["status"] = "DRAFT"
     assert merge_final_documents(initial, [draft_only]) == initial, "Draft must not affect daily costs"
     initial["rawMaterials"] = [{"source": "FINAL_KALKULATOR", "name": "Estimasi", "qty": 99, "price": 999}]

@@ -51,7 +51,7 @@ def document_rows(document):
         common = {
             "date": document["serviceDate"], "source": "FINAL_DOCUMENT",
             "sourceDocumentId": document["id"], "sourceLine": index + 1,
-            "evidenceLink": header.get("evidenceLink") or "",
+            "evidenceLink": header.get("evidenceLink") or document.get("driveUri") or "",
             "paymentReference": header.get("paymentReference") or "",
             "aggregatePayment": aggregate_payment(document),
         }
@@ -96,7 +96,7 @@ def merge_final_documents(daily, documents):
         for row in rows:
             saved = supplemental.get((str(row["sourceDocumentId"]), row["sourceLine"]), {})
             for field in ("evidenceLink", "paymentReference"):
-                if field in saved:
+                if field in saved and (field != "evidenceLink" or str(saved[field] or "").strip()):
                     row[field] = saved[field]
         kept = [row for row in out.get(key) or [] if not row.get("sourceDocumentId") and row.get("source") != "FINAL_KALKULATOR"]
         if any(row.get("invoiceNo") in invoice_numbers for row in kept):

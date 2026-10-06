@@ -279,6 +279,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const archive = doc => run(async version => {
     const result = await documentApi.archive(doc.id); await reload(version);
+    if (version === context.current && result.driveUri) await onFinalized?.();
     if (version === context.current) notify(result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError, result.driveUploadStatus !== "UPLOADED");
   });
   const cancel = doc => {

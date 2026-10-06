@@ -448,6 +448,13 @@ def _archive_document(document_id, role):
             status = 'PARTIAL' if pdf_uri or excel_uri else 'FAILED'
             error = "Dokumen tetap FINAL di aplikasi, tetapi arsip PDF dan Excel di Drive belum lengkap. Klik Simpan ke Drive untuk melengkapi; berkas yang berhasil tidak diunggah ulang. Periksa koneksi/izin Drive bila tetap gagal."
         cur.execute("update generated_accountant_documents set drive_uri=%s,drive_excel_uri=%s,drive_folder_id=%s,drive_upload_status=%s,drive_upload_error=%s,updated_at=now() where id=%s", (pdf_uri, excel_uri, folder, status, error, document_id))
+        # Complete the evidence after upload, without reopening an issued LPDH.
+        if pdf_uri:
+            daily_lock(cur, row["site"], row["service_date"])
+            cur.execute("select status from lpdh_daily_state where site=%s and service_date=%s for update", (row["site"], row["service_date"]))
+            daily_state = cur.fetchone()
+            if not daily_state or daily_state["status"] != "GENERATED":
+                _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
         return {"driveUri": pdf_uri, "driveExcelUri": excel_uri, "driveUploadStatus": status, "driveUploadError": error}
 
