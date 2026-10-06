@@ -156,11 +156,22 @@ def aggregate_payment_story(document, width, artwork=None):
 
 
 def render_document_pdf(document, artwork=None):
+    try:
+        from .payment_package import is_payment_package, payment_sections
+    except ImportError:
+        from payment_package import is_payment_package, payment_sections
     output = BytesIO()
     pdf = SimpleDocTemplate(output, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32,
                             title=document["documentNumber"], author=document["header"].get("issuerName") or "SPPG")
     width = A4[0] - 72
-    if document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"}:
+    if is_payment_package(document):
+        sections = payment_sections(document)
+        cover = {**document, 'items': [{'itemName': title, 'quantity': 1, 'unit': 'hari', 'unitPrice': section['total'], 'lineTotal': section['total']} for title, section in sections]}
+        story = invoice_story(cover, width, artwork)
+        story[0] = header(document, 'INVOICE UPAH DAN INSENTIF HARIAN', width=width, artwork=artwork)
+        for title, section in sections:
+            story += [PageBreak()] + aggregate_payment_story(section, width, artwork)
+    elif document["documentType"] in {"BAHAN_BAKU", "OPERASIONAL"}:
         story = invoice_story(document, width, artwork)
     elif aggregate_payment(document):
         story = aggregate_payment_story(document, width, artwork)

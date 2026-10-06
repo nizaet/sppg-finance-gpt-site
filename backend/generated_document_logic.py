@@ -1,6 +1,10 @@
 """Canonical document snapshots and idempotent LPDH import (no database I/O)."""
 from copy import deepcopy
 from decimal import Decimal, ROUND_HALF_UP
+try:
+    from .payment_package import is_payment_package, payment_sections
+except ImportError:
+    from payment_package import is_payment_package, payment_sections
 
 OP_CATEGORIES = [
     "BPJS Ketenagakerjaan", "Listrik", "Air PDAM", "Air minum/galon", "Gas",
@@ -89,8 +93,17 @@ def merge_final_documents(daily, documents):
     incoming = {key: [] for key in ("rawMaterials", "operations", "volunteerPayments", "incentiveRecipients")}
     invoice_numbers = {doc["documentNumber"] for doc in finalized}
     for doc in finalized:
-        key, rows = document_rows(doc)
-        incoming[key].extend(rows)
+        if is_payment_package(doc):
+            for title, section in payment_sections(doc):
+                key, rows = document_rows(section)
+                indexes = [i + 1 for i, item in enumerate(doc['items']) if (item.get('metadata') or {}).get('recipientType') == section['header']['recipientSubtype']]
+                for row, index in zip(rows, indexes):
+                    row['sourceLine'] = index
+                    row['paymentPackage'] = True
+                incoming[key].extend(rows)
+        else:
+            key, rows = document_rows(doc)
+            incoming[key].extend(rows)
     for key, rows in incoming.items():
         supplemental = {(str(r.get("sourceDocumentId")), r.get("sourceLine")): r for r in out.get(key) or [] if r.get("sourceDocumentId")}
         for row in rows:

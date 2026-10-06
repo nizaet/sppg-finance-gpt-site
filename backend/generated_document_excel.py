@@ -114,13 +114,18 @@ def table(ws, start, headings, rows, total, amount_col=7):
     return end
 
 
-def render_document_excel(document, artwork=None):
+def render_document_excel(document, artwork=None, _workbook=None, _prefix=''):
+    try:
+        from .payment_package import is_payment_package, payment_sections
+    except ImportError:
+        from payment_package import is_payment_package, payment_sections
     items = document['items']
     total = Decimal(str(document['total'])).quantize(Decimal('.01'))
     if sum((Decimal(str(item['lineTotal'])) for item in items), Decimal(0)).quantize(Decimal('.01')) != total:
         raise ValueError('Total snapshot dokumen tidak sama dengan rincian')
-    wb = Workbook()
-    wb.remove(wb.active)
+    wb = _workbook if _workbook is not None else Workbook()
+    if _workbook is None:
+        wb.remove(wb.active)
     wb.properties.title = document['documentNumber']
     wb.properties.creator = document['header'].get('issuerName') or 'SPPG'
     kind = document['documentType']
@@ -128,7 +133,10 @@ def render_document_excel(document, artwork=None):
     title = ('KUITANSI UPAH RELAWAN' if kind == 'UPAH_RELAWAN' else
              'KUITANSI INSENTIF ' + str(document['header'].get('recipientSubtype') or 'GURU / KADER').upper() if receipt else
              'INVOICE BAHAN BAKU' if kind == 'BAHAN_BAKU' else 'INVOICE OPERASIONAL')
-    ws, row = base_sheet(wb, 'Kuitansi' if receipt else 'Invoice', document, title, artwork)
+    combined = is_payment_package(document)
+    if combined:
+        title = 'INVOICE UPAH DAN INSENTIF HARIAN'
+    ws, row = base_sheet(wb, 'Invoice Utama' if combined else _prefix or ('Kuitansi' if receipt else 'Invoice'), document, title, artwork)
     h = document['header']
     for label, value in [('Penerima', h.get('recipientName')), ('Perusahaan', h.get('recipientCompany')),
                          ('Alamat', h.get('recipientAddress')), ('Pengirim', h.get('senderName') or h.get('issuerName')),
@@ -139,6 +147,8 @@ def render_document_excel(document, artwork=None):
     row += 1
     details = ([[1, title + ' — ' + document['serviceDate'], f'{len(items)} penerima', 1, 'hari', float(total), float(total)]] if receipt else
                [[i, x['itemName'], x['category'], float(x['quantity']), x['unit'], float(x['unitPrice']), float(x['lineTotal'])] for i, x in enumerate(items, 1)])
+    if combined:
+        details = [[i, name, f"{len(section['items'])} penerima", 1, 'hari', section['total'], section['total']] for i, (name, section) in enumerate(payment_sections(document), 1)]
     end = table(ws, row, ['No', 'Nama barang / pembayaran', 'Kategori / penerima', 'Jumlah', 'Satuan', 'Harga satuan', 'Total harga'], details, total)
     row = end+2
     for label, value in [('Metode', h.get('paymentMethod') or 'Transfer'), ('Bank', h.get('bankName')),
@@ -157,14 +167,19 @@ def render_document_excel(document, artwork=None):
         ws.row_dimensions[row+2].height = 60
         artwork_image(ws, (artwork or {}).get('recipientSignatureAssetId'), row+2, 2, 120, 75)
     ws.print_area = f'A1:G{row+3}'
-    if receipt:
-        appendix, start = base_sheet(wb, 'Daftar Penerima', document, 'LAMPIRAN DAFTAR PENERIMA', artwork)
+    if combined:
+        for name, section in payment_sections(document):
+            render_document_excel(section, artwork, _workbook=wb, _prefix=name)
+    elif receipt:
+        appendix, start = base_sheet(wb, ('Daftar ' + _prefix)[:31] if _prefix else 'Daftar Penerima', document, 'LAMPIRAN DAFTAR PENERIMA', artwork)
         band(appendix, start, 1, 7, 'Pembayaran harian 1 hari. Tanda terima dan tanggal penerimaan diisi manual setelah diterima.')
         appendix.row_dimensions[start].height = 32
         values = [[i, item['itemName'], (item.get('metadata') or {}).get('role') or (item.get('metadata') or {}).get('unitName') or '',
                    1, 'hari', float(item['lineTotal']), '________________'] for i, item in enumerate(items, 1)]
         end = table(appendix, start+2, ['No', 'Nama penerima', 'Unit / Tugas', 'Hari', 'Satuan', 'Nominal', 'Tanda terima / tanggal'], values, total, 6)
         appendix.print_area = f'A1:G{end}'
+    if _workbook is not None:
+        return
     out = BytesIO()
     wb.save(out)
     return out.getvalue()

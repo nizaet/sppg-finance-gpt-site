@@ -16,6 +16,7 @@ from backend.generated_document_settings import checked_number, pdf_filename, va
 from backend.generated_document_reference import MAJA_OPERATION_ITEMS, MAJA_PROFILES
 from backend.document_numbering import claim_number, suggest_number, invoice_fallback
 from backend.legacy_payment_reconciliation import legacy_payment_plan, replace_legacy_payments
+from backend.payment_package import incentive_default
 
 router = APIRouter(tags=["accountant-generated-documents"])
 Site = Literal["MAJA", "CEMPLANG"]
@@ -59,6 +60,11 @@ class GeneratedDocumentIn(BaseModel):
             if self.document_type == "OPERASIONAL" and item.category_code not in OP_CATEGORIES:
                 raise ValueError("Pilih kategori operasional sesuai kolom C workbook")
         version = self.header_payload.get("paymentSnapshotVersion")
+        if self.header_payload.get('combinedPayments'):
+            if self.document_type != 'UPAH_RELAWAN' or version != 2 or self.header_payload['combinedPayments'] is not True:
+                raise ValueError('Paket pembayaran gabungan harus menggunakan snapshot harian')
+            if any(item.metadata.get('recipientType') not in {'Relawan', 'Guru', 'Kader'} for item in self.items):
+                raise ValueError('Pilih kelompok Relawan, Guru atau Kader untuk setiap penerima')
         if version not in (None, 2) or isinstance(version, bool):
             raise ValueError("Versi snapshot pembayaran tidak valid")
         if self.document_type == "INSENTIF_GURU_KADER" and version == 2:
@@ -214,8 +220,21 @@ def master_items(site: Site, authorization: str | None = Header(default=None)):
                    "unitName": x.get("unitName") or x.get("name") or ""}
                   for x in data.get("beneficiaries") or [] if x.get("picName") and str(x.get("status") or "Aktif").lower() != "nonaktif"]
     for field, kind in (("schools", "Guru"), ("posyandu", "Kader")):
-        recipients.extend({"name": x["picName"], "recipientType": kind, "unitName": x.get("name") or ""}
+        if data.get(field):
+            recipients = [recipient for recipient in recipients if recipient['recipientType'] != kind]
+        recipients.extend({"name": x["picName"], "recipientType": kind, "unitName": x.get("name") or "", **incentive_default(x, kind)}
                           for x in data.get(field) or [] if x.get("picName") and str(x.get("status") or "Aktif").lower() != "nonaktif")
+    grouped_recipients = {}
+    for recipient in recipients:
+        key = (recipient['name'].strip().casefold(), recipient['recipientType'])
+        if key not in grouped_recipients:
+            grouped_recipients[key] = dict(recipient)
+        else:
+            target = grouped_recipients[key]
+            target['unitName'] = '; '.join(filter(None,[target.get('unitName'),recipient.get('unitName')]))
+            target['dailyAmount'] = float(target.get('dailyAmount') or 0) + float(recipient.get('dailyAmount') or 0)
+            target['targetPm'] = float(target.get('targetPm') or 0) + float(recipient.get('targetPm') or 0)
+    recipients = list(grouped_recipients.values())
     return {"site": site, "items": raw + ops, "categories": OP_CATEGORIES, "profiles": profiles,
             "volunteers": [x for x in data.get("volunteers") or [] if str(x.get("status") or "Aktif").lower() != "nonaktif"], "recipients": recipients}
 
@@ -364,6 +383,8 @@ def edit_document(document_id: int, payload: GeneratedDocumentIn, authorization:
             raise HTTPException(409, "Hanya isi draft yang dapat diedit. Site, jenis, tanggal, dan dokumen final terkunci.")
         if (row.get("header_payload") or {}).get("paymentSnapshotVersion") != payload.header_payload.get("paymentSnapshotVersion"):
             raise HTTPException(409, "Versi kuitansi historis tidak dapat diubah")
+        if bool((row.get('header_payload') or {}).get('combinedPayments')) != bool(payload.header_payload.get('combinedPayments')):
+            raise HTTPException(409, 'Cakupan paket pembayaran tersimpan tidak dapat diubah; buat draft baru')
         if (row.get("header_payload") or {}).get("paymentSnapshotVersion") == 2 and row["document_type"] == "INSENTIF_GURU_KADER" and row["header_payload"].get("recipientSubtype") != payload.header_payload.get("recipientSubtype"):
             raise HTTPException(409, "Jenis paket Guru atau Kader yang tersimpan tidak dapat diubah")
         validate_asset_refs(cur, payload.site, payload.header_payload)

@@ -472,8 +472,8 @@ def build_register(
     for source, rows in (("C1_Relawan", volunteers), ("C_Operasional", incentive_recipients)):
         for row in rows:
             if row.get("sourceDocumentId") and row.get("aggregatePayment") and as_number(row.get("amount")) > 0:
-                key = (source, row["sourceDocumentId"])
-                payment_groups.setdefault(key, {"source": source, "sourceDocumentId": row["sourceDocumentId"], "code": f"DOC-{row['sourceDocumentId']}",
+                key = ("PAKET" if row.get('paymentPackage') else source, row["sourceDocumentId"])
+                payment_groups.setdefault(key, {"source": "C1_Relawan + C_Operasional" if row.get('paymentPackage') else source, "sourceDocumentId": row["sourceDocumentId"], "code": f"DOC-{row['sourceDocumentId']}",
                     "proofNo": row.get("receiptNo") or "", "date": row.get("date") or "", "amount": 0, "link": row.get("evidenceLink") or ""})
                 payment_groups[key]["amount"] += as_number(row.get("amount"))
                 if not https_url(row.get("evidenceLink")):

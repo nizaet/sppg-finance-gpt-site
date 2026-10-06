@@ -2,10 +2,13 @@
 from copy import deepcopy
 
 from backend.generated_document_settings import PROFILE_FIELDS
+from backend.payment_package import is_payment_package, payment_sections
 
 
 def routine_documents(documents):
     templates = []
+    documents = [section for doc in documents for section in
+        ([part for title,part in payment_sections(doc) if part['documentType']=='INSENTIF_GURU_KADER'] if is_payment_package(doc) else [doc])]
     for doc in documents:
         kind = doc['documentType']
         if doc['status'] == 'CANCELLED' or kind not in {'OPERASIONAL', 'INSENTIF_GURU_KADER'}:

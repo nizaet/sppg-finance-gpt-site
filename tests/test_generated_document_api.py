@@ -88,6 +88,8 @@ class FakeConnection:
             self.result = deepcopy(self.items)
         elif sql.startswith("select data from lpdh_site_state"):
             self.result = {"data": {}}
+        elif sql.startswith("select status from lpdh_daily_state"):
+            self.result = {'status':'GENERATED'}
         elif "from calculator_master_catalog" in sql:
             self.result = []
         elif sql.startswith("select count(*)"):
