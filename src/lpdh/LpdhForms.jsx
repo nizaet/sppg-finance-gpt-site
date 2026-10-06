@@ -193,6 +193,7 @@ export function normalizeMasters(value = {}) {
   data.operations = Array.isArray(data.operations) ? data.operations : [];
   data.vendor = data.vendor || {};
   data.assets = data.assets || {};
+  data.dailyDefaults = data.dailyDefaults || {};
   data.parameters = { ...DEFAULT_PARAMETERS, ...(data.parameters || {}) };
   return data;
 }
@@ -535,6 +536,11 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
     </Section>
 
     <Section tabKey="parameters" tabLabel="Parameter" title="Parameter Ref / Pagu" subtitle="Nilai ini memetakan parameter utama pada sheet Ref.">
+      <h4>Nilai awal pilihan harian</h4>
+      <p>Dipakai untuk pilihan yang belum diisi pada dapur ini. Periksa sesuai kejadian setiap hari; nilai awal bukan bukti verifikasi atau pengiriman SIPGN. Saldo, nomor transaksi, dan link bukti tidak disalin.</p>
+      <div className="lpdh-form-grid">
+        {[["contamination","Default ada kontaminasi?"],["fatalIncident","Default ada insiden fatal?"],["suspended","Default SPPG disuspend?"],["verified","Default sudah diverifikasi?"],["pmInputSipgn","Default PM sudah masuk SIPGN?"]].map(([key,label]) => <YesNo key={key} label={label} value={data.dailyDefaults.incentiveEligibility?.[key]} onChange={value=>setMasters(current=>({...current,dailyDefaults:{...(current.dailyDefaults||{}),incentiveEligibility:{...(current.dailyDefaults?.incentiveEligibility||{}),[key]:value}}}))}/>)}
+      </div>
       <div className="lpdh-form-grid">
         <Field label="Tarif insentif / PM" type="number" value={data.parameters.incentiveTariff} onChange={(v) => updateParameter("incentiveTariff", v)} />
         <Field label="Pagu bahan porsi kecil" type="number" value={data.parameters.rawSmall} onChange={(v) => updateParameter("rawSmall", v)} />

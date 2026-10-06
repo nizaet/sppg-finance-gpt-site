@@ -178,6 +178,12 @@ def normalize_daily_draft(masters, daily, status="DRAFT"):
         return out
     out["_dailyWorkflowVersion"] = 2
     out["_documentWorkflow"] = True
+    # Site-specific initial selections, never overwrite a day's actual answers.
+    eligibility = out.setdefault('incentive', {}).setdefault('eligibility', {})
+    defaults = (masters.get('dailyDefaults') or {}).get('incentiveEligibility') or {}
+    for key in ('contamination','fatalIncident','suspended','verified','pmInputSipgn'):
+        if eligibility.get(key) in (None, '') and defaults.get(key) in ('Ya', 'Tidak'):
+            eligibility[key] = defaults[key]
     targets = master_target_by_group(masters)
     pm = out.setdefault("pm", {})
     by_code = {str(row.get("code") or row.get("groupCode") or "").upper(): row for row in pm.get("rows") or []}
