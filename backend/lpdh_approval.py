@@ -14,6 +14,10 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
+from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+from openpyxl.drawing.xdr import XDRPositiveSize2D
+from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+from openpyxl.utils.units import pixels_to_EMU, points_to_pixels
 from pypdf import PdfReader
 
 ASSETS = {
@@ -127,11 +131,35 @@ def print_copy(content, assets):
         if not assets.get(key):
             continue
         raw, _ = validate_artwork(str(assets[key]).split(',', 1)[-1])
-        image = Image(BytesIO(raw))
-        factor = min(width / image.width, height / image.height)
+        # Ignore surrounding white/transparent padding when centering uploaded art.
+        from PIL import Image as PillowImage, ImageChops
+        art = PillowImage.open(BytesIO(raw)).convert('RGBA')
+        paper = PillowImage.new('RGBA', art.size, 'white')
+        paper.alpha_composite(art)
+        mask = ImageChops.difference(paper.convert('RGB'), PillowImage.new('RGB', art.size, 'white')).convert('L')
+        bounds = mask.point(lambda value: 255 if value > 12 else 0).getbbox()
+        if not bounds:
+            raise ValueError('Gambar TTD/stempel kosong. Unggah gambar yang terlihat.')
+        art = art.crop(bounds)
+        cropped = BytesIO(); art.save(cropped, format='PNG'); cropped.seek(0)
+        image = Image(cropped)
+        column, row = coordinate_from_string(anchor)
+        col_index = column_index_from_string(column) - 1
+        col_width = int((ws.column_dimensions[column].width or 13) * 7 + 5)
+        row_height = points_to_pixels(ws.row_dimensions[row].height or ws.sheet_format.defaultRowHeight or 15)
+        next_height = points_to_pixels(ws.row_dimensions[row + 1].height or ws.sheet_format.defaultRowHeight or 15)
+        area_height = row_height + next_height
+        factor = min(width / image.width, min(height, area_height - 4) / image.height, (col_width - 12) / image.width)
         image.width *= factor
         image.height *= factor
-        ws.add_image(image, anchor)
+        marker = AnchorMarker(col=col_index, row=row-1,
+            colOff=pixels_to_EMU(max(0, (col_width-image.width)/2)),
+            rowOff=pixels_to_EMU(max(0, (area_height-image.height)/2)))
+        image.anchor = OneCellAnchor(_from=marker, ext=XDRPositiveSize2D(pixels_to_EMU(image.width), pixels_to_EMU(image.height)))
+        # Replace the placeholder only on the disposable print copy.
+        if key.endswith('Stamp') and str(ws[anchor].value or '').strip().lower().startswith('(cap '):
+            ws[anchor] = None
+        ws.add_image(image)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
     out = BytesIO()

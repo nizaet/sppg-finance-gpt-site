@@ -112,6 +112,31 @@ class ApprovalTests(unittest.TestCase):
         with patch('backend.lpdh_approval.shutil.which', return_value=None):
             with self.assertRaises(ValueError): render_approval(b'', {})
 
+    def test_all_artwork_centered_separate_and_padding_removed(self):
+        from backend.lpdh_approval import ASSETS
+        from PIL import ImageDraw
+        wb = Workbook(); ws = wb.active; ws.title = 'J_Pengesahan'
+        for col in ('B','D','F'): ws.column_dimensions[col].width = 30
+        for row in range(29,33): ws.row_dimensions[row].height = 18
+        ws['D31'] = '(cap SPPG)'; ws['F31'] = '(cap Yayasan)'; ws['D33'] = 'Nama Kepala'
+        art = Image.new('RGB', (300,100), 'white'); ImageDraw.Draw(art).rectangle((100,30,199,69), fill='black')
+        picture = BytesIO(); art.save(picture, 'PNG')
+        asset = 'data:image/png;base64,' + base64.b64encode(picture.getvalue()).decode()
+        source = BytesIO(); wb.save(source)
+        result = load_workbook(BytesIO(print_copy(source.getvalue(), {key:asset for key in ASSETS})))['J_Pengesahan']
+        self.assertEqual(len(result._images), 5)
+        self.assertIsNone(result['D31'].value); self.assertIsNone(result['F31'].value)
+        self.assertEqual(result['D33'].value, 'Nama Kepala')
+        from openpyxl.utils.units import EMU_to_pixels
+        for image in result._images:
+            self.assertEqual((image.width,image.height), (100,40))
+            anchor = image.anchor
+            x = EMU_to_pixels(anchor._from.colOff); y = EMU_to_pixels(anchor._from.rowOff)
+            w = EMU_to_pixels(anchor.ext.cx); h = EMU_to_pixels(anchor.ext.cy)
+            self.assertAlmostEqual(x+w/2, 215/2, delta=1)
+            self.assertGreaterEqual(y,0); self.assertLessEqual(y+h,48)
+        self.assertEqual(load_workbook(BytesIO(source.getvalue())).active['D31'].value, '(cap SPPG)')
+
     def test_finalize_failure_stale_and_idempotence(self):
         request = SimpleNamespace(state=SimpleNamespace(sppg_role='OWNER'))
         self.commits = 0; self.writes = []

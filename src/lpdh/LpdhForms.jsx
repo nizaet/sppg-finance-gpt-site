@@ -289,6 +289,9 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
   const officialTemplateRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [officialTemplate, setOfficialTemplate] = useState({ installed: false, filename: "" });
+  const [uploadingAssets, setUploadingAssets] = useState(0);
+  const assetReads = useRef({});
+  useEffect(() => () => { Object.values(assetReads.current).forEach(reader => reader.abort()); assetReads.current = {}; }, [site]);
   const data = normalizeMasters(masters);
 
   useEffect(() => {
@@ -302,7 +305,10 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
   const updateIdentity = (key, value) => setMasters({ ...data, identity: { ...data.identity, [key]: value } });
   const updateParameter = (key, value) => setMasters({ ...data, parameters: { ...data.parameters, [key]: value } });
   const updateVendor = (key, value) => setMasters({ ...data, vendor: { ...data.vendor, [key]: value } });
-  const updateAsset = (key, value) => setMasters({ ...data, assets: { ...data.assets, [key]: value } });
+  const updateAsset = (key, value) => setMasters(current => {
+    const latest = normalizeMasters(current);
+    return { ...latest, assets: { ...latest.assets, [key]: value } };
+  });
   const updateSigner = (index, key, value) => {
     const signers = clone(data.signers);
     signers[index] = { ...signers[index], [key]: value };
@@ -373,7 +379,19 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => updateAsset(key, String(reader.result || ""));
+    assetReads.current[key]?.abort();
+    assetReads.current[key] = reader;
+    setUploadingAssets(count => count + 1);
+    reader.onload = () => {
+      if (assetReads.current[key] !== reader) return;
+      updateAsset(key, String(reader.result || ""));
+      onSaved?.("Gambar sudah dimuat. Klik Simpan Semua Master agar dipakai pada PDF.");
+    };
+    reader.onerror = () => onSaved?.("Gambar gagal dibaca. Pilih ulang PNG/JPG/WebP.", "error");
+    reader.onloadend = () => {
+      if (assetReads.current[key] === reader) delete assetReads.current[key];
+      setUploadingAssets(count => Math.max(0, count - 1));
+    };
     reader.readAsDataURL(file);
   };
 
@@ -384,7 +402,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
       <input ref={fileRef} hidden type="file" accept=".xlsx" onChange={(e) => importFile(e.target.files?.[0])} />
       <button type="button" onClick={() => officialTemplateRef.current?.click()} disabled={busy}><FileUp size={15}/> Template LPDH Resmi</button>
       <input ref={officialTemplateRef} hidden type="file" accept=".xlsx" onChange={(e) => uploadOfficialTemplate(e.target.files?.[0])} />
-      <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Master</button>
+      <button type="button" className="primary" onClick={save} disabled={busy || uploadingAssets > 0}><Save size={15}/> Simpan Master</button>
     </>}>
       <div className="lpdh-note">Master tersimpan per dapur. Akun YAYASAN dapat mengelola Maja dan Cemplang; akun dapur hanya site sendiri.</div>
       <div className={officialTemplate.installed ? "lpdh-status-box ok" : "lpdh-status-box warn"} style={{ marginTop: 10 }}>
@@ -535,7 +553,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
     </Section>
 
     </FormTabs>
-    <div className="lpdh-sticky-save"><button type="button" className="primary" onClick={save} disabled={busy}><Save size={16}/> Simpan Semua Master</button><button type="button" onClick={onReload} disabled={busy}><RefreshCw size={16}/> Muat ulang</button></div>
+    <div className="lpdh-sticky-save"><button type="button" className="primary" onClick={save} disabled={busy || uploadingAssets > 0}><Save size={16}/> Simpan Semua Master</button><button type="button" onClick={onReload} disabled={busy || uploadingAssets > 0}><RefreshCw size={16}/> Muat ulang</button></div>
   </div>;
 }
 
