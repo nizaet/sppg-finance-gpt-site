@@ -6,8 +6,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from fastapi.encoders import jsonable_encoder
-from mcp.server import MCPServer
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -28,7 +27,7 @@ from backend.vendor_workflow_api import VendorInvoiceTextIn, parse_vendor_invoic
 
 Site = Literal["MAJA", "CEMPLANG"]
 
-mcp = MCPServer(
+mcp = FastMCP(
     "SPPG Operations Read Only",
     instructions=(
         "Read-only operational tools for SPPG MAJA and CEMPLANG. "
@@ -37,6 +36,10 @@ mcp = MCPServer(
         "These tools must never mutate operational data. All business rules come from the existing "
         "SPPG backend functions, not from a second MCP-specific calculation engine."
     ),
+    host="0.0.0.0",
+    streamable_http_path="/mcp",
+    json_response=True,
+    stateless_http=True,
 )
 
 
@@ -291,12 +294,7 @@ class BearerGate:
 
 
 def build_app() -> Any:
-    inner = mcp.streamable_http_app(
-        streamable_http_path="/mcp",
-        json_response=True,
-        stateless_http=True,
-        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-    )
+    inner = mcp.streamable_http_app()
     return BearerGate(inner)
 
 
