@@ -135,7 +135,7 @@ def _serialize_document(cur, row):
             "documentNumber": row["document_number"], "serviceDate": str(row["service_date"]),
             "status": row["status"], "header": row["header_payload"] or {},
             "total": float(row["total_amount"]), "items": items, "finalizedAt": row.get("finalized_at"),
-            "driveUri": row.get("drive_uri"), "driveUploadStatus": row.get("drive_upload_status"),
+            "driveUri": row.get("drive_uri"), "driveExcelUri": row.get("drive_excel_uri"), "driveUploadStatus": row.get("drive_upload_status"),
             "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
             "cancellationReason": row.get("cancellation_reason")}
     if row["document_type"] in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
@@ -276,13 +276,47 @@ def _save_items(cur, document_id, payload):
 
 
 @router.get("/accountant-documents/number-suggestion")
-def number_suggestion(site: Site, document_type: Literal["BAHAN_BAKU", "OPERASIONAL"],
+def number_suggestion(site: Site, document_type: DocumentType,
                       service_date: date, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
     with connection() as conn, conn.cursor() as cur:
         cur.execute("select data from lpdh_site_state where site=%s", (site,))
         data = (cur.fetchone() or {}).get("data") or {}
         return {"documentNumber": suggest_number(cur, site, document_type, invoice_fallback(data, site, document_type, service_date))}
+
+
+@router.get("/accountant-documents/previous-routine")
+def previous_routine(site: Site, service_date: date, source_date: date | None = None,
+                     authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    if source_date and source_date >= service_date:
+        raise HTTPException(422, "Pilih tanggal sumber sebelum tanggal pelayanan aktif")
+    from backend.document_routine_copy import routine_documents, routine_daily
+    from backend.document_numbering import daily_number
+    with connection() as conn, conn.cursor() as cur:
+        if not source_date:
+            cur.execute("""select max(d.service_date) as source_date from (
+                select service_date from lpdh_daily_state where site=%s and service_date<%s
+                union select service_date from generated_accountant_documents
+                  where site=%s and service_date<%s and status<>'CANCELLED'
+                ) d left join lpdh_effective_days e on e.site=%s and e.service_date=d.service_date
+                where coalesce(e.is_effective,extract(isodow from d.service_date) between 1 and 5)""",
+                (site, service_date, site, service_date, site))
+            source_date = (cur.fetchone() or {}).get('source_date')
+        if not source_date:
+            raise HTTPException(404, "Belum ada data hari pelayanan sebelumnya di dapur ini")
+        templates = routine_documents(load_documents(cur, site, source_date))
+        cur.execute("select data from lpdh_daily_state where site=%s and service_date=%s", (site, source_date))
+        source_daily = cur.fetchone()
+        cur.execute("select data from lpdh_site_state where site=%s", (site,))
+        masters = (cur.fetchone() or {}).get('data') or {}
+        cur.execute("select data,status,revision from lpdh_daily_state where site=%s and service_date=%s", (site, service_date))
+        current = cur.fetchone() or {}
+        number = daily_number(cur, site, service_date, masters, (current.get('data') or {}).get('lpdhNumber'))
+    return {'site': site, 'serviceDate': service_date, 'sourceDate': source_date,
+            'templates': templates, 'hasDaily': source_daily is not None,
+            'dailyDefaults': routine_daily((source_daily or {}).get('data') or {}),
+            'lpdhNumber': number, 'targetDailyStatus': current.get('status', 'DRAFT'), 'targetDailyRevision': current.get('revision', 0)}
 
 
 @router.post("/accountant-documents")
@@ -383,22 +417,39 @@ def _archive_document(document_id, role):
             raise HTTPException(403, "akses site tidak diizinkan")
         if row["status"] != "FINAL":
             raise HTTPException(409, "Hanya dokumen FINAL aktif yang dapat diarsipkan")
-        if row.get("drive_uri"):
-            return {"driveUri": row["drive_uri"], "driveUploadStatus": "UPLOADED"}
+        if row.get("drive_uri") and row.get("drive_excel_uri"):
+            return {"driveUri": row["drive_uri"], "driveExcelUri": row["drive_excel_uri"], "driveUploadStatus": "UPLOADED"}
         document = _serialize_document(cur, row)
+        pdf_uri, excel_uri, folder = row.get('drive_uri'), row.get('drive_excel_uri'), row.get('drive_folder_id')
+        status, error = 'UPLOADED', None
         try:
+            # Different invoices can finalize concurrently. Serialize folder
+            # creation per kitchen so the month's/day's folders are reusable.
+            cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"generated-archive-folders:{row['site']}",))
             from backend.accountant_drive import upload_accountant_artifact
             from backend.generated_document_pdf import render_document_pdf
-            uploaded = upload_accountant_artifact(kind="invoice", site=row["site"], bucket="INVOICE",
-                filename=pdf_filename(document["documentNumber"]), data=render_document_pdf(document, load_artwork(cur, document)), mime_type="application/pdf")
+            from backend.generated_document_excel import render_document_excel, MIME
+            artwork = load_artwork(cur, document)
+            if pdf_uri and not folder:
+                from backend.google_services import drive_file_parent
+                folder = drive_file_parent(pdf_uri)
+            key = f"generated-document-{document_id}-"
+            if not pdf_uri:
+                uploaded = upload_accountant_artifact(kind="invoice", site=row["site"], service_date=document['serviceDate'],
+                    target_folder_id=folder, artifact_key=key+'pdf', filename=pdf_filename(document["documentNumber"]),
+                    data=render_document_pdf(document, artwork), mime_type="application/pdf")
+                pdf_uri, folder = uploaded['driveUri'], uploaded['folderId']
+            if not excel_uri:
+                uploaded = upload_accountant_artifact(kind="invoice", site=row["site"], service_date=document['serviceDate'],
+                    target_folder_id=folder, artifact_key=key+'xlsx', filename=pdf_filename(document["documentNumber"])[:-4]+'.xlsx',
+                    data=render_document_excel(document, artwork), mime_type=MIME)
+                excel_uri = uploaded['driveUri']
         except Exception:
-            error = "PDF final sudah tersimpan di aplikasi, tetapi upload SPPG Drive gagal. Coba Simpan ke Drive lagi; bila tetap gagal periksa koneksi/izin Drive backend."
-            cur.execute("update generated_accountant_documents set drive_upload_status='FAILED',drive_upload_error=%s,updated_at=now() where id=%s", (error, document_id))
-            conn.commit()
-            return {"driveUploadStatus": "FAILED", "driveUploadError": error}
-        cur.execute("update generated_accountant_documents set drive_uri=%s,drive_upload_status='UPLOADED',drive_upload_error=null,updated_at=now() where id=%s", (uploaded["driveUri"], document_id))
+            status = 'PARTIAL' if pdf_uri or excel_uri else 'FAILED'
+            error = "Dokumen tetap FINAL di aplikasi, tetapi arsip PDF dan Excel di Drive belum lengkap. Klik Simpan ke Drive untuk melengkapi; berkas yang berhasil tidak diunggah ulang. Periksa koneksi/izin Drive bila tetap gagal."
+        cur.execute("update generated_accountant_documents set drive_uri=%s,drive_excel_uri=%s,drive_folder_id=%s,drive_upload_status=%s,drive_upload_error=%s,updated_at=now() where id=%s", (pdf_uri, excel_uri, folder, status, error, document_id))
         conn.commit()
-        return {"driveUri": uploaded["driveUri"], "driveUploadStatus": "UPLOADED"}
+        return {"driveUri": pdf_uri, "driveExcelUri": excel_uri, "driveUploadStatus": status, "driveUploadError": error}
 
 
 @router.post("/accountant-documents/{document_id}/archive")
@@ -522,3 +573,24 @@ def document_pdf(document_id: int, authorization: str | None = Header(default=No
     from backend.generated_document_pdf import render_document_pdf
     content = render_document_pdf(document, artwork)
     return {"filename": pdf_filename(document["documentNumber"]), "mimeType": "application/pdf", "contentBase64": base64.b64encode(content).decode()}
+
+
+@router.get("/accountant-documents/{document_id}/excel")
+def document_excel(document_id: int, authorization: str | None = Header(default=None)):
+    role = session_role(authorization)
+    if not database_ready():
+        raise HTTPException(503, "database unavailable")
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select * from generated_accountant_documents where id=%s", (document_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "dokumen tidak ditemukan")
+        if role not in {"OWNER", row['site']}:
+            raise HTTPException(403, "akses site tidak diizinkan")
+        if row['status'] != 'FINAL':
+            raise HTTPException(409, "Excel hanya tersedia untuk dokumen FINAL aktif")
+        document = _serialize_document(cur, row)
+        artwork = load_artwork(cur, document)
+    from backend.generated_document_excel import render_document_excel, MIME
+    return {'filename': pdf_filename(document['documentNumber'])[:-4]+'.xlsx', 'mimeType': MIME,
+            'contentBase64': base64.b64encode(render_document_excel(document, artwork)).decode()}

@@ -12,7 +12,7 @@
 ## Accounting
 - [Costing](accounting/costing.md)
 - [Accountant Workflow](accounting/accountant-workflow.md)
-- [LPDH Document-First Workflow](accounting/lpdh-document-workflow.md) — master targets, current-form review, versioned server templates with fill-only downloads, shared package evidence and confirmed legacy-payment reconciliation.
+- [LPDH Document-First Workflow](accounting/lpdh-document-workflow.md) — previous-day routine drafts, last-saved numbering, paired daily PDF/Excel archives, master targets, fill-only server templates and shared package evidence.
 - [Internal Cash Reimbursement](accounting/internal-reimbursement.md)
 - [BGN Workflow](accounting/bgn-workflow.md)
 

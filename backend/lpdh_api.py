@@ -41,6 +41,8 @@ class DailyStateIn(BaseModel):
     service_date: date
     data: dict[str, Any] = Field(default_factory=dict)
     status: str = "DRAFT"
+    require_editable: bool = False
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 class EffectiveDaysIn(BaseModel):
@@ -297,6 +299,10 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
         daily_lock(cur, site, payload.service_date)
         try:
             existing = _load_daily(site, payload.service_date)
+            if payload.require_editable and (existing['status'] == 'GENERATED' or existing['data'].get('_historicalGeneratedSnapshot')):
+                raise HTTPException(409, "LPDH sudah digenerate. Tarikan rutin tidak boleh mengganti snapshot tersebut.")
+            if payload.expected_revision is not None and existing['revision'] != payload.expected_revision:
+                raise HTTPException(409, "Data harian berubah saat penarikan. Refresh dan periksa kembali sebelum menarik.")
             validate_daily_financial_sources(payload.data, existing["data"])
             # Replacement audit history is server-owned, not editable form data.
             payload.data.pop('_replacedLegacyPayments', None)

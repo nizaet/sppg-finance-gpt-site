@@ -47,7 +47,7 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   await act(async () => { view = create(render('MAJA')); });
   const label = node => node.children.map(x => typeof x === 'string' ? x : label(x)).join('');
   const button = text => view.root.findAllByType('button').find(x => label(x).includes(text));
-  const typeSelect = () => view.root.findAllByType('select').find(x => x.findAllByType('option').some(o => o.props.value === 'OPERASIONAL'));
+  const typeSelect = () => view.root.findByProps({'aria-label':'Jenis dokumen'});
   const changeType = async value => { confirm = true; await act(async () => typeSelect().props.onChange({ target: { value } })); };
   const saveDraft = async () => {
     const input = view.root.findAllByType('label').find(x => /Nomor invoice|Nomor paket kuitansi/.test(label(x))).findByType('input');

@@ -16,10 +16,17 @@ from document_numbering import next_number, claim_number, daily_number, suggest_
 class Cursor:
     def __init__(self):
         self.rows = []
+        self.anchors = {}
         self.result = None
         self.first_date = date(2026, 10, 5)
     def execute(self, sql, params):
-        if sql.startswith("select min"):
+        if sql.startswith("select full_number from document_number_anchors"):
+            self.result = self.anchors.get(tuple(params))
+        elif sql.startswith("insert into document_number_anchors"):
+            self.anchors[tuple(params[:2])] = {'full_number': params[2], 'owner_key': params[3]}
+        elif sql.startswith("select document_id"):
+            self.result = None
+        elif sql.startswith("select min"):
             self.result = {"first_date": self.first_date}
         elif sql.startswith("select full_number"):
             if "owner_key=" in sql:
@@ -27,7 +34,7 @@ class Cursor:
                 self.result = rows[-1] if rows else None
             else:
                 rows = [r for r in self.rows if r['site'] == params[0] and r['namespace'] == params[1] and r['serial'] is not None]
-                self.result = max(rows, key=lambda r:r['serial']) if rows else None
+                self.result = rows[-1] if rows else None
         elif sql.startswith("select owner_key"):
             self.result = next((r for r in self.rows if r['site'] == params[0] and r['namespace'] == params[1] and (r['normalized_number'] == params[2] or r['serial'] is not None and r['serial'] == params[3])), None)
         elif sql.startswith("insert"):
@@ -146,6 +153,19 @@ class MasterAndNumberTests(unittest.TestCase):
         preview=logic.compute_preview(masters,daily,'2026-10-06',False,None)
         output=logic.populate_workbook(masters,daily,preview,'2026-10-06')
         self.assertEqual(load_workbook(BytesIO(output))['Identitas']['B5'].value,daily['lpdhNumber'])
+
+    def test_latest_manual_anchor_not_highest_and_skip_claimed_serials(self):
+        cur=Cursor(); fallback='001/BB/DEFAULT/X/2026'
+        claim_number(cur,'MAJA','BAHAN_BAKU','999/BB/OLD/X/2026','DOC:1')
+        claim_number(cur,'MAJA','BAHAN_BAKU','220/BB/MMD/IX/2026','DOC:2')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'221/BB/MMD/IX/2026')
+        claim_number(cur,'MAJA','BAHAN_BAKU','221/BB/MMD/IX/2026','DOC:3')
+        claim_number(cur,'MAJA','BAHAN_BAKU','219/BB/MANUAL/IX/2026','DOC:4')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/IX/2026')
+        claim_number(cur,'MAJA','BAHAN_BAKU','999/BB/OLD/X/2026','DOC:1')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/IX/2026','unchanged historical saves do not reset anchor')
+        claim_number(cur,'MAJA','BAHAN_BAKU','219/BB/EDITED/X/2026','DOC:4')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/EDITED/X/2026')
 
 
 if __name__=='__main__': unittest.main()

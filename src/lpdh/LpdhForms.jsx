@@ -439,9 +439,21 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
   </div>;
 }
 
+export function applyRoutineDaily(daily, result, masters, serviceDate) {
+  const current = normalizeDaily(daily, serviceDate);
+  const pm = result.dailyDefaults?.pm || {};
+  const byCode = new Map((pm.rows || []).map(row => [row.code, row]));
+  const next = { ...current, lpdhNumber: current.lpdhNumber || result.lpdhNumber,
+    pm: { ...current.pm, rows: current.pm.rows.map(row => ({ ...row, ...(byCode.get(row.code) || {}) })),
+      production: { ...current.pm.production, ...pm.production } } };
+  return syncDailyMasterTargets(next, masters, serviceDate);
+}
+
 export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview }) {
   const data = normalizeDaily(daily, serviceDate);
   const [busy, setBusy] = useState(false);
+  const copyContext = useRef(`${site}|${serviceDate}`);
+  copyContext.current = `${site}|${serviceDate}`;
   const masterData = normalizeMasters(masters);
   const proofGroups = evidenceGroups(data);
   const updateProofGroup = (group, field, value) => {
@@ -529,6 +541,22 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     } finally { setBusy(false); }
   };
 
+  const pullPrevious = async () => {
+    if (!window.confirm("Tarik jumlah porsi, distribusi, dan produksi hari pelayanan sebelumnya? Isian PM saat ini diganti sebagai draft yang belum disimpan. Target tetap dari master terbaru; invoice, pembayaran, bukti, BAST, serta pengesahan tidak disalin.")) return;
+    const key = copyContext.current;
+    setBusy(true);
+    try {
+      const result = await api.previousRoutine(site, serviceDate);
+      if (key !== copyContext.current) return;
+      if (result.targetDailyStatus === "GENERATED") throw new Error("LPDH sudah digenerate. Simpan sebagai draft dahulu sebelum menarik isian rutin.");
+      if (!result.hasDaily) throw new Error("Tanggal sebelumnya belum memiliki isian Data Harian. Dokumen rutin bisa ditarik di tab Buat Invoice & Kuitansi.");
+      const next = applyRoutineDaily(data, result, masters, serviceDate);
+      setDaily(next);
+      onSaved?.(`Isian PM ditarik dari ${result.sourceDate}, belum disimpan. Target tetap dari master terbaru; periksa jumlah porsi dan produksi lalu Simpan Draft.`);
+      await onPreview?.(next);
+    } finally { setBusy(false); }
+  };
+
   const total = (rows, amountFn) => rows.reduce((s, x) => s + amountFn(x), 0);
   const rawTotal = total(data.rawMaterials, (x) => (Number(x.qty) || 0) * (Number(x.price) || 0));
   const volunteerTotal = total(data.volunteerPayments, (x) => (Number(x.workDays) || 0) * (Number(x.dailyRate) || 0));
@@ -537,6 +565,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
 
   return <div className="lpdh-stack">
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
+      <button type="button" onClick={pullPrevious} disabled={busy}>Tarik isian hari sebelumnya</button>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
       <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Draft</button>
     </>}>

@@ -16,7 +16,7 @@ function Field({ label, value, onChange, type = "text", children }) {
   return <label className="doc-field"><span>{label}</span>{children || <input type={type} value={value ?? ""} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
-export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateChange, onFinalized, onOpenDaily }) {
+export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateChange, onFinalized, onOpenDaily, onRoutineDaily }) {
   const [type, setType] = useState("BAHAN_BAKU");
   const [master, setMaster] = useState(null);
   const [documents, setDocuments] = useState([]);
@@ -31,6 +31,10 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const [message, setMessage] = useState(null);
   const [calendarRevision, setCalendarRevision] = useState(0);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [routineQueue, setRoutineQueue] = useState([]);
+  const [activeRoutine, setActiveRoutine] = useState(null);
+  const [routineScope, setRoutineScope] = useState("ALL");
+  const [routineDate, setRoutineDate] = useState("");
   const context = useRef(0);
   const documentReads = useRef(0);
   const requestKey = useRef(uuid());
@@ -49,6 +53,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     const readVersion = ++documentReads.current;
     setLoading(true); setMaster(null); setDocuments([]); setLines([]); setEditing(null); setHeader({}); setMessage(null); setDocumentNumber("");
     setType("BAHAN_BAKU"); setProfile("KOPERASI"); requestKey.current = uuid();
+    setRoutineQueue([]); setActiveRoutine(null); setRoutineDate("");
     numberEdited.current = false;
     Promise.allSettled([documentApi.master(site), documentApi.list(site, serviceDate)]).then(results => {
       if (version !== context.current) return;
@@ -65,7 +70,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
 
   useEffect(() => {
     const version = ++numberReads.current;
-    if (editing || receipts || loading || numberEdited.current) return;
+    if (editing || loading || numberEdited.current) return;
     documentApi.suggestNumber(site, serviceDate, type).then(result => {
       if (version === numberReads.current && !numberEdited.current) setDocumentNumber(result.documentNumber);
     }).catch(error => notify(error.message, true));
@@ -98,6 +103,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const reset = nextType => {
     numberEdited.current = false; numberReads.current++;
     setType(nextType); setLines([]); setEditing(null); setSelected(""); setDocumentNumber(""); requestKey.current = uuid();
+    setActiveRoutine(null);
     const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
     setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile, ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? { paymentSnapshotVersion: 2, recipientSubtype: "Guru" } : {}) });
   };
@@ -125,6 +131,33 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (lines.length && !window.confirm("Ganti daftar penerima saat ini dengan data master?")) return;
     setLines(rows); notify("Penerima disiapkan untuk satu hari. Periksa nama, tugas/unit, dan nominal sebelum menyimpan.");
   };
+  const activateRoutine = entry => {
+    numberEdited.current = false; numberReads.current++;
+    setEditing(null); setActiveRoutine(entry.key); setType(entry.documentType); setHeader(entry.header);
+    setProfile(entry.header.documentProfileKey || (entry.documentType === "OPERASIONAL" ? "KOPERASI" : "YAYASAN"));
+    setLines(entry.items.map(item => ({ ...item, metadata: { ...item.metadata } })));
+    setDocumentNumber(""); setCalendarRevision(x => x+1); requestKey.current = entry.key;
+  };
+  const pullRoutine = () => run(async version => {
+    if ((lines.length || editing || routineQueue.length) && !window.confirm("Ganti isian dan antrean yang belum disimpan dengan tarikan baru? Draft yang sudah disimpan tetap aman.")) return;
+    const result = routineScope === "UPAH_RELAWAN" ? {sourceDate:"master relawan aktif",templates:[],hasDaily:false} : await documentApi.previousRoutine(site, serviceDate, routineDate);
+    if (version !== context.current) return;
+    let entries = (result.templates || []).filter(entry => routineScope === "ALL" || routineScope === entry.documentType || entry.header?.recipientSubtype === routineScope);
+    if (routineScope === "ALL" || routineScope === "UPAH_RELAWAN") {
+      const items = (master?.volunteers || []).map(x => ({ ...blank("UPAH_RELAWAN"), itemName: x.name,
+        unitPrice: Number(x.dailyRate) || 0, metadata: { volunteerCode: x.code || x.name, role: x.role || "" } }));
+      if (items.length) entries.push({ documentType: "UPAH_RELAWAN", sourceDate: "Master terbaru", items,
+        header: { ...master?.profiles?.YAYASAN, recipientSignatureAssetId: null, evidenceLink: "", paymentReference: "", documentProfileKey: "YAYASAN", paymentSnapshotVersion: 2 } });
+    }
+    if (!entries.length && !(routineScope === "ALL" && result.hasDaily && onRoutineDaily)) throw new Error("Bagian yang dipilih belum memiliki data sumber. Relawan diambil dari master aktif, bahan baku dari Final Kalkulator hari ini.");
+    if (!window.confirm(`Tarik ${entries.length} rancangan dokumen untuk ${serviceDate} dari ${result.sourceDate}?\nRelawan dari master terbaru; bahan baku tetap dari kalkulator. Rancangan dokumen belum disimpan dan belum FINAL. Periksa setiap rancangan sebelum Simpan draft.${routineScope === "ALL" && result.hasDaily && onRoutineDaily ? " Isian PM harian saat ini juga akan diganti dan DISIMPAN SEBAGAI DRAFT, bukan FINAL. Invoice serta bukti pembayaran hari ini tetap aman." : ""}`)) return;
+    if (routineScope === "ALL" && result.hasDaily && onRoutineDaily) await onRoutineDaily(result);
+    if (version !== context.current) return;
+    entries = entries.map(entry => ({ ...entry, key: uuid() }));
+    setRoutineQueue(entries);
+    if (entries.length) activateRoutine(entries[0]);
+    notify(`${entries.length} rancangan disiapkan. Pilih setiap rancangan pada antrean, edit, lalu Simpan draft. Bahan baku tidak disalin. ${routineScope === "ALL" && result.hasDaily && onRoutineDaily ? "Isian PM telah tersimpan sebagai draft di Data Harian, bukan FINAL." : ""}`);
+  });
   const pullPlan = () => run(async version => {
     if (lines.length && !window.confirm("Ganti daftar item saat ini dengan Final Kalkulator?")) return;
     const result = await lpdhApi.getFinalPlan(site, serviceDate);
@@ -148,6 +181,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     setHeader(old => ({ ...old, evidenceLink: "", paymentReference: "" }));
     numberEdited.current = false; numberReads.current++;
     setLines([]); setEditing(null); setDocumentNumber(""); requestKey.current = uuid(); await reload(version);
+    if (activeRoutine) { setRoutineQueue(rows => rows.filter(row => row.key !== activeRoutine)); setActiveRoutine(null); }
     notify(`${result.document.documentNumber} tersimpan sebagai DRAFT. Buka PDF di tab baru untuk memeriksa, lalu finalkan agar masuk data harian.`);
   });
   const edit = doc => {
@@ -179,7 +213,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       catch (e) { await reload(version); setShowCancelled(true); throw e; }
       await reload(version);
       if (version !== context.current) return;
-      await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.driveUploadStatus === "UPLOADED" ? "PDF final tersimpan di SPPG Drive." : result.driveUploadError || "Upload Drive belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED");
+      await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError || "Upload Drive belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED");
     });
   };
   const recreate = doc => {
@@ -210,6 +244,12 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     downloadBase64(result.filename, result.mimeType, result.contentBase64);
     notify(`PDF ${doc.documentNumber} berhasil diunduh. Buka file untuk mencetak.`);
   });
+  const downloadExcel = doc => run(async version => {
+    const result = await documentApi.excel(doc.id);
+    if (version !== context.current) return;
+    downloadBase64(result.filename, result.mimeType, result.contentBase64);
+    notify(`Excel ${doc.documentNumber} diunduh dari data FINAL yang sama dengan PDF.`);
+  });
   const preview = doc => {
     const tab = window.open("about:blank", "_blank");
     if (!tab) return notify("Browser memblokir tab PDF. Izinkan pop-up untuk aplikasi ini lalu coba lagi.", true);
@@ -228,7 +268,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const archive = doc => run(async version => {
     const result = await documentApi.archive(doc.id); await reload(version);
-    if (version === context.current) notify(result.driveUploadStatus === "UPLOADED" ? "PDF final tersimpan di SPPG Drive." : result.driveUploadError, result.driveUploadStatus !== "UPLOADED");
+    if (version === context.current) notify(result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError, result.driveUploadStatus !== "UPLOADED");
   });
   const cancel = doc => {
     const reason = window.prompt(`Alasan membatalkan ${doc.documentNumber}:\nDokumen dikeluarkan dari biaya harian. Riwayat dan arsip lama tetap disimpan; pengganti memakai nomor baru.`);
@@ -254,10 +294,20 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       <div className="doc-heading"><div><span className="doc-kicker">DOKUMEN HARIAN · {site}</span><h2>Buat Invoice & Kuitansi</h2><p>1. Pilih item/penerima · 2. Simpan draft & buka PDF · 3. Finalkan → data harian LPDH & SPPG Drive</p></div><button type="button" disabled={busy || loading} onClick={() => run(reload)}><RefreshCw size={15}/> Refresh register</button></div>
       {message && <div role="status" className={`doc-message${message.error ? " error" : ""}`}>{message.text}</div>}
       <fieldset disabled={busy || loading} className="doc-form">
+        <details className="doc-details">
+          <summary>Tarik dari hari pelayanan sebelumnya</summary>
+          <div className="doc-grid">
+            <Field label="Bagian yang ditarik"><select value={routineScope} onChange={e=>setRoutineScope(e.target.value)}><option value="ALL">Semua isian rutin</option><option value="OPERASIONAL">Semua invoice operasional</option><option value="Guru">Insentif guru</option><option value="Kader">Insentif kader</option><option value="UPAH_RELAWAN">Relawan dari master terbaru</option></select></Field>
+            <Field label="Tanggal sumber (kosong = hari pelayanan sebelumnya)" type="date" value={routineDate} onChange={setRoutineDate}/>
+            <button type="button" onClick={pullRoutine}>Tarik isian rutin sebagai draft</button>
+          </div>
+          <p className="doc-hint">Bahan baku masak tetap dari Final Kalkulator hari ini. Relawan dari master aktif. Nomor baru, bukti bayar, BAST, referensi transaksi dan status FINAL lama tidak disalin. Setiap invoice operasional tetap terpisah.</p>
+        </details>
+        {routineQueue.length > 0 && <div className="doc-details"><strong>Antrean tarikan · {routineQueue.length} belum disimpan</strong><div className="doc-actions">{routineQueue.map((entry, index)=><button type="button" key={entry.key} aria-pressed={entry.key===activeRoutine} disabled={entry.key===activeRoutine} onClick={()=>{if(lines.length&&!window.confirm("Pindah rancangan? Perubahan rancangan aktif yang belum disimpan akan dikosongkan."))return;activateRoutine(entry);}}>{index+1}. {entry.header.recipientSubtype || TYPES[entry.documentType]} · {entry.sourceNumber || "Master relawan"}</button>)}</div><p className="doc-hint">Periksa dan Simpan draft setiap rancangan. Nomor berikutnya muncul setelah nomor sebelumnya disimpan.</p></div>}
         <div className="doc-grid">
-          <Field label={receipts ? "Nomor paket kuitansi (manual)" : "Nomor invoice (otomatis, bisa diedit)"} value={documentNumber} onChange={value => { numberEdited.current = true; numberReads.current++; setDocumentNumber(value); }}/>
+          <Field label={receipts ? "Nomor paket kuitansi (otomatis, bisa diedit)" : "Nomor invoice (otomatis, bisa diedit)"} value={documentNumber} onChange={value => { numberEdited.current = true; numberReads.current++; setDocumentNumber(value); }}/>
           <Field label="Tanggal pembayaran / pelayanan" type="date" value={serviceDate} onChange={changeDate}/>
-          <Field label="Jenis dokumen"><select value={type} disabled={Boolean(editing)} onChange={e => chooseType(e.target.value)}>{Object.entries(TYPES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
+          <Field label="Jenis dokumen"><select aria-label="Jenis dokumen" value={type} disabled={Boolean(editing)} onChange={e => chooseType(e.target.value)}>{Object.entries(TYPES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
           <Field label="Kop surat"><select value={profile} onChange={e => { const next = e.target.value; setProfile(next); setHeader({ ...master?.profiles?.[next], documentProfileKey: next, paymentSnapshotVersion: header.paymentSnapshotVersion, recipientSubtype: header.recipientSubtype, evidenceLink: header.evidenceLink || "", paymentReference: header.paymentReference || "" }); }}>{["KOPERASI", "YAYASAN"].map(key => <option key={key}>{key}</option>)}</select></Field>
           {type === "INSENTIF_GURU_KADER" && !legacyReceipts && <Field label="Jenis paket insentif"><select aria-label="Jenis paket insentif" value={subtype} disabled={Boolean(editing)} onChange={e => { if (lines.length && !window.confirm("Ganti paket dan kosongkan penerima yang belum disimpan?")) return; setHeader(old => ({ ...old, recipientSubtype: e.target.value })); setLines([]); }}><option>Guru</option><option>Kader</option></select></Field>}
         </div>
@@ -300,13 +350,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id}>
         <td><strong>{doc.documentNumber}</strong></td><td>{doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td>{doc.items.length}</td><td className="doc-money">{money(doc.total)}</td>
         <td><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
-          {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri ? "Tersimpan di Drive" : "Belum tersimpan di Drive"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
+          {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri && doc.driveExcelUri ? "PDF + Excel tersimpan di Drive" : doc.driveUri ? "PDF tersimpan; Excel belum diarsipkan" : "Arsip Drive belum lengkap"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}
           {doc.cancelledAt && <small>Dibatalkan: {new Date(doc.cancelledAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</small>}
         </td>
         <td><div className="doc-actions">
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
-          {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button>{doc.driveUri ? <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">Buka SPPG Drive</a> : <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
+          {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
           {doc.status !== "CANCELLED" && <button type="button" disabled={busy} onClick={() => cancel(doc)}><Trash2 size={14}/> Batalkan</button>}
           {doc.status === "CANCELLED" && <button type="button" disabled={busy} onClick={() => recreate(doc)}>Buat ulang</button>}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date
 from typing import Any
 
 from backend.google_services import drive_auth_mode, ensure_drive_folder, upload_bytes_to_drive
@@ -93,7 +94,35 @@ def upload_accountant_artifact(
     mime_type: str,
     site: str | None = None,
     bucket: str | None = None,
+    service_date: str | None = None,
+    target_folder_id: str | None = None,
+    artifact_key: str | None = None,
 ) -> dict[str, Any]:
+    # New generated-document pairs use a strict shared destination. All existing
+    # Operations/accountant callers retain their previous behavior below.
+    if service_date:
+        if kind != 'invoice' or str(site or '').upper() not in _SUPPORTED_SITES:
+            raise ValueError('Arsip bertanggal membutuhkan invoice dan dapur yang valid')
+        day = date.fromisoformat(str(service_date)[:10])
+        site_key = str(site).upper()
+        parts = [site_key, str(day.year), f'{day.month:02d}', day.isoformat()]
+        roots = [target_folder_id] if target_folder_id else _candidate_folder_ids('SPPG_DRIVE_ACCOUNTANT_INVOICE_FOLDER_ID', DEFAULT_ACCOUNTANT_INVOICE_FOLDER_ID)
+        errors = []
+        for root in roots:
+            try:
+                folder = root
+                if not target_folder_id:
+                    for part in parts:
+                        folder = ensure_drive_folder(folder, part)
+                kwargs = {'artifact_key': artifact_key} if artifact_key else {}
+                uri = upload_bytes_to_drive(folder, filename, data, mime_type, **kwargs)
+                return {'driveUri': uri, 'folderId': folder, 'drivePath': '/'.join(parts)}
+            except Exception as exc:
+                friendly, global_error = _friendly_drive_error(exc)
+                errors.append(friendly)
+                if global_error:
+                    break
+        raise AccountantDriveUploadError('Arsip PDF/Excel belum lengkap: ' + '; '.join(errors))
     normalized = kind.strip().lower()
     if normalized == "excel":
         env_name = "SPPG_DRIVE_ACCOUNTANT_FOLDER_ID"

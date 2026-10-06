@@ -33,7 +33,7 @@ db = types.ModuleType("backend.db")
 db.connection = lambda: None
 db.database_ready = lambda: True
 drive_module = types.ModuleType("backend.accountant_drive")
-drive_module.upload_accountant_artifact = lambda **kwargs: {"driveUri": "https://drive.google.com/file/d/test-archive/view"}
+drive_module.upload_accountant_artifact = lambda **kwargs: {"driveUri": "https://drive.google.com/file/d/test-archive-" + kwargs.get('artifact_key','') + "/view", 'folderId':'test-folder'}
 # Run this test file in its own process: importing backend/__init__ would load
 # unrelated services, so install only the package and authentication/DB fixtures.
 sys.modules.update({"backend": package, "backend.auth_api": auth, "backend.db": db, "backend.accountant_drive": drive_module})
@@ -58,6 +58,7 @@ class FakeConnection:
         self.profiles = {}
         self.assets = {}
         self.serials = []
+        self.anchors = {}
 
     @contextmanager
     def cursor(self):
@@ -65,7 +66,11 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if sql.startswith("select owner_key,full_number from document_number_serials"):
+        if sql.startswith("select full_number from document_number_anchors"):
+            self.result = self.anchors.get(tuple(params))
+        elif sql.startswith("insert into document_number_anchors"):
+            self.anchors[tuple(params[:2])] = {'full_number':params[2]}
+        elif sql.startswith("select owner_key,full_number from document_number_serials"):
             self.result = next((x for x in self.serials if x["site"] == params[0] and x["namespace"] == params[1] and (x["normalized_number"] == params[2] or x["serial"] is not None and x["serial"] == params[3])), None)
         elif sql.startswith("select full_number from document_number_serials"):
             rows = [x for x in self.serials if x["site"] == params[0] and x["namespace"] == params[1] and x["serial"] is not None]
@@ -121,7 +126,7 @@ class FakeConnection:
             self.row["status"] = "CANCELLED" if "'CANCELLED'" in sql else "FINAL"
         elif sql.startswith("update generated_accountant_documents set drive_uri"):
             self.row["drive_uri"] = params[0]
-            self.row["drive_upload_status"] = "UPLOADED"
+            self.row.update(drive_excel_uri=params[1],drive_folder_id=params[2],drive_upload_status=params[3],drive_upload_error=params[4])
         elif sql.startswith("update generated_accountant_documents set drive_upload_status"):
             self.row["drive_upload_status"] = "FAILED"
             self.row["drive_upload_error"] = params[0]
@@ -339,15 +344,46 @@ class DocumentApiTests(unittest.TestCase):
         endpoint = "/v1/accountant-documents/1/archive"
         self.assertEqual(self.client.post(endpoint, headers=self.headers).status_code, 409)
         self.conn.row["status"] = "FINAL"
-        with patch.object(drive_module, "upload_accountant_artifact", return_value={"driveUri": "https://drive.google.com/file/d/test/view"}) as upload:
+        with patch.object(drive_module, "upload_accountant_artifact", return_value={"driveUri": "https://drive.google.com/file/d/test/view", 'folderId':'test-folder'}) as upload:
             first = self.client.post(endpoint, headers=self.headers)
             second = self.client.post(endpoint, headers=self.headers)
         self.assertEqual(first.status_code, 200, first.text)
         self.assertEqual(first.json()["driveUri"], second.json()["driveUri"])
-        upload.assert_called_once()
+        self.assertEqual(upload.call_count,2)
         self.assertEqual(upload.call_args.kwargs["kind"], "invoice")
         self.assertEqual(upload.call_args.kwargs["site"], "MAJA")
-        self.assertTrue(upload.call_args.kwargs["data"].startswith(b"%PDF-"))
+        self.assertTrue(upload.call_args_list[0].kwargs["data"].startswith(b"%PDF-"))
+        self.assertTrue(upload.call_args_list[1].kwargs["data"].startswith(b"PK"))
+        self.assertEqual(upload.call_args_list[1].kwargs['target_folder_id'],'test-folder')
+        self.assertEqual(first.json()['driveExcelUri'],second.json()['driveExcelUri'])
+
+    def test_excel_is_final_only_same_snapshot_and_site_scoped(self):
+        endpoint='/v1/accountant-documents/1/excel'
+        self.assertEqual(self.client.get(endpoint,headers=self.headers).status_code,409)
+        self.assertEqual(self.client.get(endpoint,headers={'Authorization':'Bearer CEMPLANG'}).status_code,403)
+        self.conn.row['status']='FINAL'
+        response=self.client.get(endpoint,headers=self.headers)
+        self.assertEqual(response.status_code,200,response.text)
+        from openpyxl import load_workbook
+        wb=load_workbook(BytesIO(base64.b64decode(response.json()['contentBase64'])))
+        self.assertEqual(wb.sheetnames,['Invoice'])
+        self.assertIn(1000,[c.value for row in wb['Invoice'] for c in row])
+        self.assertFalse(self.conn.committed,'download is read-only')
+
+    def test_partial_archive_retry_does_not_reupload_pdf(self):
+        self.conn.row['status']='FINAL'
+        endpoint='/v1/accountant-documents/1/archive'
+        with patch.object(drive_module,'upload_accountant_artifact',side_effect=[{'driveUri':'https://drive.google.com/file/d/pdf/view','folderId':'date-folder'},RuntimeError('Excel failed')]) as upload:
+            first=self.client.post(endpoint,headers=self.headers)
+        self.assertEqual(first.json()['driveUploadStatus'],'PARTIAL')
+        self.assertEqual(self.conn.row['drive_uri'],'https://drive.google.com/file/d/pdf/view')
+        self.assertIsNone(self.conn.row['drive_excel_uri'])
+        with patch.object(drive_module,'upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/file/d/excel/view','folderId':'date-folder'}) as upload:
+            retry=self.client.post(endpoint,headers=self.headers)
+        self.assertEqual(retry.json()['driveUploadStatus'],'UPLOADED')
+        upload.assert_called_once()
+        self.assertEqual(upload.call_args.kwargs['target_folder_id'],'date-folder')
+        self.assertTrue(upload.call_args.kwargs['filename'].endswith('.xlsx'))
 
     def test_drive_failure_preserves_committed_final_and_allows_retry(self):
         with patch.object(api, "_sync_daily", return_value={"data": {}, "imported": 1}), patch.object(drive_module, "upload_accountant_artifact", side_effect=RuntimeError("Drive unavailable")):

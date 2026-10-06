@@ -51,6 +51,14 @@ const text = node => node.children.map(x => typeof x === 'string' ? x : text(x))
   assert.equal(previewed.pm.rows.find(x=>x.code==='KS-07').targetPm,8,'saved master refreshes draft targets and review');
   assert.equal(previewed.pm.rows.find(x=>x.code==='KS-07').received,2,'actual edit survives master save');
   assert.equal(savedDaily,0);
+  global.__lpdhFixture.previousRoutine=async()=>({sourceDate:'2026-10-02',targetDailyStatus:'DRAFT',hasDaily:true,lpdhNumber:'009/LPDH/TEST/X/2026',dailyDefaults:{pm:{rows:[{code:'KS-07',received:0,distributed:0,bnba:'Tidak'}],production:{produced:5,organoleptic:3,retainedSample:2}}}});
+  await act(async()=>button('Data Harian dari Dokumen').props.onClick());
+  await act(async()=>button('Tarik isian hari sebelumnya').props.onClick());
+  assert.equal(previewed.pm.rows.find(x=>x.code==='KS-07').received,0,'copied explicit zero remains editable');
+  assert.equal(previewed.pm.rows.find(x=>x.code==='KS-07').targetPm,8,'targets remain from current master');
+  assert.equal(previewed.pm.production.produced,5,'previous production is a draft input, not a recalculation');
+  assert.equal(previewed.lpdhNumber,'009/LPDH/TEST/X/2026','new-day number not old number');
+  assert.equal(savedDaily,0,'standalone daily pull does not save automatically');
   await act(async()=>view.unmount());
   console.log('PASS live LPDH review: unsaved input, master reload, real-count preservation, boolean BNBA, production confirmation, no auto-save');
 })().catch(error=>{console.error(error);process.exitCode=1;});

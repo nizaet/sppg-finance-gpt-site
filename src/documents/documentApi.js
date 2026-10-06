@@ -15,6 +15,7 @@ async function request(path, options = {}) {
 }
 
 export const documentApi = {
+  previousRoutine: (site, date, sourceDate = "") => request(`/previous-routine?${new URLSearchParams({ site, service_date: date, ...(sourceDate ? { source_date: sourceDate } : {}) })}`),
   suggestNumber: (site, date, type) => request(`/number-suggestion?${new URLSearchParams({ site, service_date: date, document_type: type })}`),
   master: site => request(`/master?${new URLSearchParams({ site })}`),
   get: id => request(`/${id}`),
@@ -30,5 +31,6 @@ export const documentApi = {
   archive: id => request(`/${id}/archive`, { method: "POST" }),
   cancel: (id, reason) => request(`/${id}/cancel`, { method: "PATCH", body: JSON.stringify({ reason }) }),
   pdf: id => request(`/${id}/pdf`),
+  excel: id => request(`/${id}/excel`),
   syncDaily: (site, date) => request("/sync-daily", { method: "POST", body: JSON.stringify({ site, service_date: date }) }),
 };

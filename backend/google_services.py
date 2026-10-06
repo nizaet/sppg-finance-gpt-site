@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -211,15 +212,28 @@ def drive_service():
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
-def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type: str) -> str:
+def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type: str, artifact_key: str | None = None) -> str:
     if not folder_id:
         raise GoogleServicesNotConfigured("Drive folder id is not configured")
+    service = drive_service()
+    if artifact_key:
+        parent = folder_id.replace("'", "\\'")
+        key = artifact_key.replace("'", "\\'")
+        found = service.files().list(q=f"'{parent}' in parents and trashed=false and appProperties has {{ key='sppgArtifact' and value='{key}' }}",
+            fields="files(id,webViewLink)", spaces="drive", pageSize=1,
+            supportsAllDrives=True, includeItemsFromAllDrives=True).execute(num_retries=3)
+        if found.get('files'):
+            existing = found['files'][0]
+            return existing.get('webViewLink') or f"https://drive.google.com/file/d/{existing['id']}/view"
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime_type, resumable=False)
+    body = {"name": filename, "parents": [folder_id]}
+    if artifact_key:
+        body['appProperties'] = {'sppgArtifact': artifact_key}
     created = (
-        drive_service()
+        service
         .files()
         .create(
-            body={"name": filename, "parents": [folder_id]},
+            body=body,
             media_body=media,
             fields="id,webViewLink",
             supportsAllDrives=True,
@@ -231,6 +245,17 @@ def upload_bytes_to_drive(folder_id: str, filename: str, data: bytes, mime_type:
         .execute(num_retries=3)
     )
     return created.get("webViewLink") or f"https://drive.google.com/file/d/{created['id']}/view"
+
+
+def drive_file_parent(uri: str) -> str:
+    """Keep a legacy PDF where it is; add its Excel beside it without moving it."""
+    match = re.fullmatch(r'https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)/view(?:\?.*)?', uri or '')
+    if not match:
+        raise ValueError('Link arsip Drive lama tidak valid')
+    result = drive_service().files().get(fileId=match.group(1), fields='parents', supportsAllDrives=True).execute(num_retries=3)
+    if not result.get('parents'):
+        raise ValueError('Folder arsip Drive lama tidak tersedia')
+    return result['parents'][0]
 
 
 def upload_file_to_drive(folder_id: str, filename: str, file_path: str, mime_type: str) -> str:

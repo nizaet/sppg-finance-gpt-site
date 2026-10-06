@@ -35,6 +35,7 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  previousRoutine: (site, date, sourceDate) => documentApi.previousRoutine(site, date, sourceDate),
   syncDocuments: (site, date) => documentApi.syncDaily(site, date),
   getMasters: (site) => request(`/v1/lpdh/masters?${q({ site })}`),
   saveMasters: (site, data) => request("/v1/lpdh/masters", {
@@ -42,9 +43,9 @@ export const lpdhApi = {
     body: JSON.stringify({ site, data }),
   }),
   getDaily: (site, date) => request(`/v1/lpdh/daily?${q({ site, date })}`),
-  saveDaily: (site, serviceDate, data, status = "DRAFT") => request("/v1/lpdh/daily", {
+  saveDaily: (site, serviceDate, data, status = "DRAFT", options = {}) => request("/v1/lpdh/daily", {
     method: "PUT",
-    body: JSON.stringify({ site, service_date: serviceDate, data, status }),
+    body: JSON.stringify({ site, service_date: serviceDate, data, status, ...options }),
   }),
   deleteDaily: (site, date) => request(`/v1/lpdh/daily?${q({ site, date })}`, { method: "DELETE" }),
   calendar: (site, month) => request(`/v1/lpdh/calendar?${q({ site, month })}`),

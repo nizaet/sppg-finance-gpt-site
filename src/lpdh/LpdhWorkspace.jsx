@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import "./lpdh.css";
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
-import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets } from "./LpdhForms.jsx";
+import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets, applyRoutineDaily } from "./LpdhForms.jsx";
 import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
 import LpdhSheets, { SHEET_ORDER } from "./LpdhSheets.jsx";
 
@@ -311,7 +311,16 @@ export default function LpdhWorkspace({ role, onLogout }) {
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets}/>}
         {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
-        {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
+        {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onRoutineDaily={async(result)=>{
+          if(result.targetDailyStatus==="GENERATED") throw new Error("LPDH tanggal ini sudah digenerate. Buka Data Harian dan simpan sebagai draft dahulu, atau tarik dokumen per bagian tanpa isian PM.");
+          const next=applyRoutineDaily(daily,result,masters,selectedDate);
+          const key=`${site}|${selectedDate}`;
+          if(viewContext.current!==key) throw new Error("Tanggal aktif berubah; tarik kembali untuk tanggal yang dipilih.");
+          await lpdhApi.saveDaily(site,selectedDate,next,"DRAFT",{require_editable:true,expected_revision:result.targetDailyRevision});
+          if(viewContext.current!==key) return;
+          setDaily(next);
+          flash(`Isian PM dari ${result.sourceDate} tersimpan sebagai draft; periksa realisasi hari ini. Bukti dan pembayaran lama tidak disalin.`);
+        }} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
         {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
       </section>
