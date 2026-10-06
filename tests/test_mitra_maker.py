@@ -23,6 +23,8 @@ class Cursor:
         elif 'insert into accountant_invoices(' in sql: self.result={'id':100}
         elif sql.startswith('insert into generated_document_maker_exports'):
             self.export={'accountant_invoice_id':args[1],'maker_id':args[2]}
+        elif sql.startswith('update generated_document_maker_exports'):
+            self.export['maker_id']=args[0]
     def fetchone(self): return self.result
 
 
@@ -73,6 +75,12 @@ class MitraMakerTests(unittest.TestCase):
         self.assertEqual(first['maker_id'],200); self.assertTrue(second['duplicate'])
         inserts=[args for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]
         self.assertEqual(len(inserts),1); self.assertEqual(inserts[0][7],6962000)
+        cur.export['maker_id']=None
+        with patch.dict('sys.modules',{'backend.accountant_document_api':maker_module}):
+            replacement=export_snapshot(cur,doc,'OWNER')
+        self.assertEqual(replacement['accountant_invoice_id'],100)
+        self.assertEqual(replacement['maker_id'],200)
+        self.assertEqual(len([sql for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]),1)
         self.assertFalse(any('PAID' in sql or 'APPROVED' in sql for sql,args in cur.calls))
         for status in ['DRAFT','CANCELLED']:
             with self.assertRaises(HTTPException): export_snapshot(Cursor(),{**doc,'status':status},'OWNER')

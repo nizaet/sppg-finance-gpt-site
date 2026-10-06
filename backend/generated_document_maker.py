@@ -10,8 +10,15 @@ def export_snapshot(cur, document, actor):
         raise HTTPException(409, 'Simpan PDF FINAL ke Drive terlebih dahulu.')
     cur.execute('select accountant_invoice_id,maker_id from generated_document_maker_exports where document_id=%s', (document['id'],))
     existing = cur.fetchone()
-    if existing:
+    if existing and existing.get('maker_id'):
         return {**existing, 'duplicate': True}
+    if existing:
+        # The established cancellation workflow removes pending Makers, not invoices.
+        from backend.accountant_document_api import _create_maker
+        maker = _create_maker(cur,existing['accountant_invoice_id'],document['site'],document['total'],document['documentNumber'])
+        cur.execute('update generated_document_maker_exports set maker_id=%s,exported_by=%s,exported_at=now() where document_id=%s',
+                    (maker['makerId'],actor,document['id']))
+        return {'accountant_invoice_id':existing['accountant_invoice_id'],'maker_id':maker['makerId'],'duplicate':False}
     # Use existing Maker categories; retain the exact invoice type in parsed_payload.
     category = 'BAHAN_BAKU' if document['documentType'] == 'BAHAN_BAKU' else 'UPAH' if document['documentType'] == 'UPAH_RELAWAN' else 'OPERASIONAL_LAIN'
     cur.execute('''insert into accountant_invoices(site,accountant_code,invoice_category,invoice_number,
