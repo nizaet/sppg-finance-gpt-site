@@ -97,9 +97,9 @@ function Topup({ preview }) {
   ]}/><Status ok={p.withinMax}>Usulan {p.withinMax?"dalam":"melebihi"} batas saldo VA</Status><p className="lpdh-sheet-help">Kolom “Disetujui PPK” pada Excel tetap menjadi kewenangan Tim PPK dan tidak diisi otomatis.</p></div>;
 }
 
-function Checks({ preview }) {
+function Checks({ preview, onOpenIssue }) {
   return <div className="lpdh-sheet-body"><h3>G_CekPPK</h3><div className="lpdh-check-summary"><Status ok={preview?.ready}>{preview?.ready?"SEMUA VALIDASI OK":"MASIH ADA YANG HARUS DIPERBAIKI"}</Status><strong>{preview?.errorCount||0} PERIKSA</strong></div>
-    <Table headers={["No","Pemeriksaan","Status","Detail"]} rows={(preview?.checks||[]).map(x=>[x.no,x.check,<Status key={x.no} ok={x.ok}>{x.status}</Status>,x.detail||""])}/></div>;
+    <Table headers={["No","Pemeriksaan","Status","Detail"]} rows={(preview?.checks||[]).map(x=>[x.no,x.check,x.ok?<Status key={x.no} ok={x.ok}>{x.status}</Status>:<button type="button" className="lpdh-issue-link" onClick={()=>onOpenIssue?.(x)} aria-label={`Perbaiki pemeriksaan ${x.no}: ${x.check}`}>{x.status} · Buka isian</button>,x.detail||""])}/></div>;
 }
 
 function Rekap({ preview, masters, daily, serviceDate }) {
@@ -123,7 +123,7 @@ function Ref({ preview, referenceRows }) {
   return <div className="lpdh-sheet-body"><h3>Ref</h3><Table headers={["Parameter","Nilai"]} rows={main}/>{referenceRows?.length>0&&<><h4>Referensi workbook resmi</h4><Table headers={["A","B","C","D"]} rows={referenceRows.slice(0,214).map(r=>r.map(v=>v==null?"":String(v)))}/></>}</div>;
 }
 
-export default function LpdhSheets({ activeSheet, masters, daily, preview, serviceDate, referenceRows }) {
+export default function LpdhSheets({ activeSheet, masters, daily, preview, serviceDate, referenceRows, onOpenIssue }) {
   switch(activeSheet){
     case "Petunjuk": return <Petunjuk/>;
     case "Identitas": return <Identity masters={masters} daily={daily} serviceDate={serviceDate}/>;
@@ -134,7 +134,7 @@ export default function LpdhSheets({ activeSheet, masters, daily, preview, servi
     case "D_Insentif": return <Incentive preview={preview} daily={daily}/>;
     case "E_Saldo": return <Balance preview={preview} daily={daily}/>;
     case "F_TopUp": return <Topup preview={preview}/>;
-    case "G_CekPPK": return <Checks preview={preview}/>;
+    case "G_CekPPK": return <Checks preview={preview} onOpenIssue={onOpenIssue}/>;
     case "H_RekapPPK": return <Rekap preview={preview} masters={masters} daily={daily} serviceDate={serviceDate}/>;
     case "I_RegisterBukti": return <Register preview={preview}/>;
     case "J_Pengesahan": return <Approval preview={preview} masters={masters} serviceDate={serviceDate}/>;

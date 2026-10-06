@@ -150,6 +150,19 @@ class GenerationTemplateTests(unittest.TestCase):
 
     def generate(self): return lpdh_api._generate_locked(self.payload,self.request,'MAJA',self.cur)
 
+    def test_draft_with_failed_checks_does_not_issue_or_lock_report(self):
+        self.payload.draft_only=True
+        p=compute_preview({}, {}, '2026-10-05',False)
+        p.update(ready=False,errorCount=4)
+        with patch.object(lpdh_api,'compute_preview',return_value=p), patch.object(lpdh_api,'_load_final_plan',return_value=None), patch.object(lpdh_api,'_daily_with_hpe',side_effect=lambda site,day,daily:(daily,{'effective':False})), patch.object(lpdh_api,'daily_number',side_effect=AssertionError('draft must not reserve a number')), patch.object(lpdh_api,'claim_number',side_effect=AssertionError('draft must not claim a number')):
+            result=self.generate()
+        self.assertTrue(result['draft'])
+        self.assertIn('_DRAFT_',result['filename'])
+        self.assertEqual(result['validation']['errorCount'],4)
+        self.assertFalse(any('insert into lpdh_daily_state' in sql or 'insert into lpdh_generation_log' in sql for sql,_ in self.cur.calls))
+        w=load_workbook(BytesIO(base64.b64decode(result['contentBase64'])))
+        self.assertTrue(any(cell.data_type=='f' for sheet in w for row in sheet for cell in row))
+
     def test_installed_template_download_does_not_prepare_or_build_formulas(self):
         with patch.object(lpdh_api,'prepare_template',side_effect=AssertionError('no preparation')):
             result=self.generate()

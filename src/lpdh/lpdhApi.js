@@ -60,9 +60,9 @@ export const lpdhApi = {
     method: "POST",
     body: JSON.stringify({ site, service_date: serviceDate, data }),
   }),
-  generate: (site, serviceDate) => request("/v1/lpdh/generate", {
+  generate: (site, serviceDate, draftOnly = false) => request("/v1/lpdh/generate", {
     method: "POST",
-    body: JSON.stringify({ site, service_date: serviceDate }),
+    body: JSON.stringify({ site, service_date: serviceDate, draft_only: draftOnly }),
   }),
   history: (site) => request(`/v1/lpdh/history?${q({ site })}`),
   reference: (site) => request(`/v1/lpdh/reference?${q({ site })}`),

@@ -134,30 +134,30 @@ function ServiceDaysPanel({ site, effectiveDates, monthKey, setMonthKey, onSave,
   </section>;
 }
 
-function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet }) {
+function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet, onOpenIssue }) {
   return <div className="lpdh-review">
-    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW SEBELUM GENERATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa di sini sebelum file dibuat.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Review mengikuti isian Data Harian saat ini, termasuk perubahan belum disimpan. Simpan Draft sebelum Generate Excel.</p>}</div>
-      <div className={preview?.ready?"lpdh-readiness ready":"lpdh-readiness blocked"}>{preview?.ready?<FileCheck2 size={18}/>:<ClipboardCheck size={18}/>}<span>{preview?.ready?"SIAP GENERATE":`${preview?.errorCount ?? "-"} PERIKSA`}</span></div>
+    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW ISIAN TEMPLATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa sebelum template diisi dan diunduh.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Review mengikuti isian Data Harian saat ini, termasuk perubahan belum disimpan. Simpan Draft sebelum mengisi template untuk unduhan.</p>}</div>
+      <div className={preview?.ready?"lpdh-readiness ready":"lpdh-readiness blocked"}>{preview?.ready?<FileCheck2 size={18}/>:<ClipboardCheck size={18}/>}<span>{preview?.ready?"SIAP UNDUH TERVALIDASI":`${preview?.errorCount ?? "-"} PERIKSA`}</span></div>
     </div>
     <div className="lpdh-sheet-tabs">{SHEET_ORDER.map((sheet)=><button key={sheet} className={activeSheet===sheet?"active":""} type="button" onClick={()=>setActiveSheet(sheet)}>{sheet}</button>)}</div>
-    <LpdhSheets activeSheet={activeSheet} masters={masters} daily={daily} preview={preview} serviceDate={serviceDate} referenceRows={referenceRows}/>
+    <LpdhSheets activeSheet={activeSheet} masters={masters} daily={daily} preview={preview} serviceDate={serviceDate} referenceRows={referenceRows} onOpenIssue={onOpenIssue}/>
   </div>;
 }
 
-function GeneratePanel({ site, serviceDate, preview, history, onRefresh, onGenerate, busy, finalPlan }) {
+function GeneratePanel({ site, serviceDate, preview, history, onRefresh, onGenerate, busy, finalPlan, onOpenIssue }) {
   return <div className="lpdh-stack">
-    <section className="lpdh-form-section"><div className="lpdh-form-section-head"><div><h3>Generate LPDH Excel</h3><p>File hanya dapat dibuat bila seluruh G_CekPPK berstatus OK.</p></div><div className="lpdh-inline-actions"><button type="button" onClick={onRefresh}><RefreshCw size={15}/> Validasi ulang</button><button type="button" className="primary" disabled={busy||!preview?.ready} onClick={onGenerate}><FileSpreadsheet size={15}/> Generate Excel</button></div></div>
+    <section className="lpdh-form-section"><div className="lpdh-form-section-head"><div><h3>Isi Template & Unduh Excel LPDH</h3><p>Salinan template server diisi dari data terakhir yang disimpan. Rumus dan format tetap ikut. Unduhan DRAFT tidak mengunci data harian.</p></div><div className="lpdh-inline-actions"><button type="button" onClick={onRefresh}>Validasi ulang</button><button type="button" disabled={busy} onClick={()=>onGenerate(true)}>Isi Template & Unduh DRAFT</button><button type="button" className="primary" disabled={busy||!preview?.ready} onClick={()=>onGenerate(false)}>Unduh Excel Tervalidasi</button></div></div>
       <div className="lpdh-generate-gate">
         <div className={finalPlan?.payload?"ok":"bad"}><strong>1. Final Kalkulator</strong><span>{finalPlan?.payload?`${finalPlan.planName||"Rencana"} · revisi ${finalPlan.revision||1}`:"Belum final"}</span></div>
         <div className={preview?.effective?"ok":"bad"}><strong>2. Hari Pelayanan</strong><span>{preview?.effective?"Efektif":"Tidak efektif"}</span></div>
         <div className={preview?.errorCount===0?"ok":"bad"}><strong>3. G_CekPPK</strong><span>{preview?.errorCount===0?"26 pemeriksaan bersih":`${preview?.errorCount??"-"} perlu diperbaiki`}</span></div>
       </div>
-      {!preview?.ready&&<div className="lpdh-note warn">Generate terkunci. Buka Review LPDH → G_CekPPK untuk melihat tepatnya kesalahan mana yang harus diperbaiki.</div>}
+      {!preview?.ready&&<div className="lpdh-note warn">DRAFT tetap dapat diunduh meski belum OK. Klik pemeriksaan untuk membuka isian terkait.{(preview?.checks||[]).filter(x=>!x.ok).map(x=><button type="button" className="lpdh-issue-link" key={x.no} onClick={()=>onOpenIssue(x)}>{x.no}. {x.check} · Buka isian</button>)}</div>}
     </section>
-    <section className="lpdh-form-section"><div className="lpdh-form-section-head"><div><h3>Riwayat Generate</h3><p>Jejak file yang pernah dibuat untuk {SITE_LABELS[site]}.</p></div></div>
+    <section className="lpdh-form-section"><div className="lpdh-form-section-head"><div><h3>Riwayat Excel Tervalidasi</h3><p>Jejak unduhan tervalidasi untuk {SITE_LABELS[site]}. Unduhan DRAFT tidak mengubah riwayat final.</p></div></div>
       <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Tanggal Pelayanan</th><th>File</th><th>Status</th><th>Dibuat</th><th>Aktor</th></tr></thead><tbody>
         {(history||[]).map((x)=><tr key={x.id}><td>{x.service_date}</td><td>{x.filename}</td><td>{x.validation_status}</td><td>{String(x.generated_at||"").replace("T"," ").slice(0,19)}</td><td>{x.generated_by||""}</td></tr>)}
-        {!history?.length&&<tr><td colSpan="5" className="lpdh-empty-cell">Belum ada file yang digenerate.</td></tr>}
+        {!history?.length&&<tr><td colSpan="5" className="lpdh-empty-cell">Belum ada unduhan tervalidasi.</td></tr>}
       </tbody></table></div>
     </section>
   </div>;
@@ -182,6 +182,12 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [history,setHistory]=useState([]);
   const [active,setActive]=useState(["documents", "daily"].includes(requestedTab) ? requestedTab : "calendar");
   const [activeSheet,setActiveSheet]=useState("Identitas");
+  const [issueTarget,setIssueTarget]=useState(null);
+  const openIssue=issue=>{
+    const routes={1:['masters','identity',['SPPG','VA']],2:['service-days'],3:['daily','pm',['Produksi']],4:['daily','pm',['Distribusi','Fleet']],5:['daily','pm',['Alasan']],6:['masters','parameters',['Buffer']],7:['daily','pm',['BNBA','BAST']],8:['daily','pm',['Link BAST']],9:['daily','pm',['Target']],10:['masters','parameters',['Indeks']],11:['daily','raw',['Harga']],12:['daily','operations',['Harga']],13:['daily','proof',['Link']],14:['documents'],15:['documents'],16:['daily','volunteers',['Link']],17:['daily','incentive'],18:['daily','incentive'],19:['daily','incentive'],20:['daily','incentive',['Link']],21:['daily','balance',['Bukti']],22:['daily','balance'],23:['daily','balance',['Saldo VA']],24:['masters','signers'],25:['daily','upload'],26:['daily','balance']};
+    const [page,tab,fields=[]]=routes[Number(issue.no)]||['review'];
+    setIssueTarget({tab,fields,issue,token:Date.now()});setActive(page);
+  };
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState(null);
   const dailyRead = useRef(0);
@@ -269,14 +275,15 @@ export default function LpdhWorkspace({ role, onLogout }) {
     setBusy(true); try{await lpdhApi.saveEffectiveDays(site,month,dates);setEffectiveDates(dates);flash(`${dates.length} Hari Pelayanan Efektif tersimpan.`);await Promise.all([refreshPreview(),loadCalendar(site,month)]);}catch(e){flash(e.message,"error");}finally{setBusy(false);}
   };
 
-  const generate=async()=>{
+  const generate=async(draftOnly=false)=>{
     setBusy(true);
     try{
       const latest=await refreshPreview();
-      if(!latest.ready){setActive("review");setActiveSheet("G_CekPPK");throw new Error(`Masih ada ${latest.errorCount} pemeriksaan yang harus diperbaiki.`);}
-      const result=await lpdhApi.generate(site,selectedDate);
+      if(!latest.ready&&!draftOnly){setActive("review");setActiveSheet("G_CekPPK");throw new Error(`Masih ada ${latest.errorCount} pemeriksaan yang harus diperbaiki.`);}
+      const result=await lpdhApi.generate(site,selectedDate,draftOnly);
       downloadBase64(result.filename,result.mimeType,result.contentBase64);
-      flash(`${result.filename} berhasil dibuat dengan rumus workbook tetap aktif.`);
+      flash(`${result.filename} terisi dari template, rumus tetap aktif.${draftOnly?' DRAFT untuk pemeriksaan, bukan laporan final.':''}`);
+      if(draftOnly)return;
       const [h]=await Promise.all([lpdhApi.history(site),loadCalendar(site,monthKeyFromDate(selectedDate))]);setHistory(h.items||[]);
       await loadDaily();
     }catch(e){flash(e.message||"Generate gagal","error");}
@@ -290,7 +297,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
     ["documents","Buat Invoice & Kuitansi",ReceiptText],
     ["daily","Data Harian dari Dokumen",Files],
     ["review","Review LPDH / Sheet Excel",FileCheck2],
-    ["generate","Generate & Riwayat",History],
+    ["generate","Unduh Excel & Riwayat",History],
   ];
 
   return <main className="lpdh-page">
@@ -307,10 +314,11 @@ export default function LpdhWorkspace({ role, onLogout }) {
       </nav>
 
       <section className="lpdh-content">
+        {issueTarget&&<div className="lpdh-note warn" role="status">Pemeriksaan {issueTarget.issue.no}: {issueTarget.issue.check}. {issueTarget.issue.detail}<button type="button" onClick={()=>setIssueTarget(null)}>Tutup petunjuk</button></div>}
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
-        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets}/>}
-        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
+        {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets} issueTarget={issueTarget}/>}
+        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} issueTarget={issueTarget} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
         {active==="documents"&&<DocumentWorkspace searchable site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onRoutineDaily={async(result)=>{
           if(result.targetDailyStatus==="GENERATED") throw new Error("LPDH tanggal ini sudah digenerate. Buka Data Harian dan simpan sebagai draft dahulu, atau tarik dokumen per bagian tanpa isian PM.");
           const next=applyRoutineDaily(daily,result,masters,selectedDate);
@@ -321,8 +329,8 @@ export default function LpdhWorkspace({ role, onLogout }) {
           setDaily(next);
           flash(`Isian PM dari ${result.sourceDate} tersimpan sebagai draft; periksa realisasi hari ini. Bukti dan pembayaran lama tidak disalin.`);
         }} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
-        {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet}/>}
-        {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan}/>}
+        {active==="review"&&<ReviewPanel masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet} onOpenIssue={openIssue}/>}
+        {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan} onOpenIssue={openIssue}/>}
       </section>
     </div>
   </main>;

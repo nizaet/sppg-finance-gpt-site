@@ -75,6 +75,7 @@ class CalculatorFinalIn(BaseModel):
 class GenerateIn(BaseModel):
     site: str
     service_date: date
+    draft_only: bool = False
 
 
 def _require_db() -> None:
@@ -706,14 +707,15 @@ def _generate_locked(payload, request, site, cur):
     if daily_state["status"] != "GENERATED":
         raw_daily = merge_final_documents(raw_daily, load_documents(cur, site, payload.service_date, True))
     daily, context = _daily_with_hpe(site, payload.service_date, raw_daily)
-    daily["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, daily.get("lpdhNumber"))
+    if not payload.draft_only:
+        daily["lpdhNumber"] = daily_number(cur, site, payload.service_date, masters, daily.get("lpdhNumber"))
     final_plan = _load_final_plan(site, payload.service_date)
-    if not final_plan:
+    if not final_plan and not payload.draft_only:
         raise HTTPException(409, {"message": "Data Kalkulator belum berstatus FINAL untuk tanggal ini"})
-    if not context["effective"]:
+    if not context["effective"] and not payload.draft_only:
         raise HTTPException(409, {"message": "Tanggal ini bukan Hari Pelayanan Efektif"})
     preview_data = compute_preview(masters, daily, payload.service_date.isoformat(), context["effective"], final_plan)
-    if not preview_data["ready"]:
+    if not preview_data["ready"] and not payload.draft_only:
         issues = [row for row in preview_data["checks"] if not row["ok"]]
         raise HTTPException(
             409,
@@ -724,7 +726,8 @@ def _generate_locked(payload, request, site, cur):
             },
         )
 
-    claim_number(cur, site, "LPDH", daily["lpdhNumber"], "DAY:" + payload.service_date.isoformat())
+    if not payload.draft_only:
+        claim_number(cur, site, "LPDH", daily["lpdhNumber"], "DAY:" + payload.service_date.isoformat())
 
     stored_template = masters.get("_officialTemplateBase64")
     if not stored_template:
@@ -748,6 +751,11 @@ def _generate_locked(payload, request, site, cur):
         content = fill_template(template_bytes, masters, daily, preview_data, payload.service_date.isoformat())
     except Exception as exc:
         raise HTTPException(409, f'Template LPDH belum dapat diisi: {exc}. Template asli dan data harian tidak diubah.') from exc
+    if payload.draft_only:
+        return {'filename':f'LPDH_DRAFT_{site}_{payload.service_date.isoformat()}.xlsx',
+                'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'contentBase64':encode_bytes(content), 'draft':True,
+                'validation':{'ready':preview_data['ready'],'errorCount':preview_data['errorCount']}}
     daily["_historicalGeneratedSnapshot"] = True
     filename = f"LPDH_{site}_{payload.service_date.isoformat()}.xlsx"
     cur.execute(

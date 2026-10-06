@@ -43,6 +43,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const submitLock = useRef(false);
   const numberEdited = useRef(false);
   const numberReads = useRef(0);
+  const messageRef = useRef(null);
+  useEffect(()=>{if(message?.error)messageRef.current?.scrollIntoView?.({block:'center',behavior:'smooth'});},[message]);
   const receipts = type === "UPAH_RELAWAN" || type === "INSENTIF_GURU_KADER";
   const legacyReceipts = receipts && Boolean(editing) && editing.header?.paymentSnapshotVersion !== 2;
   const subtype = header.recipientSubtype || "Guru";
@@ -144,6 +146,14 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (lines.length && !window.confirm("Ganti daftar penerima saat ini dengan data master?")) return;
     setLines(rows); notify("Penerima disiapkan untuk satu hari. Periksa nama, tugas/unit, dan nominal sebelum menyimpan.");
   };
+  const excludeFinalRecipients = () => {
+    const paid = new Set(documents.filter(doc=>doc.status==='FINAL'&&['UPAH_RELAWAN','INSENTIF_GURU_KADER'].includes(doc.documentType)).flatMap(doc=>doc.items.map(item=>`${(item.metadata?.recipientType || (doc.documentType==='UPAH_RELAWAN'?'Relawan':'Guru')).toLowerCase()}:${item.itemName.trim().toLowerCase()}`)));
+    const next=lines.filter(row=>!paid.has(`${(row.metadata?.recipientType||'Relawan').toLowerCase()}:${row.itemName.trim().toLowerCase()}`));
+    const count=lines.length-next.length;
+    if(!count)return notify('Tidak ada penerima pada draft ini yang sudah tercatat FINAL.');
+    if(!window.confirm(`Keluarkan ${count} penerima yang sudah tercatat FINAL dari isian draft ini? Dokumen FINAL lama tidak berubah. Simpan draft setelah memeriksa penerima dan total baru.`))return;
+    setLines(next);notify(`${count} penerima dikeluarkan dari isian draft. Periksa total dan Simpan draft. Dokumen FINAL lama tetap utuh.`);
+  };
   const activateRoutine = entry => {
     setItemSearch(""); setLineSearch(""); setSelected("");
     numberEdited.current = false; numberReads.current++;
@@ -225,7 +235,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       if (!window.confirm(`Yakin finalkan ${current.documentNumber} sebesar ${money(current.total)}?\n\nIsi dokumen akan dikunci dan masuk otomatis ke data harian LPDH ${site}, tanggal ${serviceDate}.${replacementText}`)) return;
       let result;
       try { result = await documentApi.finalize(current.id, legacy ? {replace_legacy_snapshot:legacy.snapshotHash} : {}); }
-      catch (e) { await reload(version); setShowCancelled(true); throw e; }
+      catch (e) { await reload(version); throw e; }
       await reload(version);
       if (version !== context.current) return;
       await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError || "Upload Drive belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED");
@@ -308,7 +318,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     <DocumentCalendar site={site} serviceDate={serviceDate} onSelect={changeDate} revision={calendarRevision}/>
     <section className="doc-card">
       <div className="doc-heading"><div><span className="doc-kicker">DOKUMEN HARIAN · {site}</span><h2>Buat Invoice & Kuitansi</h2><p>1. Pilih item/penerima · 2. Simpan draft & buka PDF · 3. Finalkan → data harian LPDH & SPPG Drive</p></div><button type="button" disabled={busy || loading} onClick={() => run(reload)}><RefreshCw size={15}/> Refresh register</button></div>
-      {message && <div role="status" className={`doc-message${message.error ? " error" : ""}`}>{message.text}</div>}
+      {message && <div ref={messageRef} role={message.error?'alert':'status'} className={`doc-message${message.error ? " error" : ""}`}>{message.text}</div>}
       <fieldset disabled={busy || loading} className="doc-form">
         <details className="doc-details">
           <summary>Tarik dari hari pelayanan sebelumnya</summary>
@@ -344,6 +354,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           {!receipts && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={() => addSelected()} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
           {type === "BAHAN_BAKU" && <button type="button" onClick={pullPlan}>Tarik Final Kalkulator</button>}
           {receipts && <button type="button" onClick={prepare}>Siapkan penerima dari master</button>}
+          {combinedPayments && <button type="button" onClick={excludeFinalRecipients}>Keluarkan penerima yang sudah FINAL</button>}
           <button type="button" onClick={() => setLines(rows => [...rows, { ...blank(type), metadata: { recipientType: combinedPayments ? 'Relawan' : subtype } }])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
         </div>
         <p className="doc-hint">{receipts ? (legacyReceipts ? "Kuitansi historis mempertahankan nomor tiap penerima." : combinedPayments ? "Satu nomor untuk invoice utama, rincian upah relawan, insentif guru, insentif kader dan lampiran penerima. Guru: 0–100 PM Rp20.000; 101–500 Rp30.000; di atas 500 Rp40.000, termasuk tenaga pendidik. Kader: Rp1.000 per PM Posyandu. Periksa nominal sebelum final." : "Satu nomor kuitansi untuk total pembayaran harian. Halaman berikutnya memuat semua penerima dan kolom tanda terima kosong. Paket Guru dan Kader terpisah.") : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>

@@ -74,11 +74,23 @@ function Section({ title, subtitle, children, actions }) {
 }
 
 // Only the visible section mounts; all editable values stay in the parent form.
-function FormTabs({ label, defaultTab, children }) {
+function FormTabs({ label, defaultTab, children, issueTarget }) {
   const sections = React.Children.toArray(children);
   const [selected, setSelected] = useState(defaultTab || sections[0].props.tabKey);
   const id = useId();
   const buttons = useRef({});
+  const container = useRef(null);
+  useEffect(()=>{if(issueTarget?.tab)setSelected(issueTarget.tab);},[issueTarget]);
+  useEffect(()=>{
+    if(!issueTarget || selected!==issueTarget.tab || !container.current)return;
+    const fields=(issueTarget.fields||[]).map(x=>x.toLowerCase());
+    const elements=[...container.current.querySelectorAll('td[data-label],label')].filter(el=>fields.some(field=>(el.getAttribute('data-label')||el.querySelector('span')?.textContent||'').toLowerCase().includes(field)));
+    elements.forEach(el=>el.classList.add('lpdh-issue-focus'));
+    const target=elements.find(el=>{const input=el.querySelector('input,select');return input&&(!input.value||input.value==='Tidak');})||elements[0];
+    (target?.querySelector('input,select')||buttons.current[selected])?.focus();
+    target?.scrollIntoView?.({block:'center',behavior:'smooth'});
+    return()=>elements.forEach(el=>el.classList.remove('lpdh-issue-focus'));
+  },[issueTarget,selected]);
   const active = sections.find(section => section.props.tabKey === selected) || sections[0];
   const selectWithKeyboard = (event, index) => {
     const keys = { ArrowRight: (index + 1) % sections.length, ArrowLeft: (index + sections.length - 1) % sections.length, Home: 0, End: sections.length - 1 };
@@ -88,7 +100,7 @@ function FormTabs({ label, defaultTab, children }) {
     setSelected(key);
     buttons.current[key]?.focus();
   };
-  return <div className="lpdh-form-tabs-layout">
+  return <div className="lpdh-form-tabs-layout" ref={container}>
     <div className="lpdh-form-tabs" role="tablist" aria-label={label}>
       {sections.map((section, index) => {
         const { tabKey, tabLabel } = section.props;
@@ -272,7 +284,7 @@ export function rawFromFinalPlan(finalPlan, serviceDate) {
   })).filter((row) => row.name);
 }
 
-export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload }) {
+export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload, issueTarget }) {
   const fileRef = useRef(null);
   const officialTemplateRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -381,7 +393,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       </div>
     </Section>
 
-    <FormTabs key={site} label="Bagian Master Data" defaultTab="schools">
+    <FormTabs key={site} label="Bagian Master Data" defaultTab="schools" issueTarget={issueTarget}>
     <Section tabKey="identity" tabLabel="Identitas" title="Identitas SPPG & Rekening">
       <div className="lpdh-form-grid">
         <Field label="ID SPPG" value={data.identity.sppgId} onChange={(v) => updateIdentity("sppgId", v)} />
@@ -534,7 +546,7 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
   return syncDailyMasterTargets(next, masters, serviceDate);
 }
 
-export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview }) {
+export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
   const [busy, setBusy] = useState(false);
   const copyContext = useRef(`${site}|${serviceDate}`);
@@ -683,7 +695,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <FormTabs key={`${site}|${serviceDate}`} label="Bagian Data Harian">
+    <FormTabs key={`${site}|${serviceDate}`} label="Bagian Data Harian" issueTarget={issueTarget}>
     <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="Isian awal distribusi dan penerimaan mengikuti target master, BNBA Ya, organoleptik 3 dan retained sample 2. Periksa dan edit sesuai realisasi; nomor dan link BAST tetap wajib dilengkapi.">
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>

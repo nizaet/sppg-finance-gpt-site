@@ -18,10 +18,11 @@ const text = node => node.children.map(x => typeof x === 'string' ? x : text(x))
   }}]});
   let masters = {posyandu:[{name:'Pos Uji',pregnantLarge:5,breastfeedingLarge:7,balitaSmall:20}]};
   const daily = {pm:{rows:[{code:'KS-07',targetPm:5,distributed:4,received:3,bnba:true}],production:{produced:99,organoleptic:3,retainedSample:2}}};
-  let savedDaily=0, previewed, reloads=0;
+  let savedDaily=0, previewed, reloads=0, downloadMode;
   global.__lpdhFixture = {
     getMasters:async()=>({data:masters}),getDaily:async()=>({data:daily}),getEffectiveDays:async()=>({dates:['2026-10-05']}),calendar:async()=>({items:[]}),reference:async()=>({rows:[]}),history:async()=>({items:[]}),
-    preview:async()=>({pmRows:[],production:{produced:0}}),
+    preview:async()=>({ready:false,errorCount:1,checks:[{no:'23',check:'Saldo VA',ok:false,status:'PERIKSA',detail:'Selisih saldo'}],pmRows:[],production:{produced:0}}),
+    generate:async(site,date,draft)=>{downloadMode=draft;return {filename:'LPDH_DRAFT_UJI.xlsx',mimeType:'application/test',contentBase64:'eA=='};},
     previewDraft:async(site,date,data)=>{previewed=structuredClone(data);return {previewSource:'CURRENT_FORM',pmRows:[],production:{produced:data.pm.production.produced}};},
     officialTemplateStatus:async()=>({installed:false}),saveMasters:async(site,data)=>{masters=data;reloads++;},saveDaily:async()=>{savedDaily++;}
   };
@@ -60,6 +61,12 @@ const text = node => node.children.map(x => typeof x === 'string' ? x : text(x))
   assert.equal(previewed.pm.production.produced,5,'previous production is a draft input, not a recalculation');
   assert.equal(previewed.lpdhNumber,'009/LPDH/TEST/X/2026','new-day number not old number');
   assert.equal(savedDaily,0,'standalone daily pull does not save automatically');
+  await act(async()=>button('Unduh Excel & Riwayat').props.onClick());
+  assert.equal(button('Isi Template & Unduh DRAFT').props.disabled,false,'failed checks cannot disable draft download');
+  await act(async()=>button('Isi Template & Unduh DRAFT').props.onClick());
+  assert.equal(downloadMode,true,'download explicitly requests non-final draft');
+  await act(async()=>button('23. Saldo VA · Buka isian').props.onClick());
+  assert.equal(view.root.findAllByProps({role:'tab'}).find(x=>x.props['aria-selected']).children.join(''),'E / F · Saldo & TopUp','issue opens the correct daily tab');
   await act(async()=>view.unmount());
   console.log('PASS live LPDH review: unsaved input, master reload, real-count preservation, boolean BNBA, production confirmation, no auto-save');
 })().catch(error=>{console.error(error);process.exitCode=1;});
