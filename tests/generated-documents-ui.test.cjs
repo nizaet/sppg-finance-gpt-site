@@ -45,6 +45,7 @@ global.__DOWNLOAD = (...args) => downloads.push(args);
   let view, finalized = 0;
   const render = site => React.createElement(Workspace, { site, serviceDate: '2026-10-05', onFinalized: () => finalized++ });
   await act(async () => { view = create(render('MAJA')); });
+  assert.equal(view.root.findAllByProps({type:'search'}).length,0,'other Operations entry points keep the previous interface unless LPDH explicitly enables search');
   const label = node => node.children.map(x => typeof x === 'string' ? x : label(x)).join('');
   const button = text => view.root.findAllByType('button').find(x => label(x).includes(text));
   const typeSelect = () => view.root.findByProps({'aria-label':'Jenis dokumen'});

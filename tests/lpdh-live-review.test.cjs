@@ -44,6 +44,7 @@ const text = node => node.children.map(x => typeof x === 'string' ? x : text(x))
   await act(async()=>button('Hitung ulang total produksi').props.onClick());
   assert.equal(view.root.findAllByType('label').find(x=>text(x)==='Total diproduksi').findByType('input').props.value,'9');
   await act(async()=>button('Master Data').props.onClick());
+  await act(async()=>view.root.findAllByProps({role:'tab'}).find(x=>text(x)==='Posyandu').props.onClick());
   const posRow=view.root.findAllByType('tr').find(x=>x.findAllByType('input').some(i=>i.props.value==='Pos Uji'));
   await act(async()=>posRow.findAllByType('input')[3].props.onChange({target:{value:'8'}}));
   await act(async()=>button('Simpan Semua Master').props.onClick());

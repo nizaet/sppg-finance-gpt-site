@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Download, FileUp, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
@@ -71,6 +71,89 @@ function Section({ title, subtitle, children, actions }) {
     </div>
     {children}
   </section>;
+}
+
+// Only the visible section mounts; all editable values stay in the parent form.
+function FormTabs({ label, defaultTab, children }) {
+  const sections = React.Children.toArray(children);
+  const [selected, setSelected] = useState(defaultTab || sections[0].props.tabKey);
+  const id = useId();
+  const buttons = useRef({});
+  const active = sections.find(section => section.props.tabKey === selected) || sections[0];
+  const selectWithKeyboard = (event, index) => {
+    const keys = { ArrowRight: (index + 1) % sections.length, ArrowLeft: (index + sections.length - 1) % sections.length, Home: 0, End: sections.length - 1 };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    const key = sections[keys[event.key]].props.tabKey;
+    setSelected(key);
+    buttons.current[key]?.focus();
+  };
+  return <div className="lpdh-form-tabs-layout">
+    <div className="lpdh-form-tabs" role="tablist" aria-label={label}>
+      {sections.map((section, index) => {
+        const { tabKey, tabLabel } = section.props;
+        const isActive = active.props.tabKey === tabKey;
+        return <button key={tabKey} ref={node => { buttons.current[tabKey] = node; }} type="button" role="tab"
+          id={`${id}-tab-${tabKey}`} aria-controls={`${id}-panel-${tabKey}`} aria-selected={isActive}
+          tabIndex={isActive ? 0 : -1} className={isActive ? "active" : ""}
+          onClick={() => setSelected(tabKey)} onKeyDown={event => selectWithKeyboard(event, index)}>{tabLabel}</button>;
+      })}
+    </div>
+    <div role="tabpanel" tabIndex={0} id={`${id}-panel-${active.props.tabKey}`} aria-labelledby={`${id}-tab-${active.props.tabKey}`}>
+      {active}
+    </div>
+  </div>;
+}
+
+function nodeText(node) {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (!React.isValidElement(node)) return "";
+  return React.Children.toArray(node.props.children).map(nodeText).join("");
+}
+
+// One table/one set of controls: desktop columns become labelled mobile cards.
+function searchableText(node) {
+  if (!React.isValidElement(node)) return nodeText(node);
+  if (["input", "select"].includes(node.type)) return String(node.props.value ?? "");
+  return React.Children.toArray(node.props.children).map(searchableText).join(" ");
+}
+
+function FormTable({ children, className, searchLabel, locked = false }) {
+  const [query, setQuery] = useState("");
+  const searchId = useId();
+  const parts = React.Children.toArray(children);
+  const head = parts.find(part => part.type === "thead");
+  const headings = React.Children.toArray(React.Children.toArray(head?.props.children)[0]?.props.children).map(cell => nodeText(cell) || "Tindakan");
+  const terms = query.trim().toLocaleLowerCase("id-ID").split(/\s+/).filter(Boolean);
+  let rowCount = 0, matchCount = 0;
+  const labelled = parts.map(part => part.type !== "tbody" ? part : React.cloneElement(part, {},
+    React.Children.map(part.props.children, (row, rowIndex) => {
+      if (!React.isValidElement(row) || row.type !== "tr") return row;
+      rowCount++;
+      const text = searchableText(row).toLocaleLowerCase("id-ID");
+      if (!terms.every(term => text.includes(term))) return null;
+      matchCount++;
+      return React.cloneElement(row, {}, React.Children.map(row.props.children, (cell, columnIndex) => {
+        if (!React.isValidElement(cell)) return cell;
+        const label = headings[columnIndex] || "Tindakan";
+        const controls = React.Children.map(cell.props.children, control => {
+          if (!React.isValidElement(control) || !["input", "select", "button"].includes(control.type)) return control;
+          return React.cloneElement(control, { "aria-label": control.props["aria-label"] || `${control.type === "button" && !nodeText(control) ? "Hapus" : label} · baris ${rowIndex + 1}` });
+        });
+        return React.cloneElement(cell, { "data-label": label }, controls);
+      }));
+    })));
+  const table = <table className={`${className} lpdh-responsive-form-table`}>{labelled}</table>;
+  return <>
+    {searchLabel && <div className="lpdh-table-search">
+      <label htmlFor={searchId}>{searchLabel}</label>
+      <input id={searchId} type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Ketik nama, kode, atau kategori…" />
+      <span role="status">{matchCount} dari {rowCount} baris</span>
+      {query && <button type="button" onClick={() => setQuery("")}>Hapus pencarian</button>}
+      {rowCount > 0 && matchCount === 0 && <p>Tidak ada hasil. Coba kata lain; data tetap tersimpan.</p>}
+    </div>}
+    {locked ? <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>{table}</fieldset> : table}
+  </>;
 }
 
 function EmptyRow({ colSpan, children = "Belum ada data." }) {
@@ -282,7 +365,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
     reader.readAsDataURL(file);
   };
 
-  return <div className="lpdh-stack">
+  return <div className="lpdh-stack lpdh-tabbed-form">
     <Section title="Master Data LPDH" subtitle="Diisi sekali, lalu dipakai ulang untuk seluruh hari pelayanan." actions={<>
       <button type="button" onClick={downloadTemplate} disabled={busy}><Download size={15}/> Template Excel</button>
       <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={15}/> Import Master</button>
@@ -298,7 +381,8 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       </div>
     </Section>
 
-    <Section title="Identitas SPPG & Rekening">
+    <FormTabs key={site} label="Bagian Master Data" defaultTab="schools">
+    <Section tabKey="identity" tabLabel="Identitas" title="Identitas SPPG & Rekening">
       <div className="lpdh-form-grid">
         <Field label="ID SPPG" value={data.identity.sppgId} onChange={(v) => updateIdentity("sppgId", v)} />
         <Field label="Nama SPPG" value={data.identity.sppgName} onChange={(v) => updateIdentity("sppgName", v)} />
@@ -312,7 +396,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       </div>
     </Section>
 
-    <Section title="Master Vendor & Aset Invoice" subtitle="Dipakai saat preview/cetak invoice. Layout persis akan mengikuti contoh invoice yang Anda kirim; data dan asetnya sudah disiapkan.">
+    <Section tabKey="vendor" tabLabel="Vendor & Aset" title="Master Vendor & Aset Invoice" subtitle="Dipakai saat preview/cetak invoice. Layout persis akan mengikuti contoh invoice yang Anda kirim; data dan asetnya sudah disiapkan.">
       <div className="lpdh-form-grid">
         <Field label="Nama vendor / koperasi" value={data.vendor.name} onChange={(v) => updateVendor("name", v)} />
         <Field label="Alamat vendor" value={data.vendor.address} onChange={(v) => updateVendor("address", v)} />
@@ -329,19 +413,19 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       </div>
     </Section>
 
-    <Section title="Pengesah" subtitle="Tiga baris ini dipakai juga pada J_Pengesahan.">
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Peran</th><th>Nama</th><th>Jenis ID</th><th>Nomor ID</th><th>Ditandatangani</th></tr></thead>
+    <Section tabKey="signers" tabLabel="Pengesah" title="Pengesah" subtitle="Tiga baris ini dipakai juga pada J_Pengesahan.">
+      <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Peran</th><th>Nama</th><th>Jenis ID</th><th>Nomor ID</th><th>Ditandatangani</th></tr></thead>
         <tbody>{data.signers.slice(0, 3).map((row, index) => <tr key={index}>
           <td>{["Pengawas Keuangan SPPG","Kepala SPPG","Perwakilan Mitra/Yayasan"][index]}</td>
           <td><input value={row.name || ""} onChange={(e) => updateSigner(index, "name", e.target.value)} /></td>
           <td><input value={["NIK","NIP","NIK"][index]} disabled /></td>
           <td><input value={row.identityNumber || ""} onChange={(e) => updateSigner(index, "identityNumber", e.target.value)} /></td>
           <td><select value={row.signed || "Tidak"} onChange={(e) => updateSigner(index, "signed", e.target.value)}><option>Ya</option><option>Tidak</option></select></td>
-        </tr>)}</tbody></table></div>
+        </tr>)}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Master Sekolah" subtitle="Kolom F = porsi kecil; G = porsi besar. SD kelas 1–3 kecil, kelas 4–6 besar; PAUD kecil; SMP/SMA/Santri/PTK besar." actions={<button type="button" onClick={() => addList("schools", { code: "", name: "", schoolType: "SD/MI", smallPortions: 0, largePortions: 0, status: "Aktif" })}><Plus size={15}/> Tambah sekolah</button>}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Sekolah</th><th>Jenis</th><th>Porsi Kecil (F)</th><th>Porsi Besar (G)</th><th>Tenaga Pendidik Besar (H)</th><th>PIC</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
+    <Section tabKey="schools" tabLabel="Sekolah" title="Master Sekolah" subtitle="Kolom F = porsi kecil; G = porsi besar. SD kelas 1–3 kecil, kelas 4–6 besar; PAUD kecil; SMP/SMA/Santri/PTK besar." actions={<button type="button" onClick={() => addList("schools", { code: "", name: "", schoolType: "SD/MI", smallPortions: 0, largePortions: 0, status: "Aktif" })}><Plus size={15}/> Tambah sekolah</button>}>
+      <div className="lpdh-table-wrap"><FormTable searchLabel="Cari sekolah" className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Sekolah</th><th>Jenis</th><th>Porsi Kecil (F)</th><th>Porsi Besar (G)</th><th>Tenaga Pendidik Besar (H)</th><th>PIC</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
         {data.schools.map((row, index) => <tr key={index}>
           <td><input value={row.code || ""} onChange={e => updateList("schools", index, "code", e.target.value)}/></td>
           <td><input value={row.name || ""} onChange={e => updateList("schools", index, "name", e.target.value)}/></td>
@@ -352,28 +436,28 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
           {["picName", "phone", "address"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("schools", index, key, e.target.value)}/></td>)}
           <td><select value={row.status || "Aktif"} onChange={e => updateList("schools", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button type="button" className="icon danger" onClick={() => deleteList("schools", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.schools.length && <EmptyRow colSpan={11}/>}</tbody></table></div>
+        </tr>)}{!data.schools.length && <EmptyRow colSpan={11}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Master Posyandu" subtitle="Balita 6–59 bulan selalu kecil; ibu hamil dan ibu menyusui selalu besar." actions={<button type="button" onClick={() => addList("posyandu", { code: "", name: "", balitaSmall: 0, pregnantLarge: 0, breastfeedingLarge: 0, status: "Aktif" })}><Plus size={15}/> Tambah posyandu</button>}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Posyandu</th><th>Balita Kecil</th><th>Ibu Hamil Besar</th><th>Ibu Menyusui Besar</th><th>Kader</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
+    <Section tabKey="posyandu" tabLabel="Posyandu" title="Master Posyandu" subtitle="Balita 6–59 bulan selalu kecil; ibu hamil dan ibu menyusui selalu besar." actions={<button type="button" onClick={() => addList("posyandu", { code: "", name: "", balitaSmall: 0, pregnantLarge: 0, breastfeedingLarge: 0, status: "Aktif" })}><Plus size={15}/> Tambah posyandu</button>}>
+      <div className="lpdh-table-wrap"><FormTable searchLabel="Cari posyandu" className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama Posyandu</th><th>Balita Kecil</th><th>Ibu Hamil Besar</th><th>Ibu Menyusui Besar</th><th>Kader</th><th>Telepon</th><th>Alamat</th><th>Status</th><th/></tr></thead><tbody>
         {data.posyandu.map((row, index) => <tr key={index}>
           {["code", "name"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("posyandu", index, key, e.target.value)}/></td>)}
           {["balitaSmall", "pregnantLarge", "breastfeedingLarge"].map(key => <td key={key}><input type="number" min="0" step="1" value={row[key] ?? ""} onChange={e => updateList("posyandu", index, key, numValue(e.target.value))}/></td>)}
           {["picName", "phone", "address"].map(key => <td key={key}><input value={row[key] || ""} onChange={e => updateList("posyandu", index, key, e.target.value)}/></td>)}
           <td><select value={row.status || "Aktif"} onChange={e => updateList("posyandu", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button type="button" className="icon danger" onClick={() => deleteList("posyandu", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.posyandu.length && <EmptyRow colSpan={10}/>}</tbody></table></div>
+        </tr>)}{!data.posyandu.length && <EmptyRow colSpan={10}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Total Kelompok dari Master Sekolah & Posyandu" subtitle="Jumlah otomatis dari sekolah dan posyandu aktif. Tenaga pendidik masuk PTK besar. Total impor lama disimpan sebagai riwayat.">
+    <Section tabKey="totals" tabLabel="Total Porsi" title="Total Kelompok dari Master Sekolah & Posyandu" subtitle="Jumlah otomatis dari sekolah dan posyandu aktif. Tenaga pendidik masuk PTK besar. Total impor lama disimpan sebagai riwayat.">
       <div className="lpdh-form-grid">{GROUP_DEFAULTS.map(group => <Field key={group.code} label={`${group.label} · ${group.portion}`} type="number" disabled value={aggregateMasterTargets(data)[group.code]}/>)}<Field label="Total seluruh kelompok" type="number" disabled value={Object.values(aggregateMasterTargets(data)).reduce((sum, n) => sum + n, 0)}/></div>
     </Section>
 
-    <Section title="Master Penerima Lama" subtitle="Data format lama tetap dapat dipakai. Untuk data baru gunakan Master Sekolah dan Master Posyandu di atas." actions={
+    <Section tabKey="legacy" tabLabel="Data Lama" title="Master Penerima Lama" subtitle="Data format lama tetap dapat dipakai. Untuk data baru gunakan tab Sekolah dan Posyandu." actions={
       <button type="button" onClick={() => addList("beneficiaries", { code: "", unitType: "Sekolah", unitName: "", groupCode: "KS-01", groupName: "", portionCategory: "Kecil", picType: "Sekolah", targetPm: 0, picName: "", phone: "", address: "", status: "Aktif", note: "" })}><Plus size={15}/> Tambah</button>
     }>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode Unit</th><th>Jenis</th><th>Nama Unit</th><th>Kode Kelompok</th><th>Target PM</th><th>PIC</th><th>Status</th><th></th></tr></thead>
+      <div className="lpdh-table-wrap"><FormTable searchLabel="Cari penerima lama" className="lpdh-data-table wide"><thead><tr><th>Kode Unit</th><th>Jenis</th><th>Nama Unit</th><th>Kode Kelompok</th><th>Target PM</th><th>PIC</th><th>Status</th><th></th></tr></thead>
         <tbody>{data.beneficiaries.map((row, index) => <tr key={index}>
           <td><input value={row.code || ""} onChange={(e) => updateList("beneficiaries", index, "code", e.target.value)} /></td>
           <td><select value={row.unitType || "Sekolah"} onChange={(e) => updateList("beneficiaries", index, "unitType", e.target.value)}><option>Sekolah</option><option>Posyandu</option></select></td>
@@ -383,13 +467,13 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
           <td><input value={row.picName || ""} onChange={(e) => updateList("beneficiaries", index, "picName", e.target.value)} /></td>
           <td><select value={row.status || "Aktif"} onChange={(e) => updateList("beneficiaries", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button className="icon danger" type="button" onClick={() => deleteList("beneficiaries", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.beneficiaries.length && <EmptyRow colSpan={8}/>}</tbody></table></div>
+        </tr>)}{!data.beneficiaries.length && <EmptyRow colSpan={8}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Master Relawan" subtitle={`${data.volunteers.length} relawan. Tarif harian dipakai otomatis pada C1_Relawan.`} actions={
+    <Section tabKey="volunteers" tabLabel="Relawan" title="Master Relawan" subtitle={`${data.volunteers.length} relawan. Tarif harian dipakai otomatis pada C1_Relawan.`} actions={
       <button type="button" onClick={() => addList("volunteers", { code: `RL-${String(data.volunteers.length + 1).padStart(3, "0")}`, name: "", role: "", status: "Aktif", dailyRate: 90000, paymentMethod: "Transfer" })}><Plus size={15}/> Tambah</button>
     }>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama</th><th>Tugas</th><th>Tarif/Hari</th><th>Metode</th><th>Bank/Rekening</th><th>Status</th><th></th></tr></thead>
+      <div className="lpdh-table-wrap"><FormTable searchLabel="Cari relawan" className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Nama</th><th>Tugas</th><th>Tarif/Hari</th><th>Metode</th><th>Bank/Rekening</th><th>Status</th><th></th></tr></thead>
         <tbody>{data.volunteers.map((row, index) => <tr key={index}>
           <td><input value={row.code || ""} onChange={(e) => updateList("volunteers", index, "code", e.target.value)} /></td>
           <td><input value={row.name || ""} onChange={(e) => updateList("volunteers", index, "name", e.target.value)} /></td>
@@ -399,11 +483,11 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
           <td><input value={[row.bankName, row.accountNumber].filter(Boolean).join(" / ")} onChange={(e) => updateList("volunteers", index, "accountNumber", e.target.value)} placeholder="rekening" /></td>
           <td><select value={row.status || "Aktif"} onChange={(e) => updateList("volunteers", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button className="icon danger" type="button" onClick={() => deleteList("volunteers", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.volunteers.length && <EmptyRow colSpan={8}/>}</tbody></table></div>
+        </tr>)}{!data.volunteers.length && <EmptyRow colSpan={8}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Master Bahan Operasional" actions={<button type="button" onClick={() => addList("operations", { code: `OP-${String(data.operations.length + 1).padStart(3, "0")}`, name: "", category: "Operasional", unit: "unit", defaultPrice: 0, costNature: "Rutin", vendor: "", status: "Aktif" })}><Plus size={15}/> Tambah</button>}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Item</th><th>Kategori</th><th>Satuan</th><th>Harga Default</th><th>Sifat</th><th>Vendor</th><th>Status</th><th></th></tr></thead>
+    <Section tabKey="operations" tabLabel="Operasional" title="Master Bahan Operasional" actions={<button type="button" onClick={() => addList("operations", { code: `OP-${String(data.operations.length + 1).padStart(3, "0")}`, name: "", category: "Operasional", unit: "unit", defaultPrice: 0, costNature: "Rutin", vendor: "", status: "Aktif" })}><Plus size={15}/> Tambah</button>}>
+      <div className="lpdh-table-wrap"><FormTable searchLabel="Cari item operasional" className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Item</th><th>Kategori</th><th>Satuan</th><th>Harga Default</th><th>Sifat</th><th>Vendor</th><th>Status</th><th></th></tr></thead>
         <tbody>{data.operations.map((row, index) => <tr key={index}>
           <td><input value={row.code || ""} onChange={(e) => updateList("operations", index, "code", e.target.value)} /></td>
           <td><input value={row.name || ""} onChange={(e) => updateList("operations", index, "name", e.target.value)} /></td>
@@ -414,10 +498,10 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
           <td><input value={row.vendor || ""} onChange={(e) => updateList("operations", index, "vendor", e.target.value)} /></td>
           <td><select value={row.status || "Aktif"} onChange={(e) => updateList("operations", index, "status", e.target.value)}><option>Aktif</option><option>Nonaktif</option></select></td>
           <td><button className="icon danger" type="button" onClick={() => deleteList("operations", index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></table></div>
+        </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Parameter Ref / Pagu" subtitle="Nilai ini memetakan parameter utama pada sheet Ref.">
+    <Section tabKey="parameters" tabLabel="Parameter" title="Parameter Ref / Pagu" subtitle="Nilai ini memetakan parameter utama pada sheet Ref.">
       <div className="lpdh-form-grid">
         <Field label="Tarif insentif / PM" type="number" value={data.parameters.incentiveTariff} onChange={(v) => updateParameter("incentiveTariff", v)} />
         <Field label="Pagu bahan porsi kecil" type="number" value={data.parameters.rawSmall} onChange={(v) => updateParameter("rawSmall", v)} />
@@ -435,6 +519,7 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload 
       </div>
     </Section>
 
+    </FormTabs>
     <div className="lpdh-sticky-save"><button type="button" className="primary" onClick={save} disabled={busy}><Save size={16}/> Simpan Semua Master</button><button type="button" onClick={onReload} disabled={busy}><RefreshCw size={16}/> Muat ulang</button></div>
   </div>;
 }
@@ -563,7 +648,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   const opTotal = total(data.operations, (x) => (Number(x.qty) || 0) * (Number(x.price) || 0));
   const recipientTotal = total(data.incentiveRecipients, (x) => Number(x.amount) || 0);
 
-  return <div className="lpdh-stack">
+  return <div className="lpdh-stack lpdh-tabbed-form">
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
       <button type="button" onClick={pullPrevious} disabled={busy}>Tarik isian hari sebelumnya</button>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
@@ -598,8 +683,9 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="A_PM · Penerima Manfaat & Distribusi" subtitle="Isian awal distribusi dan penerimaan mengikuti target master, BNBA Ya, organoleptik 3 dan retained sample 2. Periksa dan edit sesuai realisasi; nomor dan link BAST tetap wajib dilengkapi.">
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
+    <FormTabs key={`${site}|${serviceDate}`} label="Bagian Data Harian">
+    <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="Isian awal distribusi dan penerimaan mengikuti target master, BNBA Ya, organoleptik 3 dan retained sample 2. Periksa dan edit sesuai realisasi; nomor dan link BAST tetap wajib dilengkapi.">
+      <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
           <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>
           <td>{row.targetPm ?? aggregateMasterTargets(masterData)[row.code]}</td>
@@ -610,7 +696,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><select className="lpdh-bnba-select" aria-label={`BNBA ${row.code}`} value={row.bnba === true || row.bnba === "Ya" ? "Ya" : row.bnba === false || row.bnba === "Tidak" ? "Tidak" : ""} onChange={(e) => updatePmRow(index, "bnba", e.target.value)}><option value="">— pilih —</option><option>Ya</option><option>Tidak</option></select></td>
           <td><input value={row.bastNo || ""} onChange={(e) => updatePmRow(index, "bastNo", e.target.value)}/></td>
           <td><input value={row.bastLink || ""} onChange={(e) => updatePmRow(index, "bastLink", e.target.value)} placeholder="https://..."/></td>
-        </tr>)}</tbody></table></div>
+        </tr>)}</tbody></FormTable></div>
       <div className="lpdh-form-grid">
         <Field label="Total diproduksi" type="number" value={data.pm.production.produced} onChange={(v) => updateProduction("produced", v)} />
         <Field label="Organoleptik" type="number" value={data.pm.production.organoleptic} onChange={(v) => updateProduction("organoleptic", v)} />
@@ -626,9 +712,8 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="B_BahanBaku" subtitle={`Total Rp ${rawTotal.toLocaleString("id-ID")}. Buat invoice lalu finalkan pada tab Buat Invoice & Kuitansi. Baris manual historis tetap ditampilkan.`}>
-      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Bahan</th><th>Kategori</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Supplier</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
+    <Section tabKey="raw" tabLabel="B · Bahan Baku" title="B_BahanBaku" subtitle={`Total Rp ${rawTotal.toLocaleString("id-ID")}. Buat invoice lalu finalkan pada tab Buat Invoice & Kuitansi. Baris manual historis tetap ditampilkan.`}>
+      <div className="lpdh-table-wrap"><FormTable locked searchLabel="Cari bahan baku" className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Bahan</th><th>Kategori</th><th>Qty</th><th>Unit</th><th>Harga</th><th>Supplier</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.rawMaterials.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("rawMaterials", index, "date", e.target.value)}/></td>
           <td><input value={row.name || ""} onChange={(e) => updateList("rawMaterials", index, "name", e.target.value)}/></td>
@@ -640,13 +725,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.invoiceNo || ""} onChange={(e) => updateList("rawMaterials", index, "invoiceNo", e.target.value)} placeholder="Nomor dasar invoice"/></td>
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("rawMaterials", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" onClick={() => deleteList("rawMaterials", index)} type="button"><Trash2 size={14}/></button></td>
-        </tr>)}{!data.rawMaterials.length && <EmptyRow colSpan={10}>Finalkan invoice bahan baku agar otomatis masuk di sini.</EmptyRow>}</tbody></table></div>
-      </fieldset>
+        </tr>)}{!data.rawMaterials.length && <EmptyRow colSpan={10}>Finalkan invoice bahan baku agar otomatis masuk di sini.</EmptyRow>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="C_Operasional" subtitle={`Belanja operasional Rp ${opTotal.toLocaleString("id-ID")}. Semua invoice FINAL masuk otomatis. Baris manual historis tetap ditampilkan.`}>
-      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Item master</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Harga</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
+    <Section tabKey="operations" tabLabel="C · Operasional" title="C_Operasional" subtitle={`Belanja operasional Rp ${opTotal.toLocaleString("id-ID")}. Semua invoice FINAL masuk otomatis. Baris manual historis tetap ditampilkan.`}>
+      <div className="lpdh-table-wrap"><FormTable locked searchLabel="Cari item operasional" className="lpdh-data-table extra-wide"><thead><tr><th>Tanggal</th><th>Item master</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Harga</th><th>No Invoice/Nota</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.operations.map((row, index) => <tr key={index}>
           <td><input type="date" value={row.date || serviceDate} onChange={(e) => updateList("operations", index, "date", e.target.value)}/></td>
           <td><select disabled={Boolean(row.sourceDocumentId)} value={row.itemCode || ""} onChange={(e) => { const code=e.target.value; const master=masterData.operations.find((x)=>x.code===code); const list=clone(data.operations); list[index]={...list[index],itemCode:code,description:master?.name||list[index].description,unit:master?.unit||list[index].unit,price:master?.defaultPrice??list[index].price}; setDaily({...data,operations:list}); }}><option value="">— pilih —</option>{masterData.operations.filter((x)=>String(x.status||"Aktif").toLowerCase()!=="nonaktif").map((x)=><option key={x.code} value={x.code}>{x.name}</option>)}</select></td>
@@ -657,13 +740,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.invoiceNo || ""} onChange={(e) => updateList("operations", index, "invoiceNo", e.target.value)}/></td>
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("operations", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" onClick={() => deleteList("operations", index)} type="button"><Trash2 size={14}/></button></td>
-        </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></table></div>
-      </fieldset>
+        </tr>)}{!data.operations.length && <EmptyRow colSpan={9}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="C1_Relawan" subtitle={`Total upah harian relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Buat paket kuitansi harian di tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
-      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table extra-wide"><thead><tr><th>Nama</th><th>Tugas</th><th>Tgl Bayar</th><th>Hari Kerja</th><th>Tarif/Hari</th><th>Jumlah</th><th>Metode</th><th>Kuitansi override</th><th>Link Bukti</th></tr></thead>
+    <Section tabKey="volunteers" tabLabel="C1 · Relawan" title="C1_Relawan" subtitle={`Total upah harian relawan Rp ${volunteerTotal.toLocaleString("id-ID")}. Buat paket kuitansi harian di tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
+      <div className="lpdh-table-wrap"><FormTable locked searchLabel="Cari relawan" className="lpdh-data-table extra-wide"><thead><tr><th>Nama</th><th>Tugas</th><th>Tgl Bayar</th><th>Hari Kerja</th><th>Tarif/Hari</th><th>Jumlah</th><th>Metode</th><th>Kuitansi override</th><th>Link Bukti</th></tr></thead>
         <tbody>{data.volunteerPayments.map((row, index) => <tr key={row.volunteerCode || index}>
           <td>{row.name}</td><td>{row.role}</td>
           <td><input type="date" value={row.date || ""} onChange={(e) => updateList("volunteerPayments", index, "date", e.target.value)}/></td>
@@ -673,13 +754,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><select value={row.paymentMethod || "Transfer"} onChange={(e) => updateList("volunteerPayments", index, "paymentMethod", e.target.value)}><option>Transfer</option><option>Tunai</option><option>Lainnya</option></select></td>
           <td><input value={row.receiptNo || ""} onChange={(e) => updateList("volunteerPayments", index, "receiptNo", e.target.value)} placeholder="kosong = pakai nomor dasar"/></td>
           <td><input value={row.evidenceLink || ""} onChange={(e) => updateList("volunteerPayments", index, "evidenceLink", e.target.value)} placeholder="https://..."/></td>
-        </tr>)}{!data.volunteerPayments.length && <EmptyRow colSpan={9}>Finalkan paket kuitansi relawan.</EmptyRow>}</tbody></table></div>
-      </fieldset>
+        </tr>)}{!data.volunteerPayments.length && <EmptyRow colSpan={9}>Finalkan paket kuitansi relawan.</EmptyRow>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Insentif Guru / Kader (bagian operasional)" subtitle={`Total Rp ${recipientTotal.toLocaleString("id-ID")}. Buat paket Guru dan Kader terpisah pada tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
-      <fieldset disabled style={{ border: 0, padding: 0, margin: 0 }}>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Jenis</th><th>Nama</th><th>Sekolah/Posyandu</th><th>Tgl</th><th>Nilai</th><th>Kuitansi override</th><th>Link Bukti</th><th></th></tr></thead>
+    <Section tabKey="recipients" tabLabel="Guru / Kader" title="Insentif Guru / Kader (bagian operasional)" subtitle={`Total Rp ${recipientTotal.toLocaleString("id-ID")}. Buat paket Guru dan Kader terpisah pada tab Buat Invoice & Kuitansi. Pembayaran historis tetap ditampilkan.`}>
+      <div className="lpdh-table-wrap"><FormTable locked searchLabel="Cari guru atau kader" className="lpdh-data-table"><thead><tr><th>Jenis</th><th>Nama</th><th>Sekolah/Posyandu</th><th>Tgl</th><th>Nilai</th><th>Kuitansi override</th><th>Link Bukti</th><th></th></tr></thead>
         <tbody>{data.incentiveRecipients.map((row,index)=><tr key={index}>
           <td><select value={row.type || "Guru"} onChange={(e)=>updateList("incentiveRecipients",index,"type",e.target.value)}><option>Guru</option><option>Kader</option></select></td>
           <td><input value={row.name||""} onChange={(e)=>updateList("incentiveRecipients",index,"name",e.target.value)}/></td>
@@ -689,11 +768,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.receiptNo||""} onChange={(e)=>updateList("incentiveRecipients",index,"receiptNo",e.target.value)}/></td>
           <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("incentiveRecipients",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("incentiveRecipients",index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.incentiveRecipients.length&&<EmptyRow colSpan={8}/>}</tbody></table></div>
-      </fieldset>
+        </tr>)}{!data.incentiveRecipients.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Lengkapi bukti invoice & kuitansi" subtitle="Satu isian per invoice/kuitansi gabungan FINAL, diterapkan ke seluruh item/penerima paket itu. Guru dan Kader tetap terpisah. Nomor dan nominal terkunci; referensi bank diisi sesuai transaksi nyata. Simpan Draft setelah melengkapi bukti.">
+    <Section tabKey="proof" tabLabel="Bukti & Referensi" title="Lengkapi bukti invoice & kuitansi" subtitle="Satu isian per invoice/kuitansi gabungan FINAL, diterapkan ke seluruh item/penerima paket itu. Guru dan Kader tetap terpisah. Nomor dan nominal terkunci; referensi bank diisi sesuai transaksi nyata. Simpan Draft setelah melengkapi bukti.">
       {proofGroups.map(group => <div key={group.key} className="lpdh-proof-package">
         <h4>{group.label} · {group.number}{group.name ? ` · ${group.name}` : ""}</h4>
         <p>{group.indexes.length} baris terkait{group.conflictingFields.length ? " · Isian lama berbeda antarbaris; tidak dipilih otomatis." : ""}</p>
@@ -704,7 +782,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>)}
     </Section>
 
-    <Section title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">
+    <Section tabKey="incentive" tabLabel="D · Insentif Yayasan" title="D_Insentif · Ketersediaan & Mutu Layanan" subtitle="Ini Insentif ke Mitra/Yayasan sesuai workbook, berbeda dari insentif guru/kader yang masuk biaya operasional.">
       <div className="lpdh-form-grid">
         <YesNo label="Ada kontaminasi?" value={data.incentive.eligibility.contamination} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,contamination:v}}})}/>
         <YesNo label="Ada insiden fatal?" value={data.incentive.eligibility.fatalIncident} onChange={(v)=>setDaily({...data,incentive:{...data.incentive,eligibility:{...data.incentive.eligibility,fatalIncident:v}}})}/>
@@ -723,7 +801,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       </div>
     </Section>
 
-    <Section title="E_Saldo & F_TopUp" subtitle="Usulan SPPG pada F_TopUp dihitung otomatis dari bahan baku + operasional + Insentif Ketersediaan dan Mutu Layanan. Kolom persetujuan PPK tidak diisi oleh aplikasi.">
+    <Section tabKey="balance" tabLabel="E / F · Saldo & TopUp" title="E_Saldo & F_TopUp" subtitle="Usulan SPPG pada F_TopUp dihitung otomatis dari bahan baku + operasional + Insentif Ketersediaan dan Mutu Layanan. Kolom persetujuan PPK tidak diisi oleh aplikasi.">
       <div className="lpdh-form-grid">
         <Field label="Saldo awal bahan" type="number" value={data.balance.openingRaw} onChange={(v)=>updateNested("balance","openingRaw",v)}/>
         <Field label="Saldo awal operasional" type="number" value={data.balance.openingOperational} onChange={(v)=>updateNested("balance","openingOperational",v)}/>
@@ -731,7 +809,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Saldo VA rekening koran" type="number" value={data.balance.bankBalance} onChange={(v)=>updateNested("balance","bankBalance",v)}/>
       </div>
       <div className="lpdh-inline-actions"><button type="button" onClick={()=>addList("topups",{date:serviceDate,reference:"",rawAmount:0,operationalAmount:0,incentiveAmount:0,receiptNo:"",evidenceLink:""})}><Plus size={15}/> Tambah penerimaan TopUp</button></div>
-      <div className="lpdh-table-wrap"><table className="lpdh-data-table"><thead><tr><th>Tgl</th><th>SP2D/Ref</th><th>Bahan</th><th>Operasional</th><th>Insentif</th><th>No Kuitansi</th><th>Link</th><th></th></tr></thead><tbody>
+      <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Tgl</th><th>SP2D/Ref</th><th>Bahan</th><th>Operasional</th><th>Insentif</th><th>No Kuitansi</th><th>Link</th><th></th></tr></thead><tbody>
         {data.topups.map((row,index)=><tr key={index}>
           <td><input type="date" value={row.date||""} onChange={(e)=>updateList("topups",index,"date",e.target.value)}/></td>
           <td><input value={row.reference||""} onChange={(e)=>updateList("topups",index,"reference",e.target.value)}/></td>
@@ -741,16 +819,17 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.receiptNo||""} onChange={(e)=>updateList("topups",index,"receiptNo",e.target.value)}/></td>
           <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("topups",index)}><Trash2 size={14}/></button></td>
-        </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></table></div>
+        </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
     </Section>
 
-    <Section title="Rencana upload">
+    <Section tabKey="upload" tabLabel="Upload" title="Rencana upload">
       <div className="lpdh-form-grid">
         <Field label="Tanggal upload" type="date" value={data.upload.date} onChange={(v)=>updateNested("upload","date",v)}/>
         <Field label="Jam upload" type="time" value={data.upload.time} onChange={(v)=>updateNested("upload","time",v)}/>
       </div>
     </Section>
 
+    </FormTabs>
     <div className="lpdh-sticky-save"><button className="primary" type="button" onClick={save} disabled={busy}><Save size={16}/> Simpan & Validasi</button></div>
   </div>;
 }

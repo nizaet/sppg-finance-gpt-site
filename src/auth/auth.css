@@ -14,7 +14,7 @@ html,body,#root{min-height:100%}.sppg-auth-loading,.sppg-login-page{min-height:1
 }
 
 /* LPDH keeps navigation in page flow so header/template actions stay visible.
-   Phone/fold layouts retain the existing horizontal scrolling controls. */
+   Other modules retain their existing navigation behavior. */
 .sppg-session-bar.sppg-session-bar--lpdh {
   position: relative;
   inset: auto;
@@ -23,4 +23,8 @@ html,body,#root{min-height:100%}.sppg-auth-loading,.sppg-login-page{min-height:1
   max-width: 1280px;
   box-sizing: border-box;
   margin: 12px auto 0;
+}
+@media(max-width:1100px){
+  .sppg-session-bar.sppg-session-bar--lpdh{flex-wrap:wrap;overflow:visible;justify-content:flex-start}
+  .sppg-session-bar.sppg-session-bar--lpdh a,.sppg-session-bar.sppg-session-bar--lpdh button{flex:1 1 150px;min-width:0;white-space:normal;min-height:44px}
 }

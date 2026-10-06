@@ -5,3 +5,35 @@ html[data-app-theme="dark"] .ops-workspace .doc-workspace{--doc-bg:#22272f;--doc
 .doc-calendar-grid,.doc-calendar-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:10px}.doc-calendar-week{text-align:center;font-size:12px}.doc-calendar-grid button{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;min-height:70px;padding:8px 6px}.doc-calendar-grid button[aria-pressed="true"]{border-color:#176348;background:#eaf7ef;color:#215f42}.doc-calendar-grid small{font-size:10px;line-height:1.4;font-weight:400}.doc-history-toggle{display:flex;align-items:center;gap:8px;font-size:12px;margin-top:12px}.doc-workspace .doc-history-toggle input{width:auto}.doc-actions a{color:#176348;font-size:12px;font-weight:600}.doc-heading .doc-actions input[type="month"]{width:155px}
 @media(max-width:500px){.doc-calendar-grid{gap:3px}.doc-calendar-grid button{padding:6px 3px;min-height:75px}.doc-calendar-grid small{font-size:9px}}
 .doc-asset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}.doc-asset{padding:12px;background:var(--doc-bg);border:1px solid var(--doc-border);border-radius:8px;display:grid;gap:8px}.doc-asset img{max-width:100%;max-height:110px;object-fit:contain;justify-self:start}.doc-asset small{overflow-wrap:anywhere}.doc-table td input+input{margin-top:7px}@media(max-width:700px){.doc-asset-grid{grid-template-columns:1fr}}
+
+.doc-search-items,.doc-line-search{display:grid;gap:8px;margin-top:14px;min-width:0}
+.doc-search-items p,.doc-line-search p{margin:0;font-size:12px}
+.doc-line-search>span{font-size:12px;opacity:.8}
+.doc-line-search>button{justify-self:start}
+.doc-search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.doc-search-results button{justify-content:flex-start;text-align:left;min-width:0;overflow-wrap:anywhere}
+.doc-search-results small{display:block;margin-top:4px;font-weight:400}
+/* Scoped to LPDH: other Operations screens retain their existing layout. */
+@media(max-width:1100px){
+  .lpdh-page .doc-heading{flex-direction:column;overflow-wrap:anywhere}
+  .lpdh-page .doc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lpdh-page .doc-table-wrap{overflow:visible;border:0}
+  .lpdh-page .doc-table{display:block;min-width:0;width:100%}
+  .lpdh-page .doc-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .lpdh-page .doc-table tbody{display:grid;gap:12px}
+  .lpdh-page .doc-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border:1px solid var(--doc-border);border-radius:10px;padding:14px;min-width:0}
+  .lpdh-page .doc-table td,.lpdh-page .doc-table td:first-child,.lpdh-page .doc-table td:nth-child(2){display:block;min-width:0;border:0;padding:0;overflow-wrap:anywhere;white-space:normal}
+  .lpdh-page .doc-table td::before{content:attr(data-label);display:block;margin-bottom:5px;font-size:11px;font-weight:750;opacity:.8}
+  .lpdh-page .doc-table td.doc-empty,.lpdh-page .doc-table td[data-label="Aksi"]{grid-column:1/-1}
+  .lpdh-page .doc-workspace input,.lpdh-page .doc-workspace select{min-width:0;min-height:44px;max-width:100%;font-size:16px}
+  .lpdh-page .doc-workspace button{min-height:44px;max-width:100%;white-space:normal}
+  .lpdh-page .doc-history-toggle input{min-height:0;width:18px;height:18px}
+  .lpdh-page .doc-workspace .doc-actions>select{max-width:100%;flex-basis:100%}
+  .lpdh-page .doc-calendar-grid small{overflow-wrap:anywhere}
+}
+@media(max-width:620px){
+  .lpdh-page .doc-grid,.lpdh-page .doc-table tbody tr,.doc-search-results{grid-template-columns:1fr}
+  .lpdh-page .doc-workspace .doc-actions{width:100%}
+  .lpdh-page .doc-workspace .doc-actions button{flex:1 1 130px}
+  .lpdh-page .doc-context{flex-wrap:wrap}
+}

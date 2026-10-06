@@ -54,6 +54,14 @@ FINAL invoices/receipts expose PDF and Excel built from the same immutable saved
 
 New PDF/Excel pairs archive together under the invoice Drive root at SITE/YEAR/MM/YYYY-MM-DD, using the document service date. Folder creation is serialized per kitchen. A partial failure keeps FINAL accounting data and successful file links intact, shows an incomplete archive, and exposes retry. Stable per-document/format Drive keys recover successful files after an interrupted attempt; a retry uploads only missing artifacts. Both links are required to display a complete archive. Downloads stay available independently of Drive. Old PDF archives are not moved/deleted: when explicitly completing an old archive, add its Excel to the PDF's existing parent folder. Existing Operations/accountant upload destinations and maker/BGN workflows are unchanged.
 
+## Tabbed forms and mobile entry (operator requested 2026-10-06)
+
+Master Data and Data Harian use top tabs for individual sections. Tabs remain available on phones; at narrow widths the tab buttons wrap, and input tables reflow into labelled cards instead of requiring horizontal scrolling. Wider desktop tables retain their columns. Preserve the parent-owned unsaved master/daily state when switching tabs, and save all categories, not only the visible section. Global import/template controls and save buttons remain available.
+
+Typed searches filter school, Posyandu, volunteer, operational-item and daily source-row displays. Within the LPDH invoice builder, operators can search master item names/codes/categories and add directly from results while retaining the existing dropdown. Receipt/invoice row search retains original source indexes for edits/deletes. Filtering must never change saved recipients, amounts, totals or finalization payloads. Searches remain usable outside disabled FINAL-source fieldsets; locked financial fields stay locked. New search controls and mobile document-card CSS are scoped to LPDH, preserving other Operations screens.
+
+Acceptance uses synthetic records and an offline browser at narrow, folded/unfolded-style and desktop viewport widths. This is layout simulation, not a claim of testing on the operator's physical phone. No actual invoice, receipt or payment is finalized for UI acceptance.
+
 ## Preservation boundaries
 
 Do not silently rewrite historical FINAL documents, generated workbook snapshots, manual legacy records, actual payments, signatures, or proof links. A template/default is not a verified financial event. Missing Posyandu detail remains missing rather than receiving an invented allocation.

@@ -16,7 +16,7 @@ function Field({ label, value, onChange, type = "text", children }) {
   return <label className="doc-field"><span>{label}</span>{children || <input type={type} value={value ?? ""} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
-export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateChange, onFinalized, onOpenDaily, onRoutineDaily }) {
+export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateChange, onFinalized, onOpenDaily, onRoutineDaily, searchable = false }) {
   const [type, setType] = useState("BAHAN_BAKU");
   const [master, setMaster] = useState(null);
   const [documents, setDocuments] = useState([]);
@@ -25,6 +25,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const [documentNumber, setDocumentNumber] = useState("");
   const [profile, setProfile] = useState("KOPERASI");
   const [selected, setSelected] = useState("");
+  const [itemSearch, setItemSearch] = useState("");
+  const [lineSearch, setLineSearch] = useState("");
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -46,6 +48,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const subtype = header.recipientSubtype || "Guru";
   const total = lines.reduce((sum, row) => sum + Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100, 0);
   const options = (master?.items || []).filter(x => x.kind === type);
+  const matches = (values, query) => {
+    const text = values.filter(value => value != null).join(" ").toLocaleLowerCase("id-ID");
+    return query.trim().toLocaleLowerCase("id-ID").split(/\s+/).filter(Boolean).every(term => text.includes(term));
+  };
+  const matchingOptions = options.filter(item => matches([item.itemName, item.recordKey, item.category, item.unit], itemSearch));
+  // Filtering never changes source indexes used for edits or deletes.
+  const visibleLines = lines.map((row, index) => ({ row, index })).filter(({ row }) => !searchable || matches([row.itemName, row.category, row.metadata?.role, row.metadata?.unitName, row.metadata?.volunteerCode], lineSearch));
   const notify = (text, error = false) => setMessage({ text, error });
 
   useEffect(() => {
@@ -53,7 +62,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     const readVersion = ++documentReads.current;
     setLoading(true); setMaster(null); setDocuments([]); setLines([]); setEditing(null); setHeader({}); setMessage(null); setDocumentNumber("");
     setType("BAHAN_BAKU"); setProfile("KOPERASI"); requestKey.current = uuid();
-    setRoutineQueue([]); setActiveRoutine(null); setRoutineDate("");
+    setRoutineQueue([]); setActiveRoutine(null); setRoutineDate(""); setItemSearch(""); setLineSearch(""); setSelected("");
     numberEdited.current = false;
     Promise.allSettled([documentApi.master(site), documentApi.list(site, serviceDate)]).then(results => {
       if (version !== context.current) return;
@@ -102,7 +111,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const reset = nextType => {
     numberEdited.current = false; numberReads.current++;
-    setType(nextType); setLines([]); setEditing(null); setSelected(""); setDocumentNumber(""); requestKey.current = uuid();
+    setType(nextType); setLines([]); setEditing(null); setSelected(""); setItemSearch(""); setLineSearch(""); setDocumentNumber(""); requestKey.current = uuid();
     setActiveRoutine(null);
     const nextProfile = ["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? "YAYASAN" : "KOPERASI";
     setProfile(nextProfile); setHeader({ ...master?.profiles?.[nextProfile], documentProfileKey: nextProfile, ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(nextType) ? { paymentSnapshotVersion: 2, recipientSubtype: "Guru" } : {}) });
@@ -114,8 +123,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const update = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const updateMetadata = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, metadata: { ...row.metadata, [key]: value } } : row));
-  const addSelected = () => {
-    const item = options.find(x => x.recordKey === selected);
+  const addSelected = (key = selected) => {
+    const item = options.find(x => x.recordKey === key);
     if (!item) return;
     setLines(rows => [...rows, { ...item, quantity: 1, metadata: { itemCode: item.recordKey } }]); setSelected("");
   };
@@ -132,6 +141,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     setLines(rows); notify("Penerima disiapkan untuk satu hari. Periksa nama, tugas/unit, dan nominal sebelum menyimpan.");
   };
   const activateRoutine = entry => {
+    setItemSearch(""); setLineSearch(""); setSelected("");
     numberEdited.current = false; numberReads.current++;
     setEditing(null); setActiveRoutine(entry.key); setType(entry.documentType); setHeader(entry.header);
     setProfile(entry.header.documentProfileKey || (entry.documentType === "OPERASIONAL" ? "KOPERASI" : "YAYASAN"));
@@ -180,12 +190,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     setMaster(old => ({ ...old, profiles: { ...old?.profiles, [profile]: { ...header, documentProfileKey: profile, evidenceLink: "", paymentReference: "" } } }));
     setHeader(old => ({ ...old, evidenceLink: "", paymentReference: "" }));
     numberEdited.current = false; numberReads.current++;
-    setLines([]); setEditing(null); setDocumentNumber(""); requestKey.current = uuid(); await reload(version);
+    setLines([]); setEditing(null); setDocumentNumber(""); setItemSearch(""); setLineSearch(""); setSelected(""); requestKey.current = uuid(); await reload(version);
     if (activeRoutine) { setRoutineQueue(rows => rows.filter(row => row.key !== activeRoutine)); setActiveRoutine(null); }
     notify(`${result.document.documentNumber} tersimpan sebagai DRAFT. Buka PDF di tab baru untuk memeriksa, lalu finalkan agar masuk data harian.`);
   });
   const edit = doc => {
     if (lines.length && !window.confirm("Buka draft ini dan kosongkan perubahan yang belum disimpan?")) return;
+    setItemSearch(""); setLineSearch(""); setSelected("");
     numberEdited.current = true; numberReads.current++;
     setEditing(doc); setType(doc.documentType); setLines(doc.items); setHeader(doc.header); setDocumentNumber(doc.documentNumber); setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI")); requestKey.current = uuid();
   };
@@ -324,21 +335,35 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <Field label="Link bukti autentik / PDF bertanda tangan" value={header.evidenceLink} onChange={v => setHeader({ ...header, evidenceLink: v })}/>
         </div>
         <div className="doc-actions">
-          {!receipts && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={addSelected} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
+          {!receipts && <><select aria-label="Item dari master" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Pilih item dari master…</option>{options.map(x => <option key={x.recordKey} value={x.recordKey}>{x.itemName} · {money(x.unitPrice)}/{x.unit}</option>)}</select><button type="button" onClick={() => addSelected()} disabled={!selected}><Plus size={15}/> Tambah item master</button></>}
           {type === "BAHAN_BAKU" && <button type="button" onClick={pullPlan}>Tarik Final Kalkulator</button>}
           {receipts && <button type="button" onClick={prepare}>Siapkan penerima dari master</button>}
           <button type="button" onClick={() => setLines(rows => [...rows, { ...blank(type), metadata: { recipientType: subtype } }])}><Plus size={15}/> {receipts ? "Tambah penerima" : "Tambah manual"}</button>
         </div>
         <p className="doc-hint">{receipts ? (legacyReceipts ? "Kuitansi historis mempertahankan nomor tiap penerima." : "Satu nomor kuitansi untuk total pembayaran harian. Halaman berikutnya memuat semua penerima dan kolom tanda terima kosong. Paket Guru dan Kader terpisah.") : "Pilih beberapa item sebelum membuat invoice. Harga referensi Maja perlu diperiksa; sewa mobil diisi sesuai biaya harian yang berlaku."}</p>
+        {searchable && !receipts && <div className="doc-search-items">
+          <Field label="Cari item dari master" type="search" value={itemSearch} onChange={setItemSearch}/>
+          {itemSearch.trim() && <>
+            <p role="status">{matchingOptions.length} item ditemukan{matchingOptions.length > 8 ? " · 8 hasil pertama; ketik lebih spesifik." : ""}</p>
+            <div className="doc-search-results">{matchingOptions.slice(0, 8).map(item => <button key={item.recordKey} type="button" onClick={() => addSelected(item.recordKey)} aria-label={`Tambah ${item.itemName} dari hasil pencarian`}><Plus size={15}/><span>{item.itemName}<small>{item.category} · {money(item.unitPrice)}/{item.unit}</small></span></button>)}</div>
+            {!matchingOptions.length && <p>Coba nama/kategori lain, atau gunakan Tambah manual.</p>}
+          </>}
+        </div>}
+        {searchable && <div className="doc-line-search">
+          <Field label={receipts ? "Cari penerima dalam kuitansi" : "Cari item dalam invoice"} type="search" value={lineSearch} onChange={setLineSearch}/>
+          <span role="status">{visibleLines.length} dari {lines.length} baris · total dan penyimpanan tetap seluruh baris.</span>
+          {lineSearch && <button type="button" onClick={() => setLineSearch("")}>Hapus pencarian</button>}
+          {lines.length > 0 && !visibleLines.length && <p>Tidak ada hasil. Data tidak dihapus.</p>}
+        </div>}
         <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? (legacyReceipts ? "Nama penerima & nomor kuitansi manual" : "Nama penerima") : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
-          {lines.map((row, index) => <tr key={index}>
-            <td><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{legacyReceipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
-            <td>{type === "OPERASIONAL" ? <select aria-label={`Kategori baris ${index + 1}`} value={row.category} onChange={e => update(index, "category", e.target.value)}>{(master?.categories || ["Lain-lain"]).map(x => <option key={x}>{x}</option>)}</select> : type === "INSENTIF_GURU_KADER" ? <><select aria-label="Jenis penerima" value={row.metadata?.recipientType || "Guru"} onChange={e => updateMetadata(index, "recipientType", e.target.value)}><option>Guru</option><option>Kader</option></select><input placeholder="Sekolah / posyandu" value={row.metadata?.unitName || ""} onChange={e => updateMetadata(index, "unitName", e.target.value)}/></> : type === "UPAH_RELAWAN" ? <input placeholder="Tugas" value={row.metadata?.role || ""} onChange={e => updateMetadata(index, "role", e.target.value)}/> : <input value={row.category} onChange={e => update(index, "category", e.target.value)}/>}</td>
-            <td><input type="number" aria-label="Jumlah" step="0.0001" min="0.0001" disabled={receipts} value={row.quantity} onChange={e => update(index, "quantity", e.target.value)}/></td>
-            <td><input aria-label="Satuan" disabled={receipts} value={row.unit} onChange={e => update(index, "unit", e.target.value)}/></td>
-            <td><input type="number" aria-label="Harga atau nominal" step="0.01" min="0.01" value={row.unitPrice} onChange={e => update(index, "unitPrice", e.target.value)}/></td>
-            <td className="doc-money">{money(Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100)}</td>
-            <td><button type="button" aria-label="Hapus baris" onClick={() => setLines(rows => rows.filter((_, i) => i !== index))}><Trash2 size={15}/></button></td>
+          {visibleLines.map(({ row, index }) => <tr key={index}>
+            <td data-label={receipts ? "Nama penerima" : "Nama item"}><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{legacyReceipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
+            <td data-label={receipts ? "Tugas / Jenis & unit" : "Kategori"}>{type === "OPERASIONAL" ? <select aria-label={`Kategori baris ${index + 1}`} value={row.category} onChange={e => update(index, "category", e.target.value)}>{(master?.categories || ["Lain-lain"]).map(x => <option key={x}>{x}</option>)}</select> : type === "INSENTIF_GURU_KADER" ? <><select aria-label="Jenis penerima" value={row.metadata?.recipientType || "Guru"} onChange={e => updateMetadata(index, "recipientType", e.target.value)}><option>Guru</option><option>Kader</option></select><input placeholder="Sekolah / posyandu" value={row.metadata?.unitName || ""} onChange={e => updateMetadata(index, "unitName", e.target.value)}/></> : type === "UPAH_RELAWAN" ? <input placeholder="Tugas" value={row.metadata?.role || ""} onChange={e => updateMetadata(index, "role", e.target.value)}/> : <input value={row.category} onChange={e => update(index, "category", e.target.value)}/>}</td>
+            <td data-label={"Jumlah"}><input type="number" aria-label="Jumlah" step="0.0001" min="0.0001" disabled={receipts} value={row.quantity} onChange={e => update(index, "quantity", e.target.value)}/></td>
+            <td data-label={"Satuan"}><input aria-label="Satuan" disabled={receipts} value={row.unit} onChange={e => update(index, "unit", e.target.value)}/></td>
+            <td data-label={receipts ? "Nominal harian" : "Harga satuan"}><input type="number" aria-label="Harga atau nominal" step="0.01" min="0.01" value={row.unitPrice} onChange={e => update(index, "unitPrice", e.target.value)}/></td>
+            <td className="doc-money" data-label={"Total"}>{money(Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100)}</td>
+            <td data-label={"Tindakan"}><button type="button" aria-label="Hapus baris" onClick={() => setLines(rows => rows.filter((_, i) => i !== index))}><Trash2 size={15}/></button></td>
           </tr>)}
           {!lines.length && <tr><td colSpan="7" className="doc-empty">{loading ? "Memuat master dan register…" : "Pilih item/penerima untuk memulai dokumen."}</td></tr>}
         </tbody></table></div>
@@ -348,13 +373,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     <section className="doc-card"><div className="doc-heading"><div><h3>Register Invoice & Kuitansi · {serviceDate}</h3><p>Beberapa invoice operasional per hari. Final masuk data harian dan diarsipkan ke Drive; pembatalan menyimpan riwayat, bukan menghapus bukti.</p></div>{onOpenDaily && <button type="button" onClick={onOpenDaily}>Buka Data Harian</button>}</div>
       <label className="doc-history-toggle"><input type="checkbox" checked={showCancelled} onChange={e => setShowCancelled(e.target.checked)}/> Tampilkan riwayat dibatalkan</label>
       <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id}>
-        <td><strong>{doc.documentNumber}</strong></td><td>{doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td>{doc.items.length}</td><td className="doc-money">{money(doc.total)}</td>
-        <td><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
+        <td data-label="Nomor dokumen"><strong>{doc.documentNumber}</strong></td><td data-label="Jenis">{doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td data-label="Item / penerima">{doc.items.length}</td><td className="doc-money" data-label="Total">{money(doc.total)}</td>
+        <td data-label="Status"><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
           {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri && doc.driveExcelUri ? "PDF + Excel tersimpan di Drive" : doc.driveUri ? "PDF tersimpan; Excel belum diarsipkan" : "Arsip Drive belum lengkap"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}
           {doc.cancelledAt && <small>Dibatalkan: {new Date(doc.cancelledAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</small>}
         </td>
-        <td><div className="doc-actions">
+        <td data-label="Aksi"><div className="doc-actions">
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
           {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}

@@ -311,7 +311,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets}/>}
         {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
-        {active==="documents"&&<DocumentWorkspace site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onRoutineDaily={async(result)=>{
+        {active==="documents"&&<DocumentWorkspace searchable site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onRoutineDaily={async(result)=>{
           if(result.targetDailyStatus==="GENERATED") throw new Error("LPDH tanggal ini sudah digenerate. Buka Data Harian dan simpan sebagai draft dahulu, atau tarik dokumen per bagian tanpa isian PM.");
           const next=applyRoutineDaily(daily,result,masters,selectedDate);
           const key=`${site}|${selectedDate}`;

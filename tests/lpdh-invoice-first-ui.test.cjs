@@ -20,6 +20,8 @@ const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lpdh-invoice-fir
   let view;
   await act(async () => { view = create(React.createElement(MasterPanel, { site: 'MAJA', masters, api: { officialTemplateStatus: async () => ({ installed: false }) }, setMasters() {} })); });
   const label = node => node.children.map(x => typeof x === 'string' ? x : label(x)).join('');
+  const tab = name => view.root.findAllByProps({role:'tab'}).find(x => label(x) === name);
+  await act(async () => tab('Total Porsi').props.onClick());
   const totalField = view.root.findAllByType('label').find(x => label(x).includes('Total seluruh kelompok')).findByType('input');
   assert.equal(totalField.props.value, '40');
   assert.equal(totalField.props.disabled, true);
@@ -29,7 +31,9 @@ const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lpdh-invoice-fir
   await act(async () => { view = create(React.createElement(DailyPanel, { site: 'MAJA', serviceDate: '2026-10-05', masters, daily, setDaily: value => { changed = value; }, api: {} })); });
   const buttons = view.root.findAllByType('button').map(label);
   assert.equal(buttons.some(x => /Tambah bahan|Terapkan invoice harian manual|Siapkan dari master|Tarik Porsi Final Kalkulator/.test(x)), false);
-  assert.ok(label(view.root).includes('Manual Historis'), 'historical manual rows remain visible');
+  await act(async () => tab('C · Operasional').props.onClick());
+  assert.ok(view.root.findAllByType('input').some(x => x.props.value === 'Manual Historis'), 'historical manual rows remain visible');
+  await act(async () => tab('Bukti & Referensi').props.onClick());
   const evidence = view.root.findAllByType('label').find(x => label(x).includes('INV-UJI') && label(x).includes('Link bukti')).findByType('input');
   assert.equal(view.root.findAllByType('label').filter(x=>label(x).includes('INV-UJI')&&label(x).includes('Link bukti')).length,1,'one proof control per multi-item invoice');
   assert.equal(evidence.props.disabled, false, 'proof can be completed after invoice finalization');

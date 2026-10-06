@@ -116,3 +116,9 @@
 
 - Finalization/archive retries update a document's general updated_at even when its number is unchanged. Added a bounded upgrade correction that initializes untouched bootstrap anchors from the latest retained number claim matching the current document/day number, not the latest upload attempt.
 - Preserve all serial claims, document numbers, historical financial data, and operator anchors saved after the first upgrade. Originally backfilled claims use document creation/service date only to break timestamp ties; missing pre-claim edit history is not invented. Added a migration guard regression and clarified the [LPDH workflow](accounting/lpdh-document-workflow.md).
+
+## 2026-10-06 - Operator-requested tabbed LPDH forms and mobile typed searches
+
+- The operator requested top tabs in Master Data and Data Harian, usable folded/unfolded phone layouts without horizontal input scrolling, and typed searches for large volunteer/item lists and operational invoice item selection in addition to dropdowns.
+- Keep unsaved parent form state across section switches and save all categories. Add responsive labelled input cards, wrapping tab/navigation buttons and scoped LPDH invoice/receipt cards; retain desktop columns and existing Operations layout.
+- Preserve original row indexes under searches. Filtering is display-only, not a reduction in finalization/save payloads or totals. FINAL-source financial inputs remain disabled while search is usable outside the lock. Update the [LPDH workflow](accounting/lpdh-document-workflow.md) and index; use synthetic/offline acceptance without changing production transactions.

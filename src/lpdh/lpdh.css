@@ -177,6 +177,18 @@
 .lpdh-site-switch{display:flex;gap:8px;margin-top:12px}.lpdh-site-switch button{border:1px solid #cddbd3;background:#fff;color:#315a49;border-radius:999px;padding:7px 12px;font-weight:800;cursor:pointer}.lpdh-site-switch button.active{background:#0f5138;color:#fff;border-color:#0f5138}
 .lpdh-nav-date{border-top:1px solid #e1e9e4;margin-top:7px;padding:12px 8px 5px;display:grid;gap:5px}.lpdh-nav-date span{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#748079}.lpdh-nav-date input{width:100%;box-sizing:border-box;border:1px solid #d7e2dc;border-radius:8px;padding:8px;background:#fff}.lpdh-nav-date small{color:#557065;font-weight:700}
 .lpdh-stack{display:grid;gap:14px}
+.lpdh-form-tabs-layout{display:grid;gap:12px;min-width:0}
+.lpdh-form-tabs-layout>[role="tabpanel"]{min-width:0}
+.lpdh-form-tabs{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.lpdh-form-tabs button{border:1px solid #cddbd3;background:#fff;color:#315a49;border-radius:9px;padding:10px 12px;min-height:44px;font:inherit;font-size:12px;font-weight:750;cursor:pointer;max-width:100%;overflow-wrap:anywhere}
+.lpdh-form-tabs button.active{background:#0f5138;color:#fff;border-color:#0f5138}
+.lpdh-form-tabs button:focus-visible{outline:3px solid #80b59b;outline-offset:2px}
+.lpdh-table-search{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px;background:#f8fbf9;border-bottom:1px solid #e0e8e3}
+.lpdh-table-search label{font-size:12px;font-weight:750;color:#40544a}
+.lpdh-table-search input{flex:1 1 180px;min-width:0;max-width:100%;box-sizing:border-box;border:1px solid #cddbd3;border-radius:8px;padding:10px;font:inherit;background:#fff}
+.lpdh-table-search span{font-size:12px;color:#64736c}
+.lpdh-table-search button{border:1px solid #cddbd3;background:#fff;color:#315a49;border-radius:8px;padding:9px;cursor:pointer}
+.lpdh-table-search p{flex-basis:100%;margin:0;font-size:13px}
 .lpdh-form-section{background:#fff;border:1px solid #d7e2dc;border-radius:16px;padding:20px;min-width:0}
 .lpdh-form-section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}.lpdh-form-section-head h3{margin:0 0 5px}.lpdh-form-section-head p{margin:0;color:#64736c;font-size:13px;line-height:1.45}
 .lpdh-inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.lpdh-inline-actions button,.lpdh-form-section-head button,.lpdh-sticky-save button,.lpdh-header-actions button{display:inline-flex;align-items:center;gap:6px;border:1px solid #d1ddd6;background:#fff;color:#254b3b;border-radius:9px;padding:9px 12px;font-weight:750;cursor:pointer}.lpdh-inline-actions button.primary,.lpdh-form-section-head button.primary,.lpdh-sticky-save button.primary{background:#0f5138;color:#fff;border-color:#0f5138}.lpdh-inline-actions button:disabled,.lpdh-form-section-head button:disabled,.lpdh-sticky-save button:disabled{opacity:.5;cursor:not-allowed}
@@ -205,3 +217,37 @@ button.icon{padding:7px;border-radius:8px;border:1px solid #ddd;background:#fff;
 @media(max-width:700px){.lpdh-asset-grid{grid-template-columns:1fr}}
 
 .lpdh-calendar-day.status-draft.effective{border-color:#dfbd6e;background:#fff9eb}.lpdh-calendar-day.status-ready.effective{border-color:#5d9d79;background:#eaf7ef}.lpdh-calendar-day.status-generated.effective{border-color:#5d82aa;background:#eef5fb}.lpdh-calendar-day.status-generated .lpdh-calendar-day-status{color:#315f8d;font-weight:800}.lpdh-calendar-day.status-ready .lpdh-calendar-day-status{color:#17613f;font-weight:800}.lpdh-calendar-day.status-draft .lpdh-calendar-day-status{color:#82621e;font-weight:800}
+
+/* Foldable/phone layouts reflow inputs, not a clipped horizontal desktop table. */
+@media(max-width:1100px){
+  .lpdh-layout{grid-template-columns:1fr}
+  .lpdh-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .lpdh-nav-date{grid-column:1/-1}
+  .lpdh-tabbed-form .lpdh-form-section-head{flex-direction:column}
+  .lpdh-tabbed-form .lpdh-status-box{flex-direction:column;overflow-wrap:anywhere}
+  .lpdh-tabbed-form .lpdh-inline-actions{width:100%}
+  .lpdh-tabbed-form .lpdh-table-wrap{overflow:visible;border:0}
+  .lpdh-responsive-form-table,.lpdh-responsive-form-table.wide,.lpdh-responsive-form-table.extra-wide{display:block;min-width:0;width:100%;background:transparent}
+  .lpdh-responsive-form-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .lpdh-responsive-form-table tbody{display:grid;gap:12px}
+  .lpdh-responsive-form-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px;border:1px solid #d7e2dc;border-radius:12px;background:#fff;min-width:0}
+  .lpdh-responsive-form-table td{display:block;border:0;padding:0;min-width:0;overflow-wrap:anywhere}
+  .lpdh-responsive-form-table td::before{content:attr(data-label);display:block;margin-bottom:5px;color:#64736c;font-size:11px;font-weight:800;line-height:1.4}
+  .lpdh-responsive-form-table td.lpdh-empty-cell{grid-column:1/-1}
+  .lpdh-responsive-form-table input,.lpdh-responsive-form-table select,.lpdh-responsive-form-table select.lpdh-bnba-select{min-height:44px;width:100%;max-width:100%;min-width:0;font-size:16px}
+  .lpdh-responsive-form-table button{min-height:44px;min-width:44px}
+  .lpdh-table-search{border:1px solid #e0e8e3;border-radius:10px;margin-bottom:12px}
+  .lpdh-asset-upload input{min-width:0;max-width:100%}
+}
+@media(max-width:620px){
+  .lpdh-page{padding:12px}
+  .lpdh-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lpdh-form-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lpdh-form-tabs button{min-width:0;padding:10px 7px}
+  .lpdh-responsive-form-table tbody tr{grid-template-columns:1fr;padding:12px}
+  .lpdh-tabbed-form .lpdh-field input,.lpdh-tabbed-form .lpdh-field select{min-height:44px;font-size:16px}
+  .lpdh-tabbed-form .lpdh-inline-actions button{flex:1 1 100%;min-height:44px}
+  .lpdh-tabbed-form .lpdh-sticky-save{flex-wrap:wrap;bottom:calc(8px + env(safe-area-inset-bottom))}
+  .lpdh-tabbed-form .lpdh-sticky-save button{flex:1 1 130px;min-height:44px}
+  .lpdh-header h1{font-size:26px;overflow-wrap:anywhere}
+}
