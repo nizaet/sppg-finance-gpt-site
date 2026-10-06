@@ -27,6 +27,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const [selected, setSelected] = useState("");
   const [itemSearch, setItemSearch] = useState("");
   const [lineSearch, setLineSearch] = useState("");
+  const [collapsedPayments, setCollapsedPayments] = useState({ Relawan: true, Guru: true, Kader: true });
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -50,6 +51,10 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const subtype = header.recipientSubtype || "Guru";
   const combinedPayments = type === "UPAH_RELAWAN" && header.combinedPayments === true;
   const total = lines.reduce((sum, row) => sum + Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100, 0);
+  const paymentGroups = ['Relawan', 'Guru', 'Kader'].map(name => {
+    const rows = lines.filter(row => (row.metadata?.recipientType || 'Relawan') === name);
+    return { name, count: rows.length, total: rows.reduce((sum, row) => sum + Math.round(Number(row.quantity) * Number(row.unitPrice) * 100) / 100, 0) };
+  });
   const options = (master?.items || []).filter(x => x.kind === type);
   const matches = (values, query) => {
     const text = values.filter(value => value != null).join(" ").toLocaleLowerCase("id-ID");
@@ -58,6 +63,9 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const matchingOptions = options.filter(item => matches([item.itemName, item.recordKey, item.category, item.unit], itemSearch));
   // Filtering never changes source indexes used for edits or deletes.
   const visibleLines = lines.map((row, index) => ({ row, index })).filter(({ row }) => !searchable || matches([row.itemName, row.category, row.metadata?.role, row.metadata?.unitName, row.metadata?.volunteerCode], lineSearch));
+  const displayedLines = combinedPayments
+    ? paymentGroups.flatMap(group => collapsedPayments[group.name] ? [] : visibleLines.filter(({ row }) => (row.metadata?.recipientType || 'Relawan') === group.name))
+    : visibleLines;
   const notify = (text, error = false) => setMessage({ text, error });
 
   useEffect(() => {
@@ -372,8 +380,16 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           {lineSearch && <button type="button" onClick={() => setLineSearch("")}>Hapus pencarian</button>}
           {lines.length > 0 && !visibleLines.length && <p>Tidak ada hasil. Data tidak dihapus.</p>}
         </div>}
+        {combinedPayments && <section className="doc-payment-recap" aria-label="Rekap invoice gabungan">
+          <h3>Rekap sebelum membuat draft</h3>
+          <div className="doc-payment-groups">{paymentGroups.map(group => <button type="button" key={group.name} className={`doc-payment-group payment-${group.name.toLowerCase()}`} aria-expanded={!collapsedPayments[group.name]} onClick={() => setCollapsedPayments(current => ({ ...current, [group.name]: !current[group.name] }))}>
+            <strong>{group.name === 'Relawan' ? 'Upah Relawan' : `Insentif ${group.name}`}</strong><span>{group.count} penerima</span><b>{money(group.total)}</b><small>{collapsedPayments[group.name] ? 'Tampilkan rincian ▾' : 'Sembunyikan rincian ▴'}</small>
+          </button>)}</div>
+          <p><strong>Total gabungan · {lines.length} penerima · {money(total)}</strong></p>
+          <p className="doc-hint">Rekap menghitung seluruh penerima, termasuk yang disembunyikan atau tidak cocok dengan pencarian.</p>
+        </section>}
         <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>{receipts ? (legacyReceipts ? "Nama penerima & nomor kuitansi manual" : "Nama penerima") : "Nama item"}</th><th>{receipts ? "Tugas / Jenis & unit" : "Kategori"}</th><th>Jumlah</th><th>Satuan</th><th>{receipts ? "Nominal harian" : "Harga satuan"}</th><th>Total</th><th/></tr></thead><tbody>
-          {visibleLines.map(({ row, index }) => <tr key={index}>
+          {displayedLines.map(({ row, index }) => <tr key={index} className={combinedPayments ? `doc-payment-row payment-${(row.metadata?.recipientType || 'Relawan').toLowerCase()}` : undefined}>
             <td data-label={receipts ? "Nama penerima" : "Nama item"}><input aria-label={`Nama baris ${index + 1}`} value={row.itemName} onChange={e => update(index, "itemName", e.target.value)}/>{combinedPayments && <><select aria-label={`Kelompok penerima baris ${index+1}`} value={row.metadata?.recipientType || 'Relawan'} onChange={e=>updateMetadata(index,'recipientType',e.target.value)}><option>Relawan</option><option>Guru</option><option>Kader</option></select><input aria-label={`Unit penerima baris ${index+1}`} placeholder="Sekolah / posyandu" value={row.metadata?.unitName||''} onChange={e=>updateMetadata(index,'unitName',e.target.value)}/></>}{row.metadata?.targetPm != null && <small>Dasar master: {row.metadata.targetPm} penerima manfaat</small>}{legacyReceipts && <input aria-label={`Nomor kuitansi baris ${index + 1}`} placeholder="Nomor kuitansi manual" value={row.metadata?.receiptNo || ""} onChange={e => updateMetadata(index, "receiptNo", e.target.value)}/>}</td>
             <td data-label={receipts ? "Tugas / Jenis & unit" : "Kategori"}>{type === "OPERASIONAL" ? <select aria-label={`Kategori baris ${index + 1}`} value={row.category} onChange={e => update(index, "category", e.target.value)}>{(master?.categories || ["Lain-lain"]).map(x => <option key={x}>{x}</option>)}</select> : type === "INSENTIF_GURU_KADER" ? <><select aria-label="Jenis penerima" value={row.metadata?.recipientType || "Guru"} onChange={e => updateMetadata(index, "recipientType", e.target.value)}><option>Guru</option><option>Kader</option></select><input placeholder="Sekolah / posyandu" value={row.metadata?.unitName || ""} onChange={e => updateMetadata(index, "unitName", e.target.value)}/></> : type === "UPAH_RELAWAN" ? <input placeholder="Tugas" value={row.metadata?.role || ""} onChange={e => updateMetadata(index, "role", e.target.value)}/> : <input value={row.category} onChange={e => update(index, "category", e.target.value)}/>}</td>
             <td data-label={"Jumlah"}><input type="number" aria-label="Jumlah" step="0.0001" min="0.0001" disabled={receipts} value={row.quantity} onChange={e => update(index, "quantity", e.target.value)}/></td>

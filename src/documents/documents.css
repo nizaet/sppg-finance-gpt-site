@@ -13,6 +13,16 @@ html[data-app-theme="dark"] .ops-workspace .doc-workspace{--doc-bg:#22272f;--doc
 .doc-search-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .doc-search-results button{justify-content:flex-start;text-align:left;min-width:0;overflow-wrap:anywhere}
 .doc-search-results small{display:block;margin-top:4px;font-weight:400}
+.doc-payment-recap{margin-top:18px;padding:14px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-soft)}
+.doc-payment-recap h3{margin:0 0 12px;font-size:16px}
+.doc-payment-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.doc-workspace .doc-payment-group{display:grid;justify-content:stretch;text-align:left;gap:6px;padding:12px;border-left:5px solid var(--payment-accent);background:var(--payment-bg);color:#23343d}
+.payment-relawan{--payment-accent:#217852;--payment-bg:#edf8f1}
+.payment-guru{--payment-accent:#3264a8;--payment-bg:#edf4ff}
+.payment-kader{--payment-accent:#956419;--payment-bg:#fff7e8}
+.doc-payment-group small{font-weight:600}.doc-payment-group:focus-visible{outline:3px solid var(--payment-accent);outline-offset:2px}
+.doc-payment-row{background:var(--payment-bg);border-left:5px solid var(--payment-accent)!important}
+@media(max-width:699px){.doc-payment-groups{grid-template-columns:1fr}.doc-workspace .doc-payment-group{grid-template-columns:1fr auto}.doc-payment-group small{grid-column:1/-1}}
 /* Scoped to LPDH: other Operations screens retain their existing layout. */
 @media(max-width:1100px){
   .lpdh-page .doc-heading{flex-direction:column;overflow-wrap:anywhere}
@@ -39,4 +49,22 @@ html[data-app-theme="dark"] .ops-workspace .doc-workspace{--doc-bg:#22272f;--doc
   .lpdh-page .doc-workspace .doc-actions{width:100%}
   .lpdh-page .doc-workspace .doc-actions button{flex:1 1 130px}
   .lpdh-page .doc-context{flex-wrap:wrap}
+}
+/* Unfolded Fold/tablet: compact desktop-style rows, without a wide hidden table. */
+@media(min-width:700px) and (max-width:1100px){
+  .lpdh-page .doc-heading{flex-direction:row}
+  .lpdh-page .doc-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .lpdh-page .doc-form .doc-table-wrap{overflow:visible;border:1px solid var(--doc-border)}
+  .lpdh-page .doc-form .doc-table{display:table;table-layout:fixed;min-width:0;width:100%}
+  .lpdh-page .doc-form .doc-table thead{position:static;width:auto;height:auto;overflow:visible;clip-path:none;white-space:normal;display:table-header-group}
+  .lpdh-page .doc-form .doc-table tbody{display:table-row-group}
+  .lpdh-page .doc-form .doc-table tbody tr{display:table-row}
+  .lpdh-page .doc-form .doc-table th{white-space:normal;padding:7px;overflow-wrap:anywhere}
+  .lpdh-page .doc-form .doc-table td{display:table-cell;padding:7px;border-top:1px solid var(--doc-border)}
+  .lpdh-page .doc-form .doc-table td::before{display:none}
+  .lpdh-page .doc-form .doc-table th:first-child{width:24%}
+  .lpdh-page .doc-form .doc-table th:nth-child(2){width:19%}
+  .lpdh-page .doc-form .doc-table th:last-child{width:7%}
+  .lpdh-page .doc-workspace input,.lpdh-page .doc-workspace select{font-size:14px;padding:7px}
+  .lpdh-page .doc-workspace .doc-actions>select{flex-basis:auto;max-width:360px}
 }

@@ -241,6 +241,19 @@ button.icon{padding:7px;border-radius:8px;border:1px solid #ddd;background:#fff;
   .lpdh-table-search{border:1px solid #e0e8e3;border-radius:10px;margin-bottom:12px}
   .lpdh-asset-upload input{min-width:0;max-width:100%}
 }
+/* Fold opened: use the available width rather than a long phone form. */
+@media(min-width:700px) and (max-width:1100px){
+  .lpdh-page{padding:16px}
+  .lpdh-nav{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .lpdh-form-grid,.lpdh-form-grid.compact{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .lpdh-tabbed-form .lpdh-form-section-head{flex-direction:row}
+  .lpdh-responsive-form-table tbody tr{grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;padding:12px}
+  .lpdh-responsive-form-table input,.lpdh-responsive-form-table select,.lpdh-responsive-form-table select.lpdh-bnba-select{font-size:14px}
+  .lpdh-summary-cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .lpdh-asset-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .lpdh-signers{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .lpdh-form-tabs{display:flex;flex-wrap:wrap}
+}
 @media(max-width:620px){
   .lpdh-page{padding:12px}
   .lpdh-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
