@@ -38,7 +38,7 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved }) {
     finally { operationLock.current = false; if (alive.current) setBusy(false); }
   };
   const approval = daily?._approval;
-  return <div className="lpdh-status-box">
+  return <div className="lpdh-status-box" style={{display:'block'}}>
     <p>PDF cetak memakai data terakhir yang disimpan dan sheet J_Pengesahan pada template resmi, beserta TTD dan stempel dari Master → Pengesah. Simpan Draft Data Harian serta Simpan Semua Master sebelum mencetak perubahan.</p>
     <div className="lpdh-inline-actions">
       <button type="button" disabled={busy} onClick={preview}>Buka Pratinjau Cetak</button>
