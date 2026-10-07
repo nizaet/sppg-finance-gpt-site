@@ -20,6 +20,7 @@ class Cursor:
     def execute(self,sql,args=()):
         self.calls.append((sql,args))
         if sql.startswith('select accountant_invoice_id'): self.result=self.export
+        elif sql.startswith('select id from accountant_invoices'): self.result=None
         elif 'insert into accountant_invoices(' in sql: self.result={'id':100}
         elif sql.startswith('insert into generated_document_maker_exports'):
             self.export={'accountant_invoice_id':args[1],'maker_id':args[2]}
@@ -29,6 +30,15 @@ class Cursor:
 
 
 class MitraMakerTests(unittest.TestCase):
+    def test_existing_manual_invoice_does_not_create_duplicate(self):
+        class ConflictCursor(Cursor):
+            def execute(self,sql,args=()):
+                super().execute(sql,args)
+                if sql.startswith('select id from accountant_invoices'): self.result={'id':177}
+        cur=ConflictCursor()
+        with self.assertRaises(HTTPException) as caught: export_snapshot(cur,document(),'OWNER')
+        self.assertEqual(caught.exception.status_code,409)
+        self.assertFalse(any(sql.startswith('insert') for sql,args in cur.calls))
     def test_categories_follow_accountant_contract(self):
         for kind,expected in [('BAHAN_BAKU','BAHAN_BAKU'),('OPERASIONAL','OPERASIONAL_LAIN'),('INSENTIF_MITRA','SEWA_MITRA'),('UPAH_RELAWAN','GAJI_RELAWAN'),('INSENTIF_GURU_KADER','UPAH')]:
             self.assertEqual(maker_category({**document(),'documentType':kind}),expected)

@@ -31,6 +31,11 @@ def export_snapshot(cur, document, actor):
         return {'accountant_invoice_id':existing['accountant_invoice_id'],'maker_id':maker['makerId'],'duplicate':False}
     # Use existing Maker categories; retain the exact invoice type in parsed_payload.
     category = maker_category(document)
+    cur.execute('select id from accountant_invoices where upper(site)=upper(%s) and lower(trim(invoice_number))=lower(trim(%s)) limit 1',
+                (document['site'],document['documentNumber']))
+    conflict = cur.fetchone()
+    if conflict:
+        raise HTTPException(409, f"Nomor invoice sudah ada di pusat operasional (invoice #{conflict['id']}). Periksa invoice/Maker tersebut; ekspor dihentikan agar tidak membuat pembayaran ganda.")
     cur.execute('''insert into accountant_invoices(site,accountant_code,invoice_category,invoice_number,
         invoice_date,period_start,period_end,invoice_amount,invoice_evidence_uri,received_at,source_type,parsed_payload,updated_at)
         values (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),'LPDH_FINAL',%s::jsonb,now()) returning id''',
