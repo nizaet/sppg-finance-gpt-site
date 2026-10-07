@@ -29,6 +29,13 @@ const text = n => n.children.map(c => typeof c === 'string' ? c : text(c)).join(
   assert.equal(current.assets.approvalSppgSignature,'data:image/png;base64,signature');
   assert.equal(current.assets.vendorLogo,'keep');
   assert.equal(view.root.findAllByType('button').find(n=>text(n).includes('Simpan Semua Master')).props.disabled,false);
+  const count=readers.length;
+  await act(async()=>upload('Stempel SPPG').props.onChange({target:{files:[{size:5*1024*1024}]}}));
+  assert.equal(readers.length,count+1,'exactly 5 MiB is accepted');
+  await act(async()=>readers[count].finish('data:image/png;base64,five-mib-test'));
+  await act(async()=>upload('Stempel SPPG').props.onChange({target:{files:[{size:5*1024*1024+1}]}}));
+  assert.equal(readers.length,count+1,'over 5 MiB is rejected without replacing the asset');
+  assert.equal(current.assets.approvalSppgStamp,'data:image/png;base64,five-mib-test');
   await act(async()=>view.unmount());
   console.log('PASS concurrent artwork uploads preserve both files and existing assets; save waits for readers');
 })().catch(error=>{console.error(error);process.exitCode=1;});

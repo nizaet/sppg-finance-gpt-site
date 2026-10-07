@@ -378,8 +378,8 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
 
   const uploadImageAsset = (key, file) => {
     if (!file) return;
-    if (file.size > 1_500_000) {
-      onSaved?.("Gambar maksimal 1,5 MB. Gunakan PNG/JPG yang sudah diperkecil.", "error");
+    if (file.size > 5 * 1024 * 1024) {
+      onSaved?.("Gambar maksimal 5 MB per file. Gunakan PNG/JPG/WebP.", "error");
       return;
     }
     const reader = new FileReader();

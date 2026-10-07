@@ -28,6 +28,15 @@ class DeliverySettingsIn(BaseModel):
     settings: dict[str, Any]
 
 
+def _validate_delivery_settings(settings):
+    # Three 5 MiB images grow to ~20 MiB after base64 encoding, plus metadata.
+    if len(json.dumps(settings)) > 25 * 1024 * 1024:
+        raise HTTPException(422,'Total aset cetak terlalu besar. Maksimal 5 MB per gambar.')
+    for key in ('logo','signature','stamp'):
+        if settings.get(key):
+            validate_artwork(str(settings[key]).split(',',1)[-1])
+
+
 class DeliveryAnchorIn(BaseModel):
     period: str = Field(pattern=r'^\d{4}(?:-\d{2})?$')
     next_number: int = Field(ge=1, le=1000000000)
@@ -44,7 +53,7 @@ def delivery_controls(site: Site, authorization: str | None = Header(default=Non
 @router.put('/accountant-documents/delivery-profiles/{kind}')
 def delivery_profile(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
-    if len(json.dumps(payload.settings))>5_000_000: raise HTTPException(422,'Aset cetak terlalu besar.')
+    _validate_delivery_settings(payload.settings)
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''insert into lpdh_delivery_profiles(site,kind,settings) values(%s,%s,%s::jsonb)
           on conflict(site,kind) do update set settings=excluded.settings,updated_at=now()''',(site,kind,json.dumps(payload.settings)))
@@ -95,7 +104,7 @@ def delivery_sync(site: Site, month: str = Query(pattern=r'^\d{4}-\d{2}$'), auth
 @router.put('/accountant-documents/{document_id}/delivery-settings')
 def delivery_settings(document_id: int, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
     role=session_role(authorization)
-    if len(json.dumps(payload.settings))>5_000_000: raise HTTPException(422,'Aset cetak terlalu besar; gunakan gambar lebih kecil.')
+    _validate_delivery_settings(payload.settings)
     with connection() as conn, conn.cursor() as cur:
         cur.execute('select * from generated_accountant_documents where id=%s for update',(document_id,))
         row=cur.fetchone()

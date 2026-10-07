@@ -30,4 +30,9 @@ await page.getByRole('checkbox',{name:'Pilih 221/BB/MMD/X/2026',exact:true}).che
 const popupPromise=page.waitForEvent('popup');await page.getByRole('button',{name:'Preview & cetak terpilih'}).click();const popup=await popupPromise;await popup.locator('.paper').first().waitFor();assert.equal(await popup.locator('.paper').count(),4);assert.ok((await popup.locator('.paper').first().textContent()).includes('220/BB/MMD/X/2026'));await popup.screenshot({path:path.join(root,'../delivery-bulk-qa.png'),fullPage:true});await popup.close();
 for(const width of [360,768,904,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,`no overflow ${width}`);}
 assert.deepEqual(errors,[]);console.log('PASS delivery calendar/list, editable saved settings and mobile/Fold widths');
+const stampBuffer=Buffer.alloc(5*1024*1024);Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==','base64').copy(stampBuffer);
+const stampInput=page.locator('.delivery-master-editor input[type="file"]').nth(2);
+await stampInput.setInputFiles({name:'stamp.png',mimeType:'image/png',buffer:stampBuffer});await page.locator('.delivery-master-editor img[alt="Stempel"]').waitFor();
+await page.getByRole('button',{name:'Simpan master jenis surat'}).click();await page.waitForFunction(()=>!document.body.textContent.includes('Memuat / menyimpan'));assert.ok(saved.settings.stamp.length>6900000);
+await stampInput.setInputFiles({name:'too-large.png',mimeType:'image/png',buffer:Buffer.alloc(5*1024*1024+1)});await page.getByRole('alert').filter({hasText:'maksimal 5 MB'}).waitFor();assert.equal(await page.locator('.delivery-master-editor img[alt="Stempel"]').count(),1);
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1});

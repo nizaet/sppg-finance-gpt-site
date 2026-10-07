@@ -385,6 +385,20 @@ class DocumentApiTests(unittest.TestCase):
         self.assertEqual(self.conn.delivery_counters[('MAJA','SJ','2026-10')],29)
         self.assertEqual(self.client.put(url,headers=self.headers,json={'period':'2026-10','next_number':29}).status_code,409)
 
+    def test_five_mib_images_and_three_delivery_assets(self):
+        stream=BytesIO()
+        Image.new('RGB',(2,2),'white').save(stream,format='PNG')
+        raw=stream.getvalue().ljust(5*1024*1024,b'\0')
+        encoded=base64.b64encode(raw).decode()
+        settings={key:'data:image/png;base64,'+encoded for key in ('logo','signature','stamp')}
+        response=self.client.put('/v1/accountant-documents/delivery-profiles/PO?site=MAJA',headers=self.headers,json={'settings':settings})
+        self.assertEqual(response.status_code,200,response.text)
+        oversized='data:image/png;base64,'+base64.b64encode(raw+b'\0').decode()
+        response=self.client.put('/v1/accountant-documents/delivery-profiles/SJ?site=MAJA',headers=self.headers,json={'settings':{'stamp':oversized}})
+        self.assertEqual(response.status_code,422)
+        self.assertIn('5 MB',response.text)
+        with self.assertRaises(HTTPException): api._validate_delivery_settings({'logo':'data:image/png;base64,not-an-image'})
+
     def test_queue_status_tracks_human_maker_and_guards_source_cancel(self):
         self.conn.row['status']='FINAL'
         self.conn.maker_exports[1]={'accountant_invoice_id':100,'maker_id':999}
