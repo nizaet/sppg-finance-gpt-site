@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {balanceSummary} from '../src/lpdh/balanceSummary.mjs';
+const daily={balance:{openingRaw:57572000,openingOperational:14000000,openingIncentive:27485100,bankBalance:55001100},incentive:{paidAmount:6344000},topups:[]};
+const preview={balance:{expenditure:{raw:28785200,operational:8926800}}};
+const result=balanceSummary(daily,preview);
+assert.deepEqual(result.rows.map(r=>r.closing),[28786800,5073200,21141100]);
+assert.equal(result.closing,55001100);assert.equal(result.difference,0);
+assert.equal(balanceSummary({...daily,balance:{...daily.balance,bankBalance:55000100}},preview).difference,1000);
+assert.equal(balanceSummary({...daily,balance:{...daily.balance,bankBalance:''}},preview).bankEntered,false);
+assert.equal(balanceSummary({...daily,balance:{...daily.balance,openingOperational:0}},preview).rows[1].closing,-8926800);
+assert.equal(balanceSummary({...daily,topups:[{rawAmount:1000}]},preview).closing,55002100);
+console.log('PASS saldo workbook example, mismatch, missing VA, minus and received top-up');

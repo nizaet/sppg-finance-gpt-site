@@ -2,6 +2,7 @@ import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Download, FileUp, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
+import { balanceSummary } from "./balanceSummary.mjs";
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -577,6 +578,8 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
 
 export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
+  const saldo = balanceSummary(data, preview);
+  const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
   const [busy, setBusy] = useState(false);
   const copyContext = useRef(`${site}|${serviceDate}`);
   copyContext.current = `${site}|${serviceDate}`;
@@ -859,6 +862,21 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <Field label="Saldo awal insentif" type="number" value={data.balance.openingIncentive} onChange={(v)=>updateNested("balance","openingIncentive",v)}/>
         <Field label="Saldo VA rekening koran" type="number" value={data.balance.bankBalance} onChange={(v)=>updateNested("balance","bankBalance",v)}/>
       </div>
+      <h4>Posisi saldo per komponen</h4>
+      <p>Saldo akhir = saldo awal + top-up diterima − pengeluaran/pembayaran hari ini. Pengeluaran mengikuti perhitungan laporan; insentif memakai nominal dibayarkan, bukan hanya insentif dihitung.</p>
+      {!preview?.balance && <div className="lpdh-status-box warn"><strong>Perhitungan pengeluaran belum tersedia</strong><span>Simpan &amp; Validasi untuk memuat angka laporan. Jangan gunakan ringkasan ini sebagai saldo final sebelum perhitungan tersedia.</span></div>}
+      <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Komponen</th><th>Saldo awal</th><th>Top-up diterima</th><th>Pengeluaran hari ini</th><th>Saldo akhir</th><th>Keterangan</th></tr></thead><tbody>
+        {saldo.rows.map(row=><tr key={row.key}><td>{row.label}</td><td>{saldoMoney(row.opening)}</td><td>{saldoMoney(row.topup)}</td><td>{saldoMoney(row.expenditure)}</td><td style={{color:row.closing<0?'#b42318':undefined,fontWeight:700}}>{saldoMoney(row.closing)}</td><td>{row.closing<0?`MINUS: dana komponen kurang ${saldoMoney(-row.closing)}. Periksa saldo awal, top-up diterima, dan pembayaran komponen ini.`:row.opening<0?'PERIKSA: saldo awal negatif.':'Tidak minus'}</td></tr>)}
+        <tr><td><strong>JUMLAH</strong></td><td>{saldoMoney(saldo.opening)}</td><td>{saldoMoney(saldo.topup)}</td><td>{saldoMoney(saldo.expenditure)}</td><td><strong>{saldoMoney(saldo.closing)}</strong></td><td>Bandingkan dengan saldo VA di rekening.</td></tr>
+      </tbody></FormTable></div>
+      <div className={`lpdh-status-box ${saldo.bankEntered&&Math.abs(saldo.difference)<1?'ok':'warn'}`} role="status" style={{marginTop:12}}>
+        <strong>{!saldo.bankEntered?'Saldo VA belum diisi':Math.abs(saldo.difference)<1?'Saldo komponen sesuai saldo VA':`SELISIH ${saldoMoney(saldo.difference)}`}</strong>
+        <span>Total saldo akhir {saldoMoney(saldo.closing)} − saldo VA rekening {saldoMoney(saldo.bank)} = {saldoMoney(saldo.difference)}. {saldo.bankEntered&&Math.abs(saldo.difference)>=1?`Saldo komponen ${saldo.difference>0?'lebih besar':'lebih kecil'} dari rekening. Periksa saldo awal, penerimaan top-up, pengeluaran, dan mutasi rekening; jangan ubah saldo VA hanya agar cocok.`:'Isi saldo VA sesuai mutasi rekening setelah transaksi hari ini.'}</span>
+      </div>
+      <h4>F_TopUp · Usulan (bukan penerimaan)</h4>
+      <div className="lpdh-summary-cards"><div><span>Bahan baku</span><strong>{saldoMoney(preview?.topup?.requiredRaw)}</strong></div><div><span>Operasional</span><strong>{saldoMoney(preview?.topup?.requiredOperational)}</strong></div><div><span>Insentif dihitung</span><strong>{saldoMoney(preview?.topup?.requiredIncentive)}</strong></div><div><span>Total usulan</span><strong>{saldoMoney(preview?.topup?.proposalTotal)}</strong></div></div>
+      <p>Ruang sampai batas saldo VA: {saldoMoney(preview?.topup?.roomToMax)}. {preview?.topup?preview.topup.withinMax?'Usulan dalam batas saldo VA.':'PERIKSA: usulan melebihi ruang saldo VA.':''} Usulan tidak menambah saldo sampai dana benar-benar diterima. Persetujuan PPK tetap diisi oleh PPK.</p>
+      <h4>Bukti penerimaan top-up hari ini</h4>
       <div className="lpdh-inline-actions"><button type="button" onClick={()=>addList("topups",{date:serviceDate,reference:"",rawAmount:0,operationalAmount:0,incentiveAmount:0,receiptNo:"",evidenceLink:""})}><Plus size={15}/> Tambah penerimaan TopUp</button></div>
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Tgl</th><th>SP2D/Ref</th><th>Bahan</th><th>Operasional</th><th>Insentif</th><th>No Kuitansi</th><th>Link</th><th></th></tr></thead><tbody>
         {data.topups.map((row,index)=><tr key={index}>
