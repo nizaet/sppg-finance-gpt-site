@@ -17,10 +17,51 @@ from backend.generated_document_reference import MAJA_OPERATION_ITEMS, MAJA_PROF
 from backend.document_numbering import claim_number, suggest_number, invoice_fallback
 from backend.legacy_payment_reconciliation import legacy_payment_plan, replace_legacy_payments
 from backend.payment_package import incentive_default
+from backend.delivery_package import ensure_package, document_dates
 
 router = APIRouter(tags=["accountant-generated-documents"])
 Site = Literal["MAJA", "CEMPLANG"]
 DocumentType = Literal["BAHAN_BAKU", "OPERASIONAL", "INSENTIF_GURU_KADER", "UPAH_RELAWAN", "INSENTIF_MITRA"]
+
+
+class DeliverySettingsIn(BaseModel):
+    settings: dict[str, Any]
+
+
+@router.post('/accountant-documents/delivery-sync')
+def delivery_sync(site: Site, month: str = Query(pattern=r'^\d{4}-\d{2}$'), authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    try:
+        start=date.fromisoformat(month+'-01')
+        end=date(start.year+(start.month==12),start.month%12+1,1)
+    except ValueError:
+        raise HTTPException(422,'Bulan tidak valid')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select * from generated_accountant_documents where site=%s and service_date>=%s and service_date<%s and document_type in ('BAHAN_BAKU','OPERASIONAL') and status='FINAL' order by service_date,id",(site,start,end))
+        for row in cur.fetchall(): ensure_package(cur,row)
+        cur.execute('''select p.document_id,p.numbers,p.settings,d.* from lpdh_delivery_packages p
+          join generated_accountant_documents d on d.id=p.document_id
+          where p.site=%s and p.service_date>=%s and p.service_date<%s order by p.service_date,p.document_id''',(site,start,end))
+        packages=[]
+        for row in cur.fetchall():
+            packages.append({'document':_serialize_document(cur,row),'numbers':row['numbers'],'settings':row['settings'],'dates':document_dates(row['service_date'])})
+        conn.commit()
+    return {'packages':packages}
+
+
+@router.put('/accountant-documents/{document_id}/delivery-settings')
+def delivery_settings(document_id: int, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
+    role=session_role(authorization)
+    if len(json.dumps(payload.settings))>5_000_000: raise HTTPException(422,'Aset cetak terlalu besar; gunakan gambar lebih kecil.')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('select * from generated_accountant_documents where id=%s for update',(document_id,))
+        row=cur.fetchone()
+        if not row: raise HTTPException(404,'Invoice tidak ditemukan')
+        if role not in {'OWNER',row['site']}: raise HTTPException(403,'akses site tidak diizinkan')
+        if row['status']!='FINAL': raise HTTPException(409,'Invoice tidak aktif FINAL')
+        cur.execute('update lpdh_delivery_packages set settings=%s::jsonb,updated_at=now() where document_id=%s',(json.dumps(payload.settings),document_id))
+        conn.commit()
+    return {'ok':True}
 
 
 class DocumentItemIn(BaseModel):
@@ -588,6 +629,7 @@ def finalize_document(document_id: int, authorization: str | None = Header(defau
         validate_asset_refs(cur, doc["site"], doc["header"])
         replacement = (doc, payload.replace_legacy_snapshot) if payload and payload.replace_legacy_snapshot and row['status'] == 'DRAFT' else None
         cur.execute("update generated_accountant_documents set status='FINAL',finalized_at=coalesce(finalized_at,now()),finalized_by=coalesce(finalized_by,%s),updated_at=now() where id=%s", (role, document_id))
+        ensure_package(cur, {**row, 'status':'FINAL'})
         synced = _sync_daily(cur, row["site"], row["service_date"], role, replacement) if replacement else _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
     return {"ok": True, "id": document_id, "status": "FINAL", "syncedToDaily": True, **synced, **_archive_document(document_id, role)}

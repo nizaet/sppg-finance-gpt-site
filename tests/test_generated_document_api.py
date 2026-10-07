@@ -61,6 +61,8 @@ class FakeConnection:
         self.anchors = {}
         self.maker_exports = {}
         self.invoice_makers = {}
+        self.delivery_packages = {}
+        self.delivery_counters = {}
 
     @contextmanager
     def cursor(self):
@@ -68,7 +70,17 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if 'from generated_document_maker_exports' in sql:
+        if sql.startswith('select * from lpdh_delivery_packages'):
+            self.result=self.delivery_packages.get(params[0])
+        elif sql.startswith('select settings from lpdh_delivery_packages'):
+            self.result=None
+        elif 'insert into lpdh_delivery_counters' in sql:
+            self.delivery_counters[params]=self.delivery_counters.get(params,0)+1
+            self.result={'value':self.delivery_counters[params]}
+        elif 'insert into lpdh_delivery_packages' in sql:
+            self.result={'document_id':params[0],'numbers':json.loads(params[3])}
+            self.delivery_packages[params[0]]=self.result
+        elif 'from generated_document_maker_exports' in sql:
             self.result = self.maker_exports.get(params[0])
             if 'join bgn_makers' in sql:
                 maker = self.invoice_makers.get((self.result or {}).get('accountant_invoice_id'))
@@ -330,6 +342,12 @@ class DocumentApiTests(unittest.TestCase):
         self.assertEqual(self.client.patch(endpoint, headers=self.headers, json={"reason": "   "}).status_code, 422)
         self.assertEqual(self.client.patch(endpoint, headers={"Authorization": "Bearer CEMPLANG"}, json={"reason": "Koreksi"}).status_code, 403)
         self.assertFalse(self.conn.committed)
+
+    def test_delivery_scope_and_final_only_settings(self):
+        self.assertEqual(self.client.post('/v1/accountant-documents/delivery-sync?site=CEMPLANG&month=2026-10',headers=self.headers).status_code,403)
+        self.assertEqual(self.client.put('/v1/accountant-documents/1/delivery-settings',headers=self.headers,json={'settings':{}}).status_code,409)
+        self.conn.row['status']='FINAL'
+        self.assertEqual(self.client.put('/v1/accountant-documents/1/delivery-settings',headers={'Authorization':'Bearer CEMPLANG'},json={'settings':{}}).status_code,403)
 
     def test_cancel_final_commits_rebuild_and_preserves_document(self):
         self.conn.row["status"] = "FINAL"

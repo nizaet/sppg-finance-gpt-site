@@ -35,6 +35,7 @@ const firebaseConfig = {
 
 const OperationsApp = lazy(() => import("./operations/OperationsWorkspace.jsx"));
 const LpdhApp = lazy(() => import("./lpdh/LpdhWorkspace.jsx"));
+const DeliveryApp = lazy(() => import("./delivery/DeliveryWorkspace.jsx"));
 const AccountantApp = lazy(() => Promise.all([
   import("./App.jsx"),
   import("./styles.css"),
@@ -117,6 +118,7 @@ function RoutedApp({ role, config, onLogout }) {
   const normalizedRole = String(role || "OWNER").toUpperCase();
   const documentUrl = legacyDocumentsUrl(window.location);
   if (documentUrl) return <DocumentRedirect url={documentUrl} />;
+  if (pathname === "/delivery") return <Suspense fallback={<BootFallback text="Memuat dokumen pendamping…" />}><DeliveryApp role={normalizedRole}/></Suspense>;
 
   // MAJA/CEMPLANG share one login between the existing Calculator and the
   // LPDH administration workspace. The root route acts as the app chooser.
