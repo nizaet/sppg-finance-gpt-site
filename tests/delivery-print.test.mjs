@@ -5,6 +5,7 @@ const require=createRequire(import.meta.url);const {chromium}=require('playwrigh
 assert.equal(terbilang(125000).trim(),'seratus dua puluh lima ribu');
 const pkg={document:{site:'MAJA',documentType:'BAHAN_BAKU',documentNumber:'220/BB/MMD/X/2026',serviceDate:'2026-10-05',total:25000,header:{issuerName:'KOPERASI\nMAJA MUDA MADYA',issuerAddress:'Alamat uji',senderSignatory:'Pengirim Uji'},items:[{itemName:'Beras <uji>',quantity:2,unit:'kg',unitPrice:12500,lineTotal:25000}]},settings:{},numbers:{PO:'PO/2026/X/001',SJ:'SJ/202610/001',CKL:'CKL/202610/001',KUI:'001/KUI.Banper/BB/X/2026'},dates:{PO:'2026-10-03',SJ:'2026-10-04',CKL:'2026-10-04',KUI:'2026-10-06'}};
 const browser=await chromium.launch({headless:true});
+for(const kind of ['PO','SJ','CKL'])assert.ok(!deliveryHtml(pkg,kind).includes('Invoice acuan:'));
 assert.ok(!deliveryHtml({...pkg,document:{...pkg.document,items:[{...pkg.document.items[0],metadata:{note:'RAHASIA CATATAN BAHAN'}}]}},'SJ').includes('RAHASIA CATATAN BAHAN'));
 assert.ok(deliveryHtml({...pkg,settings:{byKind:{PO:{foundation:'KOP KHUSUS PO'},KUI:{foundation:'KOP KHUSUS KUITANSI'}}}},'PO').includes('KOP KHUSUS PO'));
 assert.ok(!deliveryHtml({...pkg,settings:{byKind:{PO:{foundation:'KOP KHUSUS PO'},KUI:{foundation:'KOP KHUSUS KUITANSI'}}}},'KUI').includes('KOP KHUSUS PO'));
@@ -26,4 +27,10 @@ const stamp=page.locator('.asset.stamp');await stamp.scrollIntoViewIfNeeded();co
 assert.equal(await stamp.evaluate(e=>e.style.width),'130px');
 await page.emulateMedia({media:'print'});assert.equal(await stamp.evaluate(e=>getComputedStyle(e).borderTopWidth),'0px');
 console.log('PASS four editable A4 print formats, escaped invoice items, site kop and movable/sized stamp');
+await page.emulateMedia({media:'screen'});
+const logo=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d');x.fillStyle='#16486d';x.beginPath();x.arc(128,128,120,0,Math.PI*2);x.fill();x.fillStyle='white';x.font='bold 50px Arial';x.textAlign='center';x.fillText('BGN',128,145);return c.toDataURL();});
+const po={...pkg,settings:{logo,foundation:'YAYASAN MITRA MUKTI DERMAWAN SPPG CEMPLANG 2, JAWILAN, SERANG BANTEN',kitchen:'SPPG SERANG JAWILAN CEMPLANG 2',positions:{logo:{x:200,y:90,w:80,h:80}}}};
+await page.setContent(deliveryHtml(po,'PO'));
+for(const media of ['screen','print']){await page.emulateMedia({media});const bounds=await page.evaluate(()=>{const a=document.querySelector('.po-logo .asset').getBoundingClientRect(),b=document.querySelector('.po-kop-text').getBoundingClientRect();return{width:a.width,height:a.height,right:a.right,textLeft:b.left};});assert.equal(bounds.width,128);assert.equal(bounds.height,128);assert.ok(bounds.right<bounds.textLeft,'logo and header text never overlap, including saved legacy positions');}
+await page.emulateMedia({media:'screen'});await page.screenshot({path:'../delivery-PO-logo-qa.png',fullPage:true});
 }finally{await browser.close();}
