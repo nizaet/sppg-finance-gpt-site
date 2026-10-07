@@ -190,7 +190,8 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
 
   const deleteInvoice = async () => {
     if (!selected || selected.accountant_submission_id != null) return;
-    if (!window.confirm(`Hapus invoice ${selected.invoice_number || `#${selected.invoice_id}`} yang salah? File Drive dan Maker yang masih PENDING ikut dihapus. Data PAID tidak dapat dihapus.`)) return;
+    const sourceNote = selected.source_type === 'LPDH_FINAL' ? 'Alur Maker pending dihapus; dokumen FINAL dan PDF asli LPDH tetap aman. Tombol ekspor LPDH terbuka kembali.' : 'File Drive dan Maker yang masih PENDING ikut dihapus.';
+    if (!window.confirm(`Hapus invoice ${selected.invoice_number || `#${selected.invoice_id}`} yang salah? ${sourceNote} Data PAID tidak dapat dihapus.`)) return;
     setBusy(true); reportError("");
     try {
       const result = await accountantApi.deleteInvoice(selected.invoice_id);

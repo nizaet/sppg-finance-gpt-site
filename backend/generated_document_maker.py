@@ -22,7 +22,7 @@ def export_snapshot(cur, document, actor):
     existing = cur.fetchone()
     if existing and existing.get('maker_id'):
         return {**existing, 'duplicate': True}
-    if existing:
+    if existing and existing.get('accountant_invoice_id'):
         # The established cancellation workflow removes pending Makers, not invoices.
         from backend.accountant_document_api import _create_maker
         maker = _create_maker(cur,existing['accountant_invoice_id'],document['site'],document['total'],document['documentNumber'])
@@ -49,6 +49,8 @@ def export_snapshot(cur, document, actor):
             values (%s,%s,%s,%s,%s,%s)''', (invoice_id,item['itemName'],item['quantity'],item['unit'],item['unitPrice'],item['lineTotal']))
     from backend.accountant_document_api import _create_maker
     maker = _create_maker(cur,invoice_id,document['site'],document['total'],document['documentNumber'])
-    cur.execute('insert into generated_document_maker_exports(document_id,accountant_invoice_id,maker_id,exported_by) values (%s,%s,%s,%s)',
+    cur.execute('''insert into generated_document_maker_exports(document_id,accountant_invoice_id,maker_id,exported_by) values (%s,%s,%s,%s)
+        on conflict(document_id) do update set accountant_invoice_id=excluded.accountant_invoice_id,maker_id=excluded.maker_id,
+        exported_by=excluded.exported_by,exported_at=now()''',
                 (document['id'],invoice_id,maker['makerId'],actor))
     return {'accountant_invoice_id':invoice_id,'maker_id':maker['makerId'],'duplicate':False}

@@ -95,6 +95,11 @@ class MitraMakerTests(unittest.TestCase):
         self.assertEqual(replacement['accountant_invoice_id'],100)
         self.assertEqual(replacement['maker_id'],200)
         self.assertEqual(len([sql for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]),1)
+        cur.export={'accountant_invoice_id':None,'maker_id':None}
+        with patch.dict('sys.modules',{'backend.accountant_document_api':maker_module}):
+            recreated=export_snapshot(cur,doc,'OWNER')
+        self.assertEqual(recreated['maker_id'],200)
+        self.assertEqual(len([sql for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]),2)
         self.assertFalse(any('PAID' in sql or 'APPROVED' in sql for sql,args in cur.calls))
         for status in ['DRAFT','CANCELLED']:
             with self.assertRaises(HTTPException): export_snapshot(Cursor(),{**doc,'status':status},'OWNER')

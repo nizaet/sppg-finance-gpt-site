@@ -105,7 +105,8 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       documentApi.list(site, serviceDate).then(result => { if (version === context.current && readVersion === documentReads.current) { setDocuments(result.documents || []); setCalendarRevision(x => x + 1); } }).catch(() => {});
     };
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [site, serviceDate]);
 
   const run = async action => {
@@ -435,6 +436,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
           {doc.status === 'FINAL' && <button type="button" disabled={busy || Boolean(doc.makerId) || !doc.driveUri} onClick={() => exportMaker(doc)}>{doc.makerId ? `Sudah di Data Maker #${doc.makerId}` : 'Export ke Data Maker'}</button>}
+          {doc.status === 'FINAL' && !doc.makerId && <small>Belum masuk Data Maker</small>}
           {doc.makerId && doc.makerInvoiceId && <a href={`/operations/accounting?site=${encodeURIComponent(site)}&invoiceDate=${encodeURIComponent(doc.serviceDate)}&invoiceId=${doc.makerInvoiceId}`} target="_blank" rel="noopener noreferrer">Buka Data Maker #{doc.makerId}</a>}
           {doc.status !== "CANCELLED" && <button type="button" disabled={busy} onClick={() => cancel(doc)}><Trash2 size={14}/> Batalkan</button>}
           {doc.status === "CANCELLED" && <button type="button" disabled={busy} onClick={() => recreate(doc)}>Buat ulang</button>}

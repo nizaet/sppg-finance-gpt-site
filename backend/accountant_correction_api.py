@@ -290,6 +290,8 @@ def delete_direct_accountant_invoice(invoice_id: int) -> dict[str, Any]:
                 raise HTTPException(404, "invoice tidak ditemukan")
             if invoice.get("accountant_submission_id") is not None:
                 raise HTTPException(409, "invoice ini terhubung ke Excel Akuntan. Gunakan Hapus Alur pada baris Excel agar data terkait konsisten.")
+            cur.execute('select document_id from generated_document_maker_exports where accountant_invoice_id=%s', (invoice_id,))
+            lpdh_source = cur.fetchone()
             cur.execute("""select m.id,m.status,
                                   exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as has_receipt,
                                   coalesce((select upper(a.status) from bgn_approvals a where a.bgn_maker_id=m.id order by a.created_at desc,a.id desc limit 1),'PENDING') as approval_status
@@ -305,6 +307,8 @@ def delete_direct_accountant_invoice(invoice_id: int) -> dict[str, Any]:
             cur.execute("delete from accountant_invoice_items where accountant_invoice_id=%s", (invoice_id,))
             cur.execute("delete from accountant_invoices where id=%s", (invoice_id,))
             conn.commit()
-    drive_cleanup = _delete_drive_uri(invoice.get("invoice_evidence_uri")) if invoice.get("invoice_evidence_uri") else None
+    # Preserve the original LPDH-owned FINAL PDF when removing its Maker flow.
+    drive_cleanup = ({'skipped': True, 'reason': 'LPDH_FINAL_SOURCE_PRESERVED'} if lpdh_source else
+                     _delete_drive_uri(invoice.get("invoice_evidence_uri")) if invoice.get("invoice_evidence_uri") else None)
     return {"deleted": True, "invoiceId": invoice_id, "deletedMakerIds": maker_ids, "driveCleanup": drive_cleanup,
             "note": "Invoice langsung yang salah dihapus. Maker pending ikut dihapus; data PAID terlindungi."}
