@@ -259,6 +259,8 @@ export function syncDailyMasterTargets(value, masters, serviceDate) {
     const next = { ...row, targetPm: targets[row.code] };
     for (const field of ["distributed", "received"]) if (next[field] == null || next[field] === "") next[field] = targets[row.code];
     if (next.bnba == null || next.bnba === "") next.bnba = "Ya";
+    if (!String(next.bastNo || "").trim()) next.bastNo = `DRAFT-WAJIB-DIGANTI/${serviceDate}/${row.code}`;
+    if (!String(next.bastLink || "").trim()) next.bastLink = `https://example.invalid/BAST-DRAFT-WAJIB-DIGANTI/${serviceDate}/${row.code}`;
     return next;
   });
   for (const [field, defaultValue] of [["organoleptic", 3], ["retainedSample", 2]]) {
@@ -727,7 +729,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     <FormTabs key={`${site}|${serviceDate}`} label="Bagian Data Harian" issueTarget={issueTarget}>
-    <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="Isian awal distribusi dan penerimaan mengikuti target master, BNBA Ya, organoleptik 3 dan retained sample 2. Periksa dan edit sesuai realisasi; nomor dan link BAST tetap wajib dilengkapi.">
+    <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="BAST kosong diisi DRAFT-WAJIB-DIGANTI agar estimasi insentif dapat dihitung. Ganti nomor dan link dengan bukti asli di Excel setelah unduh. Dummy bukan bukti autentik dan tidak meloloskan validasi FINAL. Isian BAST yang sudah ada tidak ditimpa.">
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
           <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>

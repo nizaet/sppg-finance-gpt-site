@@ -280,7 +280,7 @@ def merged_pm_rows(masters: dict[str, Any], daily: dict[str, Any], effective: bo
             "bnba": "Ya" if yes(bnba) else "Tidak",
             "bastNo": bast_no,
             "bastLink": bast_link,
-            "bastStatus": "Terlampir" if bast_ok and received > 0 else ("Tidak wajib" if received <= 0 else "Belum lengkap"),
+            "bastStatus": "DRAFT—WAJIB DIGANTI" if received > 0 and ("DRAFT-WAJIB-DIGANTI" in bast_no.upper() or "EXAMPLE.INVALID" in bast_link.upper()) else ("Terlampir" if bast_ok and received > 0 else ("Tidak wajib" if received <= 0 else "Belum lengkap")),
             "calculatedPm": calculated,
             "achievement": (calculated / target) if target > 0 else 0,
             "note": str(source.get("note") or ""),
@@ -741,8 +741,8 @@ def compute_preview(
 
     all_distributions_balance = all(abs(row["difference"]) < 0.0001 for row in pm)
     reasons_ok = all(row["notReceived"] <= 0 or bool(row["reason"]) for row in pm)
-    receiving_docs_ok = all(row["received"] <= 0 or (row["bnba"] == "Ya" and bool(row["bastNo"])) for row in pm)
-    bast_links_ok = all(row["received"] <= 0 or https_url(row["bastLink"]) for row in pm)
+    receiving_docs_ok = all(row["received"] <= 0 or (row["bnba"] == "Ya" and bool(row["bastNo"]) and row["bastStatus"] == "Terlampir") for row in pm)
+    bast_links_ok = all(row["received"] <= 0 or (https_url(row["bastLink"]) and row["bastStatus"] == "Terlampir") for row in pm)
     target_ok = all(row["calculatedPm"] <= row["targetPm"] + 0.0001 for row in pm if row["targetPm"] > 0)
 
     volunteer_complete = all(
