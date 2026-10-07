@@ -40,6 +40,10 @@ def suggest_number(cur, site, namespace, fallback, existing=None):
         cur.execute("select full_number from document_number_serials where site=%s and namespace=%s and serial is not null order by created_at desc,owner_key desc limit 1", (site, namespace))
         row = cur.fetchone()
     candidate = next_number([row["full_number"]] if row else [], fallback)
+    # The anchor supplies the sequence/issuer; the target date supplies Roman month/year.
+    date_suffix = re.search(r'/((?:XII|XI|IX|VIII|VII|VI|IV|III|II|X|V|I))/([0-9]{4})$', fallback)
+    if date_suffix:
+        candidate = re.sub(r'/(?:XII|XI|IX|VIII|VII|VI|IV|III|II|X|V|I)/[0-9]{4}$', date_suffix.group(0), candidate)
     # A manual lower anchor is valid, but canceled/old numbers remain occupied.
     for _ in range(10000):
         serial = split_number(candidate)[0]
@@ -60,10 +64,10 @@ def invoice_fallback(masters, site, kind, service_date):
     vendor = masters.get("vendor") or {}
     field = "rawInvoicePrefix" if kind == "BAHAN_BAKU" else "operationalInvoicePrefix"
     configured = str(vendor.get(field) or "").strip() if kind in {"BAHAN_BAKU", "OPERASIONAL"} else ""
-    if configured.startswith("/"):
-        return "001" + configured
-    if split_number(configured):
-        return configured
+    roman = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][service_date.month - 1]
+    if configured.startswith("/") or split_number(configured):
+        value = "001" + configured if configured.startswith('/') else configured
+        return re.sub(r'/(?:XII|XI|IX|VIII|VII|VI|IV|III|II|X|V|I)/[0-9]{4}$', f'/{roman}/{service_date.year}', value)
     code = {"BAHAN_BAKU": "BB", "OPERASIONAL": "OP", "UPAH_RELAWAN": "UPAH", "INSENTIF_GURU_KADER": "INS", "INSENTIF_MITRA": "INS-MITRA"}[kind]
     roman = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][service_date.month - 1]
     return f"001/{code}/SPPG-{site}/{roman}/{service_date.year}"

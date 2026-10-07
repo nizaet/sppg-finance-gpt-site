@@ -5,6 +5,9 @@ const require=createRequire(import.meta.url);const {chromium}=require('playwrigh
 assert.equal(terbilang(125000).trim(),'seratus dua puluh lima ribu');
 const pkg={document:{site:'MAJA',documentType:'BAHAN_BAKU',documentNumber:'220/BB/MMD/X/2026',serviceDate:'2026-10-05',total:25000,header:{issuerName:'KOPERASI\nMAJA MUDA MADYA',issuerAddress:'Alamat uji',senderSignatory:'Pengirim Uji'},items:[{itemName:'Beras <uji>',quantity:2,unit:'kg',unitPrice:12500,lineTotal:25000}]},settings:{},numbers:{PO:'PO/2026/X/001',SJ:'SJ/202610/001',CKL:'CKL/202610/001',KUI:'001/KUI.Banper/BB/X/2026'},dates:{PO:'2026-10-03',SJ:'2026-10-04',CKL:'2026-10-04',KUI:'2026-10-06'}};
 const browser=await chromium.launch({headless:true});
+assert.ok(!deliveryHtml({...pkg,document:{...pkg.document,items:[{...pkg.document.items[0],metadata:{note:'RAHASIA CATATAN BAHAN'}}]}},'SJ').includes('RAHASIA CATATAN BAHAN'));
+assert.ok(deliveryHtml({...pkg,settings:{byKind:{PO:{foundation:'KOP KHUSUS PO'},KUI:{foundation:'KOP KHUSUS KUITANSI'}}}},'PO').includes('KOP KHUSUS PO'));
+assert.ok(!deliveryHtml({...pkg,settings:{byKind:{PO:{foundation:'KOP KHUSUS PO'},KUI:{foundation:'KOP KHUSUS KUITANSI'}}}},'KUI').includes('KOP KHUSUS PO'));
 try{const page=await browser.newPage();for(const kind of ['PO','SJ','CKL','KUI']){
   await page.setContent(deliveryHtml(pkg,kind));
   assert.equal(await page.locator('.paper').getAttribute('contenteditable'),'true');

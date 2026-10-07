@@ -28,6 +28,49 @@ class DeliverySettingsIn(BaseModel):
     settings: dict[str, Any]
 
 
+class DeliveryAnchorIn(BaseModel):
+    period: str = Field(pattern=r'^\d{4}(?:-\d{2})?$')
+    next_number: int = Field(ge=1, le=1000000000)
+
+
+@router.get('/accountant-documents/delivery-controls')
+def delivery_controls(site: Site, authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('select kind,settings from lpdh_delivery_profiles where site=%s', (site,))
+        return {'profiles':{r['kind']:r['settings'] for r in cur.fetchall()}}
+
+
+@router.put('/accountant-documents/delivery-profiles/{kind}')
+def delivery_profile(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    if len(json.dumps(payload.settings))>5_000_000: raise HTTPException(422,'Aset cetak terlalu besar.')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('''insert into lpdh_delivery_profiles(site,kind,settings) values(%s,%s,%s::jsonb)
+          on conflict(site,kind) do update set settings=excluded.settings,updated_at=now()''',(site,kind,json.dumps(payload.settings)))
+        conn.commit()
+    return {'ok':True}
+
+
+@router.put('/accountant-documents/delivery-anchors/{kind}')
+def delivery_anchor(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: DeliveryAnchorIn, authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    if (kind=='KUI' and len(payload.period)!=4) or (kind!='KUI' and len(payload.period)!=7):
+        raise HTTPException(422,'Periode kuitansi adalah tahun; dokumen lain tahun-bulan.')
+    try: date.fromisoformat(payload.period+'-01' if len(payload.period)==7 else payload.period+'-01-01')
+    except ValueError: raise HTTPException(422,'Periode tidak valid')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('select pg_advisory_xact_lock(hashtext(%s))', ('lpdh-delivery:'+site,))
+        cur.execute('select value from lpdh_delivery_counters where site=%s and kind=%s and period=%s for update',(site,kind,payload.period))
+        current=cur.fetchone()
+        if current and payload.next_number<=current['value']:
+            raise HTTPException(409,'Nomor awal harus lebih besar dari nomor yang sudah dialokasikan. Paket lama tidak diubah.')
+        cur.execute('''insert into lpdh_delivery_counters(site,kind,period,value) values(%s,%s,%s,%s)
+          on conflict(site,kind,period) do update set value=excluded.value''',(site,kind,payload.period,payload.next_number-1))
+        conn.commit()
+    return {'ok':True,'nextNumber':payload.next_number}
+
+
 @router.post('/accountant-documents/delivery-sync')
 def delivery_sync(site: Site, month: str = Query(pattern=r'^\d{4}-\d{2}$'), authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
@@ -580,6 +623,8 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
             raise HTTPException(409, 'Dokumen masih berada di antrean invoice Pusat Operasional. Hapus alur invoice di sana dahulu, lalu batalkan dokumen LPDH agar tidak ada antrean yang tertinggal.')
         cur.execute("""update generated_accountant_documents set status='CANCELLED',cancelled_at=now(),cancelled_by=%s,
                     cancellation_reason=%s,updated_at=now() where id=%s""", (role, payload.reason.strip(), document_id))
+        cur.execute('delete from generated_accountant_document_numbers where document_id=%s', (document_id,))
+        cur.execute('delete from document_number_serials where site=%s and namespace=%s and owner_key=%s', (row['site'],row['document_type'],'DOC:'+str(document_id)))
         if row["status"] == "FINAL":
             _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()

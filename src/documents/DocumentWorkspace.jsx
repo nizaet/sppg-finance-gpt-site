@@ -267,11 +267,11 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   };
   const recreate = doc => {
     if ((lines.length || documentNumber) && !window.confirm("Salin item dokumen dibatalkan? Isian yang belum disimpan akan diganti.")) return;
-    numberEdited.current = false; numberReads.current++;
-    setEditing(null); setType(doc.documentType); setDocumentNumber(""); setCalendarRevision(x => x + 1); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "", ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(doc.documentType) ? { paymentSnapshotVersion: 2, recipientSubtype: doc.header.recipientSubtype || doc.items[0]?.metadata?.recipientType || "Guru" } : {}) });
+    numberEdited.current = true; numberReads.current++;
+    setEditing(null); setType(doc.documentType); setDocumentNumber(doc.documentNumber); setCalendarRevision(x => x + 1); setHeader({ ...doc.header, evidenceLink: "", paymentReference: "", ...(["UPAH_RELAWAN", "INSENTIF_GURU_KADER"].includes(doc.documentType) ? { paymentSnapshotVersion: 2, recipientSubtype: doc.header.recipientSubtype || doc.items[0]?.metadata?.recipientType || "Guru" } : {}) });
     setProfile(doc.header.documentProfileKey || (doc.header.assetProfile === "maja-yayasan" ? "YAYASAN" : "KOPERASI"));
     setLines(doc.items.map(x => ({ ...x, metadata: { ...x.metadata, receiptNo: "" } }))); requestKey.current = uuid();
-    notify("Item disalin sebagai isian baru, belum disimpan. Isi nomor dokumen dan nomor kuitansi baru, lalu Simpan draft. Riwayat lama tetap dibatalkan.");
+    notify("Item dan nomor invoice dibatalkan disalin ke draft baru. Nomor dapat dipakai bila belum digunakan dokumen aktif lainnya. Riwayat lama tetap dibatalkan.");
   };
   const saveDefault = () => run(async version => {
     const result = await documentApi.saveProfile(site, { ...header, documentProfileKey: profile });

@@ -172,12 +172,12 @@ class MasterAndNumberTests(unittest.TestCase):
         cur=Cursor(); fallback='001/BB/DEFAULT/X/2026'
         claim_number(cur,'MAJA','BAHAN_BAKU','999/BB/OLD/X/2026','DOC:1')
         claim_number(cur,'MAJA','BAHAN_BAKU','220/BB/MMD/IX/2026','DOC:2')
-        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'221/BB/MMD/IX/2026')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'221/BB/MMD/X/2026')
         claim_number(cur,'MAJA','BAHAN_BAKU','221/BB/MMD/IX/2026','DOC:3')
         claim_number(cur,'MAJA','BAHAN_BAKU','219/BB/MANUAL/IX/2026','DOC:4')
-        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/IX/2026')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/X/2026')
         claim_number(cur,'MAJA','BAHAN_BAKU','999/BB/OLD/X/2026','DOC:1')
-        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/IX/2026','unchanged historical saves do not reset anchor')
+        self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/MANUAL/X/2026','unchanged historical saves do not reset anchor')
         claim_number(cur,'MAJA','BAHAN_BAKU','219/BB/EDITED/X/2026','DOC:4')
         self.assertEqual(suggest_number(cur,'MAJA','BAHAN_BAKU',fallback),'222/BB/EDITED/X/2026')
 

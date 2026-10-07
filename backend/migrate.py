@@ -51,6 +51,7 @@ MIGRATIONS = [
     ROOT / "schema" / "lpdh_maker_categories_v046.sql",
     ROOT / "schema" / "lpdh_maker_cancel_v047.sql",
     ROOT / "schema" / "lpdh_delivery_v048.sql",
+    ROOT / "schema" / "lpdh_delivery_controls_v049.sql",
 ]
 
 

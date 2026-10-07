@@ -63,6 +63,7 @@ class FakeConnection:
         self.invoice_makers = {}
         self.delivery_packages = {}
         self.delivery_counters = {}
+        self.delivery_profiles = {}
 
     @contextmanager
     def cursor(self):
@@ -70,13 +71,23 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if sql.startswith('select * from lpdh_delivery_packages'):
+        if sql.startswith('select kind,settings from lpdh_delivery_profiles'):
+            self.result=[{'kind':kind,'settings':value} for (site,kind),value in self.delivery_profiles.items() if site==params[0]]
+        elif 'insert into lpdh_delivery_profiles' in sql:
+            self.delivery_profiles[tuple(params[:2])]=json.loads(params[2])
+        elif sql.startswith('select value from lpdh_delivery_counters'):
+            value=self.delivery_counters.get(tuple(params))
+            self.result={'value':value} if value is not None else None
+        elif sql.startswith('delete from document_number_serials'):
+            self.serials=[x for x in self.serials if not (x['site']==params[0] and x['namespace']==params[1] and x['owner_key']==params[2])]
+        elif sql.startswith('select * from lpdh_delivery_packages'):
             self.result=self.delivery_packages.get(params[0])
         elif sql.startswith('select settings from lpdh_delivery_packages'):
             self.result=None
         elif 'insert into lpdh_delivery_counters' in sql:
-            self.delivery_counters[params]=self.delivery_counters.get(params,0)+1
-            self.result={'value':self.delivery_counters[params]}
+            key=tuple(params[:3])
+            self.delivery_counters[key]=params[3] if len(params)==4 else self.delivery_counters.get(key,0)+1
+            self.result={'value':self.delivery_counters[key]}
         elif 'insert into lpdh_delivery_packages' in sql:
             self.result={'document_id':params[0],'numbers':json.loads(params[3])}
             self.delivery_packages[params[0]]=self.result
@@ -356,8 +367,23 @@ class DocumentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.conn.row["status"], "CANCELLED")
         sync.assert_called_once()
-        self.assertFalse(any(sql.startswith("delete") for sql, _ in self.conn.calls))
+        deleted = [sql for sql, _ in self.conn.calls if sql.startswith('delete')]
+        self.assertTrue(any('generated_accountant_document_numbers' in sql for sql in deleted))
+        self.assertTrue(any('document_number_serials' in sql for sql in deleted))
+        self.assertFalse(any('delete from generated_accountant_documents ' in sql for sql in deleted))
         self.assertEqual(self.client.patch("/v1/accountant-documents/1/finalize", headers=self.headers).status_code, 409)
+
+    def test_delivery_master_and_anchor_are_site_and_kind_scoped(self):
+        url='/v1/accountant-documents/delivery-profiles/PO?site=MAJA'
+        self.assertEqual(self.client.put(url,headers={'Authorization':'Bearer CEMPLANG'},json={'settings':{}}).status_code,403)
+        self.assertEqual(self.client.put(url,headers=self.headers,json={'settings':{'foundation':'PO only'}}).status_code,200)
+        self.assertEqual(self.conn.delivery_profiles[('MAJA','PO')]['foundation'],'PO only')
+        self.assertNotIn(('MAJA','SJ'),self.conn.delivery_profiles)
+        url='/v1/accountant-documents/delivery-anchors/SJ?site=MAJA'
+        self.assertEqual(self.client.put(url,headers=self.headers,json={'period':'2026','next_number':30}).status_code,422)
+        self.assertEqual(self.client.put(url,headers=self.headers,json={'period':'2026-10','next_number':30}).status_code,200)
+        self.assertEqual(self.conn.delivery_counters[('MAJA','SJ','2026-10')],29)
+        self.assertEqual(self.client.put(url,headers=self.headers,json={'period':'2026-10','next_number':29}).status_code,409)
 
     def test_queue_status_tracks_human_maker_and_guards_source_cancel(self):
         self.conn.row['status']='FINAL'
