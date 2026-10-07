@@ -147,9 +147,10 @@ def _serialize_document(cur, row):
             "driveUri": row.get("drive_uri"), "driveExcelUri": row.get("drive_excel_uri"), "driveUploadStatus": row.get("drive_upload_status"),
             "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
             "cancellationReason": row.get("cancellation_reason")}
-    cur.execute('select maker_id from generated_document_maker_exports where document_id=%s', (row['id'],))
+    cur.execute('select maker_id,accountant_invoice_id from generated_document_maker_exports where document_id=%s', (row['id'],))
     exported = cur.fetchone()
     document['makerId'] = exported['maker_id'] if exported else None
+    document['makerInvoiceId'] = exported.get('accountant_invoice_id') if exported else None
     if row["document_type"] in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
         for index, item in enumerate(items):
             item["metadata"] = {**item["metadata"], "receiptNo": receipt_number(document, index)}

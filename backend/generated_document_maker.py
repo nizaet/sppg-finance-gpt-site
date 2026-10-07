@@ -3,6 +3,16 @@ import json
 from fastapi import HTTPException
 
 
+def maker_category(document):
+    kind = document['documentType']
+    if kind == 'BAHAN_BAKU': return 'BAHAN_BAKU'
+    if kind == 'INSENTIF_MITRA': return 'SEWA_MITRA'
+    if kind == 'UPAH_RELAWAN':
+        return 'UPAH' if document.get('header', {}).get('combinedPayments') else 'GAJI_RELAWAN'
+    if kind == 'INSENTIF_GURU_KADER': return 'UPAH'
+    return 'OPERASIONAL_LAIN'
+
+
 def export_snapshot(cur, document, actor):
     if document['status'] != 'FINAL':
         raise HTTPException(409, 'Hanya invoice FINAL aktif dapat diekspor ke Data Maker.')
@@ -20,7 +30,7 @@ def export_snapshot(cur, document, actor):
                     (maker['makerId'],actor,document['id']))
         return {'accountant_invoice_id':existing['accountant_invoice_id'],'maker_id':maker['makerId'],'duplicate':False}
     # Use existing Maker categories; retain the exact invoice type in parsed_payload.
-    category = 'BAHAN_BAKU' if document['documentType'] == 'BAHAN_BAKU' else 'UPAH' if document['documentType'] == 'UPAH_RELAWAN' else 'OPERASIONAL_LAIN'
+    category = maker_category(document)
     cur.execute('''insert into accountant_invoices(site,accountant_code,invoice_category,invoice_number,
         invoice_date,period_start,period_end,invoice_amount,invoice_evidence_uri,received_at,source_type,parsed_payload,updated_at)
         values (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),'LPDH_FINAL',%s::jsonb,now()) returning id''',

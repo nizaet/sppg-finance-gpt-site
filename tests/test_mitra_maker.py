@@ -5,7 +5,7 @@ from types import ModuleType
 import test_generated_document_api as fixture  # isolated API/DB fixtures, no live services
 from backend.generated_document_logic import merge_final_documents
 from backend.lpdh_logic import parameters
-from backend.generated_document_maker import export_snapshot
+from backend.generated_document_maker import export_snapshot, maker_category
 from fastapi import HTTPException
 
 
@@ -29,6 +29,10 @@ class Cursor:
 
 
 class MitraMakerTests(unittest.TestCase):
+    def test_categories_follow_accountant_contract(self):
+        for kind,expected in [('BAHAN_BAKU','BAHAN_BAKU'),('OPERASIONAL','OPERASIONAL_LAIN'),('INSENTIF_MITRA','SEWA_MITRA'),('UPAH_RELAWAN','GAJI_RELAWAN'),('INSENTIF_GURU_KADER','UPAH')]:
+            self.assertEqual(maker_category({**document(),'documentType':kind}),expected)
+        self.assertEqual(maker_category({**document(),'documentType':'UPAH_RELAWAN','header':{'combinedPayments':True}}),'UPAH')
     def test_pdf_excel_and_model(self):
         from io import BytesIO
         from pypdf import PdfReader

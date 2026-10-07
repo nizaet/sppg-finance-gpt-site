@@ -42,12 +42,13 @@ const STATUS = {
 };
 
 export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged, reportError, reportMessage }) {
+  const entry = new URLSearchParams(window.location.search);
   const [items, setItems] = useState([]);
-  const [month, setMonth] = useState(initialMonth);
-  const [site, setSite] = useState("");
+  const [month, setMonth] = useState(() => /^\d{4}-\d{2}-\d{2}$/.test(entry.get('invoiceDate') || '') ? entry.get('invoiceDate').slice(0,7) : initialMonth());
+  const [site, setSite] = useState(() => ['MAJA','CEMPLANG'].includes(entry.get('site')) ? entry.get('site') : '');
   const [category, setCategory] = useState("");
-  const [viewMode, setViewMode] = useState("calendar");
-  const [selectedId, setSelectedId] = useState(null);
+  const [viewMode, setViewMode] = useState(() => entry.has('invoiceId') ? 'list' : 'calendar');
+  const [selectedId, setSelectedId] = useState(() => entry.get('invoiceId') || null);
   const [busy, setBusy] = useState(false);
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
@@ -87,6 +88,11 @@ export default function AccountantUnifiedCalendar({ refreshToken = 0, onChanged,
     }
   }, [refreshVersion]);
   useEffect(() => { load(); }, [site, refreshVersion]);
+  useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [site]);
 
   const categories = useMemo(() => [...new Set(items.map((row) => String(row.invoice_category || "OPERASIONAL_LAIN")).filter(Boolean))].sort(), [items]);
   const visibleItems = useMemo(() => items.filter((row) => !category || String(row.invoice_category || "OPERASIONAL_LAIN") === category), [items, category]);
