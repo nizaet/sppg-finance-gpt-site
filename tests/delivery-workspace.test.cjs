@@ -5,7 +5,22 @@ await esbuild.build({stdin:{contents:`import React from 'react';import{createRoo
 const browser=await chromium.launch({headless:true});try{const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));let saved;
 const pkg={document:{id:1,site:'MAJA',serviceDate:'2026-10-05',documentNumber:'220/BB/MMD/X/2026',documentType:'BAHAN_BAKU',status:'FINAL',total:25000,items:[{itemName:'Beras',quantity:2,unit:'kg',unitPrice:12500,lineTotal:25000}],header:{issuerName:'Vendor Uji'}},numbers:{PO:'PO/2026/X/001',SJ:'SJ/202610/001',CKL:'CKL/202610/001',KUI:'001/KUI.Banper/BB/X/2026'},dates:{PO:'2026-10-03',SJ:'2026-10-04',CKL:'2026-10-04',KUI:'2026-10-06'},settings:{}};
 await page.route('**/*',r=>{const url=r.request().url();if(url.includes('/v1/')){if(r.request().method()==='PUT')saved=r.request().postDataJSON();return r.fulfill({contentType:'application/json',body:JSON.stringify(url.includes('delivery-sync')?{packages:[pkg]}:{ok:true})});}return r.fulfill({contentType:'text/html',body:`<meta name="viewport" content="width=device-width,initial-scale=1"><style>${fs.readFileSync(path.join(root,'src/delivery/delivery.css'),'utf8')}</style><div id="root"></div>`});});
-await page.goto('http://delivery.test/delivery?site=MAJA&date=2026-10-05');await page.addScriptTag({path:out});await page.getByRole('button',{name:/220\/BB/}).click();
+await page.goto('http://delivery.test/delivery?site=MAJA&date=2026-10-05');await page.addScriptTag({path:out});await page.addStyleTag({content:fs.readFileSync(path.join(root,'src/delivery/delivery-preview.css'),'utf8')});await page.getByRole('button',{name:/220\/BB/}).click();
+await page.getByRole('dialog',{name:'Preview Dokumen Pendamping'}).waitFor();
+const frame=page.frameLocator('iframe[title="Preview cetak editable"]');
+await frame.getByRole('heading',{name:'SURAT JALAN',exact:true}).waitFor();
+await page.getByRole('tab',{name:'Kuitansi',exact:true}).click();
+await frame.getByRole('heading',{name:'K U I T A N S I',exact:true}).waitFor();
+await frame.locator('.toolbar').waitFor({state:'hidden'});
+await frame.locator('.title').click();await page.keyboard.press('End');await page.keyboard.type(' EDIT CETAK');
+assert.ok((await frame.locator('.paper').textContent()).includes('EDIT CETAK'));
+for(const width of [360,768,904,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);}
+await page.route('**/v1/accountant-documents/1',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({document:pkg.document})}));
+await page.evaluate(()=>{const frame=document.querySelector('iframe');frame.contentWindow.print=()=>{window.testPrinted=frame.contentDocument.querySelector('.paper').textContent;};});
+await page.getByRole('button',{name:'Cetak / Simpan PDF',exact:true}).click();
+await page.waitForFunction(()=>window.testPrinted?.includes('EDIT CETAK'));
+await page.screenshot({path:path.join(root,'../delivery-preview-qa.png')});
+await page.getByRole('button',{name:'Edit identitas & aset',exact:true}).click();
 await page.getByLabel('Nama yayasan / kop BGN').fill('Yayasan Uji');await page.getByRole('button',{name:'Simpan identitas & aset paket ini'}).click();await page.waitForFunction(()=>!document.body.textContent.includes('Memuat / menyimpan'));assert.equal(saved.settings.foundation,'Yayasan Uji');
 await page.getByRole('button',{name:'Daftar',exact:true}).click();assert.equal(await page.locator('.delivery-list .delivery-card').count(),1);
 for(const width of [360,768,904,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,`no overflow ${width}`);}
