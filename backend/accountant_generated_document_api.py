@@ -147,7 +147,7 @@ def _serialize_document(cur, row):
             "driveUri": row.get("drive_uri"), "driveExcelUri": row.get("drive_excel_uri"), "driveUploadStatus": row.get("drive_upload_status"),
             "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
             "cancellationReason": row.get("cancellation_reason")}
-    cur.execute('select maker_id,accountant_invoice_id from generated_document_maker_exports where document_id=%s', (row['id'],))
+    cur.execute('select m.id as maker_id,e.accountant_invoice_id from generated_document_maker_exports e left join bgn_makers m on m.accountant_invoice_id=e.accountant_invoice_id where e.document_id=%s', (row['id'],))
     exported = cur.fetchone()
     document['makerId'] = exported['maker_id'] if exported else None
     document['makerInvoiceId'] = exported.get('accountant_invoice_id') if exported else None
@@ -529,10 +529,14 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
             raise HTTPException(403, "akses site tidak diizinkan")
         if row["status"] == "CANCELLED":
             return {"ok": True, "id": document_id, "status": "CANCELLED"}
-        cur.execute('select m.status from generated_document_maker_exports e join bgn_makers m on m.id=e.maker_id where e.document_id=%s', (document_id,))
+        cur.execute('select m.status from generated_document_maker_exports e join bgn_makers m on m.accountant_invoice_id=e.accountant_invoice_id where e.document_id=%s', (document_id,))
         maker = cur.fetchone()
         if maker and maker['status'] not in {'CANCELLED','REJECTED'}:
             raise HTTPException(409, 'Dokumen sudah masuk Data Maker. Selesaikan pembatalan pada Data Maker terlebih dahulu agar nominal pending tidak tertinggal.')
+        cur.execute('select accountant_invoice_id from generated_document_maker_exports where document_id=%s', (document_id,))
+        queued = cur.fetchone()
+        if queued and queued.get('accountant_invoice_id'):
+            raise HTTPException(409, 'Dokumen masih berada di antrean invoice Pusat Operasional. Hapus alur invoice di sana dahulu, lalu batalkan dokumen LPDH agar tidak ada antrean yang tertinggal.')
         cur.execute("""update generated_accountant_documents set status='CANCELLED',cancelled_at=now(),cancelled_by=%s,
                     cancellation_reason=%s,updated_at=now() where id=%s""", (role, payload.reason.strip(), document_id))
         if row["status"] == "FINAL":

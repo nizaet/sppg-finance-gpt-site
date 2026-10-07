@@ -20,15 +20,9 @@ def export_snapshot(cur, document, actor):
         raise HTTPException(409, 'Simpan PDF FINAL ke Drive terlebih dahulu.')
     cur.execute('select accountant_invoice_id,maker_id from generated_document_maker_exports where document_id=%s', (document['id'],))
     existing = cur.fetchone()
-    if existing and existing.get('maker_id'):
-        return {**existing, 'duplicate': True}
     if existing and existing.get('accountant_invoice_id'):
-        # The established cancellation workflow removes pending Makers, not invoices.
-        from backend.accountant_document_api import _create_maker
-        maker = _create_maker(cur,existing['accountant_invoice_id'],document['site'],document['total'],document['documentNumber'])
-        cur.execute('update generated_document_maker_exports set maker_id=%s,exported_by=%s,exported_at=now() where document_id=%s',
-                    (maker['makerId'],actor,document['id']))
-        return {'accountant_invoice_id':existing['accountant_invoice_id'],'maker_id':maker['makerId'],'duplicate':False}
+        # Queue export never creates a Maker, including after Maker cancellation.
+        return {**existing, 'duplicate': True}
     # Use existing Maker categories; retain the exact invoice type in parsed_payload.
     category = maker_category(document)
     cur.execute('select id from accountant_invoices where upper(site)=upper(%s) and lower(trim(invoice_number))=lower(trim(%s)) limit 1',
@@ -43,14 +37,12 @@ def export_snapshot(cur, document, actor):
          document['serviceDate'], document['serviceDate'], document['total'], document['driveUri'],
          json.dumps({'generatedDocumentId':document['id'], 'documentType':document['documentType'], 'header':document['header']},ensure_ascii=False)))
     invoice_id = cur.fetchone()['id']
-    # For a combined invoice this remains one maker using the main cover total.
+    # One queued invoice uses the combined cover total. Human action creates Maker.
     for item in document['items']:
         cur.execute('''insert into accountant_invoice_items(accountant_invoice_id,item_name,quantity,unit,unit_price,line_total)
             values (%s,%s,%s,%s,%s,%s)''', (invoice_id,item['itemName'],item['quantity'],item['unit'],item['unitPrice'],item['lineTotal']))
-    from backend.accountant_document_api import _create_maker
-    maker = _create_maker(cur,invoice_id,document['site'],document['total'],document['documentNumber'])
     cur.execute('''insert into generated_document_maker_exports(document_id,accountant_invoice_id,maker_id,exported_by) values (%s,%s,%s,%s)
         on conflict(document_id) do update set accountant_invoice_id=excluded.accountant_invoice_id,maker_id=excluded.maker_id,
         exported_by=excluded.exported_by,exported_at=now()''',
-                (document['id'],invoice_id,maker['makerId'],actor))
-    return {'accountant_invoice_id':invoice_id,'maker_id':maker['makerId'],'duplicate':False}
+                (document['id'],invoice_id,None,actor))
+    return {'accountant_invoice_id':invoice_id,'maker_id':None,'duplicate':False}

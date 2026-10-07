@@ -143,10 +143,10 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     notify('Nilai ditarik dari D_Insentif yang tersimpan. Periksa sebelum Simpan draft.');
   });
   const exportMaker = doc => run(async version => {
-    if (!window.confirm(`Export ${doc.documentNumber} senilai ${money(doc.total)} ke Data Maker ${site}? Satu Maker memakai total invoice utama. Ini tidak melakukan pembayaran. Dokumen yang sudah diekspor perlu dibatalkan melalui alur Maker terlebih dahulu.`)) return;
+    if (!window.confirm(`Kirim ${doc.documentNumber} senilai ${money(doc.total)} ke antrean invoice ${site}? Belum membuat Maker atau approval. Anda dapat klik Buat Maker di Pusat Operasional setelah memeriksa invoice.`)) return;
     const result = await documentApi.exportMaker(doc.id);
     await reload(version);
-    notify(`${result.duplicate ? 'Sudah ada' : 'Berhasil masuk'} Data Maker #${result.maker_id}; tidak membuat ekspor ganda.`);
+    notify(`${result.duplicate ? 'Sudah ada' : 'Berhasil masuk'} antrean invoice #${result.accountant_invoice_id}. Klik Buat Maker di Pusat Operasional untuk melanjutkan.`);
   });
   const update = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const updateMetadata = (index, key, value) => setLines(rows => rows.map((row, i) => i === index ? { ...row, metadata: { ...row.metadata, [key]: value } } : row));
@@ -435,9 +435,9 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
           {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
-          {doc.status === 'FINAL' && <button type="button" disabled={busy || Boolean(doc.makerId) || !doc.driveUri} onClick={() => exportMaker(doc)}>{doc.makerId ? `Sudah di Data Maker #${doc.makerId}` : 'Export ke Data Maker'}</button>}
-          {doc.status === 'FINAL' && !doc.makerId && <small>Belum masuk Data Maker</small>}
-          {doc.makerId && doc.makerInvoiceId && <a href={`/operations/accounting?site=${encodeURIComponent(site)}&invoiceDate=${encodeURIComponent(doc.serviceDate)}&invoiceId=${doc.makerInvoiceId}`} target="_blank" rel="noopener noreferrer">Buka Data Maker #{doc.makerId}</a>}
+          {doc.status === 'FINAL' && <button type="button" disabled={busy || Boolean(doc.makerInvoiceId) || Boolean(doc.makerId) || !doc.driveUri} onClick={() => exportMaker(doc)}>{doc.makerId ? `Sudah di Data Maker #${doc.makerId}` : doc.makerInvoiceId ? 'Dalam antrean · Belum Maker' : 'Export ke Antrean Maker'}</button>}
+          {doc.status === 'FINAL' && !doc.makerInvoiceId && !doc.makerId && <small>Belum masuk antrean Maker</small>}
+          {doc.makerInvoiceId && <a href={`/operations/accounting?site=${encodeURIComponent(site)}&invoiceDate=${encodeURIComponent(doc.serviceDate)}&invoiceId=${doc.makerInvoiceId}`} target="_blank" rel="noopener noreferrer">{doc.makerId ? `Buka Data Maker #${doc.makerId}` : 'Buka Antrean · Buat Maker'}</a>}
           {doc.status !== "CANCELLED" && <button type="button" disabled={busy} onClick={() => cancel(doc)}><Trash2 size={14}/> Batalkan</button>}
           {doc.status === "CANCELLED" && <button type="button" disabled={busy} onClick={() => recreate(doc)}>Buat ulang</button>}
         </div></td></tr>)}{!documents.some(doc => showCancelled || doc.status !== "CANCELLED") && <tr><td colSpan="6" className="doc-empty">Belum ada dokumen aktif pada tanggal ini.</td></tr>}</tbody></table></div>

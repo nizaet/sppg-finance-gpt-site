@@ -60,6 +60,7 @@ class FakeConnection:
         self.serials = []
         self.anchors = {}
         self.maker_exports = {}
+        self.invoice_makers = {}
 
     @contextmanager
     def cursor(self):
@@ -69,6 +70,9 @@ class FakeConnection:
         self.calls.append((sql, params))
         if 'from generated_document_maker_exports' in sql:
             self.result = self.maker_exports.get(params[0])
+            if 'join bgn_makers' in sql:
+                maker = self.invoice_makers.get((self.result or {}).get('accountant_invoice_id'))
+                self.result = ({'status':maker['status']} if maker else None) if sql.startswith('select m.status') else ({**self.result,'maker_id':maker['id'] if maker else None} if self.result else None)
         elif sql.startswith("select full_number from document_number_anchors"):
             self.result = self.anchors.get(tuple(params))
         elif sql.startswith("insert into document_number_anchors"):
@@ -336,6 +340,19 @@ class DocumentApiTests(unittest.TestCase):
         sync.assert_called_once()
         self.assertFalse(any(sql.startswith("delete") for sql, _ in self.conn.calls))
         self.assertEqual(self.client.patch("/v1/accountant-documents/1/finalize", headers=self.headers).status_code, 409)
+
+    def test_queue_status_tracks_human_maker_and_guards_source_cancel(self):
+        self.conn.row['status']='FINAL'
+        self.conn.maker_exports[1]={'accountant_invoice_id':100,'maker_id':999}
+        doc=api._serialize_document(self.conn,self.conn.row)
+        self.assertIsNone(doc['makerId'])  # stale cached Maker is not authoritative
+        self.assertEqual(doc['makerInvoiceId'],100)
+        self.conn.invoice_makers[100]={'id':200,'status':'CREATED'}
+        self.assertEqual(api._serialize_document(self.conn,self.conn.row)['makerId'],200)
+        self.assertEqual(self.client.patch('/v1/accountant-documents/1/cancel',headers=self.headers,json={'reason':'Koreksi'}).status_code,409)
+        self.conn.invoice_makers.clear()
+        self.assertEqual(self.client.patch('/v1/accountant-documents/1/cancel',headers=self.headers,json={'reason':'Koreksi'}).status_code,409)
+        self.assertEqual(self.conn.row['status'],'FINAL')
 
     def test_cancel_generated_daily_rolls_back(self):
         self.conn.row["status"] = "FINAL"

@@ -80,25 +80,27 @@ class MitraMakerTests(unittest.TestCase):
         self.assertEqual(p['operationalPerPm'],3000)
         self.assertFalse(p['applyIndexOp']); self.assertFalse(p['applyIndexRaw']); self.assertEqual(p['cityIndex'],1)
 
-    def test_one_maker_cover_total_and_retry(self):
+    def test_queue_only_cover_total_and_retry(self):
         maker_module=ModuleType('backend.accountant_document_api')
-        maker_module._create_maker=lambda cur,invoice,site,amount,reference: {'makerId':200}
+        def forbidden(*args, **kwargs): raise AssertionError('Queue export must not create Maker')
+        maker_module._create_maker=forbidden
         cur=Cursor(); doc=document(); doc['documentType']='UPAH_RELAWAN'; doc['header']={'combinedPayments':True}; doc['total']=6962000
         with patch.dict('sys.modules',{'backend.accountant_document_api':maker_module}):
             first=export_snapshot(cur,doc,'OWNER'); second=export_snapshot(cur,doc,'OWNER')
-        self.assertEqual(first['maker_id'],200); self.assertTrue(second['duplicate'])
+        self.assertIsNone(first['maker_id']); self.assertTrue(second['duplicate'])
         inserts=[args for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]
         self.assertEqual(len(inserts),1); self.assertEqual(inserts[0][7],6962000)
         cur.export['maker_id']=None
         with patch.dict('sys.modules',{'backend.accountant_document_api':maker_module}):
             replacement=export_snapshot(cur,doc,'OWNER')
         self.assertEqual(replacement['accountant_invoice_id'],100)
-        self.assertEqual(replacement['maker_id'],200)
+        self.assertIsNone(replacement['maker_id'])
+        self.assertTrue(replacement['duplicate'])
         self.assertEqual(len([sql for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]),1)
         cur.export={'accountant_invoice_id':None,'maker_id':None}
         with patch.dict('sys.modules',{'backend.accountant_document_api':maker_module}):
             recreated=export_snapshot(cur,doc,'OWNER')
-        self.assertEqual(recreated['maker_id'],200)
+        self.assertIsNone(recreated['maker_id'])
         self.assertEqual(len([sql for sql,args in cur.calls if 'insert into accountant_invoices(' in sql]),2)
         self.assertFalse(any('PAID' in sql or 'APPROVED' in sql for sql,args in cur.calls))
         for status in ['DRAFT','CANCELLED']:
