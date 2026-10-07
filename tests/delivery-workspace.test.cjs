@@ -33,7 +33,8 @@ for(const width of [360,768,904,1440]){await page.setViewportSize({width,height:
 assert.deepEqual(errors,[]);console.log('PASS delivery calendar/list, editable saved settings and mobile/Fold widths');
 const stampBuffer=Buffer.alloc(5*1024*1024);Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==','base64').copy(stampBuffer);
 const stampInput=page.locator('.delivery-master-editor input[type="file"]').nth(2);
-await stampInput.setInputFiles({name:'stamp.png',mimeType:'image/png',buffer:stampBuffer});await page.locator('.delivery-master-editor img[alt="Stempel"]').waitFor();
+await stampInput.setInputFiles({name:'stamp.png',mimeType:'image/png',buffer:stampBuffer});await page.locator('.delivery-master-editor img[alt="Stempel pengirim / penerima uang"]').waitFor();
 await page.getByRole('button',{name:'Simpan master jenis surat'}).click();await page.waitForFunction(()=>!document.body.textContent.includes('Memuat / menyimpan'));assert.ok(saved.settings.stamp.length>6900000);
-await stampInput.setInputFiles({name:'too-large.png',mimeType:'image/png',buffer:Buffer.alloc(5*1024*1024+1)});await page.getByRole('alert').filter({hasText:'maksimal 5 MB'}).waitFor();assert.equal(await page.locator('.delivery-master-editor img[alt="Stempel"]').count(),1);
+await stampInput.setInputFiles({name:'too-large.png',mimeType:'image/png',buffer:Buffer.alloc(5*1024*1024+1)});await page.getByRole('alert').filter({hasText:'maksimal 5 MB'}).waitFor();assert.equal(await page.locator('.delivery-master-editor img[alt="Stempel pengirim / penerima uang"]').count(),1);
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1});
+

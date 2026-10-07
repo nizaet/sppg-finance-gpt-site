@@ -14,13 +14,33 @@ export const DELIVERY_CSS=`
 @media print{@page{size:A4;margin:15mm}body{background:white}.toolbar{display:none}.paper{width:auto;min-height:0;padding:0;margin:0;box-shadow:none}.asset{border:0;resize:none}header{break-inside:avoid}.print-note{display:none}}`;
 function image(settings,key,cls=''){
   const src=settings[key];if(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(src||''))return '';
-  const defaults=key==='stamp'?{x:35,y:20,w:110,h:110}:{x:20,y:10,w:140,h:100};
+  const defaults=key.toLowerCase().includes('stamp')?{x:35,y:20,w:110,h:110}:{x:20,y:10,w:140,h:100};
   let cfg=key==='logo'?(settings.positions?.[key]||{}):{...defaults,...(settings.positionLayoutVersion===2?settings.positions?.[key]:{})};
   if(key!=='logo'){const w=Math.max(20,Math.min(180,Number(cfg.w)||defaults.w)),h=Math.max(20,Math.min(130,Number(cfg.h)||defaults.h));cfg={w,h,x:Math.max(0,Math.min(180-w,Number(cfg.x)||0)),y:Math.max(0,Math.min(140-h,Number(cfg.y)||0))};}
   const styles=[['x','left'],['y','top'],['w','width'],['h','height']].filter(([k])=>Number.isFinite(Number(cfg[k]))&&cfg[k]!==undefined).map(([k,css])=>`${css}:${Math.max(k==='w'||k==='h'?20:-500,Math.min(1200,Number(cfg[k])))}px`).join(';');
   return `<div class="asset ${cls}" data-asset="${key}" style="${styles}" contenteditable="false"><img src="${esc(src)}" alt="${esc(key)}"></div>`;
 }
-function signer(label,name,settings,withAssets=false,date=null){return `<div class="signer">${date!==null?`<p class="sign-date">${esc(date)||'&nbsp;'}</p>`:''}<p class="signer-label">${esc(label)}</p><div class="sign-space">${withAssets?image(settings,'stamp','stamp')+image(settings,'signature'):''}</div><div class="name">${esc(name)||'........................................'}</div></div>`;}
+function signer(label,name,settings,withAssets=false,date=null){return `<div class="signer">${date!==null?`<p class="sign-date">${esc(date)||'&nbsp;'}</p>`:''}<p class="signer-label">${esc(label)}</p><div class="sign-space">${withAssets?image(settings,settings.assetStampKey||'stamp','stamp')+image(settings,settings.assetSignatureKey||'signature'):''}</div><div class="name">${esc(name)||'........................................'}</div></div>`;}
+
+// Also installed by the parent on iframe load: CSP may block srcdoc inline scripts.
+export function installDeliveryDragging(doc){
+  doc.querySelectorAll('.asset').forEach(el=>{
+    if(el.dataset.dragReady)return;el.dataset.dragReady='yes';
+    el.addEventListener('pointerdown',e=>{
+      if(e.button!==0)return;
+      const r=el.getBoundingClientRect(),resize=e.clientX>r.right-18&&e.clientY>r.bottom-18;
+      e.preventDefault();e.stopPropagation();el.setPointerCapture(e.pointerId);
+      const x=e.clientX,y=e.clientY,left=el.offsetLeft,top=el.offsetTop,w=el.offsetWidth,h=el.offsetHeight;
+      const paper=el.closest('.paper'),scale=paper.getBoundingClientRect().width/paper.offsetWidth||1,parent=el.closest('.sign-space');
+      const move=m=>{const dx=(m.clientX-x)/scale,dy=(m.clientY-y)/scale;
+        if(resize){el.style.width=Math.max(20,Math.min(parent?parent.clientWidth-left:400,w+dx))+'px';el.style.height=Math.max(20,Math.min(parent?parent.clientHeight-top:400,h+dy))+'px';}
+        else{el.style.left=(parent?Math.max(0,Math.min(parent.clientWidth-el.offsetWidth,left+dx)):left+dx)+'px';el.style.top=(parent?Math.max(0,Math.min(parent.clientHeight-el.offsetHeight,top+dy)):top+dy)+'px';}
+      };
+      const stop=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',stop);el.removeEventListener('pointercancel',stop);};
+      el.addEventListener('pointermove',move);el.addEventListener('pointerup',stop);el.addEventListener('pointercancel',stop);
+    });
+  });
+}
 export function deliveryHtml(pkg,kind){
   const doc=pkg.document,s={...pkg.settings,...pkg.settings?.byKind?.[kind]},h=doc.header||{},maja=doc.site==='MAJA';
   const foundation=s.foundation||(maja?'YAYASAN DERMAWAN MENTARI MEGHA':'YAYASAN MITRA MUKTI DERMAWAN');
@@ -33,13 +53,14 @@ export function deliveryHtml(pkg,kind){
   const details=doc.items.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.itemName)}</td><td>${esc(x.quantity)}</td><td>${esc(x.unit)}</td>${kind==='CKL'?'<td></td><td><span class="box"></span>Baik<br><br><span class="box"></span>Rusak</td>':kind==='KUI'?`<td>${rp(x.unitPrice)}</td><td>${rp(x.lineTotal)}</td>`:''}<td>${doc.documentType==='BAHAN_BAKU'?'':esc(x.metadata?.note||'')}</td></tr>`).join('');
   let body='';
   if(kind==='KUI'){
-    body=`<h3 class="title">K U I T A N S I</h3><p style="text-align:center"><b>No. ${esc(pkg.numbers.KUI)}</b></p><table class="kui"><tr><td>Sudah terima dari</td><td>${esc(s.moneyFrom||`Staf Pengawas Keuangan ${kitchen} (${foundation})`)}</td></tr><tr><td>Banyaknya uang</td><td><b>${rp(doc.total)}</b></td></tr><tr><td>Terbilang</td><td><div class="spell">${esc(terbilang(doc.total))} rupiah</div></td></tr><tr><td>Untuk pembayaran</td><td>${esc(s.paymentFor||`Pembayaran ${doc.documentType==='BAHAN_BAKU'?'Bahan Baku':'Operasional lainnya'} dari Koperasi, invoice ${doc.documentNumber}, HPE ${doc.serviceDate}`)}</td></tr></table>${s.showDetails===false?'':`<p><b>Rincian Pembayaran:</b></p><table><thead><tr><th>No</th><th>Uraian</th><th>Vol</th><th>Satuan</th><th>Harga Satuan</th><th>Jumlah Total</th><th>Keterangan</th></tr></thead><tbody>${details}<tr><td colspan="5"><b>Total Dibayar</b></td><td colspan="2"><b>${rp(doc.total)}</b></td></tr></tbody></table>`}<div class="signers">${signer('Lunas Dibayar, Staf Pengawas Keuangan',s.supervisor,{},false,'')}${signer('Yang Menerima,',s.signatory||h.senderSignatory,s,true,`${maja?'Lebak':'Serang'}, ${dt}`)}</div>`;
+    body=`<h3 class="title">K U I T A N S I</h3><p style="text-align:center"><b>No. ${esc(pkg.numbers.KUI)}</b></p><table class="kui"><tr><td>Sudah terima dari</td><td>${esc(s.moneyFrom||`Staf Pengawas Keuangan ${kitchen} (${foundation})`)}</td></tr><tr><td>Banyaknya uang</td><td><b>${rp(doc.total)}</b></td></tr><tr><td>Terbilang</td><td><div class="spell">${esc(terbilang(doc.total))} rupiah</div></td></tr><tr><td>Untuk pembayaran</td><td>${esc(s.paymentFor||`Pembayaran ${doc.documentType==='BAHAN_BAKU'?'Bahan Baku':'Operasional lainnya'} dari Koperasi, invoice ${doc.documentNumber}, HPE ${doc.serviceDate}`)}</td></tr></table>${s.showDetails===false?'':`<p><b>Rincian Pembayaran:</b></p><table><thead><tr><th>No</th><th>Uraian</th><th>Vol</th><th>Satuan</th><th>Harga Satuan</th><th>Jumlah Total</th><th>Keterangan</th></tr></thead><tbody>${details}<tr><td colspan="5"><b>Total Dibayar</b></td><td colspan="2"><b>${rp(doc.total)}</b></td></tr></tbody></table>`}<div class="signers">${signer('Lunas Dibayar, Staf Pengawas Keuangan',s.supervisor,{...s,assetSignatureKey:'supervisorSignature',assetStampKey:'supervisorStamp'},true,'')}${signer('Yang Menerima,',s.signatory||h.senderSignatory,s,true,`${maja?'Lebak':'Serang'}, ${dt}`)}</div>`;
   }else{
     const title=kind==='PO'?'NOTA PESANAN BAHAN MAKANAN':kind==='SJ'?'SURAT JALAN':'CEKLIS PENERIMAAN BARANG';
     body=`<h3 class="title">${title}</h3><p><b>No. ${esc(pkg.numbers[kind])}</b> · ${dt}</p><div class="meta"><div>${kind==='PO'?'Dari':'Penerima'}: <b>${esc(name)}</b><br>Alamat: ${esc(s.receiverAddress||h.recipientAddress||address)}</div><div>${kind==='PO'?'Kepada: '+esc(s.sender||h.issuerName):'Nama Supir: '+esc(s.driver||'........................................')}${kind==='CKL'?'<br>No. Surat Jalan: '+esc(pkg.numbers.SJ):''}</div></div><table><thead><tr><th>No</th><th>${kind==='PO'?'Uraian Jenis Bahan Baku':'Nama Barang'}</th><th>${kind==='CKL'?'Qty Krm':'Jumlah'}</th><th>Satuan</th>${kind==='CKL'?'<th>Qty Trm</th><th>Ceklis Kondisi Fisik</th>':''}<th>Keterangan</th></tr></thead><tbody>${details}</tbody></table><div class="signers">${kind==='CKL'?signer('Diserahkan Oleh (Supir / Kurir)',s.driver,{}):signer(kind==='PO'?'Penerima Pesanan,':'Penerima,',kind==='PO'?s.signatory||h.senderSignatory:s.receiverSignatory,s,kind==='PO')}${signer(kind==='PO'?'Pemesan,':kind==='SJ'?'Hormat Kami,':'Diterima Oleh (Bagian Gudang)',kind==='PO'?s.orderer:kind==='SJ'?s.signatory||h.senderSignatory:s.receiverSignatory,s,kind==='SJ')}${kind==='CKL'?signer('Mengetahui (Security / Penanggung Jawab)',s.security,s,true):''}</div>`;
   }
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(DELIVERY_KINDS[kind])} ${esc(doc.documentNumber)}</title><style>${DELIVERY_CSS}</style></head><body><div class="toolbar"><button onclick="window.print()">Cetak / Simpan PDF</button><button onclick="document.querySelectorAll('.asset').forEach(x=>{x.style.left='0px';x.style.top='0px'})">Reset posisi aset</button><span>Klik teks untuk edit cetak. Geser gambar; tarik sudut kanan bawah untuk ukuran. Perubahan cetak tidak mengubah invoice FINAL.</span></div><main class="paper ${kind==='SJ'?'standard':''}" contenteditable="true">${kop}${body}</main><script>
-(()=>{document.querySelectorAll('.asset').forEach(el=>{el.addEventListener('pointerdown',e=>{const r=el.getBoundingClientRect();if(e.clientX>r.right-20&&e.clientY>r.bottom-20)return;e.preventDefault();el.setPointerCapture(e.pointerId);const x=e.clientX,y=e.clientY,left=el.offsetLeft,top=el.offsetTop;const move=m=>{const scale=parseFloat(getComputedStyle(el.closest('.paper')).zoom)||1;const parent=el.closest('.sign-space');const nx=left+(m.clientX-x)/scale,ny=top+(m.clientY-y)/scale;el.style.left=(parent?Math.max(0,Math.min(parent.clientWidth-el.offsetWidth,nx)):nx)+'px';el.style.top=(parent?Math.max(0,Math.min(parent.clientHeight-el.offsetHeight,ny)):ny)+'px'};const stop=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',stop)};el.addEventListener('pointermove',move);el.addEventListener('pointerup',stop)})});
+(()=>{(${installDeliveryDragging.toString()})(document);
 const save=document.createElement('button');save.textContent='Gunakan posisi ini di halaman dokumen';save.onclick=()=>{const positions={};document.querySelectorAll('.asset').forEach(el=>{positions[el.dataset.asset]={x:el.offsetLeft,y:el.offsetTop,w:el.offsetWidth,h:el.offsetHeight}});if(window.opener)window.opener.postMessage({type:'delivery-positions',documentId:${Number(doc.id)||0},positions,positionLayoutVersion:2,kind:'${kind}'},location.origin);};document.querySelector('.toolbar').appendChild(save);
 if(window!==window.top){const fit=()=>{document.querySelector('.paper').style.zoom=Math.min(1,(innerWidth-16)/794);};fit();window.addEventListener('resize',fit);} })();</script></body></html>`;
 }
+

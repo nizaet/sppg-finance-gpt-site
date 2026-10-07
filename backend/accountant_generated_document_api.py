@@ -29,10 +29,10 @@ class DeliverySettingsIn(BaseModel):
 
 
 def _validate_delivery_settings(settings):
-    # Three 5 MiB images grow to ~20 MiB after base64 encoding, plus metadata.
-    if len(json.dumps(settings)) > 25 * 1024 * 1024:
+    # Five 5 MiB images grow to ~34 MiB after base64 encoding, plus metadata.
+    if len(json.dumps(settings)) > 40 * 1024 * 1024:
         raise HTTPException(422,'Total aset cetak terlalu besar. Maksimal 5 MB per gambar.')
-    for key in ('logo','signature','stamp'):
+    for key in ('logo','signature','stamp','supervisorSignature','supervisorStamp'):
         if settings.get(key):
             validate_artwork(str(settings[key]).split(',',1)[-1])
 
@@ -751,3 +751,4 @@ def document_excel(document_id: int, authorization: str | None = Header(default=
     from backend.generated_document_excel import render_document_excel, MIME
     return {'filename': pdf_filename(document['documentNumber'])[:-4]+'.xlsx', 'mimeType': MIME,
             'contentBase64': base64.b64encode(render_document_excel(document, artwork)).decode()}
+
