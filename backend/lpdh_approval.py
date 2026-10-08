@@ -102,7 +102,7 @@ def cancel_approval(daily, actor, timestamp, reason):
     return out
 
 
-def print_copy(content, assets):
+def print_copy(content, assets, validation=None):
     """Hide other sheets only in the print copy; references remain available."""
     if __package__:
         from .generated_document_settings import validate_artwork
@@ -120,6 +120,17 @@ def print_copy(content, assets):
     if 'J_Pengesahan' not in wb.sheetnames:
         raise ValueError('Template tidak memiliki sheet J_Pengesahan.')
     ws = wb['J_Pengesahan']
+    if validation is not None:
+        # Disposable PDF copy: use the same authoritative checklist as Review.
+        # Legacy workbook checks do not understand grouped invoices or dummy BAST.
+        conclusion = 'LENGKAP: DAPAT DIPROSES' if validation.get('ready') is True else 'PERLU PERBAIKAN'
+        if 'G_CekPPK' in wb.sheetnames:
+            wb['G_CekPPK']['C33'] = conclusion
+        # Official layouts may store a literal result rather than link C33.
+        for row in ws:
+            for cell in row:
+                if str(cell.value or '').strip() in ('PERLU PERBAIKAN', 'LENGKAP: DAPAT DIPROSES'):
+                    cell.value = conclusion
     for sheet in wb:
         sheet.sheet_state = 'visible' if sheet == ws else 'hidden'
     wb.active = wb.index(ws)
@@ -168,14 +179,14 @@ def print_copy(content, assets):
     return out.getvalue()
 
 
-def render_approval(content, assets):
+def render_approval(content, assets, validation=None):
     binary = shutil.which('libreoffice') or shutil.which('soffice')
     if not binary:
         raise ValueError('Mesin cetak template belum tersedia. Dokumen tidak difinalkan.')
     with tempfile.TemporaryDirectory(prefix='lpdh-approval-') as folder:
         root = Path(folder)
         source = root / 'J_Pengesahan.xlsx'
-        source.write_bytes(print_copy(content, assets))
+        source.write_bytes(print_copy(content, assets, validation))
         # Independent profiles avoid concurrent print jobs sharing state.
         profile = (root / 'profile').as_uri()
         subprocess.run([binary, f'-env:UserInstallation={profile}', '--headless',

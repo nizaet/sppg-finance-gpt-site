@@ -952,7 +952,7 @@ def approval_preview(payload: ApprovalIn, request: Request):
     with connection() as conn, conn.cursor() as cur:
         masters, data, preview_data, content, digest, context = _approval_inputs(cur, site, payload.service_date)
     try:
-        pdf = render_approval(content, masters.get('assets') or {})
+        pdf = render_approval(content, masters.get('assets') or {}, preview_data)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).exception('LPDH approval print failed (%s)', type(exc).__name__)
@@ -986,7 +986,7 @@ def approval_finalize(payload: ApprovalIn, request: Request):
         claim_number(cur, site, 'D_INS_RECEIPT', data['incentive']['receiptNo'], owner)
         claim_number(cur, site, 'D_INS_PROOF', data['incentive']['proofNo'], owner)
         try:
-            pdf = render_approval(content, masters.get('assets') or {})
+            pdf = render_approval(content, masters.get('assets') or {}, preview_data)
             archive = upload_accountant_artifact(kind='invoice', filename=f'J_Pengesahan_{site}_{payload.service_date}_{digest[:12]}.pdf',
                 data=pdf, mime_type='application/pdf', site=site, service_date=payload.service_date.isoformat(),
                 artifact_key=f'lpdh-approval-{site}-{payload.service_date}-{digest}')

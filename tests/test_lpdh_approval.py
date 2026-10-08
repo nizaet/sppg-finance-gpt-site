@@ -17,6 +17,19 @@ from fastapi import HTTPException
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_print_conclusion_matches_review_without_changing_source(self):
+        wb = Workbook(); wb.active.title = 'J_Pengesahan'
+        wb.active['E23'] = 'PERLU PERBAIKAN'
+        wb.create_sheet('G_CekPPK')['C33'] = '=IF(C32=0,"LENGKAP: DAPAT DIPROSES","PERLU PERBAIKAN")'
+        source = BytesIO(); wb.save(source); content = source.getvalue()
+        for ready, expected in [(True, 'LENGKAP: DAPAT DIPROSES'), (False, 'PERLU PERBAIKAN')]:
+            result = load_workbook(BytesIO(print_copy(content, {}, {'ready': ready})))
+            self.assertEqual(result['G_CekPPK']['C33'].value, expected)
+            self.assertEqual(result['J_Pengesahan']['E23'].value, expected)
+        original = load_workbook(BytesIO(content))
+        self.assertEqual(original['J_Pengesahan']['E23'].value, 'PERLU PERBAIKAN')
+        self.assertEqual(original['G_CekPPK']['C33'].data_type, 'f')
+
     def test_cancel_keeps_archive_and_manual_proof_and_can_refinalize(self):
         final = attach_approval({'incentive': {}}, {'driveUri': 'https://drive.example/a'}, 'hash', 'OWNER', 'now')
         cancelled = cancel_approval(final, 'OWNER', 'later', 'Koreksi TTD')
@@ -175,3 +188,4 @@ class ApprovalTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
