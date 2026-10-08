@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import "./lpdh.css";
 import InvoiceRecap from './InvoiceRecap.jsx';
+import { savedDailyMatches, pendingReview } from './reviewSaveGate.mjs';
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
 import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets, applyRoutineDaily } from "./LpdhForms.jsx";
 import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
@@ -137,7 +138,7 @@ function ServiceDaysPanel({ site, effectiveDates, monthKey, setMonthKey, onSave,
 
 function ReviewPanel({ masters, daily, preview, serviceDate, referenceRows, activeSheet, setActiveSheet, onOpenIssue, site, onApprovalSaved }) {
   return <div className="lpdh-review">
-    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW ISIAN TEMPLATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa sebelum template diisi dan diunduh.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Review mengikuti isian Data Harian saat ini, termasuk perubahan belum disimpan. Simpan Draft sebelum mengisi template untuk unduhan.</p>}</div>
+    <div className="lpdh-review-head"><div><div className="lpdh-kicker">PREVIEW ISIAN TEMPLATE</div><h2>Workbook LPDH di dalam aplikasi</h2><p>Tab mengikuti urutan sheet Excel resmi. Nilai dan validasi diperiksa sebelum template diisi dan diunduh.</p>{preview?.previewSource === "CURRENT_FORM" && <p>Insentif Review hanya ditampilkan setelah Data Harian disimpan dan validasi diperbarui. Perubahan baru perlu Simpan &amp; Validasi kembali.</p>}</div>
       <div className={preview?.ready?"lpdh-readiness ready":"lpdh-readiness blocked"}>{preview?.ready?<FileCheck2 size={18}/>:<ClipboardCheck size={18}/>}<span>{preview?.ready?"SIAP UNDUH TERVALIDASI":`${preview?.errorCount ?? "-"} PERIKSA`}</span></div>
     </div>
     <div className="lpdh-sheet-tabs">{SHEET_ORDER.map((sheet)=><button key={sheet} className={activeSheet===sheet?"active":""} type="button" onClick={()=>setActiveSheet(sheet)}>{sheet}</button>)}</div>
@@ -180,6 +181,10 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const [daily,setDaily]=useState(normalizeDaily({},todayJakarta()));
   const [finalPlan,setFinalPlan]=useState(null);
   const [preview,setPreview]=useState(null);
+  const [savedDaily,setSavedDaily]=useState(null);
+  const dailySaved = savedDailyMatches(daily,savedDaily);
+  const reviewPreview = dailySaved ? preview : pendingReview(preview);
+  const reviewDaily = dailySaved ? daily : {...daily,incentive:{...daily.incentive,statementAmount:0,paidAmount:0}};
   const [referenceRows,setReferenceRows]=useState([]);
   const [history,setHistory]=useState([]);
   const [active,setActive]=useState(["documents", "daily"].includes(requestedTab) ? requestedTab : "calendar");
@@ -218,7 +223,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const loadDaily=useCallback(async(targetSite=site,date=selectedDate)=>{
     const version = ++dailyRead.current;
     const r=await lpdhApi.getDaily(targetSite,date);
-    if (version === dailyRead.current && viewContext.current === `${targetSite}|${date}`) { setDaily(normalizeDaily(r.data||{},date)); setFinalPlan(r.finalPlan||null); }
+    if (version === dailyRead.current && viewContext.current === `${targetSite}|${date}`) { const next=normalizeDaily(r.data||{},date); setDaily(next); setSavedDaily(next._reviewValidated ? JSON.stringify(next) : null); setFinalPlan(r.finalPlan||null); }
     return r;
   },[site,selectedDate]);
 
@@ -322,7 +327,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
         {active==="masters"&&<MasterPanel site={site} masters={masters} setMasters={setMasters} api={lpdhApi} onSaved={flash} onReload={reloadMasterTargets} issueTarget={issueTarget}/>}
-        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={setDaily} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} issueTarget={issueTarget} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
+        {active==="daily"&&(busy ? <div role="status">Memuat data tanggal ini…</div> : <DailyPanel dailySaved={dailySaved} onValidated={data=>{setDaily(data);setSavedDaily(JSON.stringify(data));}} site={site} serviceDate={selectedDate} masters={masters} daily={daily} setDaily={data=>setDaily({...data,_reviewValidated:false})} finalPlan={finalPlan} preview={preview} api={lpdhApi} onSaved={flash} issueTarget={issueTarget} onPreview={async(data)=>{await refreshPreview(site,selectedDate,data);await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>)}
         {active==="documents"&&<DocumentWorkspace searchable site={site} serviceDate={selectedDate} onDateChange={setSelectedDate} onOpenDaily={()=>setActive("daily")} onRoutineDaily={async(result)=>{
           if(result.targetDailyStatus==="GENERATED") throw new Error("LPDH tanggal ini sudah digenerate. Buka Data Harian dan simpan sebagai draft dahulu, atau tarik dokumen per bagian tanpa isian PM.");
           const next=applyRoutineDaily(daily,result,masters,selectedDate);
@@ -333,7 +338,8 @@ export default function LpdhWorkspace({ role, onLogout }) {
           setDaily(next);
           flash(`Isian PM dari ${result.sourceDate} tersimpan sebagai draft; periksa realisasi hari ini. Bukti dan pembayaran lama tidak disalin.`);
         }} onFinalized={async()=>{await loadDaily();await refreshPreview();await loadCalendar(site,monthKeyFromDate(selectedDate));}}/>}
-        {active==="review"&&<ReviewPanel site={site} onApprovalSaved={async()=>{await loadDaily();await refreshPreview();}} masters={masters} daily={daily} preview={preview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet} onOpenIssue={openIssue}/>}
+        {active==="review"&&!dailySaved&&<div className="lpdh-note warn" role="alert">Insentif Review masih Rp0. Klik Simpan &amp; Validasi di Data Harian agar nilai masuk ke Review. <button type="button" onClick={()=>setActive("daily")}>Buka Data Harian</button></div>}
+        {active==="review"&&<ReviewPanel site={site} onApprovalSaved={async()=>{await loadDaily();await refreshPreview();}} masters={masters} daily={reviewDaily} preview={reviewPreview} serviceDate={selectedDate} referenceRows={referenceRows} activeSheet={activeSheet} setActiveSheet={setActiveSheet} onOpenIssue={openIssue}/>}
         {active==="generate"&&<GeneratePanel site={site} serviceDate={selectedDate} preview={preview} history={history} onRefresh={()=>refreshPreview()} onGenerate={generate} busy={busy} finalPlan={finalPlan} onOpenIssue={openIssue}/>}
       </section>
     </div>

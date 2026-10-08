@@ -578,7 +578,7 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
   return syncDailyMasterTargets(next, masters, serviceDate);
 }
 
-export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, issueTarget }) {
+export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, onValidated, dailySaved=false, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
   const saldo = balanceSummary(data, preview);
   const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
@@ -670,9 +670,16 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   const save = async () => {
     setBusy(true);
     try {
-      await api.saveDaily(site, serviceDate, data, "DRAFT");
-      onSaved?.("Draft harian tersimpan di cloud.");
-      await onPreview?.(data);
+      const context=copyContext.current;
+      const saved={...data,_reviewValidated:true};
+      await api.saveDaily(site, serviceDate, saved, "DRAFT");
+      if (context !== copyContext.current) return;
+      setDaily(saved);
+      await onPreview?.(saved);
+      if (context !== copyContext.current) return;
+      onValidated?.(saved);
+      onSaved?.("Data Harian tersimpan dan validasi diperbarui. Nilai sudah masuk ke Review; periksa hasil G_CekPPK.");
+    } catch(error) { onSaved?.(error.message || "Simpan & Validasi gagal. Silakan coba lagi.","error");
     } finally { setBusy(false); }
   };
 
@@ -702,7 +709,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
       <button type="button" onClick={pullPrevious} disabled={busy}>Tarik isian hari sebelumnya</button>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
-      <button type="button" className="primary" onClick={save} disabled={busy}><Save size={15}/> Simpan Draft</button>
+      <button type="button" className={dailySaved?"primary":"lpdh-save-pending"} onClick={save} disabled={busy}><Save size={15}/> Simpan & Validasi</button>
     </>}>
       <div className={finalPlan?.payload ? "lpdh-status-box ok" : "lpdh-status-box warn"}>
         <strong>{finalPlan?.payload ? "Final Kalkulator tersedia" : "Belum ada Final Kalkulator"}</strong>
@@ -901,7 +908,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     </FormTabs>
-    <div className="lpdh-sticky-save"><button className="primary" type="button" onClick={save} disabled={busy}><Save size={16}/> Simpan & Validasi</button></div>
+    <div className="lpdh-sticky-save"><span role="status">{dailySaved?"Tersimpan. Periksa hasil validasi di Review.":"Belum disimpan / ada perubahan. Klik Simpan & Validasi agar insentif masuk ke Review."}</span><button className={dailySaved?"primary":"lpdh-save-pending"} type="button" onClick={save} disabled={busy}><Save size={16}/> {busy?"Menyimpan…":"Simpan & Validasi"}</button></div>
   </div>;
 }
 
