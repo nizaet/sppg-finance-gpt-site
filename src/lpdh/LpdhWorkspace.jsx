@@ -16,6 +16,7 @@ import {
   Save,
 } from "lucide-react";
 import "./lpdh.css";
+import InvoiceRecap from './InvoiceRecap.jsx';
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
 import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets, applyRoutineDaily } from "./LpdhForms.jsx";
 import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
@@ -168,6 +169,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
   const requestedSite=typeof window!=="undefined" ? String(new URLSearchParams(window.location.search).get("site")||"").toUpperCase() : "";
   const initialSite=accountRole==="OWNER" && (requestedSite==="MAJA" || requestedSite==="CEMPLANG") ? requestedSite : (accountRole==="OWNER"?"MAJA":accountRole);
   const [site,setSite]=useState(initialSite);
+  useEffect(()=>{document.title=`LPDH ${site==='CEMPLANG'?'Cemplang':'Maja'}`;for(const rel of ['icon','shortcut icon']){const link=document.querySelector(`link[rel='${rel}']`);if(link)link.href=`/favicon-lpdh-${site.toLowerCase()}.svg`; }},[site]);
   const requestedDate = new URLSearchParams(window.location.search).get("date") || "";
   const requestedTab = new URLSearchParams(window.location.search).get("tab") || "";
   const [selectedDate,setSelectedDate]=useState(/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && !Number.isNaN(Date.parse(requestedDate)) ? requestedDate : todayJakarta());
@@ -298,6 +300,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
     ["daily","Data Harian dari Dokumen",Files],
     ["review","Review LPDH / Sheet Excel",FileCheck2],
     ["generate","Unduh Excel & Riwayat",History],
+    ["invoice-recap","Rekap Invoice",ReceiptText],
   ];
 
   return <main className="lpdh-page">
@@ -314,6 +317,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
       </nav>
 
       <section className="lpdh-content">
+        {active==='invoice-recap'&&<InvoiceRecap site={site} onOpen={date=>{setSelectedDate(date);setActive('documents');}}/>}
         {issueTarget&&<div className="lpdh-note warn" role="status">Pemeriksaan {issueTarget.issue.no}: {issueTarget.issue.check}. {issueTarget.issue.detail}<button type="button" onClick={()=>setIssueTarget(null)}>Tutup petunjuk</button></div>}
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 
         {active==="service-days"&&<ServiceDaysPanel site={site} effectiveDates={effectiveDates} monthKey={effectiveMonth} setMonthKey={(m)=>{setEffectiveMonth(m);loadEffective(site,m).catch((e)=>flash(e.message,"error"));}} onSave={saveEffective} busy={busy}/>}
@@ -335,3 +339,4 @@ export default function LpdhWorkspace({ role, onLogout }) {
     </div>
   </main>;
 }
+

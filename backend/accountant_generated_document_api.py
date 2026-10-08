@@ -378,6 +378,17 @@ def save_document_profile(payload: DocumentProfileIn, authorization: str | None 
     return {"ok": True, "profile": profile, "header": header}
 
 
+@router.get("/accountant-documents/recap")
+def invoice_recap(site: Site, start_date: date, end_date: date, authorization: str | None = Header(default=None)):
+    _authorize(authorization, site)
+    if end_date < start_date or (end_date-start_date).days > 365:
+        raise HTTPException(422, 'Pilih periode berurutan maksimal 366 hari.')
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('select * from generated_accountant_documents where site=%s and service_date between %s and %s order by service_date,id', (site,start_date,end_date))
+        rows=cur.fetchall()
+        return {'documents': [_serialize_document(cur,row) for row in rows]}
+
+
 @router.get("/accountant-documents")
 def list_documents(site: Site, service_date: date, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)

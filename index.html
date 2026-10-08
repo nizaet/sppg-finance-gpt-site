@@ -9,7 +9,11 @@
         var path = window.location.pathname.toLowerCase();
         var icon = "/favicon-accountant-maja.svg?v=90";
         var title = "Akuntan Maja | SPPG";
-        if (path === "/operations" || path.indexOf("/operations/") === 0) {
+        if (path === '/lpdh' || path.indexOf('/lpdh/') === 0) {
+          var site = new URLSearchParams(window.location.search).get('site') === 'CEMPLANG' ? 'cemplang' : 'maja';
+          icon = '/favicon-lpdh-' + site + '.svg';
+          title = site === 'cemplang' ? 'LPDH Cemplang' : 'LPDH Maja';
+        } else if (path === "/operations" || path.indexOf("/operations/") === 0) {
           icon = "/favicon-operations.svg?v=90";
           title = "Pusat Operasional | SPPG";
         } else if (path === "/accountant/cemplang" || path.indexOf("/accountant/cemplang/") === 0) {
@@ -31,3 +35,4 @@
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+

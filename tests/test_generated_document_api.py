@@ -194,6 +194,13 @@ class DocumentApiTests(unittest.TestCase):
         self.headers = {"Authorization": "Bearer MAJA"}
         self.payload = {"site": "MAJA", "document_type": "OPERASIONAL", "document_number": "INV/MAJA/001", "service_date": "2026-10-05", "header_payload": self.conn.row["header_payload"], "request_key": "test-request-001", "items": [{"item_name": "Gas", "category_code": "Gas", "quantity": 1, "unit": "tabung", "unit_price": 1000}]}
 
+    def test_recap_auth_and_date_limits(self):
+        path='/v1/accountant-documents/recap?site=MAJA&start_date=2026-10-05&end_date=2026-10-09'
+        self.assertEqual(self.client.get(path).status_code,401)
+        self.assertEqual(self.client.get(path.replace('site=MAJA','site=CEMPLANG'),headers=self.headers).status_code,403)
+        self.assertEqual(self.client.get(path.replace('end_date=2026-10-09','end_date=2026-10-04'),headers=self.headers).status_code,422)
+        self.assertEqual(self.client.get(path.replace('end_date=2026-10-09','end_date=2028-10-09'),headers=self.headers).status_code,422)
+
     def test_authentication_and_site_scope(self):
         self.assertEqual(self.client.post("/v1/accountant-documents", json=self.payload).status_code, 401)
         for action in ("finalize", "pdf"):
@@ -502,3 +509,4 @@ class DocumentApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
