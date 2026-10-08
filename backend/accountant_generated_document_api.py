@@ -389,6 +389,22 @@ def invoice_recap(site: Site, start_date: date, end_date: date, authorization: s
         return {'documents': [_serialize_document(cur,row) for row in rows]}
 
 
+@router.get("/accountant-documents/recap/operational-items")
+def operational_items_recap(site: Site, start_date: date, end_date: date, authorization: str | None = Header(default=None)):
+    from backend.operational_item_recap import operational_recap
+    source=invoice_recap(site,start_date,end_date,authorization)
+    return operational_recap(source['documents'],start_date,end_date)
+
+
+@router.get("/accountant-documents/recap/operational-items.xlsx")
+def operational_items_excel(site: Site, start_date: date, end_date: date, authorization: str | None = Header(default=None)):
+    from backend.operational_item_recap import recap_excel
+    recap=operational_items_recap(site,start_date,end_date,authorization)
+    content=recap_excel(recap,site,start_date,end_date)
+    return Response(content,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition':f'attachment; filename="Rekap_Operasional_{site}_{start_date}_{end_date}.xlsx"','Cache-Control':'private, no-store'})
+
+
 @router.get("/accountant-documents")
 def list_documents(site: Site, service_date: date, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
