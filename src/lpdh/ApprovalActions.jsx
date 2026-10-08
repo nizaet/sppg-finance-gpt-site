@@ -23,7 +23,16 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved, onO
       setTimeout(() => URL.revokeObjectURL(url), 300000);
       if (alive.current) { setPrinted(result); setMessage('Cetak PDF pada tab baru, lalu kembali dan klik Finalkan.'); }
     } catch (error) {
-      tab.close(); if (alive.current) setMessage(error.message);
+      const failure = `Pratinjau J_Pengesahan ${site} tanggal ${serviceDate} gagal: ${error?.message || 'Permintaan gagal. Silakan coba kembali.'}`;
+      // Keep the failure visible in both places; closing the new tab hid it.
+      try {
+        if (!tab.closed) {
+          tab.document.title = 'Pratinjau J_Pengesahan gagal';
+          tab.document.body.textContent = `${failure}\n\nData tidak difinalkan. Kembali ke tab LPDH untuk memperbaiki isian atau mencoba kembali.`;
+          tab.document.body.style.cssText = 'font:18px/1.6 sans-serif;padding:32px;white-space:pre-wrap;color:#991b1b';
+        }
+      } catch { /* The originating page still displays the failure. */ }
+      if (alive.current) setMessage(failure);
     } finally { operationLock.current = false; if (alive.current) setBusy(false); }
   };
   const finalize = async () => {
@@ -60,6 +69,7 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved, onO
       {approval?.pdfLink && <a href={approval.pdfLink} target="_blank" rel="noopener noreferrer">PDF pengesahan di Drive</a>}
     </div>
     {approval?.status === 'CANCELLED' && <p>Pengesahan dibatalkan: {approval.cancelReason}. PDF lama adalah arsip, bukan pengesahan aktif.</p>}
-    {message && <p role="status">{message}</p>}
+    {message && <p role="status" style={{whiteSpace:'pre-wrap'}}>{message}</p>}
   </div>;
 }
+
