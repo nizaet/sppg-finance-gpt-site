@@ -63,7 +63,9 @@ def save_draft(payload:ReceiptIn,request:Request):
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
     with connection() as conn,conn.cursor() as cur:
         site,data,actor=context(request,payload.site,payload.service_date,cur)
-        rows=data.get('topups') or []
+        rows=data.setdefault('topups', [])
+        if payload.row_index == len(rows) and not any(expected[k] for k in ('rawAmount','operationalAmount','incentiveAmount')) and expected['date'] == payload.service_date.isoformat():
+            rows.append({**expected,'receiptNo':'','evidenceLink':''})
         if payload.row_index>=len(rows):raise HTTPException(409,'Baris TopUp berubah. Muat ulang.')
         target=rows[payload.row_index]
         try:funds=financial(target)

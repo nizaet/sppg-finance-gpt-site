@@ -4,7 +4,7 @@ import {arrayBufferToBase64} from './lpdhApi.js';
 const labels={sppgName:'Nama SPPG',foundation:'Nama Yayasan / kop',headName:'Nama Kepala SPPG',foundationName:'Nama penerima / pengurus Yayasan',address:'Alamat pada kop',payer:'Sudah terima dari',purpose:'Untuk pembayaran'};
 const images={letterhead:'Kop / logo',headSignature:'TTD Kepala SPPG',headStamp:'Stempel SPPG',foundationSignature:'TTD penerima Yayasan',foundationStamp:'Stempel Yayasan'};
 const moneyLabels={rawAmount:'Nilai bahan baku (Rp)',operationalAmount:'Nilai operasional (Rp)',incentiveAmount:'Nilai insentif (Rp)'};
-export default function TopupReceiptActions({site,serviceDate,row,index,api,disabled,onData}){
+export default function TopupReceiptActions({site,serviceDate,row,index,api,disabled,onData,isNew=false}){
  const[open,setOpen]=useState(false),[profile,setProfile]=useState({}),[number,setNumber]=useState(''),[receipt,setReceipt]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[url,setUrl]=useState(''),[hash,setHash]=useState('');
  const alive=useRef(true),lock=useRef(false),pdfUrl=useRef('');
  const[funds,setFunds]=useState(row);
@@ -19,7 +19,7 @@ export default function TopupReceiptActions({site,serviceDate,row,index,api,disa
  const finalize=()=>{if(!window.confirm('Finalkan kuitansi TopUp ini? PDF disimpan ke Drive, nomor dan link masuk ke baris penerimaan. Ini bukan konfirmasi transfer bank.'))return;run(async()=>{const r=await api.topupReceiptFinalize(receipt.id,hash);if(!alive.current)return;setReceipt(r.receipt);onData(r.data);setUrl('');setHash('');setMessage('FINAL: PDF tersimpan di Drive. Nomor dan link otomatis terisi. Klik Simpan & Validasi untuk memperbarui pemeriksaan.')})};
  const cancel=()=>{const reason=window.prompt('Alasan membatalkan kuitansi? Arsip Drive tetap disimpan.');if(!reason?.trim())return;run(async()=>{const r=await api.topupReceiptCancel(receipt.id,receipt.hash,reason);if(!alive.current)return;setReceipt(r.receipt);onData(r.data);setHash('');setUrl('');setMessage('Dibatalkan. Dana penerimaan tidak dihapus; link otomatis dilepas. Simpan & Validasi atau buat draft baru.')})};
  const total=['rawAmount','operationalAmount','incentiveAmount'].reduce((s,k)=>s+Number(funds[k]||0),0);
- return <div><button type="button" disabled={disabled&&!row._topupReceiptId} onClick={load}>Buat / Buka Kuitansi TopUp {index+1}</button>
+ return <div><button type="button" disabled={disabled&&!row._topupReceiptId} onClick={load}>{isNew?'Buat Kuitansi TopUp baru':`Buat / Buka Kuitansi TopUp ${index+1}`}</button>
  {disabled&&!row._topupReceiptId&&<small> Klik Simpan &amp; Validasi dahulu.</small>}
  {open&&<div className="invoice-recap-overlay"><section className="invoice-recap-dialog topup-receipt-dialog" role="dialog" aria-modal="true" aria-label="Kuitansi penerimaan TopUp">
  <header><h3>Kuitansi TopUp · format Banper</h3><button type="button" disabled={busy} onClick={()=>setOpen(false)}>Tutup</button></header>

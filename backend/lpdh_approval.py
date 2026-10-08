@@ -81,7 +81,7 @@ def attach_approval(daily, archive, digest, actor, timestamp):
     inc['approvalEvidenceLink'] = link
     # Preserve a separately entered real payment-evidence link.
     old_auto = (previous or {}).get('pdfLink')
-    if not inc.get('evidenceLink') or inc.get('evidenceLink') == old_auto:
+    if not str(inc.get('evidenceLink') or '').strip().startswith('https://') or inc.get('evidenceLink') == old_auto:
         inc['evidenceLink'] = link
     return out
 
@@ -190,3 +190,4 @@ def render_approval(content, assets):
         if not reader.pages or 'PENGESAHAN' not in text.upper() or '#REF!' in text:
             raise ValueError('Hasil cetak template tidak valid. Periksa template resmi.')
         return data
+

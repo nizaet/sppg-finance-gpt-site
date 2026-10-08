@@ -923,6 +923,11 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         if(JSON.stringify(current.topups[index])!==JSON.stringify(row)){onSaved?.('Kuitansi tersimpan, tetapi isian lokal berubah. Muat ulang untuk mengambil link terbaru; isian Anda tidak ditimpa.','error');return;}
         setDaily({...current,topups:current.topups.map((r,i)=>i===index?next.topups[index]:r)});
       }}/>)}</div>
+      <TopupReceiptActions key={`${site}-${serviceDate}-new-${data.topups.length}`} isNew site={site} serviceDate={serviceDate} row={{date:serviceDate,reference:'',rawAmount:0,operationalAmount:0,incentiveAmount:0}} index={data.topups.length} api={api} disabled={busy} onData={next=>{
+        const current=topupFormRef.current;
+        if(current.topups.length!==data.topups.length){onSaved?.('Daftar TopUp berubah. Muat ulang sebelum membuat kuitansi baru.','error');return;}
+        setDaily({...current,topups:[...current.topups,next.topups[data.topups.length]]});
+      }}/>
     </Section>
 
     <Section tabKey="upload" tabLabel="Upload" title="Rencana upload">

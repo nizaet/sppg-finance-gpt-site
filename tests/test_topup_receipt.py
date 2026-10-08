@@ -84,6 +84,27 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(self.db.data['topups'][0]['rawAmount'],1000)
         self.assertEqual(self.db.data['topups'][0]['incentiveAmount'],3000)
 
+    def test_new_receipt_without_existing_topup(self):
+        self.db.data['topups']=[]
+        response=self.client.post('/v1/lpdh/topup/receipts',json={'site':'MAJA','service_date':'2026-10-08','row_index':0,'expected_funds':{'date':'2026-10-08'},'funds':{'date':'2026-10-08','rawAmount':1000},'document_number':'001/KWT/SPPGSANG2/X/2026','profile':self.profile})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(len(self.db.data['topups']),1)
+        self.assertEqual(self.db.data['topups'][0]['rawAmount'],0)
+        with patch('backend.accountant_drive.upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/test'}):
+            self.assertEqual(self.action('finalize',response.json()['receipt']).status_code,200)
+        self.assertEqual(self.db.data['topups'][0]['rawAmount'],1000)
+
+    def test_invalid_mitra_link_recovers_from_final_approval(self):
+        from backend.generated_document_logic import merge_final_documents
+        data={'incentive':{'paidAmount':6344000,'evidenceLink':'004/KW-INS'},'_approval':{'status':'FINAL','pdfLink':'https://drive.google.com/approval'}}
+        result=merge_final_documents(data,[])
+        self.assertEqual(result['incentive']['evidenceLink'],'https://drive.google.com/approval')
+        self.assertEqual(result['incentive']['paidAmount'],6344000)
+        data['incentive']['evidenceLink']='https://manual.example/proof'
+        self.assertEqual(merge_final_documents(data,[])['incentive']['evidenceLink'],'https://manual.example/proof')
+        data['incentive']['evidenceLink']='';data['_approval']['status']='CANCELLED'
+        self.assertEqual(merge_final_documents(data,[])['incentive']['evidenceLink'],'')
+
     def test_stale_and_locked(self):
         bad=deepcopy(self.db.data['topups'][0]);bad['rawAmount']=1
         self.assertEqual(self.draft(expected_funds=bad).status_code,409)

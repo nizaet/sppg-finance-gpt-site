@@ -88,6 +88,10 @@ def merge_final_documents(daily, documents):
     if len(mitra) > 1:
         raise ValueError('Satu hari hanya boleh memiliki satu invoice insentif Mitra FINAL aktif.')
     incentive = out.setdefault('incentive', {})
+    approval = out.get('_approval') or {}
+    if approval.get('status') == 'FINAL' and str(approval.get('pdfLink') or '').startswith('https://') and not str(incentive.get('evidenceLink') or '').strip().startswith('https://'):
+        incentive['evidenceLink'] = approval['pdfLink']
+        incentive['approvalEvidenceLink'] = approval['pdfLink']
     prior = incentive.get('_invoiceEvidence') or {}
     if mitra:
         doc = mitra[0]
@@ -186,3 +190,4 @@ def grouped_operations(rows):
                        "invoiceNo": "; ".join(numbers), "evidenceLink": "; ".join(links), "paymentReference": "; ".join(refs),
                        "note": "; ".join(f"{x.get('description')}: {x.get('qty')} {x.get('unit')} ({x.get('invoiceNo') or '-'})" for x in items)})
     return result
+
