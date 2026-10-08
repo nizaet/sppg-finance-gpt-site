@@ -3,6 +3,7 @@ import { Download, FileUp, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 import { balanceSummary } from "./balanceSummary.mjs";
+import { defaultBastRows } from './bastDefaults.mjs';
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -224,6 +225,7 @@ export function normalizeDaily(value = {}, serviceDate = "") {
   const supplied = Array.isArray(data.pm.rows) ? data.pm.rows : [];
   const byCode = Object.fromEntries(supplied.map((x) => [String(x.code || x.groupCode || "").toUpperCase(), x]));
   data.pm.rows = GROUP_DEFAULTS.map((group) => ({ ...group, ...(byCode[group.code] || {}), code: group.code }));
+  data.pm.rows = defaultBastRows(data.pm.rows,serviceDate,data._historicalGeneratedSnapshot);
   data.rawMaterials = Array.isArray(data.rawMaterials) ? data.rawMaterials : [];
   data.operations = Array.isArray(data.operations) ? data.operations : [];
   data.volunteerPayments = Array.isArray(data.volunteerPayments) ? data.volunteerPayments : [];
@@ -996,3 +998,4 @@ export function DocumentsPanel({ serviceDate, daily, preview, masters, onMessage
     </Section>
   </div>;
 }
+

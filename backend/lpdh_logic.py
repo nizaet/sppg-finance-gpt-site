@@ -649,7 +649,8 @@ def compute_preview(
     buffer_qty = as_number(production.get("buffer"))
     production_diff = produced - (distributed + organoleptic + retained_sample + production_not_distributed + buffer_qty)
 
-    incentive_pm = calculated_pm + (organoleptic if hpe_eligible else 0) + (retained_sample if hpe_eligible else 0)
+    # Default production samples alone must not create an incentive on an empty day.
+    incentive_pm = calculated_pm + (organoleptic + retained_sample if hpe_eligible and calculated_pm > 0 else 0)
     index = as_number(params.get("cityIndex"), 1.0) or 1.0
     raw_small = as_number(params.get("rawSmall"), 8000) * (index if params.get("applyIndexRaw", True) else 1)
     raw_large = as_number(params.get("rawLarge"), 10000) * (index if params.get("applyIndexRaw", True) else 1)
@@ -1799,3 +1800,4 @@ def workbook_reference_rows() -> list[list[Any]]:
 
 def encode_bytes(content: bytes) -> str:
     return base64.b64encode(content).decode("ascii")
+
