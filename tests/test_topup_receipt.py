@@ -17,6 +17,7 @@ class Store(fixture.FakeConnection):
         super().__init__();self.data={'topups':[{'date':'2026-10-08','rawAmount':231392400,'operationalAmount':64864000,'incentiveAmount':40576000,'reference':'SP2D-1','receiptNo':'','evidenceLink':''}]};self.receipts={};self.daily_status='DRAFT';self.topup_profile=None
     def execute(self,sql,args=()):
         if sql.startswith('select data,status from lpdh_daily_state'):self.result={'data':deepcopy(self.data),'status':self.daily_status}
+        elif sql.startswith('select data from lpdh_daily_state'):self.result={'data':deepcopy(self.data)}
         elif sql.startswith('select * from lpdh_topup_receipts where id'):
             r=self.receipts.get(args[0]);self.result=deepcopy(r) if r and (len(args)==1 or (r['site']==args[1] and r['service_date']==args[2])) else None
         elif sql.startswith('select * from lpdh_topup_receipts where site'):self.result=[deepcopy(r) for r in self.receipts.values() if r['site']==args[0] and r['service_date']==args[1]]

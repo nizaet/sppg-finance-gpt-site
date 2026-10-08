@@ -919,10 +919,12 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("topups",index)}><Trash2 size={14}/></button></td>
         </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
-      <div className="lpdh-inline-actions">{data.topups.map((row,index)=><TopupReceiptActions key={`${site}-${serviceDate}-${index}`} site={site} serviceDate={serviceDate} row={row} index={index} api={api} disabled={busy||!dailySaved} onData={next=>{
+      <div className="lpdh-inline-actions">{data.topups.map((row,index)=><TopupReceiptActions key={`${site}-${serviceDate}-${index}`} site={site} serviceDate={serviceDate} row={row} index={index} api={api} disabled={busy} onData={(next,receiptId)=>{
         const current=topupFormRef.current;
         if(JSON.stringify(current.topups[index])!==JSON.stringify(row)){onSaved?.('Kuitansi tersimpan, tetapi isian lokal berubah. Muat ulang untuk mengambil link terbaru; isian Anda tidak ditimpa.','error');return;}
-        setDaily({...current,topups:current.topups.map((r,i)=>i===index?next.topups[index]:r)});
+        const target=next.topups.find(r=>r._topupReceiptId===receiptId);
+        if(!target)return;
+        setDaily({...current,topups:current.topups.map((r,i)=>i===index?target:r)});
       }}/>)}</div>
       <TopupReceiptActions key={`${site}-${serviceDate}-new`} isNew site={site} serviceDate={serviceDate} row={{date:serviceDate,reference:'',rawAmount:0,operationalAmount:0,incentiveAmount:0}} index={data.topups.length} api={api} disabled={busy} onData={(next,receiptId)=>{
         const current=topupFormRef.current;

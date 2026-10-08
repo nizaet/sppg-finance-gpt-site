@@ -54,9 +54,11 @@ def list_receipts(request:Request,site:str=Query(),service_date:date=Query(alias
         cur.execute('select data from lpdh_topup_receipt_profiles where site=%s',(site,));stored=cur.fetchone()
         if stored:profile.update(stored['data'])
         cur.execute('select * from lpdh_topup_receipts where site=%s and service_date=%s order by id',(site,service_date));receipts=[serialize(r) for r in cur.fetchall()]
+        cur.execute('select data from lpdh_daily_state where site=%s and service_date=%s',(site,service_date));daily=cur.fetchone()
+        topups=(daily['data'].get('topups') or []) if daily else []
         roman=['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'][service_date.month-1]
         number=suggest_number(cur,site,'TOPUP_RECEIPT',f'001/KWT/SPPG-{site}/{roman}/{service_date.year}')
-    return {'profile':profile,'documentNumber':number,'receipts':receipts}
+    return {'profile':profile,'documentNumber':number,'receipts':receipts,'topups':topups}
 
 @router.post('/topup/receipts')
 def save_draft(payload:ReceiptIn,request:Request):
@@ -71,7 +73,7 @@ def save_draft(payload:ReceiptIn,request:Request):
         target=rows[payload.row_index]
         try:funds=financial(target)
         except ValueError as exc:raise HTTPException(422,'Isi tanggal dan nominal penerimaan TopUp.') from exc
-        if expected!=funds:raise HTTPException(409,'Isian belum sama dengan data tersimpan. Klik Simpan & Validasi dahulu.')
+        if expected!=funds:raise HTTPException(409,'Baris TopUp tersimpan berubah sejak kuitansi dibuka. Tutup lalu buka kembali kuitansi.')
         baseline=funds
         if payload.funds is not None:
             try:funds=financial(payload.funds)
