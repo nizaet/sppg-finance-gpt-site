@@ -6,7 +6,12 @@ const {chromium}=require('playwright');
  const browser=await chromium.launch({headless:true});try{
   const page=await browser.newPage();await page.setContent('<div id="root"></div>');await page.addScriptTag({path:out});
   await page.getByRole('button',{name:'Buat / Buka Kuitansi TopUp 1',exact:true}).click();await page.getByLabel('Nama SPPG',{exact:true}).waitFor();
+  await page.addStyleTag({path:path.join(root,'src/lpdh/lpdh.css')});
   assert.equal(await page.getByLabel('Nama SPPG',{exact:true}).inputValue(),'Maja');
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.getByRole('dialog').evaluate(e=>e.scrollWidth<=e.clientWidth),true);
+  assert.ok(await page.getByLabel('Nama SPPG',{exact:true}).evaluate(e=>e.getBoundingClientRect().width)>250);
+  await page.setViewportSize({width:1100,height:900});
   assert.equal(await page.getByRole('button',{name:'Preview / Cetak PDF',exact:true}).isEnabled(),false);
   await page.getByRole('button',{name:'Simpan Draft Kuitansi',exact:true}).click();await page.waitForFunction(()=>window.receiptData?.draft);
   await page.getByRole('button',{name:'Preview / Cetak PDF',exact:true}).click();await page.getByTitle('Preview Kuitansi TopUp').waitFor();

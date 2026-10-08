@@ -13,6 +13,7 @@ class ReceiptIn(BaseModel):
     service_date:date
     row_index:int=Field(ge=0,le=120)
     expected_funds:dict
+    funds:dict|None=None
     document_number:str=Field(min_length=1,max_length=100)
     profile:dict
 class ActionIn(BaseModel):
@@ -68,12 +69,16 @@ def save_draft(payload:ReceiptIn,request:Request):
         try:funds=financial(target)
         except ValueError as exc:raise HTTPException(422,'Isi tanggal dan nominal penerimaan TopUp.') from exc
         if expected!=funds:raise HTTPException(409,'Isian belum sama dengan data tersimpan. Klik Simpan & Validasi dahulu.')
+        baseline=funds
+        if payload.funds is not None:
+            try:funds=financial(payload.funds)
+            except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         if sum(funds[k] for k in ('rawAmount','operationalAmount','incentiveAmount'))<=0:raise HTTPException(422,'Nominal TopUp harus lebih dari nol.')
         current=None
         if target.get('_topupReceiptId'):
             cur.execute('select * from lpdh_topup_receipts where id=%s and site=%s and service_date=%s for update',(target['_topupReceiptId'],site,payload.service_date));current=cur.fetchone()
         if current and current['status']=='FINAL':raise HTTPException(409,'Batalkan kuitansi FINAL sebelum mengeditnya.')
-        snapshot={'funds':funds,'profile':profile,'number':number,'previousReceipt':target.get('receiptNo') or '', 'previousLink':target.get('evidenceLink') or ''}
+        snapshot={'funds':funds,'sourceFunds':baseline,'profile':profile,'number':number,'previousReceipt':target.get('receiptNo') or '', 'previousLink':target.get('evidenceLink') or ''}
         if current and current['status']=='DRAFT':
             receipt_id=current['id']
             cur.execute('delete from document_number_serials where site=%s and namespace=%s and owner_key=%s',(site,'TOPUP_RECEIPT','TOPUP:'+str(receipt_id)))

@@ -70,6 +70,20 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaises(HTTPException):protect_final_rows(self.db,'MAJA',date(2026,10,8),changed)
         cancel=self.action('cancel',r,reason='Perbaikan');self.assertEqual(cancel.status_code,200,cancel.text)
         self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'');self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/file/d/topup/view')
+    def test_edit_receipt_values_applied_only_on_final(self):
+        original=deepcopy(self.db.data['topups'][0])
+        funds={**original,'rawAmount':1000,'operationalAmount':2000,'incentiveAmount':3000}
+        response=self.draft(funds=funds);self.assertEqual(response.status_code,200,response.text)
+        r=response.json()['receipt']
+        self.assertEqual(self.db.data['topups'][0]['rawAmount'],original['rawAmount'])
+        with patch('backend.accountant_drive.upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/test'}) as upload:
+            response=self.action('finalize',r);self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(self.action('finalize',r).status_code,200)
+            self.assertEqual(upload.call_count,1)
+        self.assertEqual(len(self.db.data['topups']),1)
+        self.assertEqual(self.db.data['topups'][0]['rawAmount'],1000)
+        self.assertEqual(self.db.data['topups'][0]['incentiveAmount'],3000)
+
     def test_stale_and_locked(self):
         bad=deepcopy(self.db.data['topups'][0]);bad['rawAmount']=1
         self.assertEqual(self.draft(expected_funds=bad).status_code,409)

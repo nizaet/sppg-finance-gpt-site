@@ -51,8 +51,11 @@ def digest(snapshot):
 def attach(data,receipt,link):
     rows=data.get('topups') or []
     row=next((r for r in rows if r.get('_topupReceiptId')==receipt['id']),None)
-    if row is None or financial(row)!=receipt['snapshot']['funds']:
+    expected=receipt['snapshot']['funds'] if receipt['status']=='FINAL' else receipt['snapshot'].get('sourceFunds',receipt['snapshot']['funds'])
+    if row is None or financial(row)!=expected:
         raise HTTPException(409,'Baris TopUp berubah. Simpan dan buat ulang draft kuitansi sebelum finalisasi.')
+    if link:
+        row.update(receipt['snapshot']['funds'])
     row['receiptNo']=receipt['document_number']; row['evidenceLink']=link
     data['_reviewValidated']=False
     return data
