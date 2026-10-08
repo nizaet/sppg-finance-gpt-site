@@ -53,6 +53,7 @@ export const lpdhApi = {
     body: JSON.stringify({ site, data }),
   }),
   getDaily: (site, date) => request(`/v1/lpdh/daily?${q({ site, date })}`),
+  previousClosing:(site,date)=>request(`/v1/lpdh/daily/previous-closing?${q({site,date})}`),
   saveDaily: (site, serviceDate, data, status = "DRAFT", options = {}) => request("/v1/lpdh/daily", {
     method: "PUT",
     body: JSON.stringify({ site, service_date: serviceDate, data, status, ...options }),

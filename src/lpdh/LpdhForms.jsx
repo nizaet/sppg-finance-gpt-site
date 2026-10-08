@@ -593,6 +593,20 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   copyContext.current = `${site}|${serviceDate}`;
   const masterData = normalizeMasters(masters);
   const proofGroups = evidenceGroups(data);
+  const pullOpening = async () => {
+    const context=copyContext.current;
+    setBusy(true);
+    try {
+      const result=await api.previousClosing(site,serviceDate);
+      if(context!==copyContext.current)return;
+      const c=result.closing;
+      if(!window.confirm(`Isi saldo awal dari saldo akhir ${result.sourceDate}? Bahan Rp ${Number(c.raw).toLocaleString('id-ID')}, operasional Rp ${Number(c.operational).toLocaleString('id-ID')}, insentif Rp ${Number(c.incentive).toLocaleString('id-ID')}. Saldo VA dan transaksi tidak diubah.`))return;
+      const current=topupFormRef.current;
+      setDaily({...current,balance:{...current.balance,openingRaw:c.raw,openingOperational:c.operational,openingIncentive:c.incentive},_openingBalanceSourceDate:result.sourceDate});
+      onSaved?.('Saldo awal diperbarui. Periksa lalu klik Simpan & Validasi.');
+    }catch(error){onSaved?.(error.message||'Penarikan saldo gagal.','error');}
+    finally{setBusy(false);}
+  };
   const deleteTopup = async (index) => {
     const row=data.topups[index], context=copyContext.current;
     if(!row._topupReceiptId){deleteList('topups',index);return;}
@@ -748,6 +762,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   return <div className="lpdh-stack lpdh-tabbed-form">
     <Section title={`Data Harian · ${serviceDate}`} subtitle="Isi realisasi tanggal ini. Data tidak menimpa tanggal lain." actions={<>
       <button type="button" onClick={pullPrevious} disabled={busy}>Tarik isian hari sebelumnya</button>
+      <button type="button" onClick={pullOpening} disabled={busy}>Tarik saldo akhir hari sebelumnya</button>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
       <button type="button" className={dailySaved?"primary":"lpdh-save-pending"} onClick={save} disabled={busy}><Save size={15}/> Simpan & Validasi</button>
       {dailySaved&&<button type="button" onClick={cancelValidation} disabled={busy}>Batalkan Validasi</button>}

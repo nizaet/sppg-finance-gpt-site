@@ -333,6 +333,18 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     }
 
 
+@router.get('/daily/previous-closing')
+def previous_closing(request:Request,site:str=Query(),service_date:date=Query(alias='date')):
+    _require_db();target=_site(request,site)
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('select service_date,data from lpdh_daily_state where site=%s and service_date<%s order by service_date desc limit 1',(target,service_date))
+        previous=cur.fetchone()
+    if not previous:raise HTTPException(404,'Belum ada data hari sebelumnya yang tersimpan.')
+    if any((previous['data'].get('balance') or {}).get(k) in (None,'') for k in ('openingRaw','openingOperational','openingIncentive')):
+        raise HTTPException(409,'Lengkapi dan simpan saldo hari sebelumnya dahulu.')
+    result=compute_preview(_load_master(target)['data'],previous['data'],previous['service_date'].isoformat(),True)
+    return {'sourceDate':previous['service_date'].isoformat(),'closing':result['balance']['closing']}
+
 @router.put("/daily")
 def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     _require_db()
