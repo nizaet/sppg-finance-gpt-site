@@ -305,6 +305,14 @@ def get_daily(request: Request, site: str = Query(), service_date: date = Query(
     daily = _load_daily(target, service_date)
     masters = _load_master(target)["data"]
     normalized = normalize_daily_draft(masters, daily.get("data") or {}, daily["status"])
+    if daily['revision'] == 0:
+        from backend.lpdh_balance_carry import carry_opening
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute('select service_date,data from lpdh_daily_state where site=%s and service_date<%s order by service_date desc limit 1',(target,service_date))
+            previous=cur.fetchone()
+        if previous and all((previous['data'].get('balance') or {}).get(k) not in (None,'') for k in ('openingRaw','openingOperational','openingIncentive')):
+            previous_preview=compute_preview(masters,previous['data'],previous['service_date'].isoformat(),True)
+            normalized=carry_opening(normalized,previous_preview['balance']['closing'],previous['service_date'])
     if daily["status"] != "GENERATED":
         from backend.accountant_generated_document_api import load_documents
         from backend.generated_document_logic import merge_final_documents
