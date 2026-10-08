@@ -69,9 +69,18 @@ def attach(data,receipt,link):
 def protect_final_rows(cur,site,service_date,data):
     cur.execute("select id,document_number,snapshot,pdf_link from lpdh_topup_receipts where site=%s and service_date=%s and status='FINAL'",(site,service_date))
     for receipt in cur.fetchall():
-        row=next((r for r in data.get('topups') or [] if r.get('_topupReceiptId')==receipt['id']),None)
-        if row is None or financial(row)!=receipt['snapshot']['funds']:
+        rows=data.get('topups') or []
+        matches=[r for r in rows if str(r.get('_topupReceiptId'))==str(receipt['id'])]
+        if not matches:
+            # Recover only an unambiguous server-issued receipt identity, not by amount.
+            matches=[r for r in rows if not r.get('_topupReceiptId') and r.get('receiptNo')==receipt['document_number'] and r.get('evidenceLink')==receipt['pdf_link']]
+        row=matches[0] if len(matches)==1 else None
+        expected=financial(receipt['snapshot']['funds'])
+        actual=financial(row) if row is not None else None
+        locked_fields=('date',)+MONEY_FIELDS
+        if actual is None or any(actual[k]!=expected[k] for k in locked_fields):
             raise HTTPException(409,'TopUp memiliki kuitansi FINAL. Batalkan kuitansi sebelum mengubah atau menghapus penerimaannya.')
+        row['_topupReceiptId']=receipt['id']
         row['receiptNo']=receipt['document_number'];row['evidenceLink']=receipt['pdf_link']
 
 def words(n):
