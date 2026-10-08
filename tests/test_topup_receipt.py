@@ -105,6 +105,24 @@ class ReceiptTests(unittest.TestCase):
         data['incentive']['evidenceLink']='';data['_approval']['status']='CANCELLED'
         self.assertEqual(merge_final_documents(data,[])['incentive']['evidenceLink'],'')
 
+    def test_total_allocation_and_already_applied_draft(self):
+        from backend.topup_receipt import allocate_total
+        self.assertEqual(allocate_total(388605400),{'rawAmount':260365618,'incentiveAmount':50518702,'operationalAmount':77721080})
+        for total in (1,4,99,101,388605401):
+            self.assertEqual(sum(allocate_total(total).values()),total)
+        response=self.draft(total_amount='388605400')
+        self.assertEqual(response.status_code,200,response.text)
+        r=response.json()['receipt']
+        self.db.data['topups'][0].update(r['snapshot']['funds'])
+        with patch('backend.accountant_drive.upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/test'}) as upload:
+            response=self.action('finalize',r);self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(self.action('finalize',r).status_code,200)
+            self.assertEqual(upload.call_count,1)
+        self.assertEqual(len(self.db.data['topups']),1)
+        self.assertEqual(self.db.data['topups'][0]['incentiveAmount'],50518702)
+        for value in (-1,'1.5','NaN'):
+            self.assertEqual(self.draft(total_amount=value).status_code,422)
+
     def test_stale_and_locked(self):
         bad=deepcopy(self.db.data['topups'][0]);bad['rawAmount']=1
         self.assertEqual(self.draft(expected_funds=bad).status_code,409)

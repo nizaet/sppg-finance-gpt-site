@@ -5,7 +5,7 @@ from fastapi import APIRouter,HTTPException,Request,Query
 from pydantic import BaseModel,Field
 from backend.db import connection
 from backend.document_numbering import claim_number,suggest_number
-from backend.topup_receipt import defaults,validate_profile,financial,digest,attach,render_receipt,checked_number
+from backend.topup_receipt import defaults,validate_profile,financial,digest,attach,render_receipt,checked_number,allocate_total
 
 router=APIRouter()
 class ReceiptIn(BaseModel):
@@ -14,6 +14,7 @@ class ReceiptIn(BaseModel):
     row_index:int=Field(ge=0,le=120)
     expected_funds:dict
     funds:dict|None=None
+    total_amount:str|int|None=None
     document_number:str=Field(min_length=1,max_length=100)
     profile:dict
 class ActionIn(BaseModel):
@@ -74,6 +75,9 @@ def save_draft(payload:ReceiptIn,request:Request):
         baseline=funds
         if payload.funds is not None:
             try:funds=financial(payload.funds)
+            except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        if payload.total_amount is not None:
+            try:funds.update(allocate_total(payload.total_amount))
             except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         if sum(funds[k] for k in ('rawAmount','operationalAmount','incentiveAmount'))<=0:raise HTTPException(422,'Nominal TopUp harus lebih dari nol.')
         current=None

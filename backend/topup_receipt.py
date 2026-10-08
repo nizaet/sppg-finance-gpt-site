@@ -13,6 +13,12 @@ MONEY_FIELDS=('rawAmount','operationalAmount','incentiveAmount')
 TEXT_FIELDS=('sppgName','foundation','headName','foundationName','address','payer','purpose')
 IMAGE_FIELDS=('letterhead','headSignature','headStamp','foundationSignature','foundationStamp')
 
+def allocate_total(value):
+    total=financial({'date':'2000-01-01','rawAmount':value})['rawAmount']
+    raw=(total*67+50)//100
+    incentive=(total*13+50)//100
+    return {'rawAmount':raw,'operationalAmount':total-raw-incentive,'incentiveAmount':incentive}
+
 def financial(row):
     amounts=[]
     for key in MONEY_FIELDS:
@@ -52,7 +58,7 @@ def attach(data,receipt,link):
     rows=data.get('topups') or []
     row=next((r for r in rows if r.get('_topupReceiptId')==receipt['id']),None)
     expected=receipt['snapshot']['funds'] if receipt['status']=='FINAL' else receipt['snapshot'].get('sourceFunds',receipt['snapshot']['funds'])
-    if row is None or financial(row)!=expected:
+    if row is None or financial(row) not in (expected,receipt['snapshot']['funds']):
         raise HTTPException(409,'Baris TopUp berubah. Simpan dan buat ulang draft kuitansi sebelum finalisasi.')
     if link:
         row.update(receipt['snapshot']['funds'])
