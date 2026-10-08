@@ -13,4 +13,12 @@ assert.equal(pending.topup.proposalTotal,300);
 assert.equal(pending.ready,false);
 assert.equal(preview.incentiveCalculated,5572000);
 console.log('PASS pending/saved/edited status, Review incentive zero and non-mutating preview');
+const actual={...preview,balance:{opening:{raw:2468200,operational:2477200,incentive:11154000},topups:{raw:231392400,operational:64864000,incentive:40576000},expenditure:{raw:0,operational:0,incentive:5572000},closing:{raw:233860600,operational:67341200,incentive:46158000},closingTotal:347359800,bankBalance:16099400,bankDifference:331260400}};
+const zero=pendingReview(actual);
+assert.equal(zero.balance.expenditure.incentive,0);
+assert.equal(zero.balance.closing.incentive,51730000);
+assert.equal(zero.balance.closingTotal,352931800);
+assert.equal(zero.balance.bankDifference,336832400);
+assert.equal(actual.balance.expenditure.incentive,5572000);
+console.log('PASS Maja 8 October pending incentive expenditure and closing/bank difference recalculated');
 

@@ -366,6 +366,24 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
     return result
 
 
+@router.post("/daily/validation/cancel")
+def cancel_daily_validation(payload: GenerateIn, request: Request) -> dict[str, Any]:
+    _require_db()
+    site = _site(request, payload.site)
+    from backend.accountant_generated_document_api import daily_lock
+    with connection() as conn, conn.cursor() as cur:
+        daily_lock(cur, site, payload.service_date)
+        state = _load_daily(site, payload.service_date)
+        if state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot'):
+            raise HTTPException(409, 'Snapshot Excel final tidak diubah. Buka kembali sebagai draft terlebih dahulu.')
+        # Change only the validation marker; never overwrite user data or FINAL documents.
+        cur.execute("""update lpdh_daily_state set data=jsonb_set(data,'{_reviewValidated}','false'::jsonb),
+                    status='DRAFT',revision=revision+1,updated_by=%s,updated_at=now()
+                    where site=%s and service_date=%s""", (_role(request), site, payload.service_date))
+        conn.commit()
+    return {'site':site, 'serviceDate':payload.service_date, 'cancelled':True}
+
+
 def _save_daily_locked(payload, request, site, cur):
     masters = _load_master(site)["data"] or {}
     if not str(payload.data.get("lpdhNumber") or "").strip():
@@ -957,3 +975,4 @@ def approval_cancel(payload: ApprovalCancelIn, request: Request):
             (json.dumps(data, ensure_ascii=False), _role(request), site, payload.service_date))
         conn.commit()
     return {'saved': True, 'approval': data['_approval']}
+

@@ -4,6 +4,7 @@ import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 import { balanceSummary } from "./balanceSummary.mjs";
 import { defaultBastRows } from './bastDefaults.mjs';
+import { pendingReview } from './reviewSaveGate.mjs';
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -578,9 +579,10 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
   return syncDailyMasterTargets(next, masters, serviceDate);
 }
 
-export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, onValidated, dailySaved=false, issueTarget }) {
+export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, onValidated, onValidationCancelled, dailySaved=false, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
-  const saldo = balanceSummary(data, preview);
+  const displayPreview=dailySaved?preview:pendingReview(preview);
+  const saldo = balanceSummary(dailySaved?data:{...data,incentive:{...data.incentive,paidAmount:0}}, displayPreview);
   const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
   const [busy, setBusy] = useState(false);
   const copyContext = useRef(`${site}|${serviceDate}`);
@@ -683,6 +685,20 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     } finally { setBusy(false); }
   };
 
+  const cancelValidation = async () => {
+    if (!window.confirm('Batalkan validasi tanggal ini? Isian dan dokumen FINAL tetap tersimpan. Insentif Review kembali Rp0 sampai Simpan & Validasi ulang.')) return;
+    const context=copyContext.current;
+    setBusy(true);
+    try {
+      await api.cancelDailyValidation(site,serviceDate);
+      if(context!==copyContext.current)return;
+      setDaily({...data,_reviewValidated:false});
+      onValidationCancelled?.();
+      onSaved?.('Validasi dibatalkan. Perbarui isian lalu Simpan & Validasi kembali.');
+    } catch(error){onSaved?.(error.message||'Pembatalan validasi gagal.','error');}
+    finally{setBusy(false);}
+  };
+
   const pullPrevious = async () => {
     if (!window.confirm("Tarik jumlah porsi, distribusi, dan produksi hari pelayanan sebelumnya? Isian PM saat ini diganti sebagai draft yang belum disimpan. Target tetap dari master terbaru; invoice, pembayaran, bukti, BAST, serta pengesahan tidak disalin.")) return;
     const key = copyContext.current;
@@ -710,6 +726,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       <button type="button" onClick={pullPrevious} disabled={busy}>Tarik isian hari sebelumnya</button>
       <button type="button" onClick={pullDocuments} disabled={busy}><Download size={15}/> Tarik Invoice & Kuitansi Final</button>
       <button type="button" className={dailySaved?"primary":"lpdh-save-pending"} onClick={save} disabled={busy}><Save size={15}/> Simpan & Validasi</button>
+      {dailySaved&&<button type="button" onClick={cancelValidation} disabled={busy}>Batalkan Validasi</button>}
     </>}>
       <div className={finalPlan?.payload ? "lpdh-status-box ok" : "lpdh-status-box warn"}>
         <strong>{finalPlan?.payload ? "Final Kalkulator tersedia" : "Belum ada Final Kalkulator"}</strong>
@@ -883,8 +900,8 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
         <span>Total saldo akhir {saldoMoney(saldo.closing)} − saldo VA rekening {saldoMoney(saldo.bank)} = {saldoMoney(saldo.difference)}. {saldo.bankEntered&&Math.abs(saldo.difference)>=1?`Saldo komponen ${saldo.difference>0?'lebih besar':'lebih kecil'} dari rekening. Periksa saldo awal, penerimaan top-up, pengeluaran, dan mutasi rekening; jangan ubah saldo VA hanya agar cocok.`:'Isi saldo VA sesuai mutasi rekening setelah transaksi hari ini.'}</span>
       </div>
       <h4>F_TopUp · Usulan (bukan penerimaan)</h4>
-      <div className="lpdh-summary-cards"><div><span>Bahan baku</span><strong>{saldoMoney(preview?.topup?.requiredRaw)}</strong></div><div><span>Operasional</span><strong>{saldoMoney(preview?.topup?.requiredOperational)}</strong></div><div><span>Insentif dihitung</span><strong>{saldoMoney(preview?.topup?.requiredIncentive)}</strong></div><div><span>Total usulan</span><strong>{saldoMoney(preview?.topup?.proposalTotal)}</strong></div></div>
-      <p>Ruang sampai batas saldo VA: {saldoMoney(preview?.topup?.roomToMax)}. {preview?.topup?preview.topup.withinMax?'Usulan dalam batas saldo VA.':'PERIKSA: usulan melebihi ruang saldo VA.':''} Usulan tidak menambah saldo sampai dana benar-benar diterima. Persetujuan PPK tetap diisi oleh PPK.</p>
+      <div className="lpdh-summary-cards"><div><span>Bahan baku</span><strong>{saldoMoney(displayPreview?.topup?.requiredRaw)}</strong></div><div><span>Operasional</span><strong>{saldoMoney(displayPreview?.topup?.requiredOperational)}</strong></div><div><span>Insentif dihitung</span><strong>{saldoMoney(displayPreview?.topup?.requiredIncentive)}</strong></div><div><span>Total usulan</span><strong>{saldoMoney(displayPreview?.topup?.proposalTotal)}</strong></div></div>
+      <p>Ruang sampai batas saldo VA: {saldoMoney(displayPreview?.topup?.roomToMax)}. {displayPreview?.topup?displayPreview.topup.withinMax?'Usulan dalam batas saldo VA.':'PERIKSA: usulan melebihi ruang saldo VA.':''} Usulan tidak menambah saldo sampai dana benar-benar diterima. Persetujuan PPK tetap diisi oleh PPK.</p>
       <h4>Bukti penerimaan top-up hari ini</h4>
       <div className="lpdh-inline-actions"><button type="button" onClick={()=>addList("topups",{date:serviceDate,reference:"",rawAmount:0,operationalAmount:0,incentiveAmount:0,receiptNo:"",evidenceLink:""})}><Plus size={15}/> Tambah penerimaan TopUp</button></div>
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Tgl</th><th>SP2D/Ref</th><th>Bahan</th><th>Operasional</th><th>Insentif</th><th>No Kuitansi</th><th>Link</th><th></th></tr></thead><tbody>

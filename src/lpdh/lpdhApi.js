@@ -35,6 +35,7 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  cancelDailyValidation: (site, serviceDate) => request('/v1/lpdh/daily/validation/cancel', {method:'POST',body:JSON.stringify({site,service_date:serviceDate})}),
   approvalCancel: (site, serviceDate, expectedHash, reason) => request('/v1/lpdh/approval/cancel', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash, reason }) }),
   approvalPreview: (site, serviceDate) => request('/v1/lpdh/approval/preview', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate }) }),
   approvalFinalize: (site, serviceDate, expectedHash) => request('/v1/lpdh/approval/finalize', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash }) }),
@@ -105,3 +106,4 @@ export function downloadBase64(filename, mimeType, contentBase64) {
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+
