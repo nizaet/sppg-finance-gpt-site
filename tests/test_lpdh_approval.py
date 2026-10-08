@@ -17,6 +17,35 @@ from fastapi import HTTPException
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_locked_cancelled_approval_uses_frozen_financial_snapshot(self):
+        state = {'status':'GENERATED', 'data':{'_historicalGeneratedSnapshot':True,
+            '_approval':{'status':'CANCELLED','revision':1}, 'balance':{'openingRaw':123},
+            'incentive':{'paidAmount':456}, 'rawMaterials':[{'amount':789}]}}
+        original = deepcopy(state)
+        with ExitStack() as stack:
+            for name, value in {'_load_master':lambda *a:{'data':{'_officialTemplateBase64':'eA=='}},
+                '_load_daily':lambda *a:state, '_daily_with_hpe':lambda *a:({}, {'effective':True}),
+                '_load_final_plan':lambda *a:{}, 'compute_preview':lambda *a:{},
+                'prepare_template':lambda *a:b'x', 'fill_template':lambda *a:b'x'}.items():
+                stack.enter_context(patch.object(api,name,value))
+            merge = stack.enter_context(patch('backend.generated_document_logic.merge_final_documents'))
+            defaults = stack.enter_context(patch.object(api,'_with_incentive_defaults'))
+            data = api._approval_inputs(None,'CEMPLANG',date(2026,10,7))[1]
+            self.assertEqual(data, original['data']); self.assertEqual(state, original)
+            merge.assert_not_called(); defaults.assert_not_called()
+            state['data']['_approval'] = {}
+            with self.assertRaises(HTTPException): api._approval_inputs(None,'CEMPLANG',date(2026,10,7))
+
+    def test_cancelled_revision_gets_new_archive_hash_and_preserves_old(self):
+        first = attach_approval({'incentive':{'paidAmount':100}}, {'driveUri':'https://drive.example/one'}, 'old', 'OWNER', 'now')
+        cancelled = cancel_approval(first,'OWNER','later','Koreksi')
+        self.assertNotEqual(approval_hash({},first,'2026-10-07',{}),approval_hash({},cancelled,'2026-10-07',{}))
+        digest = approval_hash({},cancelled,'2026-10-07',{})
+        revised = attach_approval(cancelled,{'driveUri':'https://drive.example/two'},digest,'OWNER','next')
+        self.assertEqual(revised['_approval']['revision'],2)
+        self.assertEqual(approval_hash({},revised,'2026-10-07',{}),digest)
+        self.assertEqual(revised['_approvalHistory'][0]['pdfLink'],'https://drive.example/one')
+
     def test_print_conclusion_matches_review_without_changing_source(self):
         wb = Workbook(); wb.active.title = 'J_Pengesahan'
         wb.active['E23'] = 'PERLU PERBAIKAN'
@@ -61,10 +90,10 @@ class ApprovalTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as err: api.approval_cancel(payload, request)
             self.assertEqual(err.exception.status_code, 409)
             payload.expected_hash = 'a'*64; state['status'] = 'GENERATED'
-            with self.assertRaises(HTTPException): api.approval_cancel(payload, request)
+            self.assertEqual(api.approval_cancel(payload, request)['approval']['status'], 'CANCELLED')
             state['status'] = 'DRAFT'; state['data'] = cancel_approval(original, 'OWNER', 'later', 'Koreksi')
             self.assertTrue(api.approval_cancel(payload, request)['alreadyCancelled'])
-            self.assertEqual(len(commits), 1)
+            self.assertEqual(len(commits), 2)
         with self.assertRaises(HTTPException) as err:
             api.approval_cancel(payload, SimpleNamespace(state=SimpleNamespace(sppg_role='CEMPLANG')))
         self.assertEqual(err.exception.status_code, 403)

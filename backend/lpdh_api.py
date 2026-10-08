@@ -926,12 +926,20 @@ def _approval_inputs(cur, site, service_date):
     from backend.generated_document_logic import merge_final_documents
     masters = _load_master(site)['data'] or {}
     state = _load_daily(site, service_date)
-    if state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot'):
-        raise HTTPException(409, 'Snapshot LPDH sudah terkunci. Pengesahan tidak boleh mengubah arsip lama.')
-    data = normalize_daily_draft(masters, state['data'])
-    data = merge_final_documents(data, load_documents(cur, site, service_date, True))
-    data, context = _daily_with_hpe(site, service_date, data)
-    data = _with_incentive_defaults(cur, site, service_date, masters, data, context)
+    historical = state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot')
+    if historical:
+        # Re-signing is allowed only after explicit cancellation. Keep frozen
+        # financial inputs; never merge today's documents into an old snapshot.
+        if (state['data'].get('_approval') or {}).get('status') not in ('CANCELLED', 'FINAL'):
+            raise HTTPException(409, 'Snapshot LPDH sudah terkunci. Pengesahan tidak boleh mengubah arsip lama.')
+        from copy import deepcopy
+        data = deepcopy(state['data'])
+        _, context = _daily_with_hpe(site, service_date, data)
+    else:
+        data = normalize_daily_draft(masters, state['data'])
+        data = merge_final_documents(data, load_documents(cur, site, service_date, True))
+        data, context = _daily_with_hpe(site, service_date, data)
+        data = _with_incentive_defaults(cur, site, service_date, masters, data, context)
     preview_data = compute_preview(masters, data, service_date.isoformat(), context['effective'], _load_final_plan(site, service_date))
     source = masters.get('_officialTemplateBase64')
     if not source:
@@ -1012,8 +1020,6 @@ def approval_cancel(payload: ApprovalCancelIn, request: Request):
     with connection() as conn, conn.cursor() as cur:
         daily_lock(cur, site, payload.service_date)
         state = _load_daily(site, payload.service_date)
-        if state['status'] == 'GENERATED' or state['data'].get('_historicalGeneratedSnapshot'):
-            raise HTTPException(409, 'Snapshot LPDH terkunci; arsip lama tidak boleh diubah.')
         current = state['data'].get('_approval') or {}
         if not payload.expected_hash or current.get('hash') != payload.expected_hash:
             raise HTTPException(409, 'Pengesahan berubah. Muat ulang sebelum membatalkan.')

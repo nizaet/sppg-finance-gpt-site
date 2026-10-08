@@ -59,6 +59,7 @@ def approval_hash(masters, daily, service_date, preview):
     inc.pop('evidenceLink', None)
     inc.pop('approvalEvidenceLink', None)
     material = {'date': service_date, 'daily': data,
+                'approvalRevision': int((daily.get('_approval') or {}).get('revision') or 1) + (1 if (daily.get('_approval') or {}).get('status') == 'CANCELLED' else 0),
                 'template': masters.get('_officialTemplateBase64'),
                 'signers': masters.get('signers'), 'assets': masters.get('assets'),
                 'identity': masters.get('identity'), 'parameters': masters.get('parameters'),
@@ -75,6 +76,7 @@ def attach_approval(daily, archive, digest, actor, timestamp):
     if previous and (previous.get('hash') != digest or previous.get('status') != 'FINAL'):
         out.setdefault('_approvalHistory', []).append(previous)
     out['_approval'] = {'status': 'FINAL', 'hash': digest, 'pdfLink': link,
+                        'revision': int((previous or {}).get('revision') or 1) + (1 if previous and previous.get('status') == 'CANCELLED' else 0),
                         'folderId': archive.get('folderId'), 'finalizedBy': actor,
                         'finalizedAt': timestamp, 'evidenceType': 'PENGESAHAN'}
     inc = out.setdefault('incentive', {})
