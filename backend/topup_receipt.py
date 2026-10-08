@@ -86,7 +86,7 @@ def words(n):
         if n>=value:return words(n//value)+' '+label+(' '+words(n%value) if n%value else '')
 
 def render_receipt(receipt,final=False):
-    from reportlab.platypus import SimpleDocTemplate,Table,TableStyle,Spacer,KeepTogether,Flowable,Image
+    from reportlab.platypus import SimpleDocTemplate,Table,TableStyle,Spacer,KeepTogether,Flowable,Image,HRFlowable
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.utils import ImageReader
@@ -98,7 +98,7 @@ def render_receipt(receipt,final=False):
         text=escape(str(value or '')).replace('\n','<br/>')
         return Paragraph(text,ParagraphStyle('banper',fontName='Times-Bold' if bold else 'Times-Roman',fontSize=size,leading=size+3,alignment=align))
     profile=receipt['snapshot']['profile']; funds=receipt['snapshot']['funds']; total=sum(funds[k] for k in MONEY_FIELDS)
-    output=BytesIO(); width=A4[0]-56.9-28.1
+    output=BytesIO(); width=A4[0]-90
     story=[]
     kop_text=[p(profile['sppgName'].upper(),True,TA_CENTER,12),p(profile['foundation'].upper(),True,TA_CENTER,12),p(profile.get('address'),align=TA_CENTER,size=10)]
     if profile.get('letterhead'):
@@ -106,29 +106,36 @@ def render_receipt(receipt,final=False):
         if iw>=3*ih:
             w=min(width,100*iw/ih);story += [Image(BytesIO(raw),width=w,height=w*ih/iw),Spacer(1,18)]
         else:
-            w=min(70,70*iw/ih)
-            kop=Table([[Image(BytesIO(raw),width=w,height=w*ih/iw),kop_text]],colWidths=[80,width-80]);kop.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE')]))
-            story += [kop,Spacer(1,24)]
+            w=min(76,76*iw/ih)
+            kop=Table([[Image(BytesIO(raw),width=w,height=w*ih/iw),kop_text,'']],colWidths=[86,width-172,86])
+            kop.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0)]))
+            story += [kop,Spacer(1,12)]
     else:
-        story += kop_text+[Spacer(1,24)]
-    story += [p('KWITANSI',True,TA_CENTER,14),p('No. '+receipt['document_number'],align=TA_CENTER,size=10),Spacer(1,28)]
-    story += [p('Sudah Terima dari : '+profile['payer'],size=11),Spacer(1,12),
-        p('Uang Sebanyak : Rp '+f'{total:,}'.replace(',','.')+' ('+words(total).capitalize()+' Rupiah)',size=11),Spacer(1,22),
-        p('Untuk Pembayaran : '+profile['purpose']+' di '+profile['sppgName']+', tanggal '+date_label(funds['date']),size=11),Spacer(1,36)]
+        story += kop_text+[Spacer(1,12)]
+    story += [HRFlowable(width='100%',thickness=1),Spacer(1,22),p('KWITANSI',True,TA_CENTER,14),p('No. '+receipt['document_number'],align=TA_CENTER,size=10),Spacer(1,26)]
+    details=Table([
+        [p('Sudah terima dari',True,size=11),p(':',size=11),p(profile['payer'],size=11)],
+        [p('Uang sebanyak',True,size=11),p(':',size=11),p('Rp '+f'{total:,}'.replace(',','.'),True,size=12)],
+        [p('Terbilang',True,size=11),p(':',size=11),p(words(total).capitalize()+' rupiah',size=11)],
+        [p('Untuk pembayaran',True,size=11),p(':',size=11),p(profile['purpose']+' di '+profile['sppgName']+', tanggal '+date_label(funds['date']),size=11)],
+    ],colWidths=[112,12,width-124])
+    details.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),('TOPPADDING',(0,0),(-1,-1),8),('BOTTOMPADDING',(0,0),(-1,-1),10)]))
+    story += [details,Spacer(1,32)]
     class Signing(Flowable):
-        def __init__(self,prefix):self.prefix=prefix;self.width=width/2;self.height=90
+        def __init__(self,prefix):self.prefix=prefix;self.width=width/2;self.height=104
         def draw(self):
-            for field,x,y,w,h in ((self.prefix+'Signature',70,20,100,55),(self.prefix+'Stamp',44,10,70,70)):
+            center=self.width/2
+            for field,x,y,w,h in ((self.prefix+'Stamp',center-62,12,82,82),(self.prefix+'Signature',center-38,26,112,58)):
                 if profile.get(field):self.canv.drawImage(ImageReader(BytesIO(base64.b64decode(profile[field].split(',',1)[-1]))),x,y,w,h,mask='auto',preserveAspectRatio=True,anchor='c')
     signatures=Table([[p('Kepala SPPG\n'+profile['sppgName'],align=TA_CENTER,size=11),p('Yang Menerima\nPenerima Bantuan',align=TA_CENTER,size=11)],
         [Signing('head'),Signing('foundation')],
         [p(profile['headName'],True,TA_CENTER,11),p(profile['foundationName'],True,TA_CENTER,11)],
         ['',p(profile['foundation'],align=TA_CENTER,size=10)]],colWidths=[width/2,width/2])
-    signatures.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0)]))
+    signatures.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4)]))
     story += [KeepTogether(signatures)]
     def page(canvas,doc):
         if not final:
             canvas.saveState();canvas.setFillColorRGB(.87,.87,.87);canvas.setFont('Helvetica-Bold',48);canvas.translate(A4[0]/2,A4[1]/2);canvas.rotate(35);canvas.drawCentredString(0,0,'DRAFT');canvas.restoreState()
-    SimpleDocTemplate(output,pagesize=A4,leftMargin=56.9,rightMargin=28.1,topMargin=56.9,bottomMargin=28.1,title=receipt['document_number']).build(story,onFirstPage=page,onLaterPages=page)
+    SimpleDocTemplate(output,pagesize=A4,leftMargin=45,rightMargin=45,topMargin=42,bottomMargin=42,title=receipt['document_number']).build(story,onFirstPage=page,onLaterPages=page)
     return output.getvalue()
 

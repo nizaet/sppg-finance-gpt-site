@@ -4,7 +4,6 @@ import { arrayBufferToBase64, downloadBase64 } from "./lpdhApi.js";
 import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 import { balanceSummary } from "./balanceSummary.mjs";
 import { defaultBastRows } from './bastDefaults.mjs';
-import { pendingReview } from './reviewSaveGate.mjs';
 import TopupReceiptActions from './TopupReceiptActions.jsx';
 
 export const GROUP_DEFAULTS = [
@@ -584,8 +583,10 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   const data = normalizeDaily(daily, serviceDate);
   const topupFormRef=useRef(data);
   topupFormRef.current=data;
-  const displayPreview=dailySaved?preview:pendingReview(preview);
-  const saldo = balanceSummary(dailySaved?data:{...data,incentive:{...data.incentive,paidAmount:0}}, displayPreview);
+  // E/F is the editable ledger calculation, not the validated Review snapshot.
+  // Editing a balance or receipt must not erase an entered payment from its totals.
+  const displayPreview=preview;
+  const saldo = balanceSummary(data, displayPreview);
   const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
   const [busy, setBusy] = useState(false);
   const copyContext = useRef(`${site}|${serviceDate}`);
