@@ -35,6 +35,11 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  topupReceipts:(site,date)=>request(`/v1/lpdh/topup/receipts?${new URLSearchParams({site,date})}`),
+  topupReceiptDraft:payload=>request('/v1/lpdh/topup/receipts',{method:'POST',body:JSON.stringify(payload)}),
+  topupReceiptPdf:id=>request(`/v1/lpdh/topup/receipts/${id}/pdf`),
+  topupReceiptFinalize:(id,hash)=>request(`/v1/lpdh/topup/receipts/${id}/finalize`,{method:'POST',body:JSON.stringify({expected_hash:hash})}),
+  topupReceiptCancel:(id,hash,reason)=>request(`/v1/lpdh/topup/receipts/${id}/cancel`,{method:'POST',body:JSON.stringify({expected_hash:hash,reason})}),
   uploadTopupEvidence: (site,serviceDate,contentBase64) => request('/v1/lpdh/topup/evidence',{method:'POST',body:JSON.stringify({site,service_date:serviceDate,content_base64:contentBase64})}),
   cancelDailyValidation: (site, serviceDate) => request('/v1/lpdh/daily/validation/cancel', {method:'POST',body:JSON.stringify({site,service_date:serviceDate})}),
   approvalCancel: (site, serviceDate, expectedHash, reason) => request('/v1/lpdh/approval/cancel', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash, reason }) }),

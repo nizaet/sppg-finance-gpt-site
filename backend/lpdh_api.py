@@ -345,6 +345,8 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
             if payload.expected_revision is not None and existing['revision'] != payload.expected_revision:
                 raise HTTPException(409, "Data harian berubah saat penarikan. Refresh dan periksa kembali sebelum menarik.")
             validate_daily_financial_sources(payload.data, existing["data"])
+            from backend.topup_receipt import protect_final_rows
+            protect_final_rows(cur, site, payload.service_date, payload.data)
             for protected in ('_approval', '_approvalHistory'):
                 payload.data.pop(protected, None)
                 if protected in existing['data']:
@@ -1005,4 +1007,8 @@ def approval_cancel(payload: ApprovalCancelIn, request: Request):
             (json.dumps(data, ensure_ascii=False), _role(request), site, payload.service_date))
         conn.commit()
     return {'saved': True, 'approval': data['_approval']}
+
+
+from backend.topup_receipt_api import router as topup_receipt_router
+router.include_router(topup_receipt_router)
 

@@ -5,6 +5,7 @@ import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 import { balanceSummary } from "./balanceSummary.mjs";
 import { defaultBastRows } from './bastDefaults.mjs';
 import { pendingReview } from './reviewSaveGate.mjs';
+import TopupReceiptActions from './TopupReceiptActions.jsx';
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -581,8 +582,8 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
 
 export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, onValidated, onValidationCancelled, dailySaved=false, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
-  const topupDailyRef=useRef(data);
-  topupDailyRef.current=data;
+  const topupFormRef=useRef(data);
+  topupFormRef.current=data;
   const displayPreview=dailySaved?preview:pendingReview(preview);
   const saldo = balanceSummary(dailySaved?data:{...data,incentive:{...data.incentive,paidAmount:0}}, displayPreview);
   const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
@@ -698,24 +699,6 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       onValidationCancelled?.();
       onSaved?.('Validasi dibatalkan. Perbarui isian lalu Simpan & Validasi kembali.');
     } catch(error){onSaved?.(error.message||'Pembatalan validasi gagal.','error');}
-    finally{setBusy(false);}
-  };
-
-  const uploadTopup = async (index,file) => {
-    if(!file)return;
-    if(file.size>5*1024*1024)return onSaved?.('Bukti maksimal 5 MB per berkas.','error');
-    if(!['image/jpeg','image/png','application/pdf'].includes(file.type))return onSaved?.('Pilih JPEG/PNG atau PDF.','error');
-    const context=copyContext.current,original=JSON.stringify(data.topups[index]);
-    setBusy(true);
-    try{
-      const result=await api.uploadTopupEvidence(site,serviceDate,arrayBufferToBase64(await file.arrayBuffer()));
-      if(context!==copyContext.current)return;
-      const current=topupDailyRef.current;
-      if(JSON.stringify(current.topups[index])!==original)throw Error('Bukti tersimpan di Drive, tetapi baris berubah saat upload. Ulangi upload pada baris yang benar.');
-      const rows=current.topups.map((row,i)=>i===index?{...row,evidenceLink:result.evidenceLink}:row);
-      setDaily({...current,topups:rows});
-      onSaved?.('Bukti tersimpan di Drive dan link sudah terisi. Klik Simpan & Validasi untuk menyimpan isian tanggal ini.');
-    }catch(error){onSaved?.(error.message||'Upload gagal. Link lama tetap aman.','error');}
     finally{setBusy(false);}
   };
 
@@ -932,9 +915,14 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input type="number" value={row.operationalAmount??""} onChange={(e)=>updateList("topups",index,"operationalAmount",numValue(e.target.value))}/></td>
           <td><input type="number" value={row.incentiveAmount??""} onChange={(e)=>updateList("topups",index,"incentiveAmount",numValue(e.target.value))}/></td>
           <td><input value={row.receiptNo||""} onChange={(e)=>updateList("topups",index,"receiptNo",e.target.value)}/></td>
-          <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/><label className="lpdh-topup-upload">Upload bukti JPEG/PNG/PDF · maks. 5 MB<input aria-label={`Upload bukti TopUp baris ${index+1}`} type="file" accept="image/jpeg,image/png,application/pdf" disabled={busy} onChange={e=>{const file=e.target.files?.[0];e.target.value='';uploadTopup(index,file);}}/></label></td>
+          <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("topups",index)}><Trash2 size={14}/></button></td>
         </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
+      <div className="lpdh-inline-actions">{data.topups.map((row,index)=><TopupReceiptActions key={`${site}-${serviceDate}-${index}`} site={site} serviceDate={serviceDate} row={row} index={index} api={api} disabled={busy||!dailySaved} onData={next=>{
+        const current=topupFormRef.current;
+        if(JSON.stringify(current.topups[index])!==JSON.stringify(row)){onSaved?.('Kuitansi tersimpan, tetapi isian lokal berubah. Muat ulang untuk mengambil link terbaru; isian Anda tidak ditimpa.','error');return;}
+        setDaily({...current,topups:current.topups.map((r,i)=>i===index?next.topups[index]:r)});
+      }}/>)}</div>
     </Section>
 
     <Section tabKey="upload" tabLabel="Upload" title="Rencana upload">
