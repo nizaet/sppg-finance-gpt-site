@@ -35,6 +35,7 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  uploadTopupEvidence: (site,serviceDate,contentBase64) => request('/v1/lpdh/topup/evidence',{method:'POST',body:JSON.stringify({site,service_date:serviceDate,content_base64:contentBase64})}),
   cancelDailyValidation: (site, serviceDate) => request('/v1/lpdh/daily/validation/cancel', {method:'POST',body:JSON.stringify({site,service_date:serviceDate})}),
   approvalCancel: (site, serviceDate, expectedHash, reason) => request('/v1/lpdh/approval/cancel', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate, expected_hash: expectedHash, reason }) }),
   approvalPreview: (site, serviceDate) => request('/v1/lpdh/approval/preview', { method: 'POST', body: JSON.stringify({ site, service_date: serviceDate }) }),

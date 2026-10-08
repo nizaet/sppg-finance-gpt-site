@@ -581,6 +581,8 @@ export function applyRoutineDaily(daily, result, masters, serviceDate) {
 
 export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalPlan, preview, api, onSaved, onPreview, onValidated, onValidationCancelled, dailySaved=false, issueTarget }) {
   const data = normalizeDaily(daily, serviceDate);
+  const topupDailyRef=useRef(data);
+  topupDailyRef.current=data;
   const displayPreview=dailySaved?preview:pendingReview(preview);
   const saldo = balanceSummary(dailySaved?data:{...data,incentive:{...data.incentive,paidAmount:0}}, displayPreview);
   const saldoMoney = value => new Intl.NumberFormat('id-ID', {style:'currency',currency:'IDR',maximumFractionDigits:0}).format(value || 0);
@@ -699,6 +701,24 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     finally{setBusy(false);}
   };
 
+  const uploadTopup = async (index,file) => {
+    if(!file)return;
+    if(file.size>5*1024*1024)return onSaved?.('Bukti maksimal 5 MB per berkas.','error');
+    if(!['image/jpeg','image/png','application/pdf'].includes(file.type))return onSaved?.('Pilih JPEG/PNG atau PDF.','error');
+    const context=copyContext.current,original=JSON.stringify(data.topups[index]);
+    setBusy(true);
+    try{
+      const result=await api.uploadTopupEvidence(site,serviceDate,arrayBufferToBase64(await file.arrayBuffer()));
+      if(context!==copyContext.current)return;
+      const current=topupDailyRef.current;
+      if(JSON.stringify(current.topups[index])!==original)throw Error('Bukti tersimpan di Drive, tetapi baris berubah saat upload. Ulangi upload pada baris yang benar.');
+      const rows=current.topups.map((row,i)=>i===index?{...row,evidenceLink:result.evidenceLink}:row);
+      setDaily({...current,topups:rows});
+      onSaved?.('Bukti tersimpan di Drive dan link sudah terisi. Klik Simpan & Validasi untuk menyimpan isian tanggal ini.');
+    }catch(error){onSaved?.(error.message||'Upload gagal. Link lama tetap aman.','error');}
+    finally{setBusy(false);}
+  };
+
   const pullPrevious = async () => {
     if (!window.confirm("Tarik jumlah porsi, distribusi, dan produksi hari pelayanan sebelumnya? Isian PM saat ini diganti sebagai draft yang belum disimpan. Target tetap dari master terbaru; invoice, pembayaran, bukti, BAST, serta pengesahan tidak disalin.")) return;
     const key = copyContext.current;
@@ -758,7 +778,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
     </Section>
 
     <FormTabs key={`${site}|${serviceDate}`} label="Bagian Data Harian" issueTarget={issueTarget}>
-    <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="BAST kosong diisi DRAFT-WAJIB-DIGANTI agar estimasi insentif dapat dihitung. Ganti nomor dan link dengan bukti asli di Excel setelah unduh. Dummy bukan bukti autentik dan tidak meloloskan validasi FINAL. Isian BAST yang sudah ada tidak ditimpa.">
+    <Section tabKey="pm" tabLabel="A · Penerima Manfaat" title="A_PM · Penerima Manfaat & Distribusi" subtitle="BAST kosong diisi DRAFT-WAJIB-DIGANTI. Dummy diizinkan dan dianggap OK pada pemeriksaan aplikasi, tetapi bukan bukti autentik: wajib diganti nomor dan link asli di Excel setelah unduh. Isian BAST yang sudah ada tidak ditimpa.">
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table wide"><thead><tr><th>Kode</th><th>Kelompok / Porsi</th><th>Target dari Master</th><th>Distribusi POP</th><th>Diterima Fleet</th><th>Tidak diterima</th><th>Alasan</th><th>BNBA</th><th>No BAST</th><th>Link BAST</th></tr></thead>
         <tbody>{data.pm.rows.map((row, index) => <tr key={row.code}>
           <td><strong>{row.code}</strong></td><td>{row.label} · {row.portion}</td>
@@ -912,7 +932,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input type="number" value={row.operationalAmount??""} onChange={(e)=>updateList("topups",index,"operationalAmount",numValue(e.target.value))}/></td>
           <td><input type="number" value={row.incentiveAmount??""} onChange={(e)=>updateList("topups",index,"incentiveAmount",numValue(e.target.value))}/></td>
           <td><input value={row.receiptNo||""} onChange={(e)=>updateList("topups",index,"receiptNo",e.target.value)}/></td>
-          <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
+          <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/><label className="lpdh-topup-upload">Upload bukti JPEG/PNG/PDF · maks. 5 MB<input aria-label={`Upload bukti TopUp baris ${index+1}`} type="file" accept="image/jpeg,image/png,application/pdf" disabled={busy} onChange={e=>{const file=e.target.files?.[0];e.target.value='';uploadTopup(index,file);}}/></label></td>
           <td><button className="icon danger" type="button" onClick={()=>deleteList("topups",index)}><Trash2 size={14}/></button></td>
         </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
     </Section>

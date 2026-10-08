@@ -742,8 +742,11 @@ def compute_preview(
 
     all_distributions_balance = all(abs(row["difference"]) < 0.0001 for row in pm)
     reasons_ok = all(row["notReceived"] <= 0 or bool(row["reason"]) for row in pm)
-    receiving_docs_ok = all(row["received"] <= 0 or (row["bnba"] == "Ya" and bool(row["bastNo"]) and row["bastStatus"] == "Terlampir") for row in pm)
-    bast_links_ok = all(row["received"] <= 0 or (https_url(row["bastLink"]) and row["bastStatus"] == "Terlampir") for row in pm)
+    # Operator permits placeholders for app checks; preserve the explicit dummy label.
+    allowed_bast = {"Terlampir", "DRAFT—WAJIB DIGANTI"}
+    receiving_docs_ok = all(row["received"] <= 0 or (row["bnba"] == "Ya" and bool(row["bastNo"]) and row["bastStatus"] in allowed_bast) for row in pm)
+    bast_links_ok = all(row["received"] <= 0 or (https_url(row["bastLink"]) and row["bastStatus"] in allowed_bast) for row in pm)
+    dummy_bast = any(row['received'] > 0 and row['bastStatus'] == 'DRAFT—WAJIB DIGANTI' for row in pm)
     target_ok = all(row["calculatedPm"] <= row["targetPm"] + 0.0001 for row in pm if row["targetPm"] > 0)
 
     volunteer_complete = all(
@@ -808,8 +811,8 @@ def compute_preview(
         ("04", "Distribusi POP sesuai penerimaan Fleet (per baris dan total)", all_distributions_balance, "PERIKSA", "Ada kelompok dengan distribusi tidak sama dengan diterima + tidak diterima."),
         ("05", "Porsi tidak diterima seluruhnya diberi alasan", reasons_ok, "PERIKSA", "Isi alasan untuk setiap porsi yang tidak diterima."),
         ("06", "Buffer produksi dalam batas yang ditetapkan", buffer_ok, buffer_status, "Batas buffer belum ditetapkan PPK." if buffer_status == "BELUM DITETAPKAN" else "Buffer melebihi ambang PPK."),
-        ("07", "Kelompok yang menerima porsi memiliki BNBA dan nomor BAST", receiving_docs_ok, "PERIKSA", "Ada penerima dengan BNBA atau nomor BAST belum lengkap."),
-        ("08", "Bukti autentik BAST ter-link ke Cloud SIPGN", bast_links_ok, "PERIKSA", "Link BAST wajib HTTPS untuk kelompok yang menerima."),
+        ("07", "Kelompok yang menerima porsi memiliki BNBA dan nomor BAST", receiving_docs_ok, "PERIKSA", "Dummy diizinkan di aplikasi; wajib diganti bukti asli di Excel." if receiving_docs_ok and dummy_bast else "Ada penerima dengan BNBA atau nomor BAST belum lengkap."),
+        ("08", "Link BAST terisi (dummy diizinkan)", bast_links_ok, "PERIKSA", "Dummy bukan bukti autentik; ganti link asli di Excel." if bast_links_ok and dummy_bast else "Link BAST wajib HTTPS untuk kelompok yang menerima."),
         ("09", "PM dihitung tidak melebihi target SPS (indikasi anomali)", target_ok, "PERIKSA", "Ada PM dihitung melebihi target master SPS."),
         ("10", "Indeks kemahalan Kab/Kota tercantum di Ref", city_reference_ok, "PERIKSA", "Isi Kabupaten/Kota pada Identitas dan indeks kemahalan pada Master Parameter."),
         ("11", "Biaya bahan per porsi dalam pagu setelah indeks kemahalan", produced > 0 and raw_per_portion <= weighted_raw_pagu + 0.0001, "PERIKSA", f"Biaya/porsi Rp{raw_per_portion:,.0f}; pagu Rp{weighted_raw_pagu:,.0f}."),
@@ -840,7 +843,7 @@ def compute_preview(
             "check": label,
             "ok": status != "PERIKSA",
             "status": status,
-            "detail": detail if status != "OK" else "",
+            "detail": detail if status != "OK" or (dummy_bast and no in {"07", "08"}) else "",
         })
     error_count = sum(1 for row in check_rows if row["status"] == "PERIKSA")
 

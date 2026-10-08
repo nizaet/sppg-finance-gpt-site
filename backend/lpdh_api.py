@@ -79,6 +79,12 @@ class GenerateIn(BaseModel):
     draft_only: bool = False
 
 
+class TopupEvidenceIn(BaseModel):
+    site: str
+    service_date: date
+    content_base64: str = Field(min_length=1,max_length=6990508)
+
+
 class ApprovalIn(BaseModel):
     site: str
     service_date: date
@@ -364,6 +370,30 @@ def save_daily(payload: DailyStateIn, request: Request) -> dict[str, Any]:
         result = _save_daily_locked(payload, request, site, cur)
         conn.commit()
     return result
+
+
+@router.post("/topup/evidence")
+def upload_topup_evidence(payload: TopupEvidenceIn, request: Request):
+    _require_db()
+    site=_site(request,payload.site)
+    from backend.topup_evidence import decode_evidence
+    from backend.accountant_drive import upload_accountant_artifact
+    import hashlib
+    try:
+        content,mime,extension=decode_evidence(payload.content_base64)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    digest=hashlib.sha256(content).hexdigest()
+    filename=f'Bukti_TopUp_{site}_{payload.service_date}_{digest[:12]}.{extension}'
+    try:
+        archive=upload_accountant_artifact(kind='invoice',filename=filename,data=content,mime_type=mime,
+            site=site,service_date=payload.service_date.isoformat(),artifact_key=f'topup-{site}-{payload.service_date}-{digest}')
+    except Exception as exc:
+        raise HTTPException(502,'Upload Drive gagal. Link lama tidak diubah; silakan coba lagi.') from exc
+    link=archive.get('driveUri') or ''
+    if not link.startswith('https://'):
+        raise HTTPException(502,'Drive belum mengembalikan link bukti. Silakan coba lagi.')
+    return {'evidenceLink':link,'filename':filename}
 
 
 @router.post("/daily/validation/cancel")
