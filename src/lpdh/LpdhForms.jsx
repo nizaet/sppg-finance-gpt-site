@@ -593,6 +593,26 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
   copyContext.current = `${site}|${serviceDate}`;
   const masterData = normalizeMasters(masters);
   const proofGroups = evidenceGroups(data);
+  const deleteTopup = async (index) => {
+    const row=data.topups[index], context=copyContext.current;
+    if(!row._topupReceiptId){deleteList('topups',index);return;}
+    setBusy(true);
+    try {
+      const list=await api.topupReceipts(site,serviceDate);
+      const receipt=list.receipts.find(r=>String(r.id)===String(row._topupReceiptId));
+      if(!receipt)throw Error('Kuitansi terkait tidak ditemukan. Muat ulang sebelum menghapus.');
+      if(context!==copyContext.current)return;
+      if(!window.confirm(`Hapus penerimaan TopUp dan batalkan kuitansi ${receipt.documentNumber}? Nominal tidak lagi dihitung sebagai penerimaan. Arsip PDF Drive tetap disimpan.`))return;
+      const reason=window.prompt('Alasan menghapus penerimaan dan membatalkan kuitansi TopUp:');
+      if(!reason?.trim())return;
+      await api.topupReceiptCancel(receipt.id,receipt.hash,reason.trim(),true);
+      if(context!==copyContext.current)return;
+      const current=topupFormRef.current;
+      setDaily({...current,topups:current.topups.filter(r=>String(r._topupReceiptId)!==String(receipt.id))});
+      onSaved?.('Penerimaan dihapus dan kuitansi dibatalkan. Arsip Drive tetap tersimpan.');
+    }catch(error){onSaved?.(error.message||'Pembatalan gagal; penerimaan tidak dihapus.','error');}
+    finally{setBusy(false);}
+  };
   const updateProofGroup = (group, field, value) => {
     if (group.conflictingFields.includes(field) && !window.confirm(`Isian ${field === "evidenceLink" ? "link bukti" : "referensi pembayaran"} pada ${group.number} berbeda antarbaris. Samakan seluruh ${group.indexes.length} baris dengan isian baru?`)) return;
     setDaily(applyEvidence(data, group, field, value));
@@ -917,7 +937,7 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
           <td><input type="number" value={row.incentiveAmount??""} onChange={(e)=>updateList("topups",index,"incentiveAmount",numValue(e.target.value))}/></td>
           <td><input value={row.receiptNo||""} onChange={(e)=>updateList("topups",index,"receiptNo",e.target.value)}/></td>
           <td><input value={row.evidenceLink||""} onChange={(e)=>updateList("topups",index,"evidenceLink",e.target.value)} placeholder="https://..."/></td>
-          <td><button className="icon danger" type="button" onClick={()=>deleteList("topups",index)}><Trash2 size={14}/></button></td>
+          <td><button className="icon danger" type="button" aria-label={`Hapus penerimaan TopUp ${index+1}`} disabled={busy} onClick={()=>deleteTopup(index)}><Trash2 size={14}/></button></td>
         </tr>)}{!data.topups.length&&<EmptyRow colSpan={8}/>}</tbody></FormTable></div>
       <div className="lpdh-inline-actions">{data.topups.map((row,index)=><TopupReceiptActions key={`${site}-${serviceDate}-${index}`} site={site} serviceDate={serviceDate} row={row} index={index} api={api} disabled={busy} onData={(next,receiptId)=>{
         const current=topupFormRef.current;

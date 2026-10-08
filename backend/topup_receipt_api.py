@@ -20,6 +20,7 @@ class ReceiptIn(BaseModel):
 class ActionIn(BaseModel):
     expected_hash:str=Field(min_length=64,max_length=64)
     reason:str=Field(default='',max_length=600)
+    remove_row:bool=False
 
 def context(request,site,service_date,cur):
     from backend.lpdh_api import _site,_require_db,_role
@@ -136,6 +137,8 @@ def cancel(receipt_id:int,payload:ActionIn,request:Request):
         receipt=get_receipt(cur,request,receipt_id,False);site,data,actor=context(request,receipt['site'],receipt['service_date'],cur)
         receipt=get_receipt(cur,request,receipt_id)
         if digest(receipt['snapshot'])!=payload.expected_hash:raise HTTPException(409,'Kuitansi berubah. Muat ulang.')
+        if payload.remove_row:
+            data['topups']=[row for row in data.get('topups') or [] if str(row.get('_topupReceiptId'))!=str(receipt_id)]
         for row in data.get('topups') or []:
             if row.get('_topupReceiptId')==receipt_id:
                 if row.get('receiptNo')==receipt['document_number']:row['receiptNo']=receipt['snapshot']['previousReceipt']

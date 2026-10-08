@@ -71,6 +71,19 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaises(HTTPException):protect_final_rows(self.db,'MAJA',date(2026,10,8),changed)
         cancel=self.action('cancel',r,reason='Perbaikan');self.assertEqual(cancel.status_code,200,cancel.text)
         self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'');self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/file/d/topup/view')
+    def test_delete_cancels_only_linked_receipt_and_preserves_archive(self):
+        r=self.draft().json()['receipt']
+        with patch('backend.accountant_drive.upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/test'}):
+            self.assertEqual(self.action('finalize',r).status_code,200)
+        other={'date':'2026-10-08','rawAmount':10}
+        self.db.data['topups'].append(other)
+        response=self.action('cancel',r,reason='Duplikat',remove_row=True)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.db.data['topups'],[other])
+        self.assertEqual(self.db.receipts[1]['status'],'CANCELLED')
+        self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/test')
+        protect_final_rows(self.db,'MAJA',date(2026,10,8),deepcopy(self.db.data))
+
     def test_edit_receipt_values_applied_only_on_final(self):
         original=deepcopy(self.db.data['topups'][0])
         funds={**original,'rawAmount':1000,'operationalAmount':2000,'incentiveAmount':3000}
