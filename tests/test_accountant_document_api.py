@@ -131,6 +131,29 @@ Reference No.
     ]
 
 
+def test_maja_jasper_clock_and_comma_amounts_do_not_change_cemplang_parser() -> None:
+    text = '''TRANSACTION STATUS
+Reference No.
+07-Oct-2026
+19:41:08
+20261007185901353097 BBOPS7OKT26 37/OP/MMD/X/2
+026 Online Transfer IDR 690,800.00 Immediate07-Oct-2026 Berhasil Dijalankan
+08-Oct-2026 20:28:16 20261008200311598594 BBOPS8OKT26 39/OP/MMD/X/2
+026 Online Transfer IDR 898,800.00 Immediate08-Oct-2026 Berhasil Dijalankan
+08-Oct-2026 20:28:17 20261008200148598379 BB8OKT26 223/BB/MMD/X/2
+026 Online Transfer IDR 25,758,000.00 Immediate08-Oct-2026 Berhasil Dijalankan
+09-Oct-2026 14:55:09 20261009143407780217 BPJS 52/OP/MMD/X/2
+026 Online Transfer IDR 5,789,599.00 Immediate09-Oct-2026 Berhasil Dijalankan
+'''
+    rows = api._mandiri_status_transactions(text)
+    assert [(r['reference_number'],r['amount']) for r in rows] == [
+        ('37/OP/MMD/X/2026',690800),('39/OP/MMD/X/2026',898800),
+        ('223/BB/MMD/X/2026',25758000),('52/OP/MMD/X/2026',5789599)]
+    assert all(r['status']=='SUCCESS' for r in rows)
+    assert api._bank_status_transactions(text) == []
+    assert api._number('690.800,00') == 690800  # Other invoice formats unchanged.
+
+
 def test_pdfium_bank_status_reads_wrapped_header_amounts_and_all_rows() -> None:
     text = """Transaction Status
 Creation Date Transaction
@@ -220,3 +243,4 @@ def test_direct_invoice_never_creates_maker_by_default() -> None:
         commit=True,
     )
     assert payload.create_maker is False
+

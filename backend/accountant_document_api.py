@@ -768,7 +768,12 @@ def _mandiri_status_transactions(text: str) -> list[dict[str, Any]]:
         else:
             continue
         amount_match = re.search(r"\bIDR\s+([0-9][0-9,.]+)", compact, re.I)
-        amount = _number(amount_match.group(1)) if amount_match else None
+        # This Jasper/Maja export uses English bank formatting: commas group
+        # thousands and the dot is decimal. Do not use the Indonesian invoice
+        # parser (690,800.00 became 690.8; multi-comma millions were dropped).
+        amount_text = amount_match.group(1) if amount_match else ''
+        amount = (float(amount_text.replace(',', ''))
+                  if re.fullmatch(r'(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?', amount_text) else None)
         if amount is None:
             continue
         month = ENGLISH_MONTHS.get(head.group(2).lower())
@@ -1009,3 +1014,4 @@ def upload_approval_evidence(payload: ApprovalEvidenceIn) -> dict[str, Any]:
         "approvedCount": len(approved), "paidCount": len(approved), "transactions": matches,
         "accountantLedgerSync": ledger_sync,
     }
+
