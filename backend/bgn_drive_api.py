@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -30,6 +30,28 @@ class SiteIn(BaseModel):
 
 class FolderIn(SiteIn):
     folder_id:str=Field(min_length=1,max_length=100)
+
+
+class TestUploadIn(SiteIn):
+    service_date:date
+
+
+@router.post('/test-upload')
+def test_upload(payload:TestUploadIn,request:Request,response:Response):
+    authorized(request,payload.site);response.headers['Cache-Control']='no-store'
+    from backend.lpdh_api import _effective
+    if not _effective(payload.site,payload.service_date):
+        raise HTTPException(409,'Pilih tanggal HPE aktif untuk tes upload BGN.')
+    from backend.bgn_drive_test import verified_test_upload
+    try:
+        with connection() as conn,conn.cursor() as cur:
+            result=verified_test_upload(cur,payload.site,payload.service_date)
+            conn.commit()
+        return result
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('BGN test upload failed (%s)',type(exc).__name__)
+        raise HTTPException(502,'Tes upload BGN belum berhasil atau belum lolos verifikasi. Periksa koneksi dan izin folder, lalu coba lagi. Invoice dan saldo tidak diubah.') from exc
 
 
 @router.get('/status')

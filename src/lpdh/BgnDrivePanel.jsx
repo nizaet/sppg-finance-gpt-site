@@ -10,8 +10,10 @@ function loadPicker(){
  }).catch(error=>{pickerLoader=null;throw error;});
  return pickerLoader;
 }
-export default function BgnDrivePanel({site}){
+export default function BgnDrivePanel({site,serviceDate}){
  const[state,setState]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ const [testResult,setTestResult]=useState(null);
+ useEffect(()=>{setTestResult(null);},[site,serviceDate]);
  const context=useRef(site);context.current=site;
  const refresh=async()=>{const target=site;const r=await lpdhApi.bgnStatus(target);if(context.current===target)setState(r);};
  async function check(){
@@ -65,6 +67,18 @@ export default function BgnDrivePanel({site}){
   }catch(e){if(context.current===target)setMessage('Folder BGN belum dapat diverifikasi: '+e.message+' Jika izin belum pernah diberikan ke aplikasi, pilih melalui Google Picker pada browser/PC yang berhasil.');}
   finally{if(context.current===target)setBusy(false);}
  }
+ async function testUpload(){
+  if(!serviceDate)return setMessage('Pilih tanggal HPE aktif dahulu.');
+  if(!window.confirm(`Upload satu PDF UJI KONEKSI - BUKAN BUKTI TRANSAKSI ke Drive BGN ${site}, HPE ${serviceDate}? Tidak membuat invoice atau mengubah saldo.`))return;
+  const target=site;setBusy(true);setTestResult(null);setMessage('Mengunggah PDF uji dan membaca kembali metadata file di Drive BGN…');
+  try{
+   const r=await lpdhApi.bgnTestUpload(target,serviceDate);
+   if(context.current!==target)return;
+   if(!r.verified)throw new Error('File belum lolos verifikasi upload.');
+   setTestResult(r);setMessage('Tes upload BGN BERHASIL. File, ukuran, checksum, dan folder tujuan sudah diperiksa kembali.');
+  }catch(e){if(context.current===target)setMessage(e.message);}
+  finally{if(context.current===target)setBusy(false);}
+ }
  async function disconnect(){if(!window.confirm('Putuskan koneksi Drive BGN dapur ini? Bukti di kedua Drive tidak dihapus.'))return;setBusy(true);try{await lpdhApi.bgnDisconnect(site);await refresh();setMessage('Koneksi diputus. Hubungkan ulang sebelum upload BGN.');}catch(e){setMessage(e.message);}finally{setBusy(false);}}
  return <section className="lpdh-form-section"><h2>Koneksi Drive BGN · {site}</h2>
   <p>Drive BGN untuk link bukti LPDH. Drive internal tetap terpisah untuk arsip dan Maker. Folder mengikuti bulan dan tanggal HPE, bukan tanggal tombol upload diklik.</p>
@@ -73,6 +87,8 @@ export default function BgnDrivePanel({site}){
    <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state.configured} onClick={connect}>Hubungkan / Login Ulang Google</button><button type="button" disabled={busy} onClick={check}>{busy?'Sedang memproses…':'Periksa Koneksi'}</button><button type="button" disabled={busy||!state.connected} onClick={verifyAssignedFolder}>Verifikasi Folder BGN Dapur</button><button type="button" disabled={busy||!state.connected} onClick={choose}>Pilih Folder BGN</button><button type="button" disabled={busy||!state.connected} onClick={disconnect}>Putuskan Koneksi</button></div>
    <p>Jika popup Google meminta sign-in terus atau Select tidak memberi hasil, tutup popup lalu klik Verifikasi Folder BGN Dapur. Cara ini hanya berhasil jika akun Google sudah memberi izin folder ke aplikasi; tidak melewati izin Google.</p></>}
   {!state&&!message&&<p>Memeriksa koneksi…</p>}{message&&<p role="status">{message}</p>}
+  <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state?.folderReady||!serviceDate} onClick={testUpload}>Tes Upload BGN · {serviceDate||'Pilih HPE'}</button></div>
+  {testResult&&<p>File uji: {testResult.filename}<br/>Folder HPE: {testResult.drivePath}<br/><a href={testResult.driveUri} target="_blank" rel="noopener noreferrer">Buka PDF Uji di Drive BGN</a></p>}
   <p>Tahap koneksi: upload bukti ke BGN belum diaktifkan pada alur invoice. Arsip dan link internal yang sudah ada tidak diubah.</p>
  </section>;
 }

@@ -324,7 +324,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
       </nav>
 
       <section className="lpdh-content">
-        {active==='bgn-drive'&&<BgnDrivePanel key={site} site={site}/>}
+        {active==='bgn-drive'&&<BgnDrivePanel key={`${site}|${selectedDate}`} site={site} serviceDate={selectedDate}/>}
         {active==='invoice-recap'&&<InvoiceRecap site={site} onOpen={date=>{setSelectedDate(date);setActive('documents');}}/>}
         {issueTarget&&<div className="lpdh-note warn" role="status">Pemeriksaan {issueTarget.issue.no}: {issueTarget.issue.check}. {issueTarget.issue.detail}<button type="button" onClick={()=>setIssueTarget(null)}>Tutup petunjuk</button></div>}
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 

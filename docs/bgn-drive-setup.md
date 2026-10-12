@@ -4,6 +4,13 @@ Status implementasi: OAuth per dapur, pemilihan folder dan transport upload
 tersedia. Alur invoice/TopUp/pengesahan belum memakai transport BGN; bukti
 internal, Maker, dan arsip lama tetap berjalan seperti sebelumnya.
 
+Tombol Tes Upload BGN membuat PDF deterministik bertanda BUKAN BUKTI
+TRANSAKSI untuk tanggal HPE aktif. Endpoint memeriksa dapur dan HPE serta
+ukuran, MD5, mimeType, parent folder dan status trashed hasil readback Google.
+Tes hanya menulis catatan pada lpdh_bgn_drive_uploads; tidak membuat invoice,
+Maker atau mengubah saldo/data harian. Tes berulang menggunakan artifact key
+dan content hash yang sama. File uji tidak dihapus otomatis.
+
 ## Konfigurasi server
 
 - `SPPG_BGN_DRIVE_PICKER_API_KEY`: key baru khusus Google Picker API,

@@ -13,7 +13,8 @@ const{chromium}=require('playwright');
  class View{setIncludeFolders(){return this;}setSelectFolderEnabled(){return this;}}
  class Builder{setDeveloperKey(){return this;}setAppId(){return this;}setOAuthToken(){return this;}setOrigin(){return this;}addView(){return this;}setCallback(fn){window.selectFolder=fn;return this;}build(){return {setVisible(){},dispose(){throw new Error('Synthetic popup cleanup failure');}};}}
  window.google={picker:{DocsView:View,PickerBuilder:Builder,ViewId:{FOLDERS:'folders'},Action:{PICKED:'picked',CANCEL:'cancel'}}};
- createRoot(document.getElementById('root')).render(<BgnDrivePanel site="MAJA"/>);`},outfile:out,bundle:true,format:'iife'});
+ window.confirm=()=>true;lpdhApi.bgnTestUpload=async(site,date)=>{window.testUploadArgs={site,date};return {verified:true,driveUri:'https://drive.google.com/file/d/test/view',filename:'UJI_KONEKSI.pdf',drivePath:'2026-10/2026-10-12'};};
+ createRoot(document.getElementById('root')).render(<BgnDrivePanel site="MAJA" serviceDate="2026-10-12"/>);`},outfile:out,bundle:true,format:'iife'});
  const browser=await chromium.launch({headless:true});try{
   const page=await browser.newPage();await page.setContent('<div id="root"></div>');await page.addScriptTag({path:out});
   await page.getByRole('button',{name:'Periksa Koneksi',exact:true}).click();
@@ -47,6 +48,10 @@ const{chromium}=require('playwright');
   await page.evaluate(()=>{window.rejectFolder=true;});
   await page.getByRole('button',{name:'Verifikasi Folder BGN Dapur',exact:true}).click();
   await page.getByText(/Folder BGN belum dapat diverifikasi/).waitFor();
+  await page.getByRole('button',{name:'Tes Upload BGN · 2026-10-12',exact:true}).click();
+  await page.getByText(/Tes upload BGN BERHASIL/).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.testUploadArgs),{site:'MAJA',date:'2026-10-12'});
+  assert.equal(await page.getByRole('link',{name:'Buka PDF Uji di Drive BGN'}).getAttribute('href'),'https://drive.google.com/file/d/test/view');
   console.log('PASS check shows progress and timestamped result even when status is unchanged');
   console.log('PASS Select saves despite popup cleanup failure and always reports success, empty selection, rejection or cancellation');
   console.log('PASS assigned folder verification uses the existing secured endpoint and reports permission rejection');

@@ -37,6 +37,7 @@ function q(params) {
 export const lpdhApi = {
   bgnStatus:site=>request(`/v1/lpdh/bgn-drive/status?${new URLSearchParams({site})}`),
   bgnCheck:site=>request('/v1/lpdh/bgn-drive/check',{method:'POST',body:JSON.stringify({site})}),
+  bgnTestUpload:(site,date)=>request('/v1/lpdh/bgn-drive/test-upload',{method:'POST',body:JSON.stringify({site,service_date:date})}),
   bgnStart:site=>request('/v1/lpdh/bgn-drive/oauth/start',{method:'POST',credentials:'include',body:JSON.stringify({site})}),
   bgnPicker:site=>request('/v1/lpdh/bgn-drive/picker',{method:'POST',body:JSON.stringify({site})}),
   bgnFolder:(site,folderId)=>request('/v1/lpdh/bgn-drive/folder',{method:'POST',body:JSON.stringify({site,folder_id:folderId})}),

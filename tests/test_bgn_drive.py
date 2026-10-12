@@ -140,6 +140,52 @@ class BgnDriveTests(unittest.TestCase):
             result=api.check(api.SiteIn(site='MAJA'),SimpleNamespace(),Response())
             token.assert_called_once();self.assertFalse(result['folderReady']);self.assertIn('Folder belum dipilih',result['detail']);self.assertNotIn('private-token',json.dumps(result))
 
+    def test_upload_pdf_is_deterministic_and_not_a_transaction(self):
+        from backend.bgn_drive_test import test_pdf
+        from pypdf import PdfReader
+        from io import BytesIO
+        content=test_pdf('CEMPLANG','2026-10-12')
+        self.assertEqual(content,test_pdf('CEMPLANG','2026-10-12'))
+        reader=PdfReader(BytesIO(content));self.assertEqual(len(reader.pages),1)
+        text=reader.pages[0].extract_text()
+        self.assertIn('BUKAN BUKTI TRANSAKSI',text);self.assertIn('CEMPLANG',text);self.assertIn('2026-10-12',text)
+        self.assertIn('Tidak mengubah saldo',text)
+
+    def test_upload_endpoint_requires_site_and_hpe_and_never_writes_financial_data(self):
+        from datetime import date
+        from backend import lpdh_api
+        request=SimpleNamespace(state=SimpleNamespace(sppg_role='CEMPLANG'))
+        payload=api.TestUploadIn(site='CEMPLANG',service_date=date(2026,10,12))
+        db=Database()
+        with patch.object(lpdh_api,'_effective',return_value=False),patch('backend.bgn_drive_test.verified_test_upload') as upload:
+            with self.assertRaises(HTTPException) as error:api.test_upload(payload,request,Response())
+            self.assertEqual(error.exception.status_code,409);upload.assert_not_called()
+        with patch.object(lpdh_api,'_effective',return_value=True),patch.object(api,'connection',db.connection),patch('backend.bgn_drive_test.verified_test_upload',return_value={'verified':True,'driveUri':'https://drive.google.com/file/d/synthetic/view'}) as upload:
+            self.assertTrue(api.test_upload(payload,request,Response())['verified'])
+            upload.assert_called_once_with(db,'CEMPLANG',date(2026,10,12));self.assertEqual(db.commits,1)
+            self.assertEqual(db.calls,[])
+        payload.site='MAJA'
+        with self.assertRaises(HTTPException) as error:api.test_upload(payload,request,Response())
+        self.assertEqual(error.exception.status_code,403)
+
+    def test_upload_readback_rejects_corrupt_or_wrong_parent_pdf(self):
+        from backend.bgn_drive_test import verified_test_upload,test_pdf
+        import hashlib
+        content=test_pdf('CEMPLANG','2026-10-12')
+        record={'file_id':'test-file','folder_id':'test-day','drive_uri':'https://drive.google.com/file/d/test-file/view'}
+        saved={'email':drive.SITES['CEMPLANG'][0]}
+        db=Database()
+        db.fetchone=lambda: record if 'lpdh_bgn_drive_uploads' in db.calls[-1][0] else saved
+        valid={'id':'test-file','mimeType':'application/pdf','parents':['test-day'],'size':str(len(content)),'md5Checksum':hashlib.md5(content).hexdigest()}
+        from unittest.mock import Mock
+        google=Mock()
+        with patch.object(drive,'upload',return_value=record['drive_uri']),patch.object(drive,'service',return_value=google):
+            google.files.return_value.get.return_value.execute.return_value=valid
+            self.assertTrue(verified_test_upload(db,'CEMPLANG','2026-10-12')['verified'])
+            for bad in [{**valid,'parents':['wrong']},{**valid,'md5Checksum':'wrong'},{**valid,'size':'0'},{**valid,'trashed':True}]:
+                google.files.return_value.get.return_value.execute.return_value=bad
+                with self.assertRaises(ValueError):verified_test_upload(db,'CEMPLANG','2026-10-12')
+
 
 if __name__=='__main__':unittest.main()
 
