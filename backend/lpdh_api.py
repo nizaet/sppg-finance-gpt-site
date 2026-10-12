@@ -1037,4 +1037,6 @@ def approval_cancel(payload: ApprovalCancelIn, request: Request):
 
 from backend.topup_receipt_api import router as topup_receipt_router
 router.include_router(topup_receipt_router)
+from backend.bgn_drive_api import router as bgn_drive_router
+router.include_router(bgn_drive_router)
 

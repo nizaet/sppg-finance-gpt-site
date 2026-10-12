@@ -35,6 +35,11 @@ function q(params) {
 }
 
 export const lpdhApi = {
+  bgnStatus:site=>request(`/v1/lpdh/bgn-drive/status?${new URLSearchParams({site})}`),
+  bgnStart:site=>request('/v1/lpdh/bgn-drive/oauth/start',{method:'POST',credentials:'include',body:JSON.stringify({site})}),
+  bgnPicker:site=>request('/v1/lpdh/bgn-drive/picker',{method:'POST',body:JSON.stringify({site})}),
+  bgnFolder:(site,folderId)=>request('/v1/lpdh/bgn-drive/folder',{method:'POST',body:JSON.stringify({site,folder_id:folderId})}),
+  bgnDisconnect:site=>request('/v1/lpdh/bgn-drive/disconnect',{method:'POST',body:JSON.stringify({site})}),
   topupReceipts:(site,date)=>request(`/v1/lpdh/topup/receipts?${new URLSearchParams({site,date})}`),
   topupReceiptDraft:payload=>request('/v1/lpdh/topup/receipts',{method:'POST',body:JSON.stringify(payload)}),
   topupReceiptPdf:id=>request(`/v1/lpdh/topup/receipts/${id}/pdf`),

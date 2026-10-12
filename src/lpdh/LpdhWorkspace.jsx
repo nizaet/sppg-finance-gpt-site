@@ -21,6 +21,7 @@ import { savedDailyMatches, pendingReview } from './reviewSaveGate.mjs';
 import { lpdhApi, downloadBase64 } from "./lpdhApi.js";
 import { DailyPanel, MasterPanel, normalizeDaily, normalizeMasters, syncDailyMasterTargets, applyRoutineDaily } from "./LpdhForms.jsx";
 import DocumentWorkspace from "../documents/DocumentWorkspace.jsx";
+import BgnDrivePanel from './BgnDrivePanel.jsx';
 import LpdhSheets, { SHEET_ORDER } from "./LpdhSheets.jsx";
 
 const SITE_LABELS = { MAJA: "Maja", CEMPLANG: "Cemplang" };
@@ -302,6 +303,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
     ["service-days","Hari Pelayanan Efektif",CalendarCheck2],
     ["masters","Master Data",FolderCog],
     ["documents","Buat Invoice & Kuitansi",ReceiptText],
+    ['bgn-drive','Koneksi Drive BGN',ReceiptText],
     ["daily","Data Harian dari Dokumen",Files],
     ["review","Review LPDH / Sheet Excel",FileCheck2],
     ["generate","Unduh Excel & Riwayat",History],
@@ -322,6 +324,7 @@ export default function LpdhWorkspace({ role, onLogout }) {
       </nav>
 
       <section className="lpdh-content">
+        {active==='bgn-drive'&&<BgnDrivePanel key={site} site={site}/>}
         {active==='invoice-recap'&&<InvoiceRecap site={site} onOpen={date=>{setSelectedDate(date);setActive('documents');}}/>}
         {issueTarget&&<div className="lpdh-note warn" role="status">Pemeriksaan {issueTarget.issue.no}: {issueTarget.issue.check}. {issueTarget.issue.detail}<button type="button" onClick={()=>setIssueTarget(null)}>Tutup petunjuk</button></div>}
         {active==="calendar"&&<CalendarPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} effectiveDates={effectiveDates} calendarItems={calendarItems} onOpenDaily={()=>setActive("daily")} onOpenMaster={()=>setActive("service-days")}/>} 

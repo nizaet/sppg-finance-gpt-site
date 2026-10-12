@@ -21,6 +21,7 @@ PUBLIC_PREFIXES = (
     "/openapi.json",
 )
 PUBLIC_EXACT = {"/health", "/v1/auth/config", "/v1/auth/login", "/v1/auth/logout"}
+PUBLIC_EXACT.add('/v1/lpdh/bgn-drive/oauth/callback') # One-time state + browser-cookie bound, not a public Drive API.
 
 
 def _authorization(headers: list[tuple[bytes, bytes]]) -> str:
@@ -145,3 +146,4 @@ class SppgAccessMiddleware:
 
         response = _json_response(403, f"akun {role} hanya dapat menggunakan Kalkulator {role}")
         await response(scope, receive, send)
+
