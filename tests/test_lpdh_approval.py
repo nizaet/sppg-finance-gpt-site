@@ -17,6 +17,41 @@ from fastapi import HTTPException
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_j_summary_matches_review_not_stale_template_formulas(self):
+        wb=Workbook();ws=wb.active;ws.title='J_Pengesahan'
+        labels=['Jumlah penerima manfaat dihitung','Belanja bahan baku pangan (Rp)',
+            'Biaya operasional (Rp)','Insentif dihitung (Rp)',
+            'Insentif dibayarkan ke Mitra/Yayasan (Rp)','Saldo akhir VA (Rp)','Usulan top up (Rp)']
+        for row,label in enumerate(labels,16):
+            ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=4)
+            ws.merge_cells(start_row=row,start_column=5,end_row=row,end_column=6)
+            ws.cell(row,1,label);ws.cell(row,5,'=1+2');ws.cell(row,5).number_format='#,##0'
+        ws['E18']='=8846300';ws['E21']='=220232500'
+        source=BytesIO();wb.save(source);raw=source.getvalue()
+        preview={'ready':True,'production':{'incentivePm':3023},'rawTotal':27599900,
+            'operationalTotal':8988300,'incentiveCalculated':6046000,
+            'balance':{'bankBalance':220090500,'expenditure':{'incentive':6046000}},
+            'topup':{'requiredTotal':42634200}}
+        result=load_workbook(BytesIO(print_copy(raw,{},preview)))['J_Pengesahan']
+        self.assertEqual([result.cell(row,5).value for row in range(16,23)],
+            [3023,27599900,8988300,6046000,6046000,220090500,42634200])
+        self.assertEqual(result['E21'].number_format,'#,##0')
+        self.assertEqual(load_workbook(BytesIO(raw))['J_Pengesahan']['E21'].value,'=220232500')
+        ws['A21']='Label tidak dikenal';bad=BytesIO();wb.save(bad)
+        with self.assertRaises(ValueError):print_copy(bad.getvalue(),{},preview)
+
+    def test_bgn_approval_is_in_excel_register_without_changing_totals(self):
+        from backend.lpdh_logic import compute_preview
+        daily={'_approval':{'status':'FINAL','pdfLink':'https://drive.google.com/file/d/bgn-j/view'},
+            'balance':{'bankBalance':220090500},'incentive':{'paidAmount':6046000}}
+        preview=compute_preview({},daily,'2026-10-12',True,{})
+        row=next(row for row in preview['register'] if row['source']=='J_Pengesahan')
+        self.assertEqual(row['link'],daily['_approval']['pdfLink']);self.assertEqual(row['amount'],0)
+        without=compute_preview({}, {k:v for k,v in daily.items() if k!='_approval'},'2026-10-12',True,{})
+        self.assertEqual(preview['balance'],without['balance'])
+        daily['_approval']['status']='CANCELLED'
+        self.assertFalse(any(row['source']=='J_Pengesahan' for row in compute_preview({},daily,'2026-10-12',True,{})['register']))
+
     def test_empty_stamp_removes_template_placeholder_and_old_art_but_keeps_signature(self):
         wb=Workbook(); ws=wb.active; ws.title='J_Pengesahan'
         ws['D31']='(cap SPPG)'; ws['F31']='(cap Yayasan)'

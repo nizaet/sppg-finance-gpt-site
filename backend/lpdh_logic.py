@@ -681,6 +681,11 @@ def compute_preview(
     # D_Insentif!C16 = IF(C11="Ya", C14*C15, 0), not an unconditional payment.
     incentive_calculated = incentive_pm * incentive_tariff if incentive_eligible else 0
     register = build_register(raw, operations, volunteers, incentive_recipients, daily)
+    approval = daily.get('_approval') or {}
+    if approval.get('status') == 'FINAL' and https_url(approval.get('pdfLink')):
+        register.append({'source':'J_Pengesahan','code':'J-PENGESAHAN',
+            'proofNo':daily.get('lpdhNumber') or f'J-{service_date}', 'date':service_date,
+            'amount':0, 'link':approval['pdfLink']})
     incentive_receipts = individual_incentive_receipts(daily, incentive_recipients)
 
     balance = daily.get("balance") or {}

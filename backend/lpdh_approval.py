@@ -58,7 +58,7 @@ def approval_hash(masters, daily, service_date, preview):
     inc = data.setdefault('incentive', {})
     inc.pop('evidenceLink', None)
     inc.pop('approvalEvidenceLink', None)
-    material = {'date': service_date, 'daily': data,
+    material = {'date': service_date, 'daily': data, 'printSummaryVersion': 2,
                 'approvalRevision': int((daily.get('_approval') or {}).get('revision') or 1) + (1 if (daily.get('_approval') or {}).get('status') == 'CANCELLED' else 0),
                 'template': masters.get('_officialTemplateBase64'),
                 'signers': masters.get('signers'), 'assets': masters.get('assets'),
@@ -105,6 +105,54 @@ def cancel_approval(daily, actor, timestamp, reason):
     return out
 
 
+def apply_review_summary(ws, preview):
+    """Only the disposable J print copy uses authoritative Review totals.
+
+    Template formulas and the archived source workbook are never rewritten.
+    Refuse an unmapped layout instead of silently printing stale balances.
+    """
+    import re
+    from openpyxl.cell.cell import MergedCell
+    balance = preview.get('balance') or {}
+    production = preview.get('production') or {}
+    values = {
+        'jumlahpenerimamanfaatdihitung': production.get('incentivePm'),
+        'belanjabahanbakupangan': preview.get('rawTotal'),
+        'biayaoperasional': preview.get('operationalTotal'),
+        'insentifdihitung': preview.get('incentiveCalculated'),
+        'insentifdibayarkankemitrayayasan': (balance.get('expenditure') or {}).get('incentive'),
+        'saldoakhirva': balance.get('bankBalance'),
+        'usulantopup': (preview.get('topup') or {}).get('requiredTotal'),
+    }
+    if not any(value is not None for value in values.values()):
+        return  # Lightweight validation-only callers do not supply a summary.
+    found = set()
+    for row in ws:
+        for label in row:
+            if label.data_type == 'f' or not isinstance(label.value, str):
+                continue
+            text = re.sub(r'[^a-z0-9]', '', label.value.lower())
+            key = next((key for key in values if text in (key, key+'rp')), None)
+            if not key or values[key] is None:
+                continue
+            end = label.column
+            for merged in ws.merged_cells.ranges:
+                if label.coordinate in merged:
+                    end = merged.max_col
+                    break
+            candidates = [cell for cell in row if cell.column > end and not isinstance(cell, MergedCell)]
+            target = next((cell for cell in candidates if cell.data_type == 'f' or isinstance(cell.value, (int,float))), None)
+            if target is None:
+                target = next((cell for cell in candidates if cell.value is None), None)
+            if target is None or key in found:
+                raise ValueError('Pemetaan ringkasan J_Pengesahan tidak unik.')
+            target.value = float(values[key])
+            found.add(key)
+    expected = {key for key,value in values.items() if value is not None}
+    if found != expected:
+        raise ValueError('Label ringkasan J_Pengesahan tidak sesuai template resmi.')
+
+
 def print_copy(content, assets, validation=None):
     """Hide other sheets only in the print copy; references remain available."""
     if __package__:
@@ -123,6 +171,8 @@ def print_copy(content, assets, validation=None):
     if 'J_Pengesahan' not in wb.sheetnames:
         raise ValueError('Template tidak memiliki sheet J_Pengesahan.')
     ws = wb['J_Pengesahan']
+    if validation is not None:
+        apply_review_summary(ws, validation)
     if validation is not None:
         # Disposable PDF copy: use the same authoritative checklist as Review.
         # Legacy workbook checks do not understand grouped invoices or dummy BAST.

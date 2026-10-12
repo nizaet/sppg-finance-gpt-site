@@ -42,7 +42,7 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved, onO
     try {
       await lpdhApi.approvalFinalize(site, serviceDate, printed.hash);
       await onSaved?.();
-      if (alive.current) setMessage('FINAL: PDF tersimpan di Drive dan link masuk ke D_Insentif.');
+      if (alive.current) setMessage('FINAL: PDF tersimpan di Drive BGN dapur ini; link BGN masuk ke D_Insentif dan Register Bukti Excel. Salinan internal tetap disimpan.');
     } catch (error) { if (alive.current) setMessage(error.message); }
     finally { operationLock.current = false; if (alive.current) setBusy(false); }
   };
@@ -66,7 +66,8 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved, onO
       <button type="button" disabled={busy} onClick={preview}>Buka Pratinjau Cetak</button>
       <button type="button" className="primary" disabled={busy || !printed} onClick={finalize}>Finalkan Pengesahan &amp; Simpan ke Drive</button>
       {approval?.status === 'FINAL' && <button type="button" disabled={busy} onClick={cancel}>Batalkan Pengesahan</button>}
-      {approval?.pdfLink && <a href={approval.pdfLink} target="_blank" rel="noopener noreferrer">PDF pengesahan di Drive</a>}
+      {approval?.pdfLink && <a href={approval.pdfLink} target="_blank" rel="noopener noreferrer">PDF pengesahan · link LPDH</a>}
+      {approval?.internalPdfLink && <a href={approval.internalPdfLink} target="_blank" rel="noopener noreferrer">Salinan pengesahan internal</a>}
     </div>
     {approval?.status === 'CANCELLED' && <p>Pengesahan dibatalkan: {approval.cancelReason}. PDF lama adalah arsip, bukan pengesahan aktif.</p>}
     {message && <p role="status" style={{whiteSpace:'pre-wrap'}}>{message}</p>}

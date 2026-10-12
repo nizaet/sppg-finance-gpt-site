@@ -55,6 +55,17 @@ class FillOnlyTests(unittest.TestCase):
 
     def fill(self): return fill_template(self.template,{},self.daily,self.preview,'2026-10-05')
 
+    def test_final_approval_bgn_link_is_in_exported_excel_register(self):
+        link='https://drive.google.com/file/d/bgn-approval/view'
+        self.daily['_approval']={'status':'FINAL','pdfLink':link,'internalPdfLink':'https://internal/archive'}
+        self.preview=compute_preview({},self.daily,'2026-10-05',False)
+        result=load_workbook(BytesIO(self.fill()))
+        rows=list(result['I_RegisterBukti'].iter_rows(min_row=5,max_col=6,values_only=True))
+        approval=next(row for row in rows if row[0]=='J_Pengesahan')
+        self.assertEqual(approval[2],self.daily['lpdhNumber']);self.assertEqual(approval[4],0)
+        self.assertEqual(approval[5],link)
+        self.assertFalse(any(row[5]=='https://internal/archive' for row in rows))
+
     def test_exports_only_change_yellow_inputs_and_keep_all_formulas_styles_parts(self):
         output = self.fill()
         before = load_workbook(BytesIO(self.template)); after = load_workbook(BytesIO(output))

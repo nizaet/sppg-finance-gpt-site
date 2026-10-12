@@ -34,7 +34,7 @@ const text = n => n.children.map(x => typeof x === 'string' ? x : text(x)).join(
   confirmed=true;error=true;
   await act(async()=>button('Finalkan').props.onClick());assert.equal(refreshed,0);assert.ok(text(view.root).includes('Drive belum tersimpan'));
   error=false;
-  await act(async()=>button('Finalkan').props.onClick());assert.equal(refreshed,1);assert.ok(text(view.root).includes('link masuk ke D_Insentif'));
+  await act(async()=>button('Finalkan').props.onClick());assert.equal(refreshed,1);assert.ok(text(view.root).includes('link BGN masuk ke D_Insentif dan Register Bukti Excel'));
   let opened=false;
   await act(async()=>view.update(React.createElement(Component,{site:'MAJA',serviceDate:'2026-10-05',daily:{_approval:{status:'FINAL',hash:'final-hash'}},onSaved:()=>refreshed++,onOpenIssue:issue=>{assert.equal(issue.no,24);opened=true;}})));
   await act(async()=>button('Unggah TTD').props.onClick());assert.ok(opened);
