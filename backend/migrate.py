@@ -54,6 +54,7 @@ MIGRATIONS = [
     ROOT / "schema" / "lpdh_delivery_controls_v049.sql",
     ROOT / "schema" / "lpdh_topup_receipts_v050.sql",
     ROOT / "schema" / "lpdh_bgn_drive_v051.sql",
+    ROOT / "schema" / "lpdh_bgn_evidence_v052.sql",
 ]
 
 

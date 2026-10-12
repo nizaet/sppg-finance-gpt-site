@@ -89,7 +89,7 @@ export default function BgnDrivePanel({site,serviceDate}){
   {!state&&!message&&<p>Memeriksa koneksi…</p>}{message&&<p role="status">{message}</p>}
   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state?.folderReady||!serviceDate} onClick={testUpload}>Tes Upload BGN · {serviceDate||'Pilih HPE'}</button></div>
   {testResult&&<p>File uji: {testResult.filename}<br/>Folder HPE: {testResult.drivePath}<br/><a href={testResult.driveUri} target="_blank" rel="noopener noreferrer">Buka PDF Uji di Drive BGN</a></p>}
-  <p>Tahap koneksi: upload bukti ke BGN belum diaktifkan pada alur invoice. Arsip dan link internal yang sudah ada tidak diubah.</p>
+  <p>Finalisasi invoice/kuitansi, TopUp dan J_Pengesahan mengunggah PDF ke BGN dan mengisi link LPDH otomatis. Arsip internal untuk Maker tetap terpisah. Bukti lama tidak dipindah; pastikan koneksi masing-masing dapur siap sebelum finalisasi.</p>
  </section>;
 }
 

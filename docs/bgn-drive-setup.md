@@ -1,8 +1,8 @@
-# Koneksi Drive BGN — tahap koneksi
+# Koneksi Drive BGN dan bukti LPDH
 
-Status implementasi: OAuth per dapur, pemilihan folder dan transport upload
-tersedia. Alur invoice/TopUp/pengesahan belum memakai transport BGN; bukti
-internal, Maker, dan arsip lama tetap berjalan seperti sebelumnya.
+Status implementasi: OAuth per dapur, pemilihan folder, tes upload, dan
+integrasi finalisasi invoice/TopUp/pengesahan ke BGN tersedia. Arsip internal
+untuk Maker tetap terpisah; bukti lama tidak dipindah otomatis.
 
 Tombol Tes Upload BGN membuat PDF deterministik bertanda BUKAN BUKTI
 TRANSAKSI untuk tanggal HPE aktif. Endpoint memeriksa dapur dan HPE serta
@@ -49,7 +49,24 @@ pemeriksaan langsung token Google dan izin tulis folder, tanpa membuat berkas,
 serta menampilkan hasil dan waktu pemeriksaan. Status tersimpan saja bukan
 bukti bahwa token Google masih aktif.
 
-## Aktivasi berikutnya
+## Integrasi finalisasi (v052)
+
+Finalisasi invoice akuntan (termasuk kuitansi relawan/guru/kader dan insentif
+mitra), kuitansi TopUp, J_Pengesahan, serta upload bukti TopUp menggunakan
+dua tujuan: PDF BGN untuk link LPDH, arsip internal untuk Maker.
+BGN memverifikasi parent, ukuran dan checksum file setelah upload. Folder
+BGN mengikuti tanggal pelayanan `YYYY-MM/YYYY-MM-DD`, bukan waktu upload.
+Tidak mengubah nominal, status pembayaran bank, atau bukti lama secara massal.
+
+Invoice mempertahankan status FINAL saat upload gagal (alur lama); status/error
+BGN terpisah dan tombol Simpan ke Drive dapat mencoba lagi tanpa mengunggah
+ulang PDF/Excel internal yang sudah tersimpan. Link internal tidak menjadi
+fallback LPDH untuk invoice yang dikelola BGN. Snapshot LPDH GENERATED tidak
+ditulis ulang oleh retry arsip. Kuitansi TopUp dan pengesahan baru menjadi
+FINAL setelah kedua arsip lengkap; kegagalan menyisakan draft/data lama.
+Final lama tidak otomatis dipindah. Pastikan kedua dapur tersambung sendiri.
+
+## Riwayat tahap koneksi
 
 1. Deploy migrasi dan halaman Koneksi Drive BGN tanpa mengganti alur bukti.
 2. Pasang dua konfigurasi server tanpa menampilkan nilainya di chat/log.

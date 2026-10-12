@@ -55,7 +55,8 @@ def document_rows(document):
         common = {
             "date": document["serviceDate"], "source": "FINAL_DOCUMENT",
             "sourceDocumentId": document["id"], "sourceLine": index + 1,
-            "evidenceLink": header.get("evidenceLink") or document.get("driveUri") or "",
+            "evidenceLink": (document.get("bgnDriveUri") or "") if document.get("bgnRequired") else (header.get("evidenceLink") or document.get("driveUri") or ""),
+            "bgnRequired": bool(document.get("bgnRequired")),
             "paymentReference": header.get("paymentReference") or "",
             "aggregatePayment": aggregate_payment(document),
         }
@@ -95,10 +96,10 @@ def merge_final_documents(daily, documents):
     prior = incentive.get('_invoiceEvidence') or {}
     if mitra:
         doc = mitra[0]
-        link = doc.get('driveUri') or ''
+        link = (doc.get('bgnDriveUri') or '') if doc.get('bgnRequired') else (doc.get('driveUri') or '')
         if not prior:
             prior = {'previousLink': incentive.get('evidenceLink', ''), 'previousReceipt': incentive.get('receiptNo', '')}
-        if link:
+        if link or doc.get('bgnRequired'):
             incentive['evidenceLink'] = link
         incentive['receiptNo'] = doc['documentNumber']
         incentive['_invoiceEvidence'] = {**prior, 'documentId': doc['id'], 'link': link, 'number': doc['documentNumber']}
@@ -135,7 +136,7 @@ def merge_final_documents(daily, documents):
         for row in rows:
             saved = supplemental.get((str(row["sourceDocumentId"]), row["sourceLine"]), {})
             for field in ("evidenceLink", "paymentReference"):
-                if field in saved and (field != "evidenceLink" or str(saved[field] or "").strip()):
+                if field in saved and (field != "evidenceLink" or (not row.get('bgnRequired') and str(saved[field] or "").strip())):
                     row[field] = saved[field]
         kept = [row for row in out.get(key) or [] if not row.get("sourceDocumentId") and row.get("source") != "FINAL_KALKULATOR"]
         if any(row.get("invoiceNo") in invoice_numbers for row in kept):

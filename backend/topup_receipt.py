@@ -145,6 +145,6 @@ def render_receipt(receipt,final=False):
     def page(canvas,doc):
         if not final:
             canvas.saveState();canvas.setFillColorRGB(.87,.87,.87);canvas.setFont('Helvetica-Bold',48);canvas.translate(A4[0]/2,A4[1]/2);canvas.rotate(35);canvas.drawCentredString(0,0,'DRAFT');canvas.restoreState()
-    SimpleDocTemplate(output,pagesize=A4,leftMargin=45,rightMargin=45,topMargin=42,bottomMargin=42,title=receipt['document_number']).build(story,onFirstPage=page,onLaterPages=page)
+    SimpleDocTemplate(output,pagesize=A4,leftMargin=45,rightMargin=45,topMargin=42,bottomMargin=42,invariant=1,title=receipt['document_number']).build(story,onFirstPage=page,onLaterPages=page)
     return output.getvalue()
 

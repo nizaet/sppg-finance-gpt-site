@@ -211,11 +211,16 @@ class ApprovalTests(unittest.TestCase):
         with ExitStack() as stack:
             for name, value in {'connection':connection, '_approval_inputs':lambda *a:deepcopy(inputs), 'render_approval':lambda *a:b'pdf', 'claim_number':lambda *a:None}.items():
                 stack.enter_context(patch.object(api, name, value))
+            stack.enter_context(patch('backend.bgn_evidence.upload_verified',return_value='https://drive.google.com/file/d/bgn-approval/view'))
             stack.enter_context(patch.object(fixture.api, 'daily_lock', lambda *a:None))
             with patch('backend.accountant_drive.upload_accountant_artifact', side_effect=RuntimeError('failed')):
                 with self.assertRaises(HTTPException) as error: api.approval_finalize(payload, request)
                 self.assertEqual(error.exception.status_code, 502)
                 self.assertEqual(self.commits, 0); self.assertEqual(self.writes, [])
+            with patch('backend.bgn_evidence.upload_verified',side_effect=RuntimeError('BGN unavailable')):
+                with self.assertRaises(HTTPException) as error:api.approval_finalize(payload,request)
+                self.assertEqual(error.exception.status_code,502)
+                self.assertEqual(self.commits,0);self.assertEqual(self.writes,[])
             payload.expected_hash = 'b'*64
             with self.assertRaises(HTTPException) as error: api.approval_finalize(payload, request)
             self.assertEqual(error.exception.status_code, 409)
@@ -223,6 +228,8 @@ class ApprovalTests(unittest.TestCase):
             response = api.approval_finalize(payload, request)
             self.assertEqual(self.commits, 1)
             self.assertEqual(response['approval']['status'], 'FINAL')
+            self.assertEqual(response['approval']['pdfLink'],'https://drive.google.com/file/d/bgn-approval/view')
+            self.assertTrue(response['approval']['internalPdfLink'])
             daily['_approval'] = response['approval']
             response = api.approval_finalize(payload, request)
             self.assertTrue(response['alreadyFinal']); self.assertEqual(self.commits, 1)

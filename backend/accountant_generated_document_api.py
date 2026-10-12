@@ -239,6 +239,8 @@ def _serialize_document(cur, row):
             "total": float(row["total_amount"]), "items": items, "finalizedAt": row.get("finalized_at"),
             "driveUri": row.get("drive_uri"), "driveExcelUri": row.get("drive_excel_uri"), "driveUploadStatus": row.get("drive_upload_status"),
             "driveUploadError": row.get("drive_upload_error"), "cancelledAt": row.get("cancelled_at"),
+            "bgnDriveUri": row.get("bgn_pdf_uri"), "bgnUploadStatus": row.get("bgn_upload_status"),
+            "bgnUploadError": row.get("bgn_upload_error"), "bgnRequired": bool(row.get("bgn_upload_status")),
             "cancellationReason": row.get("cancellation_reason")}
     cur.execute('select m.id as maker_id,e.accountant_invoice_id from generated_document_maker_exports e left join bgn_makers m on m.accountant_invoice_id=e.accountant_invoice_id where e.document_id=%s', (row['id'],))
     exported = cur.fetchone()
@@ -565,8 +567,6 @@ def _archive_document(document_id, role):
             raise HTTPException(403, "akses site tidak diizinkan")
         if row["status"] != "FINAL":
             raise HTTPException(409, "Hanya dokumen FINAL aktif yang dapat diarsipkan")
-        if row.get("drive_uri") and row.get("drive_excel_uri"):
-            return {"driveUri": row["drive_uri"], "driveExcelUri": row["drive_excel_uri"], "driveUploadStatus": "UPLOADED"}
         document = _serialize_document(cur, row)
         pdf_uri, excel_uri, folder = row.get('drive_uri'), row.get('drive_excel_uri'), row.get('drive_folder_id')
         status, error = 'UPLOADED', None
@@ -596,15 +596,33 @@ def _archive_document(document_id, role):
             status = 'PARTIAL' if pdf_uri or excel_uri else 'FAILED'
             error = "Dokumen tetap FINAL di aplikasi, tetapi arsip PDF dan Excel di Drive belum lengkap. Klik Simpan ke Drive untuk melengkapi; berkas yang berhasil tidak diunggah ulang. Periksa koneksi/izin Drive bila tetap gagal."
         cur.execute("update generated_accountant_documents set drive_uri=%s,drive_excel_uri=%s,drive_folder_id=%s,drive_upload_status=%s,drive_upload_error=%s,updated_at=now() where id=%s", (pdf_uri, excel_uri, folder, status, error, document_id))
+        bgn_uri = row.get('bgn_pdf_uri')
+        bgn_status, bgn_error = 'UPLOADED', None
+        cur.execute('savepoint bgn_evidence_upload')
+        try:
+            from backend.bgn_evidence import upload_verified
+            from backend.generated_document_pdf import render_document_pdf
+            revision = int((row.get('header_payload') or {}).get('_archiveRevision') or 1)
+            bgn_uri = upload_verified(cur, row['site'], document['serviceDate'],
+                f'generated-document-{document_id}-revision-{revision}-pdf',
+                pdf_filename(document['documentNumber']), render_document_pdf(document, load_artwork(cur, document)), 'application/pdf')
+        except Exception:
+            cur.execute('rollback to savepoint bgn_evidence_upload')
+            bgn_status = 'FAILED'
+            bgn_error = 'Upload BGN belum berhasil. Link LPDH belum lengkap; periksa Koneksi Drive BGN lalu klik Simpan ke Drive. Arsip internal dan Maker tetap terpisah.'
+        cur.execute('release savepoint bgn_evidence_upload')
+        cur.execute('update generated_accountant_documents set bgn_pdf_uri=%s,bgn_upload_status=%s,bgn_upload_error=%s where id=%s',
+            (bgn_uri, bgn_status, bgn_error, document_id))
         # Complete the evidence after upload, without reopening an issued LPDH.
-        if pdf_uri:
+        if pdf_uri or bgn_uri:
             daily_lock(cur, row["site"], row["service_date"])
             cur.execute("select status from lpdh_daily_state where site=%s and service_date=%s for update", (row["site"], row["service_date"]))
             daily_state = cur.fetchone()
             if not daily_state or daily_state["status"] != "GENERATED":
                 _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
-        return {"driveUri": pdf_uri, "driveExcelUri": excel_uri, "driveUploadStatus": status, "driveUploadError": error}
+        return {"driveUri": pdf_uri, "driveExcelUri": excel_uri, "driveUploadStatus": status, "driveUploadError": error,
+                "bgnDriveUri": bgn_uri, "bgnUploadStatus": bgn_status, "bgnUploadError": bgn_error}
 
 
 @router.post("/accountant-documents/{document_id}/archive")
@@ -709,7 +727,7 @@ def finalize_document(document_id: int, authorization: str | None = Header(defau
             raise HTTPException(422, "Draft belum lengkap. Edit kop, item, kategori, dan tarif harian sebelum finalisasi.") from exc
         validate_asset_refs(cur, doc["site"], doc["header"])
         replacement = (doc, payload.replace_legacy_snapshot) if payload and payload.replace_legacy_snapshot and row['status'] == 'DRAFT' else None
-        cur.execute("update generated_accountant_documents set status='FINAL',finalized_at=coalesce(finalized_at,now()),finalized_by=coalesce(finalized_by,%s),updated_at=now() where id=%s", (role, document_id))
+        cur.execute("update generated_accountant_documents set status='FINAL',bgn_pdf_uri=case when status='DRAFT' then null else bgn_pdf_uri end,bgn_upload_status='PENDING',bgn_upload_error=null,finalized_at=coalesce(finalized_at,now()),finalized_by=coalesce(finalized_by,%s),updated_at=now() where id=%s", (role, document_id))
         ensure_package(cur, {**row, 'status':'FINAL'})
         synced = _sync_daily(cur, row["site"], row["service_date"], role, replacement) if replacement else _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()

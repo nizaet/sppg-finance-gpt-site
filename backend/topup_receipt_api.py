@@ -39,6 +39,7 @@ def save_daily(cur,site,day,data,actor):
 def serialize(row):
     return {'id':row['id'],'documentNumber':row['document_number'],'status':row['status'],
         'hash':digest(row['snapshot']),'snapshot':row['snapshot'],'pdfLink':row.get('pdf_link'),
+        'internalPdfLink':row.get('internal_pdf_link'),
         'cancelReason':row.get('cancelled_reason')}
 
 def get_receipt(cur,request,receipt_id,lock=True):
@@ -116,17 +117,24 @@ def finalize(receipt_id:int,payload:ActionIn,request:Request):
         if receipt['status']=='CANCELLED':raise HTTPException(409,'Kuitansi dibatalkan. Buat draft baru.')
         if digest(receipt['snapshot'])!=payload.expected_hash:raise HTTPException(409,'Draft berubah. Buka preview terbaru.')
         attach(data,receipt,receipt.get('pdf_link') or '') # Validate row before any upload.
+        if receipt['status']=='FINAL':
+            return {'receipt':serialize(receipt),'data':data}
         link=receipt.get('pdf_link')
+        internal_link=receipt.get('internal_pdf_link')
+        content=render_receipt(receipt,True)
+        key='topup-receipt-'+str(receipt_id)+'-'+payload.expected_hash
         if not link:
             try:
                 archive=upload_accountant_artifact(kind='invoice',site=site,service_date=str(receipt['service_date']),
-                    filename='Kuitansi_TopUp_'+str(receipt_id)+'.pdf',data=render_receipt(receipt,True),mime_type='application/pdf',
-                    artifact_key='topup-receipt-'+str(receipt_id)+'-'+payload.expected_hash)
-                link=archive['driveUri']
+                    filename='Kuitansi_TopUp_'+str(receipt_id)+'.pdf',data=content,mime_type='application/pdf',
+                    artifact_key=key)
+                internal_link=archive['driveUri']
+                from backend.bgn_evidence import upload_verified
+                link=upload_verified(cur,site,receipt['service_date'],key,'Kuitansi_TopUp_'+str(receipt_id)+'.pdf',content,'application/pdf')
                 if not str(link).startswith('https://'):raise ValueError('invalid link')
-            except Exception as exc:raise HTTPException(502,'Drive gagal. Kuitansi tetap DRAFT dan link lama tidak berubah; coba lagi.') from exc
+            except Exception as exc:raise HTTPException(502,'Upload internal/BGN belum lengkap. Kuitansi tetap DRAFT dan link lama tidak berubah; periksa Koneksi Drive BGN lalu Finalkan ulang.') from exc
         attach(data,receipt,link)
-        cur.execute("update lpdh_topup_receipts set status='FINAL',pdf_link=%s,finalized_by=coalesce(finalized_by,%s),finalized_at=coalesce(finalized_at,now()),updated_at=now() where id=%s returning *",(link,actor,receipt_id));receipt=cur.fetchone()
+        cur.execute("update lpdh_topup_receipts set status='FINAL',pdf_link=%s,internal_pdf_link=%s,finalized_by=coalesce(finalized_by,%s),finalized_at=coalesce(finalized_at,now()),updated_at=now() where id=%s returning *",(link,internal_link,actor,receipt_id));receipt=cur.fetchone()
         save_daily(cur,site,receipt['service_date'],data,actor);conn.commit()
     return {'receipt':serialize(receipt),'data':data}
 

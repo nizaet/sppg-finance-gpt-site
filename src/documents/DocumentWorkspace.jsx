@@ -262,7 +262,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       catch (e) { await reload(version); throw e; }
       await reload(version);
       if (version !== context.current) return;
-      await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError || "Upload Drive belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED");
+      await onFinalized?.(); notify(`${doc.documentNumber} FINAL dan sudah masuk data harian. ${result.bgnUploadError || (result.bgnUploadStatus === 'UPLOADED' ? 'PDF BGN tersimpan dan link LPDH terisi. ' : '')}${result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel internal tersimpan untuk arsip/Maker." : result.driveUploadError || "Upload internal belum berhasil; klik Simpan ke Drive untuk mencoba lagi."}`, result.driveUploadStatus !== "UPLOADED" || result.bgnUploadStatus !== 'UPLOADED');
     });
   };
   const recreate = doc => {
@@ -318,7 +318,7 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
   const archive = doc => run(async version => {
     const result = await documentApi.archive(doc.id); await reload(version);
     if (version === context.current && result.driveUri) await onFinalized?.();
-    if (version === context.current) notify(result.driveUploadStatus === "UPLOADED" ? "PDF dan Excel final tersimpan bersama di SPPG Drive." : result.driveUploadError, result.driveUploadStatus !== "UPLOADED");
+    if (version === context.current) notify(result.bgnUploadError || result.driveUploadError || "Arsip internal lengkap dan PDF BGN tersimpan; link LPDH sudah diperbarui jika tanggal belum diterbitkan.", result.driveUploadStatus !== "UPLOADED" || result.bgnUploadStatus !== 'UPLOADED');
   });
   const cancel = doc => {
     const reason = window.prompt(`Alasan membatalkan ${doc.documentNumber}:\nDokumen dikeluarkan dari biaya harian. Riwayat dan arsip lama tetap disimpan; pengganti memakai nomor baru.`);
@@ -427,13 +427,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
       <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id}>
         <td data-label="Nomor dokumen"><strong>{doc.documentNumber}</strong></td><td data-label="Jenis">{doc.header?.combinedPayments ? 'Invoice Upah + Insentif Guru + Kader' : doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td data-label="Item / penerima">{doc.items.length}</td><td className="doc-money" data-label="Total">{money(doc.total)}</td>
         <td data-label="Status"><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
-          {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri && doc.driveExcelUri ? "PDF + Excel tersimpan di Drive" : doc.driveUri ? "PDF tersimpan; Excel belum diarsipkan" : "Arsip Drive belum lengkap"}</small>{doc.driveUploadError && <small>{doc.driveUploadError}</small>}</>}
+          {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri && doc.driveExcelUri ? "PDF + Excel internal tersimpan" : "Arsip internal belum lengkap"}</small>{doc.bgnRequired && <small>{doc.bgnUploadStatus === 'UPLOADED' ? 'PDF BGN tersimpan · link untuk LPDH' : 'Upload BGN belum lengkap'}</small>}{doc.driveUploadError && <small>{doc.driveUploadError}</small>}{doc.bgnUploadError && <small>{doc.bgnUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}
           {doc.cancelledAt && <small>Dibatalkan: {new Date(doc.cancelledAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</small>}
         </td>
         <td data-label="Aksi"><div className="doc-actions">
           <button type="button" disabled={busy} onClick={() => preview(doc)}>Buka PDF{doc.status === "DRAFT" ? " Draft" : ""}</button>
-          {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF di Drive</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel di Drive</a>}{!(doc.driveUri && doc.driveExcelUri) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
+          {doc.status === "FINAL" && <><button type="button" disabled={busy} onClick={() => download(doc)}><Download size={14}/> Unduh PDF</button><button type="button" disabled={busy} onClick={() => downloadExcel(doc)}><Download size={14}/> Unduh Excel</button>{doc.bgnDriveUri && <a href={doc.bgnDriveUri} target="_blank" rel="noopener noreferrer">PDF BGN · LPDH</a>}{doc.driveUri && <a href={doc.driveUri} target="_blank" rel="noopener noreferrer">PDF internal · Maker</a>}{doc.driveExcelUri && <a href={doc.driveExcelUri} target="_blank" rel="noopener noreferrer">Excel internal</a>}{(!(doc.driveUri && doc.driveExcelUri) || (doc.bgnRequired && doc.bgnUploadStatus !== 'UPLOADED')) && <button type="button" disabled={busy} onClick={() => archive(doc)}>Simpan ke Drive</button>}</>}
           {doc.status === "DRAFT" && <><button type="button" disabled={busy} onClick={() => edit(doc)}><Edit3 size={14}/> Edit</button><button type="button" className="primary" disabled={busy} onClick={() => finalize(doc)}><CheckCircle2 size={14}/> Finalkan</button></>}
           {doc.status === 'FINAL' && ['BAHAN_BAKU','OPERASIONAL'].includes(doc.documentType) && <a href={`/delivery?site=${site}&date=${doc.serviceDate}`} target="_blank" rel="noopener noreferrer">PO · Surat Jalan · Ceklis · Kuitansi</a>}
           {doc.status === 'FINAL' && <button type="button" disabled={busy || Boolean(doc.makerInvoiceId) || Boolean(doc.makerId) || !doc.driveUri} onClick={() => exportMaker(doc)}>{doc.makerId ? `Sudah di Data Maker #${doc.makerId}` : doc.makerInvoiceId ? 'Dalam antrean · Belum Maker' : 'Export ke Antrean Maker'}</button>}

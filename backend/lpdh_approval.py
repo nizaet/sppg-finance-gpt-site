@@ -76,6 +76,7 @@ def attach_approval(daily, archive, digest, actor, timestamp):
     if previous and (previous.get('hash') != digest or previous.get('status') != 'FINAL'):
         out.setdefault('_approvalHistory', []).append(previous)
     out['_approval'] = {'status': 'FINAL', 'hash': digest, 'pdfLink': link,
+                        'internalPdfLink': archive.get('internalDriveUri'),
                         'revision': int((previous or {}).get('revision') or 1) + (1 if previous and previous.get('status') == 'CANCELLED' else 0),
                         'folderId': archive.get('folderId'), 'finalizedBy': actor,
                         'finalizedAt': timestamp, 'evidenceType': 'PENGESAHAN'}

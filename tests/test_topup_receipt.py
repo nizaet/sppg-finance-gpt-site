@@ -27,7 +27,7 @@ class Store(fixture.FakeConnection):
         elif sql.startswith('update lpdh_topup_receipts set snapshot'):
             r=self.receipts[args[2]];r.update(snapshot=json.loads(args[0]),document_number=args[1]);self.result=deepcopy(r)
         elif sql.startswith("update lpdh_topup_receipts set status='FINAL'"):
-            r=self.receipts[args[2]];r.update(status='FINAL',pdf_link=args[0]);self.result=deepcopy(r)
+            r=self.receipts[args[-1]];r.update(status='FINAL',pdf_link=args[0],internal_pdf_link=args[1]);self.result=deepcopy(r)
         elif sql.startswith("update lpdh_topup_receipts set status='CANCELLED'"):
             r=self.receipts[args[1]];r.update(status='CANCELLED',cancelled_reason=args[0]);self.result=deepcopy(r)
         elif sql.startswith('update lpdh_daily_state set data'):self.data=json.loads(args[0])
@@ -36,8 +36,21 @@ class Store(fixture.FakeConnection):
         else:super().execute(sql,args)
 
 class ReceiptTests(unittest.TestCase):
+    def test_bgn_failure_keeps_draft_and_retry_attaches_only_bgn_link(self):
+        r=self.draft().json()['receipt'];before=deepcopy(self.db.data)
+        with patch('backend.bgn_evidence.upload_verified',side_effect=RuntimeError('secret')):
+            result=self.action('finalize',r)
+        self.assertEqual(result.status_code,502)
+        self.assertEqual(self.db.receipts[1]['status'],'DRAFT')
+        self.assertEqual(self.db.data,before)
+        final=self.action('finalize',r)
+        self.assertEqual(final.status_code,200,final.text)
+        self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'https://drive.google.com/file/d/bgn-topup/view')
+        self.assertTrue(self.db.receipts[1]['internal_pdf_link'])
+
     def setUp(self):
         self.db=Store();self.stack=ExitStack();self.addCleanup(self.stack.close)
+        self.bgn=self.stack.enter_context(patch('backend.bgn_evidence.upload_verified',return_value='https://drive.google.com/file/d/bgn-topup/view'))
         @contextmanager
         def connection():yield self.db
         self.stack.enter_context(patch.object(api,'connection',connection))
@@ -70,7 +83,8 @@ class ReceiptTests(unittest.TestCase):
         changed=deepcopy(self.db.data);changed['topups'][0]['rawAmount']=1
         with self.assertRaises(HTTPException):protect_final_rows(self.db,'MAJA',date(2026,10,8),changed)
         cancel=self.action('cancel',r,reason='Perbaikan');self.assertEqual(cancel.status_code,200,cancel.text)
-        self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'');self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/file/d/topup/view')
+        self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'');self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/file/d/bgn-topup/view')
+        self.assertEqual(self.db.receipts[1]['internal_pdf_link'],'https://drive.google.com/file/d/topup/view')
     def test_delete_cancels_only_linked_receipt_and_preserves_archive(self):
         r=self.draft().json()['receipt']
         with patch('backend.accountant_drive.upload_accountant_artifact',return_value={'driveUri':'https://drive.google.com/test'}):
@@ -81,7 +95,8 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(self.db.data['topups'],[other])
         self.assertEqual(self.db.receipts[1]['status'],'CANCELLED')
-        self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/test')
+        self.assertEqual(self.db.receipts[1]['pdf_link'],'https://drive.google.com/file/d/bgn-topup/view')
+        self.assertEqual(self.db.receipts[1]['internal_pdf_link'],'https://drive.google.com/test')
         protect_final_rows(self.db,'MAJA',date(2026,10,8),deepcopy(self.db.data))
 
     def test_edit_receipt_values_applied_only_on_final(self):

@@ -410,12 +410,15 @@ def upload_topup_evidence(payload: TopupEvidenceIn, request: Request):
     try:
         archive=upload_accountant_artifact(kind='invoice',filename=filename,data=content,mime_type=mime,
             site=site,service_date=payload.service_date.isoformat(),artifact_key=f'topup-{site}-{payload.service_date}-{digest}')
+        from backend.bgn_evidence import upload_verified
+        with connection() as conn, conn.cursor() as cur:
+            link=upload_verified(cur,site,payload.service_date,f'topup-{site}-{payload.service_date}-{digest}',filename,content,mime)
+            conn.commit()
     except Exception as exc:
         raise HTTPException(502,'Upload Drive gagal. Link lama tidak diubah; silakan coba lagi.') from exc
-    link=archive.get('driveUri') or ''
     if not link.startswith('https://'):
         raise HTTPException(502,'Drive belum mengembalikan link bukti. Silakan coba lagi.')
-    return {'evidenceLink':link,'filename':filename}
+    return {'evidenceLink':link,'internalEvidenceLink':archive.get('driveUri'),'filename':filename}
 
 
 @router.post("/daily/validation/cancel")
@@ -998,9 +1001,14 @@ def approval_finalize(payload: ApprovalIn, request: Request):
             archive = upload_accountant_artifact(kind='invoice', filename=f'J_Pengesahan_{site}_{payload.service_date}_{digest[:12]}.pdf',
                 data=pdf, mime_type='application/pdf', site=site, service_date=payload.service_date.isoformat(),
                 artifact_key=f'lpdh-approval-{site}-{payload.service_date}-{digest}')
+            from backend.bgn_evidence import upload_verified
+            internal_uri = archive['driveUri']
+            bgn_uri = upload_verified(cur,site,payload.service_date,f'lpdh-approval-{site}-{payload.service_date}-{digest}',
+                f'J_Pengesahan_{site}_{payload.service_date}_{digest[:12]}.pdf',pdf,'application/pdf')
+            archive = {**archive, 'driveUri':bgn_uri, 'internalDriveUri':internal_uri}
             data = attach_approval(data, archive, digest, _role(request), datetime.now(timezone.utc).isoformat())
         except Exception as exc:
-            raise HTTPException(502, 'PDF pengesahan belum tersimpan di Drive. Status FINAL dan link D_Insentif tidak diubah; silakan ulangi.') from exc
+            raise HTTPException(502, 'PDF pengesahan belum lengkap di Drive internal/BGN. Status FINAL dan link D_Insentif tidak diubah; periksa Koneksi Drive BGN lalu ulangi.') from exc
         cur.execute("""insert into lpdh_daily_state(site,service_date,data,status,revision,updated_by,updated_at)
             values (%s,%s,%s::jsonb,'DRAFT',1,%s,now()) on conflict (site,service_date) do update
             set data=excluded.data,revision=lpdh_daily_state.revision+1,updated_by=excluded.updated_by,updated_at=now()""",

@@ -164,7 +164,7 @@ def render_document_pdf(document, artwork=None):
         from payment_package import is_payment_package, payment_sections
     output = BytesIO()
     pdf = SimpleDocTemplate(output, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32,
-                            title=document["documentNumber"], author=document["header"].get("issuerName") or "SPPG")
+                            invariant=1, title=document["documentNumber"], author=document["header"].get("issuerName") or "SPPG")
     width = A4[0] - 72
     if is_payment_package(document):
         sections = payment_sections(document)

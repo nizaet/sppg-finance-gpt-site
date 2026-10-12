@@ -71,6 +71,9 @@ class FakeConnection:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        if 'from lpdh_topup_receipts' in sql:
+            self.result=[]
+            return
         if sql.startswith('select kind,settings from lpdh_delivery_profiles'):
             self.result=[{'kind':kind,'settings':value} for (site,kind),value in self.delivery_profiles.items() if site==params[0]]
         elif 'insert into lpdh_delivery_profiles' in sql:
@@ -159,6 +162,8 @@ class FakeConnection:
         elif sql.startswith("update generated_accountant_documents set drive_uri"):
             self.row["drive_uri"] = params[0]
             self.row.update(drive_excel_uri=params[1],drive_folder_id=params[2],drive_upload_status=params[3],drive_upload_error=params[4])
+        elif sql.startswith('update generated_accountant_documents set bgn_pdf_uri'):
+            self.row.update(bgn_pdf_uri=params[0],bgn_upload_status=params[1],bgn_upload_error=params[2])
         elif sql.startswith("update generated_accountant_documents set drive_upload_status"):
             self.row["drive_upload_status"] = "FAILED"
             self.row["drive_upload_error"] = params[0]
@@ -174,11 +179,30 @@ class FakeConnection:
 
 
 class DocumentApiTests(unittest.TestCase):
+    def test_bgn_failure_has_retry_without_reuploading_internal_archive(self):
+        self.conn.row['status']='FINAL'
+        self.conn.row.update(drive_uri='https://internal/pdf',drive_excel_uri='https://internal/excel',drive_folder_id='internal-folder')
+        with patch('backend.bgn_evidence.upload_verified',side_effect=RuntimeError('provider-secret-not-public')):
+            first=self.client.post('/v1/accountant-documents/1/archive',headers=self.headers)
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual(first.json()['bgnUploadStatus'],'FAILED')
+        self.assertNotIn('provider-secret',first.text)
+        self.assertEqual(self.conn.row['status'],'FINAL')
+        with patch('backend.accountant_drive.upload_accountant_artifact') as internal:
+            retry=self.client.post('/v1/accountant-documents/1/archive',headers=self.headers)
+        internal.assert_not_called()
+        self.assertEqual(retry.json()['bgnUploadStatus'],'UPLOADED')
+        self.assertEqual(self.conn.row['bgn_pdf_uri'],'https://drive.google.com/file/d/bgn-doc/view')
+        self.assertEqual(self.conn.row['drive_uri'],'https://internal/pdf')
+
     def setUp(self):
         app = FastAPI()
         app.include_router(api.router, prefix="/v1")
         self.client = TestClient(app)
         self.conn = FakeConnection()
+        self.bgn_patcher = patch('backend.bgn_evidence.upload_verified',return_value='https://drive.google.com/file/d/bgn-doc/view')
+        self.bgn_patcher.start()
+        self.addCleanup(self.bgn_patcher.stop)
         @contextmanager
         def connection():
             original = deepcopy((self.conn.row, self.conn.items, self.conn.numbers, self.conn.profiles, self.conn.assets, self.conn.serials))
