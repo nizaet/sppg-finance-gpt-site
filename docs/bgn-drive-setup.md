@@ -7,7 +7,8 @@ internal, Maker, dan arsip lama tetap berjalan seperti sebelumnya.
 ## Konfigurasi server
 
 - `SPPG_BGN_DRIVE_PICKER_API_KEY`: key baru khusus Google Picker API,
-  website restriction `https://sppg-finance-gpt-site-production-5b7d.up.railway.app/*`.
+  website restrictions `https://sppg-finance-gpt-site-production-5b7d.up.railway.app/*`
+  dan `https://docs.google.com/*` (iframe Picker). Jangan menonaktifkan restrictions.
 - `SPPG_BGN_DRIVE_TOKEN_KEY`: Fernet key (32 byte acak, URL-safe base64).
   Buat dan pasang melalui pengelola secret Railway, jangan commit/cetak ke log.
   Simpan backup aman; mengganti key membuat akun perlu dihubungkan ulang.
@@ -34,6 +35,12 @@ harus verified dan cocok dengan dapur; refresh token disimpan dengan Fernet.
 Token akses Picker hanya dikirim sesaat ke browser yang sudah login, no-store,
 tidak disimpan di localStorage. Putuskan koneksi menghapus token lokal saja,
 tidak menghapus berkas Drive atau koneksi internal.
+
+Koneksi disimpan per dapur, bukan per PC. Login ulang dengan email akuntan
+yang sama mempertahankan folder terpilih. Tombol Periksa Koneksi melakukan
+pemeriksaan langsung token Google dan izin tulis folder, tanpa membuat berkas,
+serta menampilkan hasil dan waktu pemeriksaan. Status tersimpan saja bukan
+bukti bahwa token Google masih aktif.
 
 ## Aktivasi berikutnya
 

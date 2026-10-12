@@ -14,6 +14,12 @@ export default function BgnDrivePanel({site}){
  const[state,setState]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
  const context=useRef(site);context.current=site;
  const refresh=async()=>{const target=site;const r=await lpdhApi.bgnStatus(target);if(context.current===target)setState(r);};
+ async function check(){
+  const target=site;setBusy(true);setMessage('Memeriksa akun Google dan izin folder…');
+  try{const r=await lpdhApi.bgnCheck(target);if(context.current!==target)return;setState(r);setMessage(r.detail+' · '+new Date(r.checkedAt).toLocaleTimeString('id-ID'));}
+  catch(e){if(context.current===target)setMessage('Pemeriksaan gagal: '+e.message);}
+  finally{if(context.current===target)setBusy(false);}
+ }
  useEffect(()=>{let alive=true;setState(null);setMessage('');lpdhApi.bgnStatus(site).then(r=>{if(alive)setState(r);}).catch(e=>{if(alive)setMessage(e.message);});return()=>{alive=false;};},[site]);
  async function connect(){
   const target=site,w=window.open('','_blank');if(!w)return setMessage('Izinkan tab baru untuk login Google.');
@@ -40,7 +46,7 @@ export default function BgnDrivePanel({site}){
   <p>Drive BGN untuk link bukti LPDH. Drive internal tetap terpisah untuk arsip dan Maker. Folder mengikuti bulan dan tanggal HPE, bukan tanggal tombol upload diklik.</p>
   {state&&<><p>Akun akuntan: <strong>{state.expectedEmail}</strong></p><p>Status: {state.folderReady?'Akun terhubung · Folder siap':state.connected?'Akun terhubung · Pilih folder BGN':state.configured?'Belum terhubung':'Konfigurasi server belum lengkap'}</p>
    {state.expectedFolderId&&<a href={`https://drive.google.com/drive/folders/${state.expectedFolderId}`} target="_blank" rel="noopener noreferrer">Buka folder BGN dapur</a>}
-   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state.configured} onClick={connect}>Hubungkan / Login Ulang Google</button><button type="button" disabled={busy} onClick={()=>refresh().catch(e=>setMessage(e.message))}>Periksa Koneksi</button><button type="button" disabled={busy||!state.connected} onClick={choose}>Pilih Folder BGN</button><button type="button" disabled={busy||!state.connected} onClick={disconnect}>Putuskan Koneksi</button></div></>}
+   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state.configured} onClick={connect}>Hubungkan / Login Ulang Google</button><button type="button" disabled={busy} onClick={check}>{busy?'Sedang memproses…':'Periksa Koneksi'}</button><button type="button" disabled={busy||!state.connected} onClick={choose}>Pilih Folder BGN</button><button type="button" disabled={busy||!state.connected} onClick={disconnect}>Putuskan Koneksi</button></div></>}
   {!state&&!message&&<p>Memeriksa koneksi…</p>}{message&&<p role="status">{message}</p>}
   <p>Tahap koneksi: upload bukti ke BGN belum diaktifkan pada alur invoice. Arsip dan link internal yang sudah ada tidak diubah.</p>
  </section>;

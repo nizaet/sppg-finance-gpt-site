@@ -83,8 +83,10 @@ def callback(request:Request):
                 with connection() as conn,conn.cursor() as cur:
                     cur.execute('''insert into lpdh_bgn_drive_connections(site,email,token_ciphertext) values(%s,%s,%s)
                         on conflict(site) do update set email=excluded.email,token_ciphertext=excluded.token_ciphertext,
-                        folder_id=null,updated_at=now()''',(saved['site'],email,ciphertext));conn.commit()
-                message='Akun Google tersambung. Kembali ke LPDH, klik Periksa Koneksi, lalu Pilih Folder BGN.'
+                        folder_id=case when lpdh_bgn_drive_connections.email=excluded.email
+                            then lpdh_bgn_drive_connections.folder_id else null end,
+                        updated_at=now()''',(saved['site'],email,ciphertext));conn.commit()
+                message='Akun Google tersambung. Kembali ke LPDH dan klik Periksa Koneksi. Folder yang sudah dipilih tetap tersimpan; pilih folder hanya jika belum siap.'
         except Exception:
             # Never expose Google errors, authorization codes or tokens.
             message='Koneksi gagal. Pastikan memakai email akuntan sesuai dapur dan memberikan izin Drive. Hubungkan ulang dari LPDH.'
@@ -106,6 +108,28 @@ def picker(payload:SiteIn,request:Request,response:Response):
             'appId':client_id.split('-')[0],'expectedFolderId':drive.SITES[payload.site][1]}
     except Exception as exc:
         raise HTTPException(502,'Koneksi Google kedaluwarsa atau dicabut. Hubungkan ulang.') from exc
+
+
+@router.post('/check')
+def check(payload:SiteIn,request:Request,response:Response):
+    result=status(request,response,payload.site)
+    result['checkedAt']=datetime.now(timezone.utc).isoformat()
+    if not result['configured']:
+        return {**result,'folderReady':False,'detail':'Konfigurasi Drive BGN server belum lengkap.'}
+    if not result['connected']:
+        return {**result,'detail':'Belum terhubung. Klik Hubungkan / Login Ulang Google.'}
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('select * from lpdh_bgn_drive_connections where site=%s',(payload.site,));saved=cur.fetchone()
+    if not saved or saved['email']!=drive.SITES[payload.site][0]:
+        return {**result,'connected':False,'folderReady':False,'detail':'Koneksi berubah. Hubungkan ulang dengan akun dapur yang benar.'}
+    try:
+        if saved.get('folder_id'):
+            drive.validate_folder(drive.service(saved),payload.site,saved['folder_id'])
+            return {**result,'folderReady':True,'detail':'Pemeriksaan berhasil: akun Google aktif dan folder BGN dapat menerima upload.'}
+        drive.access_token(saved)
+        return {**result,'folderReady':False,'detail':'Akun Google aktif. Folder belum dipilih; klik Pilih Folder BGN.'}
+    except Exception:
+        return {**result,'folderReady':False,'detail':'Pemeriksaan belum berhasil. Koneksi Google atau izin folder perlu diperiksa; hubungkan ulang atau pilih folder kembali.'}
 
 
 @router.post('/folder')

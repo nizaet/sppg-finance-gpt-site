@@ -86,6 +86,10 @@ class BgnDriveTests(unittest.TestCase):
             exchange.assert_called_once()
             writes=[args for sql,args in db.calls if sql.startswith('insert into lpdh_bgn_drive_connections')]
             self.assertEqual(len(writes),1);self.assertNotIn('secret-test',writes[0][2]);self.assertNotIn('short-lived',result.body.decode())
+            connection_sql=next(sql for sql,args in db.calls if sql.startswith('insert into lpdh_bgn_drive_connections'))
+            self.assertIn('lpdh_bgn_drive_connections.email=excluded.email',connection_sql)
+            self.assertIn('then lpdh_bgn_drive_connections.folder_id else null end',connection_sql)
+            self.assertNotIn('folder_id=null',connection_sql)
             sql=db.calls[0][0];self.assertIn('browser_hash=%s',sql);self.assertIn('expires_at>now()',sql)
 
     def test_folder_selection_cannot_cross_sites(self):
@@ -97,6 +101,27 @@ class BgnDriveTests(unittest.TestCase):
         with patch.object(drive,'service') as service:
             with self.assertRaises(ValueError):drive.upload(db,'MAJA','2026-10-07','test-artifact','test.pdf',b'pdf','application/pdf')
             service.assert_not_called()
+
+    def test_live_check_verifies_folder_without_uploading_or_mutating(self):
+        db=Database({'email':drive.SITES['MAJA'][0],'folder_id':drive.SITES['MAJA'][1]})
+        current={'configured':True,'connected':True,'folderReady':True}
+        with patch.object(api,'status',return_value=current),patch.object(api,'connection',db.connection),patch.object(drive,'service',return_value='fake-service'),patch.object(drive,'validate_folder') as validate,patch.object(drive,'upload') as upload:
+            result=api.check(api.SiteIn(site='MAJA'),SimpleNamespace(),Response())
+            self.assertTrue(result['folderReady']);self.assertIn('Pemeriksaan berhasil',result['detail']);self.assertIn('checkedAt',result)
+            validate.assert_called_once_with('fake-service','MAJA',drive.SITES['MAJA'][1]);upload.assert_not_called()
+            self.assertFalse(any(sql.startswith(('update ','insert ','delete ')) for sql,args in db.calls))
+
+    def test_live_check_does_not_report_ready_after_provider_failure(self):
+        db=Database({'email':drive.SITES['CEMPLANG'][0],'folder_id':drive.SITES['CEMPLANG'][1]})
+        with patch.object(api,'status',return_value={'configured':True,'connected':True,'folderReady':True}),patch.object(api,'connection',db.connection),patch.object(drive,'service',side_effect=ValueError('synthetic-private-token')):
+            result=api.check(api.SiteIn(site='CEMPLANG'),SimpleNamespace(),Response())
+            self.assertFalse(result['folderReady']);self.assertIn('belum berhasil',result['detail']);self.assertNotIn('synthetic-private-token',result['detail'])
+
+    def test_live_check_unselected_folder_checks_google_account(self):
+        db=Database({'email':drive.SITES['MAJA'][0],'folder_id':None})
+        with patch.object(api,'status',return_value={'configured':True,'connected':True,'folderReady':False}),patch.object(api,'connection',db.connection),patch.object(drive,'access_token',return_value='private-token') as token:
+            result=api.check(api.SiteIn(site='MAJA'),SimpleNamespace(),Response())
+            token.assert_called_once();self.assertFalse(result['folderReady']);self.assertIn('Folder belum dipilih',result['detail']);self.assertNotIn('private-token',json.dumps(result))
 
 
 if __name__=='__main__':unittest.main()
