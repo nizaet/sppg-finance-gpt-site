@@ -184,6 +184,7 @@ class DailySyncIn(BaseModel):
 
 class CancelDocumentIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+    trash_bgn: bool = False
 
 
 class FinalizeDocumentIn(BaseModel):
@@ -675,6 +676,11 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
         queued = cur.fetchone()
         if queued and queued.get('accountant_invoice_id'):
             raise HTTPException(409, 'Dokumen masih berada di antrean invoice Pusat Operasional. Hapus alur invoice di sana dahulu, lalu batalkan dokumen LPDH agar tidak ada antrean yang tertinggal.')
+        trash_result=None
+        if payload.trash_bgn and row['status']=='FINAL':
+            from backend.bgn_trash import enqueue
+            revision=int((row.get('header_payload') or {}).get('_archiveRevision') or 1)
+            trash_result=enqueue(cur,row['site'],f'generated-document-{document_id}-revision-{revision}-pdf',row.get('bgn_pdf_uri'),role)
         cur.execute("""update generated_accountant_documents set status='CANCELLED',cancelled_at=now(),cancelled_by=%s,
                     cancellation_reason=%s,updated_at=now() where id=%s""", (role, payload.reason.strip(), document_id))
         cur.execute('delete from generated_accountant_document_numbers where document_id=%s', (document_id,))
@@ -682,7 +688,8 @@ def cancel_document(document_id: int, payload: CancelDocumentIn, authorization: 
         if row["status"] == "FINAL":
             _sync_daily(cur, row["site"], row["service_date"], role)
         conn.commit()
-    return {"ok": True, "id": document_id, "status": "CANCELLED"}
+    from backend.bgn_trash import finish
+    return {"ok": True, "id": document_id, "status": "CANCELLED", "bgnTrash":finish(row["site"],trash_result)}
 
 
 @router.get("/accountant-documents/{document_id}/finalization-check")

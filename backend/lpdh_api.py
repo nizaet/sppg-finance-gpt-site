@@ -93,6 +93,7 @@ class ApprovalIn(BaseModel):
 
 class ApprovalCancelIn(ApprovalIn):
     reason: str = Field(min_length=1, max_length=500)
+    trash_bgn: bool = False
 
 
 def _with_incentive_defaults(cur, site, service_date, masters, daily, context, reserve=False):
@@ -1035,12 +1036,17 @@ def approval_cancel(payload: ApprovalCancelIn, request: Request):
             return {'saved': True, 'approval': current, 'alreadyCancelled': True}
         if current.get('status') != 'FINAL':
             raise HTTPException(409, 'Hanya pengesahan FINAL yang dapat dibatalkan.')
+        trash_result=None
+        if payload.trash_bgn:
+            from backend.bgn_trash import enqueue
+            trash_result=enqueue(cur,site,f"lpdh-approval-{site}-{payload.service_date}-{current['hash']}",current.get('pdfLink'),_role(request))
         data = cancel_approval(state['data'], _role(request), datetime.now(timezone.utc).isoformat(), reason)
         cur.execute("""update lpdh_daily_state set data=%s::jsonb,
             revision=revision+1,updated_by=%s,updated_at=now() where site=%s and service_date=%s""",
             (json.dumps(data, ensure_ascii=False), _role(request), site, payload.service_date))
         conn.commit()
-    return {'saved': True, 'approval': data['_approval']}
+    from backend.bgn_trash import finish
+    return {'saved': True, 'approval': data['_approval'], 'bgnTrash':finish(site,trash_result)}
 
 
 from backend.topup_receipt_api import router as topup_receipt_router

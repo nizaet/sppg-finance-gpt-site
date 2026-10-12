@@ -36,6 +36,19 @@ class Store(fixture.FakeConnection):
         else:super().execute(sql,args)
 
 class ReceiptTests(unittest.TestCase):
+    def test_cancel_default_keeps_bgn_and_opt_in_runs_only_after_commit(self):
+        r=self.draft().json()['receipt'];self.action('finalize',r)
+        events=[];original_commit=self.db.commit
+        def commit():events.append('commit');original_commit()
+        def finish(site,result):
+            self.assertEqual(events[-1],'commit');self.assertEqual(site,'MAJA')
+            return {'status':'TRASHED','message':'Sampah BGN terkonfirmasi'}
+        with patch('backend.bgn_trash.enqueue',return_value={'requestId':7}) as enqueue,patch('backend.bgn_trash.finish',side_effect=finish),patch.object(self.db,'commit',side_effect=commit):
+            result=self.action('cancel',r,reason='Koreksi',trash_bgn=True)
+        self.assertEqual(result.status_code,200,result.text);self.assertEqual(result.json()['bgnTrash']['status'],'TRASHED')
+        self.assertEqual(enqueue.call_args.args[1:4],('MAJA','topup-receipt-1-'+r['hash'],'https://drive.google.com/file/d/bgn-topup/view'))
+        self.assertTrue(self.db.receipts[1]['internal_pdf_link']);self.assertEqual(self.db.data['topups'][0]['evidenceLink'],'')
+
     def test_bgn_failure_keeps_draft_and_retry_attaches_only_bgn_link(self):
         r=self.draft().json()['receipt'];before=deepcopy(self.db.data)
         with patch('backend.bgn_evidence.upload_verified',side_effect=RuntimeError('secret')):

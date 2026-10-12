@@ -5,6 +5,7 @@ import { evidenceGroups, applyEvidence } from "./lpdhEvidence.js";
 import { balanceSummary } from "./balanceSummary.mjs";
 import { defaultBastRows } from './bastDefaults.mjs';
 import TopupReceiptActions from './TopupReceiptActions.jsx';
+import {chooseBgnTrash} from './bgnTrashChoice.js';
 
 export const GROUP_DEFAULTS = [
   { code: "KS-01", label: "PAUD/TK/RA", portion: "Kecil", pic: "Sekolah" },
@@ -618,14 +619,16 @@ export function DailyPanel({ site, serviceDate, masters, daily, setDaily, finalP
       const receipt=list.receipts.find(r=>String(r.id)===String(row._topupReceiptId));
       if(!receipt)throw Error('Kuitansi terkait tidak ditemukan. Muat ulang sebelum menghapus.');
       if(context!==copyContext.current)return;
-      if(!window.confirm(`Hapus penerimaan TopUp dan batalkan kuitansi ${receipt.documentNumber}? Nominal tidak lagi dihitung sebagai penerimaan. Arsip PDF Drive tetap disimpan.`))return;
+      if(!window.confirm(`Hapus penerimaan TopUp dan batalkan kuitansi ${receipt.documentNumber}? Nominal tidak lagi dihitung sebagai penerimaan. Arsip internal tetap disimpan; pilihan file BGN ditanyakan berikutnya.`))return;
       const reason=window.prompt('Alasan menghapus penerimaan dan membatalkan kuitansi TopUp:');
       if(!reason?.trim())return;
-      await api.topupReceiptCancel(receipt.id,receipt.hash,reason.trim(),true);
+      const trashBgn=chooseBgnTrash(receipt.status==='FINAL'&&Boolean(receipt.pdfLink));
+      if(trashBgn===null)return;
+      const result=await api.topupReceiptCancel(receipt.id,receipt.hash,reason.trim(),true,trashBgn);
       if(context!==copyContext.current)return;
       const current=topupFormRef.current;
       setDaily({...current,topups:current.topups.filter(r=>String(r._topupReceiptId)!==String(receipt.id))});
-      onSaved?.('Penerimaan dihapus dan kuitansi dibatalkan. Arsip Drive tetap tersimpan.');
+      onSaved?.('Penerimaan dihapus dan kuitansi dibatalkan. '+(result?.bgnTrash?.message||'Arsip internal tetap disimpan.'));
     }catch(error){onSaved?.(error.message||'Pembatalan gagal; penerimaan tidak dihapus.','error');}
     finally{setBusy(false);}
   };

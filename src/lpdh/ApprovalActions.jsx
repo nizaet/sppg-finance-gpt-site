@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import {chooseBgnTrash} from './bgnTrashChoice.js';
 import { lpdhApi } from './lpdhApi.js';
 
 export default function ApprovalActions({ site, serviceDate, daily, onSaved, onOpenIssue }) {
@@ -50,12 +51,14 @@ export default function ApprovalActions({ site, serviceDate, daily, onSaved, onO
   const cancel = async () => {
     if (operationLock.current) return;
     const reason = window.prompt('Alasan membatalkan pengesahan? PDF lama tetap tersimpan sebagai riwayat.');
-    if (!reason?.trim() || !window.confirm('Batalkan pengesahan ini? Link otomatis di D_Insentif akan dilepas; bukti manual dan arsip Drive tetap aman.')) return;
+    if (!reason?.trim() || !window.confirm('Batalkan pengesahan ini? Link otomatis di D_Insentif akan dilepas. Arsip internal tetap disimpan; pilihan file BGN ditanyakan berikutnya.')) return;
+    const trashBgn=chooseBgnTrash(Boolean(approval.pdfLink));
+    if(trashBgn===null)return;
     operationLock.current = true; setBusy(true);
     try {
-      await lpdhApi.approvalCancel(site, serviceDate, approval.hash, reason.trim());
+      const result=await lpdhApi.approvalCancel(site, serviceDate, approval.hash, reason.trim(),trashBgn);
       setPrinted(null); await onSaved?.();
-      if (alive.current) setMessage('Pengesahan dibatalkan. Perbaiki data, simpan, lalu buka pratinjau untuk finalkan kembali. Arsip lama tetap tersimpan.');
+      if (alive.current) setMessage('Pengesahan dibatalkan. Perbaiki data, simpan, lalu buka pratinjau untuk finalkan kembali. '+(result?.bgnTrash?.message||'Arsip internal tetap disimpan.'));
     } catch (error) { if (alive.current) setMessage(error.message); }
     finally { operationLock.current = false; if (alive.current) setBusy(false); }
   };

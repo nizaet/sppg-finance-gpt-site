@@ -30,7 +30,7 @@ export const documentApi = {
   finalize: (id, options = {}) => request(`/${id}/finalize`, { method: "PATCH", body: JSON.stringify(options) }),
   archive: id => request(`/${id}/archive`, { method: "POST" }),
   exportMaker: id => request(`/${id}/export-maker`, { method: "POST" }),
-  cancel: (id, reason) => request(`/${id}/cancel`, { method: "PATCH", body: JSON.stringify({ reason }) }),
+  cancel: (id, reason, trashBgn=false) => request(`/${id}/cancel`, { method: "PATCH", body: JSON.stringify({ reason, trash_bgn:trashBgn }) }),
   pdf: id => request(`/${id}/pdf`),
   excel: id => request(`/${id}/excel`),
   syncDaily: (site, date) => request("/sync-daily", { method: "POST", body: JSON.stringify({ site, service_date: date }) }),

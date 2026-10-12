@@ -17,7 +17,7 @@ const {chromium}=require('playwright');
   await page.getByRole('button',{name:'Preview / Cetak PDF',exact:true}).click();await page.getByTitle('Preview Kuitansi TopUp').waitFor();
   await page.getByLabel('Nama SPPG',{exact:true}).fill('Maja Baru');assert.equal(await page.getByRole('button',{name:'Finalkan & Simpan ke Drive',exact:true}).isEnabled(),false);
   await page.getByRole('button',{name:'Simpan Draft Kuitansi',exact:true}).click();await page.getByRole('button',{name:'Preview / Cetak PDF',exact:true}).click();await page.getByTitle('Preview Kuitansi TopUp').waitFor();
-  page.on('dialog',d=>d.type()==='prompt'?d.accept('Perbaikan'):d.accept());
+  page.on('dialog',d=>d.type()==='prompt'?d.accept(d.message().includes('File di Drive BGN')?'SIMPAN':'Perbaikan'):d.accept());
   await page.getByRole('button',{name:'Finalkan & Simpan ke Drive',exact:true}).click();await page.waitForFunction(()=>window.receiptData?.final);
   assert.equal(await page.getByLabel('Nama SPPG',{exact:true}).isEnabled(),false);
   await page.getByRole('button',{name:'Batalkan Kuitansi',exact:true}).click();await page.waitForFunction(()=>window.receiptData?.cancelled);

@@ -21,6 +21,7 @@ class ActionIn(BaseModel):
     expected_hash:str=Field(min_length=64,max_length=64)
     reason:str=Field(default='',max_length=600)
     remove_row:bool=False
+    trash_bgn:bool=False
 
 def context(request,site,service_date,cur):
     from backend.lpdh_api import _site,_require_db,_role
@@ -145,6 +146,10 @@ def cancel(receipt_id:int,payload:ActionIn,request:Request):
         receipt=get_receipt(cur,request,receipt_id,False);site,data,actor=context(request,receipt['site'],receipt['service_date'],cur)
         receipt=get_receipt(cur,request,receipt_id)
         if digest(receipt['snapshot'])!=payload.expected_hash:raise HTTPException(409,'Kuitansi berubah. Muat ulang.')
+        trash_result=None
+        if payload.trash_bgn and receipt['status']=='FINAL':
+            from backend.bgn_trash import enqueue
+            trash_result=enqueue(cur,site,'topup-receipt-'+str(receipt_id)+'-'+payload.expected_hash,receipt.get('pdf_link'),actor)
         if payload.remove_row:
             data['topups']=[row for row in data.get('topups') or [] if str(row.get('_topupReceiptId'))!=str(receipt_id)]
         for row in data.get('topups') or []:
@@ -154,5 +159,6 @@ def cancel(receipt_id:int,payload:ActionIn,request:Request):
         cur.execute("update lpdh_topup_receipts set status='CANCELLED',cancelled_reason=%s,updated_at=now() where id=%s returning *",(payload.reason.strip(),receipt_id));receipt=cur.fetchone()
         cur.execute('delete from document_number_serials where site=%s and namespace=%s and owner_key=%s',(site,'TOPUP_RECEIPT','TOPUP:'+str(receipt_id)))
         save_daily(cur,site,receipt['service_date'],data,actor);conn.commit()
-    return {'receipt':serialize(receipt),'data':data}
+    from backend.bgn_trash import finish
+    return {'receipt':serialize(receipt),'data':data,'bgnTrash':finish(site,trash_result)}
 

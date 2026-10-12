@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Download, Edit3, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { documentApi } from "./documentApi.js";
+import { chooseBgnTrash } from '../lpdh/bgnTrashChoice.js';
 import { downloadBase64, lpdhApi } from "../lpdh/lpdhApi.js";
 import "./documents.css";
 import DocumentCalendar from "./DocumentCalendar.jsx";
@@ -325,11 +326,13 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     if (reason === null) return;
     if (reason.trim().length < 3) return notify("Alasan pembatalan minimal 3 karakter.", true);
     if (!window.confirm(`Yakin batalkan ${doc.documentNumber}?\n${reason.trim()}`)) return;
+    const trashBgn=chooseBgnTrash(doc.status==='FINAL' && Boolean(doc.bgnDriveUri));
+    if(trashBgn===null)return;
     run(async version => {
-      await documentApi.cancel(doc.id, reason.trim()); await reload(version);
+      const result=await documentApi.cancel(doc.id, reason.trim(),trashBgn); await reload(version);
       if (version !== context.current) return;
       if (editing?.id === doc.id) reset(type);
-      await onFinalized?.(); notify(`${doc.documentNumber} dibatalkan. Buat dokumen pengganti dengan nomor baru bila diperlukan.`);
+      await onFinalized?.(); notify(`${doc.documentNumber} dibatalkan. Buat dokumen pengganti dengan nomor baru bila diperlukan. `+(result.bgnTrash?.message||""),["FAILED","PENDING"].includes(result.bgnTrash?.status));
     });
   };
   const changeDate = value => {

@@ -7,6 +7,7 @@ const{chromium}=require('playwright');
  const status={configured:true,connected:true,folderReady:true,expectedEmail:'synthetic@example.test',expectedFolderId:'assigned-folder'};
  lpdhApi.bgnStatus=async()=>status;lpdhApi.bgnCheck=async()=>new Promise(resolve=>window.finishCheck=()=>resolve({...status,checkedAt:'2026-10-12T05:00:00Z',detail:'Pemeriksaan berhasil: akun Google aktif dan folder BGN dapat menerima upload.'}));
  window.saveCalls=[];
+ lpdhApi.bgnTrashRequests=async()=>({items:[]});
  lpdhApi.bgnPicker=async()=>({apiKey:'synthetic',appId:'123',accessToken:'synthetic'});
  lpdhApi.bgnFolder=async(site,id)=>{window.saveCalls.push({site,id});if(window.rejectFolder)throw new Error('Folder tidak sesuai dapur.');return new Promise(resolve=>window.finishFolder=()=>resolve({saved:true}));};
  window.gapi={load:(_name,options)=>options.callback()};

@@ -36,6 +36,29 @@ class TestUploadIn(SiteIn):
     service_date:date
 
 
+class TrashRetryIn(SiteIn):
+    request_id:int=Field(ge=1)
+
+
+@router.get('/trash-requests')
+def trash_requests(request:Request,response:Response,site:str):
+    authorized(request,site);response.headers['Cache-Control']='no-store'
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("select id,artifact_key,service_date,status,error_message from lpdh_bgn_trash_requests where site=%s and status in ('PENDING','FAILED') order by id desc limit 50",(site,))
+        items=cur.fetchall()
+    return {'items':items}
+
+
+@router.post('/trash-retry')
+def trash_retry(payload:TrashRetryIn,request:Request,response:Response):
+    authorized(request,payload.site);response.headers['Cache-Control']='no-store'
+    from backend.bgn_trash import process
+    try:
+        return process(payload.site,payload.request_id)
+    except ValueError as exc:
+        raise HTTPException(404,'Permintaan Sampah BGN tidak ditemukan untuk dapur ini.') from exc
+
+
 @router.post('/test-upload')
 def test_upload(payload:TestUploadIn,request:Request,response:Response):
     authorized(request,payload.site);response.headers['Cache-Control']='no-store'

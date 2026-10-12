@@ -13,16 +13,24 @@ function loadPicker(){
 export default function BgnDrivePanel({site,serviceDate}){
  const[state,setState]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
  const [testResult,setTestResult]=useState(null);
+ const [trashRequests,setTrashRequests]=useState([]);
  useEffect(()=>{setTestResult(null);},[site,serviceDate]);
  const context=useRef(site);context.current=site;
- const refresh=async()=>{const target=site;const r=await lpdhApi.bgnStatus(target);if(context.current===target)setState(r);};
+ const refresh=async()=>{const target=site;const r=await lpdhApi.bgnStatus(target);if(context.current===target)setState(r);if(lpdhApi.bgnTrashRequests){const pending=await lpdhApi.bgnTrashRequests(target);if(context.current===target)setTrashRequests(pending.items||[]);}};
+ async function retryTrash(id){
+  if(!window.confirm('Coba lagi memindahkan file BGN yang dipilih saat pembatalan ke Sampah? Salinan internal tidak dihapus.'))return;
+  const target=site;setBusy(true);
+  try{const result=await lpdhApi.bgnTrashRetry(target,id);if(context.current!==target)return;setMessage(result.message);await refresh();}
+  catch(e){if(context.current===target)setMessage(e.message);}
+  finally{if(context.current===target)setBusy(false);}
+ }
  async function check(){
   const target=site;setBusy(true);setMessage('Memeriksa akun Google dan izin folder…');
   try{const r=await lpdhApi.bgnCheck(target);if(context.current!==target)return;setState(r);setMessage(r.detail+' · '+new Date(r.checkedAt).toLocaleTimeString('id-ID'));}
   catch(e){if(context.current===target)setMessage('Pemeriksaan gagal: '+e.message);}
   finally{if(context.current===target)setBusy(false);}
  }
- useEffect(()=>{let alive=true;setState(null);setMessage('');lpdhApi.bgnStatus(site).then(r=>{if(alive)setState(r);}).catch(e=>{if(alive)setMessage(e.message);});return()=>{alive=false;};},[site]);
+ useEffect(()=>{let alive=true;setState(null);setMessage('');setTrashRequests([]);lpdhApi.bgnStatus(site).then(r=>{if(alive)setState(r);}).catch(e=>{if(alive)setMessage(e.message);});if(lpdhApi.bgnTrashRequests)lpdhApi.bgnTrashRequests(site).then(r=>{if(alive)setTrashRequests(r.items||[]);}).catch(e=>{if(alive)setMessage('Daftar Sampah BGN belum dapat dimuat: '+e.message);});return()=>{alive=false;};},[site]);
  async function connect(){
   const target=site,w=window.open('','_blank');if(!w)return setMessage('Izinkan tab baru untuk login Google.');
   w.document.body.textContent='Membuka login Google…';setBusy(true);setMessage('');
@@ -89,6 +97,7 @@ export default function BgnDrivePanel({site,serviceDate}){
   {!state&&!message&&<p>Memeriksa koneksi…</p>}{message&&<p role="status">{message}</p>}
   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state?.folderReady||!serviceDate} onClick={testUpload}>Tes Upload BGN · {serviceDate||'Pilih HPE'}</button></div>
   {testResult&&<p>File uji: {testResult.filename}<br/>Folder HPE: {testResult.drivePath}<br/><a href={testResult.driveUri} target="_blank" rel="noopener noreferrer">Buka PDF Uji di Drive BGN</a></p>}
+  {trashRequests.length>0&&<section><h3>Pemindahan file BGN belum selesai</h3><p>Pembatalan dokumen sudah tersimpan. File berikut belum terkonfirmasi berada di Sampah.</p>{trashRequests.map(row=><div key={row.id}><p>HPE {row.service_date} · permintaan #{row.id} · {row.status}<br/>{row.error_message}</p><button type="button" disabled={busy||!state?.connected} onClick={()=>retryTrash(row.id)}>Coba lagi pindahkan ke Sampah BGN</button></div>)}</section>}
   <p>Finalisasi invoice/kuitansi, TopUp dan J_Pengesahan mengunggah PDF ke BGN dan mengisi link LPDH otomatis. Arsip internal untuk Maker tetap terpisah. Bukti lama tidak dipindah; pastikan koneksi masing-masing dapur siap sebelum finalisasi.</p>
  </section>;
 }
