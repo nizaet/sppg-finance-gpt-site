@@ -17,6 +17,21 @@ from fastapi import HTTPException
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_empty_stamp_removes_template_placeholder_and_old_art_but_keeps_signature(self):
+        wb=Workbook(); ws=wb.active; ws.title='J_Pengesahan'
+        ws['D31']='(cap SPPG)'; ws['F31']='(cap Yayasan)'
+        image=BytesIO(); Image.new('RGBA',(20,20),'black').save(image,'PNG')
+        from openpyxl.drawing.image import Image as ExcelImage
+        old=ExcelImage(BytesIO(image.getvalue())); old.anchor='D29'; ws.add_image(old)
+        logo=ExcelImage(BytesIO(image.getvalue())); logo.anchor='A1'; ws.add_image(logo)
+        source=BytesIO(); wb.save(source)
+        signature='data:image/png;base64,'+base64.b64encode(image.getvalue()).decode()
+        result=load_workbook(BytesIO(print_copy(source.getvalue(),{'approvalSppgSignature':signature})))['J_Pengesahan']
+        self.assertIsNone(result['D31'].value); self.assertIsNone(result['F31'].value)
+        self.assertEqual(len(result._images),2) # Logo and current signature, no stamp.
+        original=load_workbook(BytesIO(source.getvalue()))['J_Pengesahan']
+        self.assertEqual(original['D31'].value,'(cap SPPG)'); self.assertEqual(len(original._images),2)
+
     def test_locked_cancelled_approval_uses_frozen_financial_snapshot(self):
         state = {'status':'GENERATED', 'data':{'_historicalGeneratedSnapshot':True,
             '_approval':{'status':'CANCELLED','revision':1}, 'balance':{'openingRaw':123},

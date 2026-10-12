@@ -140,6 +140,16 @@ def print_copy(content, assets, validation=None):
     # Preserve an explicit official print area. Legacy official templates omit it.
     if not ws.print_area:
         ws.print_area = 'A1:F34'
+    # Signing artwork must come only from the current Master assets, not a
+    # stamp/signature baked into a previously uploaded workbook print copy.
+    def signing_image(image):
+        marker = getattr(image.anchor, '_from', None)
+        return marker is not None and 28 <= marker.row <= 31 and 1 <= marker.col <= 5
+    ws._images = [image for image in ws._images if not signing_image(image)]
+    for row in ws:
+        for cell in row:
+            if str(cell.value or '').strip().lower().startswith(('(cap ', '(stempel ')):
+                cell.value = None
     for key, (anchor, width, height) in ASSETS.items():
         if not assets.get(key):
             continue

@@ -447,12 +447,14 @@ export function MasterPanel({ site, masters, setMasters, api, onSaved, onReload,
         <label className="lpdh-asset-upload"><span>Tanda tangan vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorSignature",e.target.files?.[0])}/>{data.assets.vendorSignature && <img src={data.assets.vendorSignature} alt="Preview tanda tangan vendor"/>}</label>
         <label className="lpdh-asset-upload"><span>Stempel vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorStamp",e.target.files?.[0])}/>{data.assets.vendorStamp && <img src={data.assets.vendorStamp} alt="Preview stempel vendor"/>}</label>
         <label className="lpdh-asset-upload"><span>Logo vendor</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>uploadImageAsset("vendorLogo",e.target.files?.[0])}/>{data.assets.vendorLogo && <img src={data.assets.vendorLogo} alt="Preview logo vendor"/>}</label>
+        {[["vendorSignature","TTD vendor"],["vendorStamp","Stempel vendor"],["vendorLogo","Logo vendor"]].map(([key,label])=>data.assets[key]&&<button key={key} type="button" disabled={busy||uploadingAssets>0} onClick={()=>updateAsset(key,'')}>Hapus {label}</button>)}
       </div>
     </Section>
 
     <Section tabKey="signers" tabLabel="Pengesah" title="Pengesah" subtitle="Tiga baris ini dipakai juga pada J_Pengesahan.">
       <div className="lpdh-asset-grid">
-        {[["approvalFinanceSignature","TTD Pengawas Keuangan"],["approvalSppgSignature","TTD Kepala SPPG"],["approvalFoundationSignature","TTD Yayasan"],["approvalSppgStamp","Stempel SPPG"],["approvalFoundationStamp","Stempel Yayasan"]].map(([key,label])=><label key={key} className="lpdh-asset-upload"><span>{label}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>uploadImageAsset(key,e.target.files?.[0])}/>{data.assets[key]&&<img src={data.assets[key]} alt={label}/>}</label>)}
+        {[["approvalFinanceSignature","TTD Pengawas Keuangan"],["approvalSppgSignature","TTD Kepala SPPG"],["approvalFoundationSignature","TTD Yayasan"],["approvalSppgStamp","Stempel SPPG"],["approvalFoundationStamp","Stempel Yayasan"]].map(([key,label])=><label key={key} className="lpdh-asset-upload"><span>{label}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{uploadImageAsset(key,e.target.files?.[0]);e.target.value='';}}/>{data.assets[key]&&<><img src={data.assets[key]} alt={label}/><button type="button" disabled={busy} onClick={()=>setMasters({...data,assets:{...data.assets,[key]:''}})}>Hapus {label}</button></>}</label>)}
+        <p>Setelah menghapus gambar, klik Simpan Semua Master. Gambar yang dihapus tidak ikut PDF baru; TTD dan aset lain tetap digunakan. Arsip FINAL lama tidak berubah.</p>
       </div>
       <div className="lpdh-table-wrap"><FormTable className="lpdh-data-table"><thead><tr><th>Peran</th><th>Nama</th><th>Jenis ID</th><th>Nomor ID</th><th>Ditandatangani</th></tr></thead>
         <tbody>{data.signers.slice(0, 3).map((row, index) => <tr key={index}>
