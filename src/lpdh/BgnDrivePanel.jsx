@@ -28,17 +28,29 @@ export default function BgnDrivePanel({site}){
   catch(e){w.close();if(context.current===target)setMessage(e.message);}finally{setBusy(false);}
  }
  async function choose(){
-  const target=site;setBusy(true);setMessage('');
+  const target=site;setBusy(true);setMessage('Membuka pemilih folder Google…');
   try{
    await loadPicker();const config=await lpdhApi.bgnPicker(target);if(context.current!==target)return;
    const view=new window.google.picker.DocsView(window.google.picker.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true);
    const picker=new window.google.picker.PickerBuilder().setDeveloperKey(config.apiKey).setAppId(config.appId).setOAuthToken(config.accessToken).setOrigin(window.location.origin).addView(view).setCallback(async result=>{
-    if(result.action===window.google.picker.Action.PICKED){
-     picker.setVisible(false);picker.dispose();
+    if(context.current!==target)return;
+    if(result?.action===window.google.picker.Action.CANCEL){setMessage('Pemilihan folder dibatalkan. Folder tersimpan sebelumnya tidak diubah.');return;}
+    if(result?.action!==window.google.picker.Action.PICKED)return;
+    setBusy(true);setMessage('Pilihan folder diterima. Menyimpan dan memeriksa izin upload…');
+    try{
+     const folderId=result?.docs?.[0]?.id;
+     if(!folderId)throw new Error('Google belum mengirim ID folder. Pilih folder kembali.');
+     // Popup cleanup must never abort the server-side save or hide its error.
+     try{picker.setVisible(false);picker.dispose();}catch{}
+     await lpdhApi.bgnFolder(target,folderId);
      if(context.current!==target)return;
-     try{await lpdhApi.bgnFolder(target,result.docs[0].id);await refresh();setMessage('Folder BGN sesuai dapur dan izin upload terverifikasi.');}catch(e){setMessage(e.message);}
-    }
+     setState(old=>({...old,connected:true,folderReady:true}));
+     setMessage('Folder BGN berhasil disimpan dan izin upload terverifikasi.');
+     try{await refresh();}catch{if(context.current===target)setMessage('Folder BGN berhasil disimpan. Refresh status belum berhasil; klik Periksa Koneksi.');}
+    }catch(e){if(context.current===target)setMessage('Folder BGN belum tersimpan: '+(e?.message||'Permintaan gagal. Pilih folder kembali.'));}
+    finally{if(context.current===target)setBusy(false);}
    }).build();picker.setVisible(true);
+   setMessage('Pilih folder BGN dapur, lalu klik Select. Jika belum muncul “Pilihan folder diterima”, hasil Google belum sampai ke aplikasi.');
   }catch(e){if(context.current===target)setMessage(e.message);}finally{setBusy(false);}
  }
  async function disconnect(){if(!window.confirm('Putuskan koneksi Drive BGN dapur ini? Bukti di kedua Drive tidak dihapus.'))return;setBusy(true);try{await lpdhApi.bgnDisconnect(site);await refresh();setMessage('Koneksi diputus. Hubungkan ulang sebelum upload BGN.');}catch(e){setMessage(e.message);}finally{setBusy(false);}}
