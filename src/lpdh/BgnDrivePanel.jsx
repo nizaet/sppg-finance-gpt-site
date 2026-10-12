@@ -53,12 +53,25 @@ export default function BgnDrivePanel({site}){
    setMessage('Pilih folder BGN dapur, lalu klik Select. Jika belum muncul “Pilihan folder diterima”, hasil Google belum sampai ke aplikasi.');
   }catch(e){if(context.current===target)setMessage(e.message);}finally{setBusy(false);}
  }
+ async function verifyAssignedFolder(){
+  const target=site,folderId=state?.expectedFolderId;
+  if(!folderId)return setMessage('Folder BGN dapur belum tersedia. Klik Periksa Koneksi.');
+  setBusy(true);setMessage('Memverifikasi folder BGN dapur langsung melalui akun Google yang terhubung…');
+  try{
+   await lpdhApi.bgnFolder(target,folderId);
+   if(context.current!==target)return;
+   setState(old=>({...old,connected:true,folderReady:true}));
+   setMessage('Folder BGN berhasil diverifikasi dan disimpan. Folder siap dipakai dari PC lain tanpa memilih ulang.');
+  }catch(e){if(context.current===target)setMessage('Folder BGN belum dapat diverifikasi: '+e.message+' Jika izin belum pernah diberikan ke aplikasi, pilih melalui Google Picker pada browser/PC yang berhasil.');}
+  finally{if(context.current===target)setBusy(false);}
+ }
  async function disconnect(){if(!window.confirm('Putuskan koneksi Drive BGN dapur ini? Bukti di kedua Drive tidak dihapus.'))return;setBusy(true);try{await lpdhApi.bgnDisconnect(site);await refresh();setMessage('Koneksi diputus. Hubungkan ulang sebelum upload BGN.');}catch(e){setMessage(e.message);}finally{setBusy(false);}}
  return <section className="lpdh-form-section"><h2>Koneksi Drive BGN · {site}</h2>
   <p>Drive BGN untuk link bukti LPDH. Drive internal tetap terpisah untuk arsip dan Maker. Folder mengikuti bulan dan tanggal HPE, bukan tanggal tombol upload diklik.</p>
   {state&&<><p>Akun akuntan: <strong>{state.expectedEmail}</strong></p><p>Status: {state.folderReady?'Akun terhubung · Folder siap':state.connected?'Akun terhubung · Pilih folder BGN':state.configured?'Belum terhubung':'Konfigurasi server belum lengkap'}</p>
    {state.expectedFolderId&&<a href={`https://drive.google.com/drive/folders/${state.expectedFolderId}`} target="_blank" rel="noopener noreferrer">Buka folder BGN dapur</a>}
-   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state.configured} onClick={connect}>Hubungkan / Login Ulang Google</button><button type="button" disabled={busy} onClick={check}>{busy?'Sedang memproses…':'Periksa Koneksi'}</button><button type="button" disabled={busy||!state.connected} onClick={choose}>Pilih Folder BGN</button><button type="button" disabled={busy||!state.connected} onClick={disconnect}>Putuskan Koneksi</button></div></>}
+   <div className="lpdh-inline-actions"><button type="button" disabled={busy||!state.configured} onClick={connect}>Hubungkan / Login Ulang Google</button><button type="button" disabled={busy} onClick={check}>{busy?'Sedang memproses…':'Periksa Koneksi'}</button><button type="button" disabled={busy||!state.connected} onClick={verifyAssignedFolder}>Verifikasi Folder BGN Dapur</button><button type="button" disabled={busy||!state.connected} onClick={choose}>Pilih Folder BGN</button><button type="button" disabled={busy||!state.connected} onClick={disconnect}>Putuskan Koneksi</button></div>
+   <p>Jika popup Google meminta sign-in terus atau Select tidak memberi hasil, tutup popup lalu klik Verifikasi Folder BGN Dapur. Cara ini hanya berhasil jika akun Google sudah memberi izin folder ke aplikasi; tidak melewati izin Google.</p></>}
   {!state&&!message&&<p>Memeriksa koneksi…</p>}{message&&<p role="status">{message}</p>}
   <p>Tahap koneksi: upload bukti ke BGN belum diaktifkan pada alur invoice. Arsip dan link internal yang sudah ada tidak diubah.</p>
  </section>;

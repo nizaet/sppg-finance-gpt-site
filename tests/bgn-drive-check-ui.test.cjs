@@ -4,7 +4,7 @@ const{chromium}=require('playwright');
  const root=path.resolve(__dirname,'..'),out=path.join(fs.mkdtempSync(path.join(os.tmpdir(),'bgn-check-')),'ui.js');
  await esbuild.build({define:{'import.meta.env':'{}'},stdin:{resolveDir:root,loader:'jsx',contents:`
  import React from'react';import{createRoot}from'react-dom/client';import BgnDrivePanel from'./src/lpdh/BgnDrivePanel.jsx';import{lpdhApi}from'./src/lpdh/lpdhApi.js';
- const status={configured:true,connected:true,folderReady:true,expectedEmail:'synthetic@example.test'};
+ const status={configured:true,connected:true,folderReady:true,expectedEmail:'synthetic@example.test',expectedFolderId:'assigned-folder'};
  lpdhApi.bgnStatus=async()=>status;lpdhApi.bgnCheck=async()=>new Promise(resolve=>window.finishCheck=()=>resolve({...status,checkedAt:'2026-10-12T05:00:00Z',detail:'Pemeriksaan berhasil: akun Google aktif dan folder BGN dapat menerima upload.'}));
  window.saveCalls=[];
  lpdhApi.bgnPicker=async()=>({apiKey:'synthetic',appId:'123',accessToken:'synthetic'});
@@ -38,8 +38,18 @@ const{chromium}=require('playwright');
   await page.getByText('Folder BGN belum tersimpan: Folder tidak sesuai dapur.',{exact:true}).waitFor();
   await page.evaluate(()=>{window.selectFolder({action:'cancel'});});
   await page.getByText(/Pemilihan folder dibatalkan/).waitFor();
+  await page.evaluate(()=>{window.rejectFolder=false;});
+  await page.getByRole('button',{name:'Verifikasi Folder BGN Dapur',exact:true}).click();
+  await page.getByText(/Memverifikasi folder BGN dapur langsung/).waitFor();
+  assert.deepEqual((await page.evaluate(()=>window.saveCalls)).at(-1),{site:'MAJA',id:'assigned-folder'});
+  await page.evaluate(()=>window.finishFolder());
+  await page.getByText(/Folder BGN berhasil diverifikasi dan disimpan/).waitFor();
+  await page.evaluate(()=>{window.rejectFolder=true;});
+  await page.getByRole('button',{name:'Verifikasi Folder BGN Dapur',exact:true}).click();
+  await page.getByText(/Folder BGN belum dapat diverifikasi/).waitFor();
   console.log('PASS check shows progress and timestamped result even when status is unchanged');
   console.log('PASS Select saves despite popup cleanup failure and always reports success, empty selection, rejection or cancellation');
+  console.log('PASS assigned folder verification uses the existing secured endpoint and reports permission rejection');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});
 

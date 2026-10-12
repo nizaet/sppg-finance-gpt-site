@@ -96,6 +96,23 @@ class BgnDriveTests(unittest.TestCase):
         api_mock=SimpleNamespace(files=lambda:None)
         with self.assertRaises(ValueError):drive.validate_folder(api_mock,'MAJA',drive.SITES['CEMPLANG'][1])
 
+    def test_assigned_folder_still_requires_google_permission_before_save(self):
+        request=SimpleNamespace(state=SimpleNamespace(sppg_role='MAJA'))
+        payload=api.FolderIn(site='MAJA',folder_id=drive.SITES['MAJA'][1])
+        db=Database({'email':drive.SITES['MAJA'][0]})
+        with patch.object(api,'connection',db.connection),patch.object(drive,'service',return_value='fake-service'),patch.object(drive,'validate_folder',side_effect=ValueError('not authorized')):
+            with self.assertRaises(HTTPException) as error:api.folder(payload,request)
+            self.assertEqual(error.exception.status_code,403)
+            self.assertEqual(db.commits,0)
+            self.assertFalse(any(sql.startswith('update ') for sql,args in db.calls))
+        with patch.object(api,'connection',db.connection),patch.object(drive,'service',return_value='fake-service'),patch.object(drive,'validate_folder') as validate:
+            self.assertTrue(api.folder(payload,request)['folderReady'])
+            validate.assert_called_once_with('fake-service','MAJA',drive.SITES['MAJA'][1])
+            self.assertEqual(db.commits,1)
+        payload.folder_id=drive.SITES['CEMPLANG'][1]
+        with self.assertRaises(HTTPException) as error:api.folder(payload,request)
+        self.assertEqual(error.exception.status_code,422)
+
     def test_disconnected_upload_fails_without_internal_fallback(self):
         db=Database()
         with patch.object(drive,'service') as service:
