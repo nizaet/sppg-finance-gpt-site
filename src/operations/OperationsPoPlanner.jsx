@@ -624,8 +624,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
       applyPlanningSnapshot(detail, inventoryData?.items || [], cooperativeData?.items || []);
       setMessage(`Planning + stok ${activeSite} untuk distribusi ${distributionDate} berhasil ditarik. Data ini hanya working set PO dan boleh dibersihkan tanpa menghapus PO tersimpan.`);
     } catch (planningError) {
-      setSchedule([]);
-      applyPlanningSnapshot(null, [], []);
+      // Do not clear an already edited working set when a dependency fails.
+      // A failed stock request is not evidence that the planning is missing.
       const detail = String(planningError?.message || "").trim();
       if (detail.includes("SPPG Core API 404")) {
         setError(`Rencana Kalkulator ${activeSite} tanggal ${distributionDate} tidak ditemukan pada sumber kalkulator baku. PO yang sudah tersimpan tetap ditampilkan. ${detail}`.trim());
@@ -1465,7 +1465,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
             Data PO harian belum ditarik. Pilih site/tanggal lalu tekan <strong>Tarik Data Kalkulator + Stok</strong>. Mengganti tanggal tidak akan menarik data otomatis.
           </div>
         )}
-        {!loading && dailyPulled && !planningSnapshot && (
+        {!loading && dailyPulled && !planningSnapshot && !error && (
           <div className="ops-notice">
             Belum ada planning snapshot Kalkulator untuk <strong>{activeSite}</strong> tanggal {distributionDate}. PO tidak dibuat dari tebakan.
           </div>

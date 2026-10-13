@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import json
 import re
 from datetime import date, datetime, timezone
@@ -44,6 +45,14 @@ SOURCE_PRIORITY = {
     "RECIPE_INGREDIENT": 65,
     "GRAMASI": 40,
 }
+
+
+class RequestItemMatchers(list):
+    """Classification memoization belongs to this DB snapshot, never a global cache."""
+    def __init__(self, values):
+        super().__init__(values)
+        self.classification_cache = {}
+        self.candidate_patterns = {}
 
 
 def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
@@ -130,10 +139,32 @@ def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
             "source_refs": row.get("source_refs") or [],
             "priority": SOURCE_PRIORITY["PLANNING_SNAPSHOT"],
         })
-    return masters
+    return RequestItemMatchers(masters)
 
 
 def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(masters, RequestItemMatchers):
+        return _classify_item(raw_name, masters)
+    cache = masters.classification_cache
+    if raw_name not in cache:
+        result = _classify_item(raw_name, masters)
+        if len(cache) < 2048:
+            cache[raw_name] = deepcopy(result)
+        return deepcopy(result)
+    return deepcopy(cache[raw_name])
+
+
+def _candidate_contains(candidate, normalized, masters):
+    pattern = rf"(?:^| ){re.escape(candidate)}(?: |$)"
+    if not isinstance(masters, RequestItemMatchers):
+        return re.search(pattern, normalized)
+    compiled = masters.candidate_patterns.get(candidate)
+    if compiled is None:
+        compiled = masters.candidate_patterns[candidate] = re.compile(pattern)
+    return compiled.search(normalized)
+
+
+def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
     normalized = normalize_name(raw_name)
     raw_type = stock_type(raw_name)
     exact: list[tuple[dict[str, Any], str, str]] = []
@@ -149,7 +180,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             elif (
                 str(master.get("source_type") or "") != "GRAMASI"
                 and len(candidate) >= 4
-                and re.search(rf"(?:^| ){re.escape(candidate)}(?: |$)", normalized)
+                and _candidate_contains(candidate, normalized, masters)
                 and not (
                     raw_type["method"] == "ITEM_TYPE_RULE"
                     and stock_type(master.get("canonical_name") or candidate)["method"] == "ITEM_TYPE_RULE"
