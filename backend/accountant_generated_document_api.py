@@ -243,10 +243,19 @@ def _serialize_document(cur, row):
             "bgnDriveUri": row.get("bgn_pdf_uri"), "bgnUploadStatus": row.get("bgn_upload_status"),
             "bgnUploadError": row.get("bgn_upload_error"), "bgnRequired": bool(row.get("bgn_upload_status")),
             "cancellationReason": row.get("cancellation_reason")}
-    cur.execute('select m.id as maker_id,e.accountant_invoice_id from generated_document_maker_exports e left join bgn_makers m on m.accountant_invoice_id=e.accountant_invoice_id where e.document_id=%s', (row['id'],))
+    cur.execute('''select m.id as maker_id,e.accountant_invoice_id,m.status as maker_status,a.status as approval_status,
+        exists(select 1 from bgn_receipts r where r.bgn_maker_id=m.id) as maker_paid
+        from (select * from generated_document_maker_exports where document_id=%s) e
+        left join lateral (select x.* from bgn_makers x where x.accountant_invoice_id=e.accountant_invoice_id
+            and upper(x.site)=upper(%s) order by x.id desc limit 1) m on true
+        left join lateral (select x.status from bgn_approvals x where x.bgn_maker_id=m.id order by x.id desc limit 1) a on true
+        ''', (row['id'],row['site']))
     exported = cur.fetchone()
     document['makerId'] = exported['maker_id'] if exported else None
     document['makerInvoiceId'] = exported.get('accountant_invoice_id') if exported else None
+    document['makerStatus'] = exported.get('maker_status') if exported else None
+    document['makerApprovalStatus'] = exported.get('approval_status') if exported else None
+    document['makerPaid'] = bool(exported and exported.get('maker_paid'))
     if row["document_type"] in {"UPAH_RELAWAN", "INSENTIF_GURU_KADER"}:
         for index, item in enumerate(items):
             item["metadata"] = {**item["metadata"], "receiptNo": receipt_number(document, index)}

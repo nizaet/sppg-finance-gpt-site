@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Download, Edit3, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { documentApi } from "./documentApi.js";
+import { documentMakerStatus } from './makerStatus.js';
 import { chooseBgnTrash } from '../lpdh/bgnTrashChoice.js';
 import { downloadBase64, lpdhApi } from "../lpdh/lpdhApi.js";
 import "./documents.css";
@@ -427,9 +428,10 @@ export default function DocumentWorkspace({ site = "MAJA", serviceDate, onDateCh
     </section>
     <section className="doc-card"><div className="doc-heading"><div><h3>Register Invoice & Kuitansi · {serviceDate}</h3><p>Beberapa invoice operasional per hari. Final masuk data harian dan diarsipkan ke Drive; pembatalan menyimpan riwayat, bukan menghapus bukti.</p></div>{onOpenDaily && <button type="button" onClick={onOpenDaily}>Buka Data Harian</button>}</div>
       <label className="doc-history-toggle"><input type="checkbox" checked={showCancelled} onChange={e => setShowCancelled(e.target.checked)}/> Tampilkan riwayat dibatalkan</label>
-      <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id}>
+      <div className="doc-table-wrap"><table className="doc-table"><thead><tr><th>Nomor dokumen</th><th>Jenis</th><th>Item / penerima</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{documents.filter(doc => showCancelled || doc.status !== "CANCELLED").map(doc => <tr key={doc.id} className={documentMakerStatus(doc).className}>
         <td data-label="Nomor dokumen"><strong>{doc.documentNumber}</strong></td><td data-label="Jenis">{doc.header?.combinedPayments ? 'Invoice Upah + Insentif Guru + Kader' : doc.header?.recipientSubtype && doc.documentType === "INSENTIF_GURU_KADER" ? `Kuitansi Insentif ${doc.header.recipientSubtype}` : TYPES[doc.documentType]}</td><td data-label="Item / penerima">{doc.items.length}</td><td className="doc-money" data-label="Total">{money(doc.total)}</td>
         <td data-label="Status"><span className={`doc-status ${doc.status === "FINAL" ? "final" : ""}`}>{doc.status === "CANCELLED" ? "DIBATALKAN" : doc.status}</span>
+          {documentMakerStatus(doc).label&&<span className={`doc-maker-label ${documentMakerStatus(doc).className}`}>{documentMakerStatus(doc).label}</span>}
           {doc.status === "FINAL" && <><small>Dasar data harian</small><small>{doc.driveUri && doc.driveExcelUri ? "PDF + Excel internal tersimpan" : "Arsip internal belum lengkap"}</small>{doc.bgnRequired && <small>{doc.bgnUploadStatus === 'UPLOADED' ? 'PDF BGN tersimpan · link untuk LPDH' : 'Upload BGN belum lengkap'}</small>}{doc.driveUploadError && <small>{doc.driveUploadError}</small>}{doc.bgnUploadError && <small>{doc.bgnUploadError}</small>}</>}
           {doc.status === "CANCELLED" && <small>{doc.cancellationReason}</small>}
           {doc.cancelledAt && <small>Dibatalkan: {new Date(doc.cancelledAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</small>}

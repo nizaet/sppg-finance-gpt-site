@@ -96,6 +96,10 @@ class FakeConnection:
             self.delivery_packages[params[0]]=self.result
         elif 'from generated_document_maker_exports' in sql:
             self.result = self.maker_exports.get(params[0])
+            if 'a.status as approval_status' in sql:
+                maker=self.invoice_makers.get((self.result or {}).get('accountant_invoice_id'))
+                self.result={**self.result,'maker_id':maker['id'] if maker else None,'maker_status':(maker or {}).get('status'),'approval_status':(maker or {}).get('approval_status'),'maker_paid':bool((maker or {}).get('paid'))} if self.result else None
+                return
             if 'join bgn_makers' in sql:
                 maker = self.invoice_makers.get((self.result or {}).get('accountant_invoice_id'))
                 self.result = ({'status':maker['status']} if maker else None) if sql.startswith('select m.status') else ({**self.result,'maker_id':maker['id'] if maker else None} if self.result else None)
@@ -179,6 +183,21 @@ class FakeConnection:
 
 
 class DocumentApiTests(unittest.TestCase):
+    def test_maker_status_read_matches_approval_and_paid_for_both_sites(self):
+        for site in ('MAJA','CEMPLANG'):
+            self.conn.row.update(site=site,status='FINAL')
+            self.conn.maker_exports[1]={'accountant_invoice_id':77}
+            for approval,paid in (('PENDING',False),('APPROVED',False),('APPROVED',True)):
+                self.conn.invoice_makers[77]={'id':15,'status':'PAID' if paid else 'CREATED','approval_status':approval,'paid':paid}
+                self.conn.calls=[]
+                response=self.client.get('/v1/accountant-documents/1',headers={'Authorization':'Bearer '+site})
+                self.assertEqual(response.status_code,200,response.text)
+                doc=response.json()['document']
+                self.assertEqual(doc['makerId'],15);self.assertEqual(doc['makerApprovalStatus'],approval);self.assertEqual(doc['makerPaid'],paid)
+                queries=[(sql,args) for sql,args in self.conn.calls if 'a.status as approval_status' in sql]
+                self.assertEqual(queries[0][1],(1,site));self.assertIn('order by x.id desc limit 1',queries[0][0])
+                self.assertFalse(any(sql.strip().startswith(('update ','insert ','delete ')) for sql,_ in self.conn.calls))
+
     def test_bgn_failure_has_retry_without_reuploading_internal_archive(self):
         self.conn.row['status']='FINAL'
         self.conn.row.update(drive_uri='https://internal/pdf',drive_excel_uri='https://internal/excel',drive_folder_id='internal-folder')
