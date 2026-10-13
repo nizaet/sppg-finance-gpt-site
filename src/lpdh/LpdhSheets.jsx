@@ -20,6 +20,8 @@ export const SHEET_ORDER = [
 ];
 
 const money = (value) => `Rp ${Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+const portionMoney = (value) => `Rp ${Number(value || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const portionExcess = (cost, limit) => { const excess=Math.max(0,Number(cost||0)-Number(limit||0)); return excess>0&&excess<0.005 ? '< Rp 0,01' : portionMoney(excess); };
 const num = (value) => Number(value || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 });
 const yes = (value) => ["ya","yes","true","1"].includes(String(value || "").toLowerCase()) ? "Ya" : "Tidak";
 
@@ -55,7 +57,7 @@ function APM({ preview }) {
 
 function Raw({ preview }) {
   return <div className="lpdh-sheet-body"><h3>B_BahanBaku</h3><Table headers={["No","Tanggal","Bahan","Kategori","Volume","Unit","Harga","Jumlah","Supplier","No Invoice","Bukti"]} rows={(preview?.rawMaterials||[]).map((x,i)=>[i+1,x.date||"",x.name||"",x.category||"",num(x.qty),x.unit||"",money(x.price),money(x.amount),x.supplier||"",x.invoiceNo||"",x.evidenceLink||""])}/>
-    <div className="lpdh-summary-cards"><div><span>Total bahan</span><strong>{money(preview?.rawTotal)}</strong></div><div><span>Biaya/porsi</span><strong>{money(preview?.rawPerPortion)}</strong></div><div><span>Pagu/porsi</span><strong>{money(preview?.weightedRawPagu)}</strong></div><div><span>Status</span><strong>{preview?.rawStatus||"-"}</strong></div></div></div>;
+    <div className="lpdh-summary-cards"><div><span>Total bahan</span><strong>{money(preview?.rawTotal)}</strong></div><div><span>Biaya/porsi</span><strong>{portionMoney(preview?.rawPerPortion)}</strong></div><div><span>Pagu/porsi</span><strong>{portionMoney(preview?.weightedRawPagu)}</strong></div><div><span>Status</span><strong>{preview?.rawStatus||"-"}</strong></div>{preview?.rawStatus==='MELEBIHI PAGU'&&<div><span>Selisih di atas pagu/porsi</span><strong>{portionExcess(preview?.rawPerPortion,preview?.weightedRawPagu)}</strong></div>}</div></div>;
 }
 
 function Operational({ preview }) {
@@ -63,7 +65,7 @@ function Operational({ preview }) {
   rows.unshift(["","","Relawan","","","",money(preview?.volunteerTotal),"",""]);
   rows.splice(1,0,["","","Insentif guru/kader","","","",money(preview?.incentiveRecipientTotal),"",""]);
   return <div className="lpdh-sheet-body"><h3>C_Operasional</h3><Table headers={["No","Tanggal","Uraian","Volume","Unit","Harga","Jumlah","No Bukti","Link"]} rows={rows}/>
-    <div className="lpdh-summary-cards"><div><span>Total operasional</span><strong>{money(preview?.operationalTotal)}</strong></div><div><span>Operasional/PM</span><strong>{money(preview?.operationalPerPm)}</strong></div><div><span>Pagu/PM</span><strong>{money(preview?.operationalPagu)}</strong></div><div><span>Status</span><strong>{preview?.operationalStatus||"-"}</strong></div></div></div>;
+    <div className="lpdh-summary-cards"><div><span>Total operasional</span><strong>{money(preview?.operationalTotal)}</strong></div><div><span>Operasional/PM</span><strong>{portionMoney(preview?.operationalPerPm)}</strong></div><div><span>Pagu/PM</span><strong>{portionMoney(preview?.operationalPagu)}</strong></div><div><span>Status</span><strong>{preview?.operationalStatus||"-"}</strong></div>{preview?.operationalStatus==='MELEBIHI PAGU'&&<div><span>Selisih di atas pagu/PM</span><strong>{portionExcess(preview?.operationalPerPm,preview?.operationalPagu)}</strong></div>}</div></div>;
 }
 
 function Volunteer({ preview }) {

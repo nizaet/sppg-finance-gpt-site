@@ -70,6 +70,16 @@ OPERATIONAL_DEFAULTS = [
 ]
 
 
+def cost_limit_detail(label, cost, limit, unit):
+    money = lambda value: f"Rp{value:,.2f}".translate(str.maketrans(',.','.,'))
+    detail = f"{label} {money(cost)}; pagu {money(limit)}."
+    excess = cost - limit
+    if excess > 0:
+        difference = '< Rp0,01' if excess < 0.005 else money(excess)
+        detail += f" Melebihi pagu {difference}/{unit}."
+    return detail
+
+
 def as_number(value: Any, default: float = 0.0) -> float:
     if value is None or value == "":
         return default
@@ -820,8 +830,8 @@ def compute_preview(
         ("08", "Link BAST terisi (dummy diizinkan)", bast_links_ok, "PERIKSA", "Dummy bukan bukti autentik; ganti link asli di Excel." if bast_links_ok and dummy_bast else "Link BAST wajib HTTPS untuk kelompok yang menerima."),
         ("09", "PM dihitung tidak melebihi target SPS (indikasi anomali)", target_ok, "PERIKSA", "Ada PM dihitung melebihi target master SPS."),
         ("10", "Indeks kemahalan Kab/Kota tercantum di Ref", city_reference_ok, "PERIKSA", "Isi Kabupaten/Kota pada Identitas dan indeks kemahalan pada Master Parameter."),
-        ("11", "Biaya bahan per porsi dalam pagu setelah indeks kemahalan", produced > 0 and raw_per_portion <= weighted_raw_pagu + 0.0001, "PERIKSA", f"Biaya/porsi Rp{raw_per_portion:,.0f}; pagu Rp{weighted_raw_pagu:,.0f}."),
-        ("12", "Biaya operasional per PM dalam pagu setelah indeks kemahalan", incentive_pm > 0 and op_per_pm <= op_pagu + 0.0001, "PERIKSA", f"Operasional/PM Rp{op_per_pm:,.0f}; pagu Rp{op_pagu:,.0f}."),
+        ("11", "Biaya bahan per porsi dalam pagu setelah indeks kemahalan", produced > 0 and raw_per_portion <= weighted_raw_pagu + 0.0001, "PERIKSA", cost_limit_detail('Biaya/porsi', raw_per_portion, weighted_raw_pagu, 'porsi')),
+        ("12", "Biaya operasional per PM dalam pagu setelah indeks kemahalan", incentive_pm > 0 and op_per_pm <= op_pagu + 0.0001, "PERIKSA", cost_limit_detail('Operasional/PM', op_per_pm, op_pagu, 'PM')),
         ("13", "Setiap transaksi bernilai memiliki link bukti autentik", len(evidence_missing) == 0, "PERIKSA", f"{len(evidence_missing)} transaksi belum punya link HTTPS."),
         ("14", "Nomor bukti transaksi tidak duplikat", len(duplicate_numbers) == 0 and len(missing_incentive_receipts) == 0, "PERIKSA", (f"Duplikat: {', '.join(duplicate_numbers[:5])}." if duplicate_numbers else f"{len(missing_incentive_receipts)} kuitansi guru/kader belum memiliki nomor dasar.")),
         ("15", "Tanggal transaksi sesuai periode kegiatan/produksi", len(invalid_dates) == 0, "PERIKSA", f"{len(invalid_dates)} transaksi di luar periode {valid_from} s.d. {valid_to}."),
