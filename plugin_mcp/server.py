@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -268,9 +269,15 @@ class BearerGate:
             await self.app(scope, receive, send)
             return
 
-        expected = os.getenv("SPPG_MCP_API_KEY", "").strip()
-        if not expected:
-            response = JSONResponse({"detail": "SPPG_MCP_API_KEY is not configured"}, status_code=503)
+        try:
+            issuer, audience, jwks_url, resource, required_scope, allowed_subjects = oauth_settings()
+        except RuntimeError:
+            response = JSONResponse({"detail": "OAuth not configured"}, status_code=503)
+            await response(scope, receive, send)
+            return
+
+        if path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+            response = JSONResponse(protected_resource_metadata(resource, issuer, required_scope))
             await response(scope, receive, send)
             return
 
@@ -279,14 +286,13 @@ class BearerGate:
             if key.lower() == b"authorization":
                 authorization = value.decode("latin-1").strip()
                 break
-
         supplied = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-        if not supplied or not hmac.compare_digest(supplied, expected):
-            response = JSONResponse(
-                {"detail": "Bearer token required"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        try:
+            if not supplied:
+                raise ValueError("Missing token")
+            validate_access_token(supplied)
+        except Exception:
+            response = unauthorized(resource)
             await response(scope, receive, send)
             return
 
