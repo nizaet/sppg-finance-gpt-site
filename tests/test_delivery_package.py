@@ -22,6 +22,14 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(first,ensure_package(cur,row));self.assertEqual(first['numbers']['PO'],'PO/2026/X/001')
         self.assertEqual(ensure_package(cur,{**row,'id':2,'document_type':'OPERASIONAL'})['numbers']['KUI'],'002/KUI.Banper/OP/X/2026')
         self.assertEqual(ensure_package(cur,{**row,'id':3,'site':'CEMPLANG'})['numbers']['SJ'],'SJ/202610/001')
-        for kind in ['UPAH_RELAWAN','INSENTIF_GURU_KADER','INSENTIF_MITRA']:
+        for kind in ['UPAH_RELAWAN','INSENTIF_GURU_KADER']:
             self.assertIsNone(ensure_package(cur,{**row,'document_type':kind}))
         self.assertIsNone(ensure_package(cur,{**row,'status':'DRAFT'}))
+    def test_mitra_only_receipt_h_plus_one_and_reusable_number(self):
+        for site in ('MAJA','CEMPLANG'):
+            cur=Cursor();row={'id':9,'site':site,'service_date':'2026-12-31','status':'FINAL','document_type':'INSENTIF_MITRA'}
+            result=ensure_package(cur,row)
+            self.assertEqual(document_dates(row['service_date'],row['document_type']),{'KUI_MITRA':'2027-01-01'})
+            self.assertEqual(result['numbers'],{'KUI_MITRA':'001/KUI.Banper/IM/I/2027'})
+            self.assertEqual(result,ensure_package(cur,row));self.assertEqual(len(cur.counters),1)
+            self.assertIsNone(ensure_package(cur,{**row,'status':'DRAFT'}));self.assertIsNone(ensure_package(cur,{**row,'status':'CANCELLED'}))

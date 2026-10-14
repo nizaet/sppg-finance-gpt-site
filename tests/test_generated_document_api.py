@@ -183,6 +183,20 @@ class FakeConnection:
 
 
 class DocumentApiTests(unittest.TestCase):
+    def test_mitra_receipt_master_is_isolated_and_year_anchor_scoped(self):
+        self.conn.delivery_profiles[('MAJA','KUI')]={'signatory':'Vendor'}
+        url='/v1/accountant-documents/delivery-profiles/KUI_MITRA?site=MAJA'
+        result=self.client.put(url,headers=self.headers,json={'settings':{'signatory':'Pengurus Yayasan'}})
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(self.conn.delivery_profiles[('MAJA','KUI')]['signatory'],'Vendor')
+        self.assertEqual(self.conn.delivery_profiles[('MAJA','KUI_MITRA')]['signatory'],'Pengurus Yayasan')
+        self.assertEqual(self.client.put(url,headers={'Authorization':'Bearer CEMPLANG'},json={'settings':{}}).status_code,403)
+        anchor='/v1/accountant-documents/delivery-anchors/KUI_MITRA?site=MAJA'
+        self.assertEqual(self.client.put(anchor,headers=self.headers,json={'period':'2026','next_number':10}).status_code,200)
+        self.assertEqual(self.conn.delivery_counters[('MAJA','KUI_MITRA','2026')],9)
+        self.assertEqual(self.client.put(anchor,headers=self.headers,json={'period':'2026-10','next_number':10}).status_code,422)
+        self.assertFalse(any('update generated_accountant_documents' in sql for sql,_ in self.conn.calls))
+
     def test_maker_status_read_matches_approval_and_paid_for_both_sites(self):
         for site in ('MAJA','CEMPLANG'):
             self.conn.row.update(site=site,status='FINAL')

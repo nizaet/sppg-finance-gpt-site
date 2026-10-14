@@ -56,6 +56,7 @@ MIGRATIONS = [
     ROOT / "schema" / "lpdh_bgn_drive_v051.sql",
     ROOT / "schema" / "lpdh_bgn_evidence_v052.sql",
     ROOT / "schema" / "lpdh_bgn_trash_v053.sql",
+    ROOT / "schema" / "lpdh_mitra_companion_v054.sql",
 ]
 
 

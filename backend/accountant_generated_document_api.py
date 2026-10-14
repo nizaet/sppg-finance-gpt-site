@@ -51,7 +51,7 @@ def delivery_controls(site: Site, authorization: str | None = Header(default=Non
 
 
 @router.put('/accountant-documents/delivery-profiles/{kind}')
-def delivery_profile(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
+def delivery_profile(kind: Literal['PO','SJ','CKL','KUI','KUI_MITRA'], site: Site, payload: DeliverySettingsIn, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
     _validate_delivery_settings(payload.settings)
     with connection() as conn, conn.cursor() as cur:
@@ -62,9 +62,9 @@ def delivery_profile(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: 
 
 
 @router.put('/accountant-documents/delivery-anchors/{kind}')
-def delivery_anchor(kind: Literal['PO','SJ','CKL','KUI'], site: Site, payload: DeliveryAnchorIn, authorization: str | None = Header(default=None)):
+def delivery_anchor(kind: Literal['PO','SJ','CKL','KUI','KUI_MITRA'], site: Site, payload: DeliveryAnchorIn, authorization: str | None = Header(default=None)):
     _authorize(authorization, site)
-    if (kind=='KUI' and len(payload.period)!=4) or (kind!='KUI' and len(payload.period)!=7):
+    if (kind in {'KUI','KUI_MITRA'} and len(payload.period)!=4) or (kind not in {'KUI','KUI_MITRA'} and len(payload.period)!=7):
         raise HTTPException(422,'Periode kuitansi adalah tahun; dokumen lain tahun-bulan.')
     try: date.fromisoformat(payload.period+'-01' if len(payload.period)==7 else payload.period+'-01-01')
     except ValueError: raise HTTPException(422,'Periode tidak valid')
@@ -89,14 +89,14 @@ def delivery_sync(site: Site, month: str = Query(pattern=r'^\d{4}-\d{2}$'), auth
     except ValueError:
         raise HTTPException(422,'Bulan tidak valid')
     with connection() as conn, conn.cursor() as cur:
-        cur.execute("select * from generated_accountant_documents where site=%s and service_date>=%s and service_date<%s and document_type in ('BAHAN_BAKU','OPERASIONAL') and status='FINAL' order by service_date,id",(site,start,end))
+        cur.execute("select * from generated_accountant_documents where site=%s and service_date>=%s and service_date<%s and document_type in ('BAHAN_BAKU','OPERASIONAL','INSENTIF_MITRA') and status='FINAL' order by service_date,id",(site,start,end))
         for row in cur.fetchall(): ensure_package(cur,row)
         cur.execute('''select p.document_id,p.numbers,p.settings,d.* from lpdh_delivery_packages p
           join generated_accountant_documents d on d.id=p.document_id
           where p.site=%s and p.service_date>=%s and p.service_date<%s order by p.service_date,p.document_id''',(site,start,end))
         packages=[]
         for row in cur.fetchall():
-            packages.append({'document':_serialize_document(cur,row),'numbers':row['numbers'],'settings':row['settings'],'dates':document_dates(row['service_date'])})
+            packages.append({'document':_serialize_document(cur,row),'numbers':row['numbers'],'settings':row['settings'],'dates':document_dates(row['service_date'],row['document_type'])})
         conn.commit()
     return {'packages':packages}
 
