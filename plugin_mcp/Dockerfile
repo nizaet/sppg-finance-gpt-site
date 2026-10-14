@@ -3,7 +3,7 @@ WORKDIR /app
 
 COPY backend/requirements.txt ./backend-requirements.txt
 RUN pip install --no-cache-dir -r backend-requirements.txt \
-    && pip install --no-cache-dir "mcp>=1.28,<2" "sse-starlette==2.4.0" "starlette==0.47.3"
+    && pip install --no-cache-dir "mcp>=1.28,<2" "sse-starlette==2.4.0" "starlette==0.47.3" "PyJWT[crypto]>=2.9,<3"
 
 COPY backend ./backend
 COPY parser ./parser
