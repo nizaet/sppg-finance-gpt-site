@@ -34,7 +34,7 @@ def ensure_package(cur, row):
             numbers[kind]=f'{seq}/KUI.Banper/{category}/{ROMAN[dt.month-1]}/{dt.year}'
         elif kind=='PO': numbers[kind]=f'PO/{dt.year}/{ROMAN[dt.month-1]}/{seq}'
         else: numbers[kind]=f'{kind}/{dt.year}{dt.month:02d}/{seq}'
-    cur.execute('select settings from lpdh_delivery_packages where site=%s order by updated_at desc,document_id desc limit 1', (row['site'],))
+    cur.execute("select settings from lpdh_delivery_packages p join generated_accountant_documents d on d.id=p.document_id where p.site=%s and d.document_type in ('BAHAN_BAKU','OPERASIONAL') order by p.updated_at desc,p.document_id desc limit 1", (row['site'],))
     defaults=(cur.fetchone() or {}).get('settings') or {}
     defaults={key:value for key,value in defaults.items() if key!='paymentFor'}
     if row['document_type']=='INSENTIF_MITRA':
