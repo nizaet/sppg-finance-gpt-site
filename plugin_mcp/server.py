@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
+from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -273,6 +274,28 @@ class BearerGate:
             issuer, audience, jwks_url, resource, required_scope, allowed_subjects = oauth_settings()
         except RuntimeError:
             response = JSONResponse({"detail": "OAuth not configured"}, status_code=503)
+            await response(scope, receive, send)
+            return
+
+        if path in ("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"):
+            response = JSONResponse(oauth_metadata(issuer))
+            await response(scope, receive, send)
+            return
+        request = Request(scope, receive=receive)
+        if path == "/jwks.json":
+            response = JSONResponse(oauth_jwks())
+            await response(scope, receive, send)
+            return
+        if path == "/register" and str(scope.get("method") or "").upper() == "POST":
+            response = await oauth_register(request, issuer)
+            await response(scope, receive, send)
+            return
+        if path == "/authorize":
+            response = await (authorize_post(request, issuer) if str(scope.get("method") or "").upper() == "POST" else authorize_get(request, issuer))
+            await response(scope, receive, send)
+            return
+        if path == "/token" and str(scope.get("method") or "").upper() == "POST":
+            response = await oauth_token(request, issuer, audience)
             await response(scope, receive, send)
             return
 
