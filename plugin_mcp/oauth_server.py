@@ -25,6 +25,7 @@ CHATGPT_STABLE_REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect
 CHATGPT_CIMD_CLIENT_ID = "https://chatgpt.com/oauth/client.json"
 DCR_CLIENT_ID = "sppg-chatgpt-public-v1"
 PKCE_RE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
+VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 
 
 def _b64(raw: bytes) -> str:
@@ -275,7 +276,9 @@ async def token(
         return _oauth_error("invalid_grant", "OAuth client does not match authorization code.")
     if not _resource_allowed(resource, expected_resource) or resource.rstrip("/") != str(record["resource"]).rstrip("/"):
         return _oauth_error("invalid_target", "OAuth resource does not match authorization code.")
-    if not verifier or _b64(hashlib.sha256(verifier.encode("ascii")).digest()) != record["challenge"]:
+    if not VERIFIER_RE.fullmatch(verifier):
+        return _oauth_error("invalid_grant", "PKCE verifier is invalid.")
+    if _b64(hashlib.sha256(verifier.encode("ascii")).digest()) != record["challenge"]:
         return _oauth_error("invalid_grant", "PKCE verification failed.")
 
     now = int(time.time())
