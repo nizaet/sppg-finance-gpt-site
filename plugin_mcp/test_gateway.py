@@ -123,6 +123,25 @@ class GatewayTests(unittest.TestCase):
             schemes = tool.get("securitySchemes", [])
             self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
 
+    def test_authorization_error_redirect_includes_issuer(self):
+        params = {
+            "response_type": "code",
+            "client_id": "https://chatgpt.com/oauth/client.json",
+            "redirect_uri": CHATGPT_STABLE_REDIRECT,
+            "state": "state-123",
+            "code_challenge": "A" * 43,
+            "code_challenge_method": "S256",
+            "scope": "wrong:scope",
+            "resource": RESOURCE,
+        }
+        response = self.client.get("/authorize", params=params, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        location = response.headers["location"]
+        self.assertTrue(location.startswith(CHATGPT_STABLE_REDIRECT + "?"))
+        self.assertIn("error=invalid_scope", location)
+        self.assertIn("state=state-123", location)
+        self.assertIn("iss=https%3A%2F%2Fmcp.example.test", location)
+
     def test_dcr_accepts_only_stable_chatgpt_callback(self):
         response = self.client.post(
             "/register",
