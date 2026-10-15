@@ -241,10 +241,35 @@ def vendor_payables_list(
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_: Request) -> JSONResponse:
+    try:
+        issuer, audience, jwks_url, resource, required_scope, allowed_subjects = oauth_settings()
+        keys = oauth_jwks().get("keys") or []
+        if audience.rstrip("/") != resource.rstrip("/"):
+            raise RuntimeError("OAuth audience must equal MCP resource")
+        if jwks_url != issuer + "/jwks.json":
+            raise RuntimeError("OAuth JWKS URL must match this authorization server")
+        if "SPPG_OWNER" not in allowed_subjects:
+            raise RuntimeError("SPPG_OWNER must be allowlisted")
+        if required_scope != "sppg:read":
+            raise RuntimeError("OAuth scope must be sppg:read")
+        if not keys:
+            raise RuntimeError("OAuth JWKS is empty")
+    except Exception:
+        return JSONResponse(
+            {
+                "status": "not_ready",
+                "service": "sppg-plugin-mcp",
+                "mode": "read-only",
+                "oauthReady": False,
+            },
+            status_code=503,
+        )
+
     return JSONResponse({
         "status": "ok",
         "service": "sppg-plugin-mcp",
         "mode": "read-only",
+        "oauthReady": True,
         "tools": [
             "po_action_queue",
             "receiving_preview",
