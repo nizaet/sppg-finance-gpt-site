@@ -291,11 +291,15 @@ class BearerGate:
             await response(scope, receive, send)
             return
         if path == "/authorize":
-            response = await (authorize_post(request, issuer) if str(scope.get("method") or "").upper() == "POST" else authorize_get(request, issuer))
+            response = await (
+                authorize_post(request, issuer, resource)
+                if str(scope.get("method") or "").upper() == "POST"
+                else authorize_get(request, issuer, resource)
+            )
             await response(scope, receive, send)
             return
         if path == "/token" and str(scope.get("method") or "").upper() == "POST":
-            response = await oauth_token(request, issuer, audience)
+            response = await oauth_token(request, issuer, audience, resource)
             await response(scope, receive, send)
             return
 
@@ -315,7 +319,7 @@ class BearerGate:
                 raise ValueError("Missing token")
             validate_access_token(supplied)
         except Exception:
-            response = unauthorized(resource)
+            response = unauthorized(resource, required_scope)
             await response(scope, receive, send)
             return
 
