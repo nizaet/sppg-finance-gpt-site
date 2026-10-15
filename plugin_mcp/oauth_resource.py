@@ -5,7 +5,6 @@ import os
 from urllib.parse import urlparse
 
 import jwt
-from jwt import PyJWKClient
 from starlette.responses import JSONResponse
 
 
@@ -37,27 +36,21 @@ def settings():
     return issuer, audience, jwks_url, resource, required_scope, allowed_subjects
 
 
-def _verification_key(token: str, issuer: str, jwks_url: str):
-    if os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip() and jwks_url == issuer + "/jwks.json":
-        try:
-            from plugin_mcp.oauth_server import load_signing_key
-            return load_signing_key().public_key()
-        except Exception as exc:
-            raise jwt.InvalidTokenError("Local OAuth verification key is invalid") from exc
-    return PyJWKClient(
-        jwks_url,
-        cache_jwk_set=True,
-        lifespan=300,
-    ).get_signing_key_from_jwt(token).key
+def _verification_key():
+    try:
+        from plugin_mcp.oauth_server import signing_secret
+        return signing_secret()
+    except Exception as exc:
+        raise jwt.InvalidTokenError("Local OAuth signing secret is invalid") from exc
 
 
 def validate_access_token(token: str) -> dict:
     issuer, audience, jwks_url, _, required_scope, allowed_subjects = settings()
-    key = _verification_key(token, issuer, jwks_url)
+    key = _verification_key()
     claims = jwt.decode(
         token,
         key,
-        algorithms=["RS256"],
+        algorithms=["HS256"],
         audience=audience,
         issuer=issuer,
         options={"require": ["exp", "iat", "iss", "sub", "aud"]},
