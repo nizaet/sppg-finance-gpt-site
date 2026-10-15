@@ -33,9 +33,21 @@ logger = logging.getLogger("sppg_plugin_mcp")
 
 Site = Literal["MAJA", "CEMPLANG"]
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
-OAUTH_META = {"securitySchemes": [{"type": "oauth2", "scopes": ["sppg:read"]}]}
+OAUTH_SECURITY_SCHEMES = [{"type": "oauth2", "scopes": ["sppg:read"]}]
 
-mcp = FastMCP(
+
+class OpenAIFastMCP(FastMCP):
+    """FastMCP v1.28 adapter for OpenAI's top-level tool securitySchemes extension."""
+
+    async def list_tools(self):
+        tools = await super().list_tools()
+        return [
+            tool.model_copy(update={"securitySchemes": OAUTH_SECURITY_SCHEMES})
+            for tool in tools
+        ]
+
+
+mcp = OpenAIFastMCP(
     "SPPG Operations Read Only",
     instructions=(
         "Read-only operational tools for SPPG MAJA and CEMPLANG. "
@@ -72,7 +84,7 @@ def _safe(result: Any) -> Any:
     return jsonable_encoder(result)
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def po_action_queue(
     site: str,
     date_iso: str | None = None,
@@ -93,7 +105,7 @@ def po_action_queue(
     return _safe({**result, "mcpReadOnly": True, "operationalMutation": False})
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def receiving_preview(
     site: str,
     text: str,
@@ -129,7 +141,7 @@ def receiving_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def stock_opname_preview(
     site: str,
     text: str,
@@ -160,7 +172,7 @@ def stock_opname_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def vendor_invoice_parse_preview(
     site: str,
     vendor_code: str,
@@ -188,7 +200,7 @@ def vendor_invoice_parse_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def vendor_payable_preview(
     site: str,
     purchase_order_id: int,
@@ -224,7 +236,7 @@ def vendor_payable_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
+@mcp.tool(annotations=READ_ONLY)
 def vendor_payables_list(
     site: str,
     vendor: str | None = None,
