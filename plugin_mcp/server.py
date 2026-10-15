@@ -33,6 +33,7 @@ logger = logging.getLogger("sppg_plugin_mcp")
 
 Site = Literal["MAJA", "CEMPLANG"]
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
+OAUTH_META = {"securitySchemes": [{"type": "oauth2", "scopes": ["sppg:read"]}]}
 
 mcp = FastMCP(
     "SPPG Operations Read Only",
@@ -71,7 +72,7 @@ def _safe(result: Any) -> Any:
     return jsonable_encoder(result)
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def po_action_queue(
     site: str,
     date_iso: str | None = None,
@@ -92,7 +93,7 @@ def po_action_queue(
     return _safe({**result, "mcpReadOnly": True, "operationalMutation": False})
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def receiving_preview(
     site: str,
     text: str,
@@ -128,7 +129,7 @@ def receiving_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def stock_opname_preview(
     site: str,
     text: str,
@@ -159,7 +160,7 @@ def stock_opname_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def vendor_invoice_parse_preview(
     site: str,
     vendor_code: str,
@@ -187,7 +188,7 @@ def vendor_invoice_parse_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def vendor_payable_preview(
     site: str,
     purchase_order_id: int,
@@ -223,7 +224,7 @@ def vendor_payable_preview(
     })
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=OAUTH_META)
 def vendor_payables_list(
     site: str,
     vendor: str | None = None,
