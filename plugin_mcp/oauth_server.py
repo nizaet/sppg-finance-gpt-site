@@ -32,7 +32,7 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def load_signingload_signing_key():
+def load_signing_key():
     raw = os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip()
     if not raw:
         raise RuntimeError("OAuth signing key missing")
@@ -68,7 +68,7 @@ def load_signingload_signing_key():
 
 
 def jwks() -> dict:
-    public_numbers = load_signing_key().publicload_signing_key().public_numbers()
+    public_numbers = load_signing_key().public_key().public_numbers()
     return {
         "keys": [
             {
