@@ -12,6 +12,6 @@ COPY legacy ./legacy
 COPY workflow ./workflow
 COPY plugin_mcp ./plugin_mcp
 
-RUN python -m unittest plugin_mcp.test_oauth_resource
+RUN python -m unittest discover -s plugin_mcp -p 'test_*.py'
 
 CMD ["sh", "-c", "exec uvicorn plugin_mcp.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
