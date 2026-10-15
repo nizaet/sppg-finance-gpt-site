@@ -10,7 +10,6 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from cryptography.hazmat.primitives import serialization
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -47,6 +46,31 @@ def signing_secret() -> bytes:
 def jwks() -> dict:
     # HS256 is server-internal signing; no symmetric verification key is published.
     return {"keys": []}
+
+def issue_access_token(
+    issuer: str,
+    audience: str,
+    *,
+    subject: str = "SPPG_OWNER",
+    scope: str = REQUIRED_SCOPE,
+    ttl_seconds: int = 3600,
+) -> str:
+    now = int(time.time())
+    claims = {
+        "iss": issuer,
+        "sub": subject,
+        "aud": audience,
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "scope": scope,
+    }
+    return jwt.encode(
+        claims,
+        signing_secret(),
+        algorithm="HS256",
+        headers={"kid": "sppg-owner-hmac-v1"},
+    )
+
 
 def metadata(issuer: str) -> dict:
     return {
@@ -258,21 +282,7 @@ async def token(
     if _b64(hashlib.sha256(verifier.encode("ascii")).digest()) != record["challenge"]:
         return _oauth_error("invalid_grant", "PKCE verification failed.")
 
-    now = int(time.time())
-    claims = {
-        "iss": issuer,
-        "sub": "SPPG_OWNER",
-        "aud": audience,
-        "iat": now,
-        "exp": now + 3600,
-        "scope": REQUIRED_SCOPE,
-    }
-    access_token = jwt.encode(
-        claims,
-        signing_secret(),
-        algorithm="HS256",
-        headers={"kid": "sppg-owner-hmac-v1"},
-    )
+    access_token = issue_access_token(issuer, audience)
     return JSONResponse(
         {
             "access_token": access_token,
