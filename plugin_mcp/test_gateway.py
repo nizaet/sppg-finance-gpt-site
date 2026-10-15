@@ -27,15 +27,17 @@ CONFIG = {
 
 
 class GatewayTests(unittest.TestCase):
-    def setUp(self):
-        self.env = patch.dict(os.environ, CONFIG, clear=False)
-        self.env.start()
-        self.client_context = TestClient(app)
-        self.client = self.client_context.__enter__()
+    @classmethod
+    def setUpClass(cls):
+        cls.env = patch.dict(os.environ, CONFIG, clear=False)
+        cls.env.start()
+        cls.client_context = TestClient(app)
+        cls.client = cls.client_context.__enter__()
 
-    def tearDown(self):
-        self.client_context.__exit__(None, None, None)
-        self.env.stop()
+    @classmethod
+    def tearDownClass(cls):
+        cls.client_context.__exit__(None, None, None)
+        cls.env.stop()
 
     def test_health_proves_token_round_trip(self):
         response = self.client.get("/health")
