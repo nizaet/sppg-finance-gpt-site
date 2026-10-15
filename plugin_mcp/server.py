@@ -254,13 +254,14 @@ async def health(_: Request) -> JSONResponse:
             raise RuntimeError("OAuth scope must be sppg:read")
         if not keys:
             raise RuntimeError("OAuth JWKS is empty")
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
             {
                 "status": "not_ready",
                 "service": "sppg-plugin-mcp",
                 "mode": "read-only",
                 "oauthReady": False,
+                "reason": str(exc)[:200],
             },
             status_code=503,
         )
