@@ -32,7 +32,7 @@ from backend.vendor_workflow_api import VendorInvoiceTextIn, parse_vendor_invoic
 logger = logging.getLogger("sppg_plugin_mcp")
 
 Site = Literal["MAJA", "CEMPLANG"]
-READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
+READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 OAUTH_META = {"securitySchemes": [{"type": "oauth2", "scopes": ["sppg:read"]}]}
 
 mcp = FastMCP(
