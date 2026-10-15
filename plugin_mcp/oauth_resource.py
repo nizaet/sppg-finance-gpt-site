@@ -1,12 +1,10 @@
 """OAuth 2.1 protected-resource validation for the SPPG MCP gateway."""
 from __future__ import annotations
 
-import base64
 import os
 from urllib.parse import urlparse
 
 import jwt
-from cryptography.hazmat.primitives import serialization
 from jwt import PyJWKClient
 from starlette.responses import JSONResponse
 
@@ -39,15 +37,11 @@ def settings():
     return issuer, audience, jwks_url, resource, required_scope, allowed_subjects
 
 
-def _verification_key(issuer: str, jwks_url: str):
-    local_b64 = os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip()
-    if local_b64 and jwks_url == issuer + "/jwks.json":
+def _verification_key(token: str, issuer: str, jwks_url: str):
+    if os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip() and jwks_url == issuer + "/jwks.json":
         try:
-            private_key = serialization.load_pem_private_key(
-                base64.b64decode(local_b64, validate=True),
-                password=None,
-            )
-            return private_key.public_key()
+            from plugin_mcp.oauth_server import load_signing_key
+            return load_signing_key().public_key()
         except Exception as exc:
             raise jwt.InvalidTokenError("Local OAuth verification key is invalid") from exc
     return PyJWKClient(
@@ -59,7 +53,7 @@ def _verification_key(issuer: str, jwks_url: str):
 
 def validate_access_token(token: str) -> dict:
     issuer, audience, jwks_url, _, required_scope, allowed_subjects = settings()
-    key = _verification_key(issuer, jwks_url)
+    key = _verification_key(token, issuer, jwks_url)
     claims = jwt.decode(
         token,
         key,
