@@ -15,6 +15,7 @@ class ReceiptIn(BaseModel):
     expected_funds:dict
     funds:dict|None=None
     total_amount:str|int|None=None
+    manual_allocation:bool=False
     document_number:str=Field(min_length=1,max_length=100)
     profile:dict
 class ActionIn(BaseModel):
@@ -82,7 +83,12 @@ def save_draft(payload:ReceiptIn,request:Request):
             try:funds=financial(payload.funds)
             except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         if payload.total_amount is not None:
-            try:funds.update(allocate_total(payload.total_amount))
+            try:
+                recommendation=allocate_total(payload.total_amount)
+                if payload.manual_allocation:
+                    if payload.funds is None or sum(funds[k] for k in recommendation)!=sum(recommendation.values()):
+                        raise ValueError('Jumlah bahan baku, operasional, dan insentif harus sama dengan total TopUp.')
+                else:funds.update(recommendation)
             except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         if sum(funds[k] for k in ('rawAmount','operationalAmount','incentiveAmount'))<=0:raise HTTPException(422,'Nominal TopUp harus lebih dari nol.')
         current=None

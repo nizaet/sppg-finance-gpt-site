@@ -21,11 +21,14 @@ def operational_recap(documents, start_date, end_date):
             name = str(item.get('itemName') or '').strip() or 'Tanpa nama item'
             unit = str(item.get('unit') or '').strip() or 'Tidak diisi'
             category = str(item.get('category') or '').strip()
-            key = (name.casefold(), unit.casefold(), category.casefold())
+            normalized_name = ' '.join(name.casefold().split())
+            normalized_name = {'lap hitam ompreng':'lap hitam untuk ompreng', 'spn cuci piring':'spon cuci piring'}.get(normalized_name, normalized_name)
+            key = (normalized_name, ' '.join(unit.casefold().split()))
             qty = Decimal(str(item.get('quantity') or 0))
             amount = Decimal(str(item.get('lineTotal') or 0))
             group = groups.setdefault(key, dict(itemName=name, unit=unit, category=category,
-                quantity=Decimal(0), amount=Decimal(0), invoices=set(), dates=set()))
+                quantity=Decimal(0), amount=Decimal(0), invoices=set(), dates=set(), categories=set()))
+            if category: group['categories'].add(category)
             group['quantity'] += qty
             group['amount'] += amount
             group['invoices'].add(identity if identity is not None else doc.get('documentNumber'))
@@ -33,7 +36,7 @@ def operational_recap(documents, start_date, end_date):
             details.append(dict(serviceDate=day, documentNumber=doc.get('documentNumber') or '',
                 documentId=identity, itemName=name, category=category, unit=unit,
                 quantity=float(qty), unitPrice=float(item.get('unitPrice') or 0), amount=float(amount)))
-    rows = [dict(itemName=g['itemName'], category=g['category'], unit=g['unit'],
+    rows = [dict(itemName=g['itemName'], category=' / '.join(sorted(g['categories'])), unit=g['unit'],
         quantity=float(g['quantity']), amount=float(g['amount']), invoiceCount=len(g['invoices']),
         dayCount=len(g['dates'])) for _, g in sorted(groups.items())]
     return dict(items=rows, details=details, totalAmount=float(sum((g['amount'] for g in groups.values()), Decimal(0))),
