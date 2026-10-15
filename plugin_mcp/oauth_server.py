@@ -123,30 +123,69 @@ def _oauth_error(error: str, description: str, status: int = 400) -> JSONRespons
     )
 
 
+def _authorization_error_redirect(
+    redirect_uri: str,
+    issuer: str,
+    state: str,
+    error: str,
+    description: str,
+) -> RedirectResponse:
+    params = {
+        "error": error,
+        "error_description": description,
+        "iss": issuer,
+    }
+    if state:
+        params["state"] = state
+    return RedirectResponse(
+        redirect_uri + "?" + urlencode(params),
+        status_code=303,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def authorize_get(
     request: Request,
     issuer: str,
     expected_resource: str,
-) -> HTMLResponse | JSONResponse:
+) -> HTMLResponse | JSONResponse | RedirectResponse:
     q = request.query_params
     client_id = str(q.get("client_id") or "")
     redirect_uri = str(q.get("redirect_uri") or "")
+    state = str(q.get("state") or "")
     resource = str(q.get("resource") or "")
     scope = str(q.get("scope") or REQUIRED_SCOPE)
     challenge = str(q.get("code_challenge") or "")
 
-    if q.get("response_type") != "code":
-        return _oauth_error("unsupported_response_type", "Only authorization code is supported.")
-    if q.get("code_challenge_method") != "S256" or not _pkce_allowed(challenge):
-        return _oauth_error("invalid_request", "PKCE S256 is required.")
-    if not q.get("state"):
-        return _oauth_error("invalid_request", "state is required.")
+    # Never redirect to an untrusted URI. Once client + callback are validated,
+    # RFC 9207 issuer identification is included in every OAuth response.
     if not _client_allowed(client_id, redirect_uri):
         return _oauth_error("invalid_client", "Unrecognized ChatGPT OAuth client.")
+    if q.get("response_type") != "code":
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "unsupported_response_type", "Only authorization code is supported.",
+        )
+    if q.get("code_challenge_method") != "S256" or not _pkce_allowed(challenge):
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_request", "PKCE S256 is required.",
+        )
+    if not state:
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_request", "state is required.",
+        )
     if not _resource_allowed(resource, expected_resource):
-        return _oauth_error("invalid_target", "OAuth resource does not match this MCP server.")
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_target", "OAuth resource does not match this MCP server.",
+        )
     if not _scope_allowed(scope):
-        return _oauth_error("invalid_scope", "sppg:read scope is required.")
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_scope", "sppg:read scope is required.",
+        )
 
     hidden_names = (
         "client_id",
@@ -196,12 +235,23 @@ async def authorize_post(
     scope = str(form.get("scope") or REQUIRED_SCOPE)
     challenge = str(form.get("code_challenge") or "")
 
-    if not state or not _client_allowed(client_id, redirect_uri):
-        return _oauth_error("invalid_request", "Invalid OAuth client or state.")
+    if not _client_allowed(client_id, redirect_uri):
+        return _oauth_error("invalid_client", "Unrecognized ChatGPT OAuth client.")
+    if not state:
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_request", "state is required.",
+        )
     if not _resource_allowed(resource, expected_resource):
-        return _oauth_error("invalid_target", "OAuth resource does not match this MCP server.")
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_target", "OAuth resource does not match this MCP server.",
+        )
     if not _scope_allowed(scope) or not _pkce_allowed(challenge):
-        return _oauth_error("invalid_request", "Invalid scope or PKCE challenge.")
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "invalid_request", "Invalid scope or PKCE challenge.",
+        )
 
     password = str(form.get("password") or "")
     try:
@@ -227,7 +277,10 @@ async def authorize_post(
 
     session = response.json()
     if str(session.get("role") or "").upper() != "OWNER":
-        return _oauth_error("access_denied", "OWNER access required.", 403)
+        return _authorization_error_redirect(
+            redirect_uri, issuer, state,
+            "access_denied", "OWNER access required.",
+        )
 
     _prune_codes()
     code = _b64(os.urandom(32))
