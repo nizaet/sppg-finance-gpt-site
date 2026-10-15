@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from datetime import date, datetime
 from typing import Any, Literal
@@ -27,6 +28,8 @@ from backend.vendor_payables_api import (
 )
 from backend.vendor_workflow_api import VendorInvoiceTextIn, parse_vendor_invoice
 
+
+logger = logging.getLogger("sppg_plugin_mcp")
 
 Site = Literal["MAJA", "CEMPLANG"]
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
@@ -255,6 +258,7 @@ async def health(_: Request) -> JSONResponse:
         if not keys:
             raise RuntimeError("OAuth JWKS is empty")
     except Exception as exc:
+        logger.warning("OAuth readiness failed: %s", exc)
         return JSONResponse(
             {
                 "status": "not_ready",
