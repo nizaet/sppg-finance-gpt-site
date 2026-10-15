@@ -120,7 +120,7 @@ class GatewayTests(unittest.TestCase):
         )
         for tool in tools:
             self.assertTrue(tool.get("annotations", {}).get("readOnlyHint"))
-            schemes = tool.get("_meta", {}).get("securitySchemes", [])
+            schemes = tool.get("securitySchemes", [])
             self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
 
     def test_dcr_accepts_only_stable_chatgpt_callback(self):
