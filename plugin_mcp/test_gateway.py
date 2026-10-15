@@ -30,10 +30,11 @@ class GatewayTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, CONFIG, clear=False)
         self.env.start()
-        self.client = TestClient(app)
+        self.client_context = TestClient(app)
+        self.client = self.client_context.__enter__()
 
     def tearDown(self):
-        self.client.close()
+        self.client_context.__exit__(None, None, None)
         self.env.stop()
 
     def test_health_proves_token_round_trip(self):
