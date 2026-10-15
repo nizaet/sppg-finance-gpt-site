@@ -12,7 +12,7 @@ from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
-from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, authorize_get, authorize_post, token as oauth_token, register as oauth_register
+from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, issue_access_token as oauth_issue_access_token, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -254,6 +254,10 @@ async def health(_: Request) -> JSONResponse:
             raise RuntimeError("SPPG_OWNER must be allowlisted")
         if required_scope != "sppg:read":
             raise RuntimeError("OAuth scope must be sppg:read")
+        probe_token = oauth_issue_access_token(issuer, audience, ttl_seconds=60)
+        probe_claims = validate_access_token(probe_token)
+        if probe_claims.get("sub") != "SPPG_OWNER":
+            raise RuntimeError("OAuth token round-trip subject mismatch")
     except Exception as exc:
         logger.warning("OAuth readiness failed: %s", exc)
         return JSONResponse(
