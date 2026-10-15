@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 from plugin_mcp.oauth_server import (
     CHATGPT_STABLE_REDIRECT,
     DCR_CLIENT_ID,
+    issue_access_token,
 )
 from plugin_mcp.server import app
 
@@ -70,6 +71,54 @@ class GatewayTests(unittest.TestCase):
         challenge = response.headers.get("www-authenticate", "")
         self.assertIn("/.well-known/oauth-protected-resource", challenge)
         self.assertIn('scope="sppg:read"', challenge)
+
+    def test_authenticated_mcp_initialize_and_tools_list(self):
+        token = issue_access_token(ISSUER, RESOURCE, ttl_seconds=60)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-06-18",
+        }
+        initialized = self.client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "sppg-test", "version": "1.0"},
+                },
+            },
+        )
+        self.assertEqual(initialized.status_code, 200, initialized.text)
+
+        listed = self.client.post(
+            "/mcp",
+            headers=headers,
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        payload = listed.json()
+        tools = payload["result"]["tools"]
+        names = {tool["name"] for tool in tools}
+        self.assertEqual(
+            names,
+            {
+                "po_action_queue",
+                "receiving_preview",
+                "stock_opname_preview",
+                "vendor_invoice_parse_preview",
+                "vendor_payable_preview",
+                "vendor_payables_list",
+            },
+        )
+        for tool in tools:
+            self.assertTrue(tool.get("annotations", {}).get("readOnlyHint"))
+            schemes = tool.get("_meta", {}).get("securitySchemes", [])
+            self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
 
     def test_dcr_accepts_only_stable_chatgpt_callback(self):
         response = self.client.post(
