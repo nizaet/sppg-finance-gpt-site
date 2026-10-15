@@ -32,64 +32,21 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def load_signing_key():
+def signing_secret() -> bytes:
+    """Derive a server-only HMAC key from the configured OAuth secret material.
+
+    The Railway variable may contain a PEM key, DER base64, or another high-entropy
+    secret. We never expose it; the access token is validated by this same service.
+    """
     raw = os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip()
-    if not raw:
-        raise RuntimeError("OAuth signing key missing")
-
-    # Accept the intended base64(PEM) form, plus base64(PKCS8-DER) and raw PEM.
-    # This keeps Railway configuration resilient across PowerShell/.NET versions.
-    candidates: list[bytes] = []
-    cleaned = raw[1:-1] if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"} else raw
-    if cleaned.startswith("-----BEGIN"):
-        candidates.append(cleaned.replace("\\n", "\n").encode("utf-8"))
-    try:
-        candidates.append(base64.b64decode(cleaned, validate=True))
-    except Exception:
-        pass
-
-    key = None
-    last_error: Exception | None = None
-    for candidate in candidates:
-        try:
-            if candidate.lstrip().startswith(b"-----BEGIN"):
-                key = serialization.load_pem_private_key(candidate, password=None)
-            else:
-                key = serialization.load_der_private_key(candidate, password=None)
-            break
-        except Exception as exc:
-            last_error = exc
-
-    if key is None:
-        raise RuntimeError("OAuth signing key is invalid") from last_error
-    if getattr(key, "key_size", 0) < 2048:
-        raise RuntimeError("OAuth RSA signing key must be at least 2048 bits")
-    return key
+    if len(raw) < 32:
+        raise RuntimeError("OAuth signing secret is missing or too short")
+    return hashlib.sha256(("sppg-oauth-v1:" + raw).encode("utf-8")).digest()
 
 
 def jwks() -> dict:
-    public_numbers = load_signing_key().public_key().public_numbers()
-    return {
-        "keys": [
-            {
-                "kty": "RSA",
-                "use": "sig",
-                "alg": "RS256",
-                "kid": "sppg-owner-1",
-                "n": _b64(
-                    public_numbers.n.to_bytes(
-                        (public_numbers.n.bit_length() + 7) // 8, "big"
-                    )
-                ),
-                "e": _b64(
-                    public_numbers.e.to_bytes(
-                        (public_numbers.e.bit_length() + 7) // 8, "big"
-                    )
-                ),
-            }
-        ]
-    }
-
+    # HS256 is server-internal signing; no symmetric verification key is published.
+    return {"keys": []}
 
 def metadata(issuer: str) -> dict:
     return {
@@ -97,7 +54,6 @@ def metadata(issuer: str) -> dict:
         "authorization_endpoint": issuer + "/authorize",
         "token_endpoint": issuer + "/token",
         "registration_endpoint": issuer + "/register",
-        "jwks_uri": issuer + "/jwks.json",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"],
@@ -313,9 +269,9 @@ async def token(
     }
     access_token = jwt.encode(
         claims,
-        load_signing_key(),
-        algorithm="RS256",
-        headers={"kid": "sppg-owner-1"},
+        signing_secret(),
+        algorithm="HS256",
+        headers={"kid": "sppg-owner-hmac-v1"},
     )
     return JSONResponse(
         {
