@@ -12,7 +12,7 @@ from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
-from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, authorize_get, authorize_post, token as oauth_token, register as oauth_register
+from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -246,17 +246,13 @@ def vendor_payables_list(
 async def health(_: Request) -> JSONResponse:
     try:
         issuer, audience, jwks_url, resource, required_scope, allowed_subjects = oauth_settings()
-        keys = oauth_jwks().get("keys") or []
+        oauth_signing_secret()
         if audience.rstrip("/") != resource.rstrip("/"):
             raise RuntimeError("OAuth audience must equal MCP resource")
-        if jwks_url != issuer + "/jwks.json":
-            raise RuntimeError("OAuth JWKS URL must match this authorization server")
         if "SPPG_OWNER" not in allowed_subjects:
             raise RuntimeError("SPPG_OWNER must be allowlisted")
         if required_scope != "sppg:read":
             raise RuntimeError("OAuth scope must be sppg:read")
-        if not keys:
-            raise RuntimeError("OAuth JWKS is empty")
     except Exception as exc:
         logger.warning("OAuth readiness failed: %s", exc)
         return JSONResponse(
