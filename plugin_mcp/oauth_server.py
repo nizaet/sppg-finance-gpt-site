@@ -32,22 +32,43 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _key():
+def load_signingload_signing_key():
     raw = os.getenv("SPPG_OAUTH_PRIVATE_KEY_B64", "").strip()
     if not raw:
         raise RuntimeError("OAuth signing key missing")
+
+    # Accept the intended base64(PEM) form, plus base64(PKCS8-DER) and raw PEM.
+    # This keeps Railway configuration resilient across PowerShell/.NET versions.
+    candidates: list[bytes] = []
+    cleaned = raw[1:-1] if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"} else raw
+    if cleaned.startswith("-----BEGIN"):
+        candidates.append(cleaned.replace("\\n", "\n").encode("utf-8"))
     try:
-        pem = base64.b64decode(raw, validate=True)
-        key = serialization.load_pem_private_key(pem, password=None)
-    except Exception as exc:
-        raise RuntimeError("OAuth signing key is invalid") from exc
+        candidates.append(base64.b64decode(cleaned, validate=True))
+    except Exception:
+        pass
+
+    key = None
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            if candidate.lstrip().startswith(b"-----BEGIN"):
+                key = serialization.load_pem_private_key(candidate, password=None)
+            else:
+                key = serialization.load_der_private_key(candidate, password=None)
+            break
+        except Exception as exc:
+            last_error = exc
+
+    if key is None:
+        raise RuntimeError("OAuth signing key is invalid") from last_error
     if getattr(key, "key_size", 0) < 2048:
         raise RuntimeError("OAuth RSA signing key must be at least 2048 bits")
     return key
 
 
 def jwks() -> dict:
-    public_numbers = _key().public_key().public_numbers()
+    public_numbers = load_signing_key().publicload_signing_key().public_numbers()
     return {
         "keys": [
             {
@@ -292,7 +313,7 @@ async def token(
     }
     access_token = jwt.encode(
         claims,
-        _key(),
+        load_signing_key(),
         algorithm="RS256",
         headers={"kid": "sppg-owner-1"},
     )
