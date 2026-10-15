@@ -231,7 +231,8 @@ async def authorize_post(
 
     _prune_codes()
     code = _b64(os.urandom(32))
-    _CODES[code] = {
+    code_key = hashlib.sha256(code.encode("ascii")).hexdigest()
+    _CODES[code_key] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "challenge": challenge,
@@ -257,7 +258,8 @@ async def token(
 ) -> JSONResponse:
     form = await request.form()
     code = str(form.get("code") or "")
-    record = _CODES.pop(code, None)
+    code_key = hashlib.sha256(code.encode("ascii")).hexdigest()
+    record = _CODES.pop(code_key, None)
 
     if not record or int(time.time()) - int(record.get("iat") or 0) > 300:
         return _oauth_error("invalid_grant", "Authorization code is invalid or expired.")
