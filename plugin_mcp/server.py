@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from fastapi.encoders import jsonable_encoder
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
@@ -28,6 +29,7 @@ from backend.vendor_workflow_api import VendorInvoiceTextIn, parse_vendor_invoic
 
 
 Site = Literal["MAJA", "CEMPLANG"]
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
 
 mcp = FastMCP(
     "SPPG Operations Read Only",
@@ -66,7 +68,7 @@ def _safe(result: Any) -> Any:
     return jsonable_encoder(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def po_action_queue(
     site: str,
     date_iso: str | None = None,
@@ -87,7 +89,7 @@ def po_action_queue(
     return _safe({**result, "mcpReadOnly": True, "operationalMutation": False})
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def receiving_preview(
     site: str,
     text: str,
@@ -123,7 +125,7 @@ def receiving_preview(
     })
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def stock_opname_preview(
     site: str,
     text: str,
@@ -154,7 +156,7 @@ def stock_opname_preview(
     })
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def vendor_invoice_parse_preview(
     site: str,
     vendor_code: str,
@@ -182,7 +184,7 @@ def vendor_invoice_parse_preview(
     })
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def vendor_payable_preview(
     site: str,
     purchase_order_id: int,
@@ -218,7 +220,7 @@ def vendor_payable_preview(
     })
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def vendor_payables_list(
     site: str,
     vendor: str | None = None,
