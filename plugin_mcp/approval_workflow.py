@@ -22,6 +22,7 @@ from backend.vendor_payables_manual_api import (
     ManualPayableIn, preview_manual_payable, commit_manual_payable,
 )
 from plugin_mcp.core_proxy import core_request, operational_writes_enabled
+from plugin_mcp.form_fields import describe_form, apply_form
 
 
 OWNER = "SPPG_OWNER"
@@ -116,6 +117,7 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
     if action == "CREATE_ACCOUNTANT_TRANSACTIONS":
         from backend.gpt_bridge_api import FinanceTransactionBatchIn
         data["site"] = change.site
+        unknown_payment = any("payment_status" not in row and "is_debt" not in row for row in data.get("items",[]))
         batch = FinanceTransactionBatchIn.model_validate(data)
         totals = {"income": 0.0, "expense": 0.0, "unpaidExpense": 0.0}
         for line in batch.items:
@@ -125,6 +127,7 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         result = {
             "canCommit": True, "committed": False, "site": change.site,
             "sourceRef": batch.source_ref, "itemCount": len(batch.items),
+            **({"canCommit":False,"validationError":"Pilih status pembayaran sebelum menyimpan."} if unknown_payment else {}),
             "items": [item.model_dump(mode="json") for item in batch.items],
             "totals": {key: round(value, 2) for key, value in totals.items()},
             "note": "Commit may write PostgreSQL and separately synchronize Firestore.",
@@ -274,8 +277,6 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
             "finance": "NONE",
             "note": "Backend status, receiving, and revision constraints are checked again on commit.",
         }
-    if result.get("canCommit") is False:
-        raise ValueError("Backend preview reports canCommit=false")
     return result, before, impact
 
 
@@ -290,7 +291,8 @@ def _render_pending(row: dict[str, Any]) -> dict[str, Any]:
         "before": row.get("before_state"),
         "impact": row["impact_data"],
         "expiresAt": row["expires_at"].isoformat() if isinstance(row["expires_at"], datetime) else str(row["expires_at"]),
-        "approvalMethod": "MCP_APP_CARD",
+        "approvalMethod": "MCP_APP_CARD_OR_TEXT",
+        "form": describe_form(row["action"], row["proposed_payload"], row["preview_data"]),
         "isDestructive": row["action"] in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
         "message": "Please check this card. Only a user click on Confirm may commit.",
@@ -305,7 +307,15 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "reason": reason,
     })
     # Prepare is intentionally available before the production switch is on.
-    preview, before, impact = await _preview(change)
+    if action not in CONTROL_ACTIONS:
+        raise ValueError("Action not in the confirmed-write allowlist")
+    if payload.get("site",site) != site:
+        raise ValueError("Cross-site payload and change.site mismatch")
+    try:
+        preview, before, impact = await _preview(change)
+    except Exception as exc:
+        preview, before, impact = {"canCommit": False, "validationError": str(exc)[:800]}, None, {}
+    status = "DRAFT" if preview.get("canCommit") is False else "PENDING"
     _db_ready()
     proposal_id = uuid.uuid4()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=TTL_MINUTES)
@@ -316,20 +326,20 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
             cur.execute(
                 """insert into sppg_mcp_approvals(
                     id,operator_sub,site,action,reason,proposed_payload,before_state,before_hash,
-                    preview_data,impact_data,expires_at
-                   ) values (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s::jsonb,%s)""",
+                    preview_data,impact_data,expires_at,status
+                   ) values (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s::jsonb,%s,%s)""",
                 (
                     proposal_id, OWNER, change.site, change.action, change.reason,
                     json.dumps(change.payload, ensure_ascii=False, default=str),
                     json.dumps(before, ensure_ascii=False, default=str) if before is not None else None,
                     before_hash, json.dumps(preview, ensure_ascii=False, default=str),
-                    json.dumps(impact, ensure_ascii=False, default=str), expires_at,
+                    json.dumps(impact, ensure_ascii=False, default=str), expires_at, status,
                 ),
             )
             conn.commit()
     return {
         "approvalId": str(proposal_id),
-        "status": "PENDING",
+        "status": status,
         "action": action,
         "site": change.site,
         "reason": reason,
@@ -337,7 +347,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "before": before,
         "impact": impact,
         "expiresAt": expires_at.isoformat(),
-        "approvalMethod": "MCP_APP_CARD",
+        "approvalMethod": "MCP_APP_CARD_OR_TEXT",
+        "form": describe_form(action, change.payload, preview),
         "isDestructive": action in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
         "message": "Preview prepared; no operational record changed. Confirm on the card to execute.",
@@ -428,6 +439,10 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
             row = cur.fetchone()
             if not row:
                 raise ValueError("Approval request not found")
+            if choice == "CANCEL" and row["status"] == "DRAFT":
+                cur.execute("update sppg_mcp_approvals set status='DECLINED',confirmed_at=now() where id=%s", (approval_id,))
+                conn.commit()
+                return {"approvalId": approval_id,"status":"DECLINED","committed":False}
             if row["status"] != "PENDING":
                 return {
                     "approvalId": approval_id, "status": row["status"],
@@ -460,6 +475,8 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
     # Revalidate against current live state, not only old preview text.
     try:
         fresh_preview, current, impact = await _preview(change)
+        if fresh_preview.get("canCommit") is False:
+            return {"approvalId":approval_id,"status":"REVALIDATION_FAILED","committed":False,"reason":"Current preview requires unresolved input"}
         if row["before_hash"] and _hash_json(current) != row["before_hash"]:
             with connection() as conn:
                 with conn.cursor() as cur:
@@ -524,3 +541,22 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
             "Execution uncertain/failed. Do not retry automatically; inspect current state."
         ),
     }
+
+
+
+async def amend_change(approval_id: str, edits: dict[str, Any]) -> dict[str, Any]:
+    """Claim the old ticket before creating a reviewed replacement; never commits domain data."""
+    _db_ready()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            _ensure_table(cur)
+            cur.execute("select * from sppg_mcp_approvals where id=%s and operator_sub=%s for update", (approval_id,OWNER))
+            row=cur.fetchone()
+            if not row or row['status'] not in {'PENDING','DRAFT'}:
+                raise ValueError('Proposal tidak dapat diedit; muat status terbaru')
+            if row['expires_at'] < datetime.now(timezone.utc):
+                raise ValueError('Proposal kedaluwarsa; buat preview baru')
+            data=apply_form(row['action'],row['proposed_payload'],row['preview_data'],edits)
+            cur.execute("update sppg_mcp_approvals set status='SUPERSEDED',confirmed_at=now() where id=%s",(approval_id,))
+            conn.commit()
+    return await prepare_change(row['action'],data,row['site'],row['reason'])

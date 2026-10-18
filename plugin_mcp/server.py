@@ -16,12 +16,8 @@ from plugin_mcp.oauth_resource import settings as oauth_settings, validate_acces
 from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, issue_access_token as oauth_issue_access_token, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 from plugin_mcp.v0186_tools import register_v0186_tools
 from plugin_mcp.core_proxy import operational_writes_enabled
-from plugin_mcp.approval_workflow import prepare_change, confirm_change, read_change
+from plugin_mcp.approval_workflow import prepare_change, confirm_change, read_change, amend_change
 
-from backend.hermes_receiving_preview_api import (
-    HermesReceivingPreviewIn,
-    preview_receiving_multi_po,
-)
 from backend.inventory_api import StockOpnameWhatsAppIn, stock_opname_whatsapp
 from backend.po_reminder_v4_api import po_reminders_v4
 from backend.vendor_payables_api import (
@@ -55,11 +51,11 @@ mcp = OpenAIFastMCP(
     "SPPG Operations v0.18.6 Parity",
     instructions=(
         "MCP bridge for the legacy SPPG GPTS v0.18.6 workflow across MAJA and CEMPLANG. "
-        "It exposes the original Action names plus focused read-only helpers. "
+        "It exposes legacy commands and direct SPPG Core helpers with compact choice cards. "
         "Existing confirmed SPPG knowledge and conversation memory are loaded from SPPG Core. "
         "Meaningful turns and explicit operator corrections may be written to the memory/knowledge layer. "
-        "Production operational writes remain gated; preview-capable operations force commit=false until "
-        "the confirmation-gated write rollout is explicitly enabled."
+        "Production writes use one-time confirmation cards; legacy direct writes remain preview-only. "
+        "Check the operational write switch; never bypass user approval."
     ),
     host="0.0.0.0",
     streamable_http_path="/mcp",
@@ -107,8 +103,7 @@ async def prepareSppgControlledChange(
     CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION.
     Receiving supports explicit OWNER review of unambiguous over-receipt.
     Confirm via the card or confirmSppgControlledChangeByText after the user
-    approves the displayed proposal. Never use the read-only Hermes token gate
-    as a substitute for this controlled operational workflow.
+    approves the displayed proposal. Uses SPPG Core operational APIs directly.
     """
     return await prepare_change(action, payload, site, reason)
 
@@ -146,10 +141,38 @@ async def confirmSppgControlledChangeByText(
         raise ValueError("Explicit approval required: commit true / masukkan / simpan / konfirmasi")
     return await confirm_change(approval_id, "CONFIRM")
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=READ_ONLY, meta=APPROVAL_META)
 def getSppgControlledChange(approval_id: str) -> dict[str, Any]:
     """Read status and audit outcome of one SPPG approval card."""
     return read_change(approval_id)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False),
+          meta={"ui":{"visibility":["app"]}})
+async def updateSppgControlledChange(approval_id: str, edits: dict[str, Any]) -> dict[str, Any]:
+    """App-only form handler. Revalidates selected items/date/status into a NEW preview. Never commits."""
+    return await amend_change(approval_id, edits)
+
+
+@mcp.tool(annotations=READ_ONLY, meta=APPROVAL_META)
+def showSppgSelectionCard(title: str, fields: list[dict[str, Any]], context: str = '') -> dict[str, Any]:
+    """Display choices instead of asking the operator to type: select, multiselect,
+    checkbox, date, datetime-local, number, text, textarea. Each field has key,
+    label, type, optional value, required and options [{value,label}]. Use for
+    vendor/PO ambiguity, item selection, paid/unpaid/partial and date questions.
+    This card collects answers only; it never grants operational write approval.
+    """
+    if not 1 <= len(fields) <= 20: raise ValueError('1..20 fields required')
+    keys=set()
+    for f in fields:
+        if not isinstance(f.get('key'),str) or not f['key'] or f['key'] in keys:
+            raise ValueError('Unique field key required')
+        keys.add(f['key'])
+        if f.get('type') not in {'select','multiselect','checkbox','date','datetime-local','number','text','textarea'}:
+            raise ValueError('Unsupported input type')
+        if len(f.get('options') or [])>60: raise ValueError('Too many options')
+    return {'kind':'SELECTION','title':title,'fields':fields,'context':context,
+            'committed':False,'operationalMutation':False,'approvalRequired':True}
 
 
 def _site(value: str) -> Site:
@@ -194,71 +217,29 @@ def po_action_queue(
     return _safe({**result, "mcpReadOnly": True, "operationalMutation": False})
 
 
-@mcp.tool(annotations=READ_ONLY)
-def receiving_preview(
-    site: str,
-    text: str,
-    vendor_code: str | None = None,
-    purchase_order_id: int | None = None,
-    received_at_iso: str | None = None,
-    reporter: str | None = None,
-) -> dict[str, Any]:
-    """Reconcile pasted/forwarded goods-arrival text against live PO state without writing.
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False), meta=APPROVAL_META)
+async def receiving_preview(site: str, text: str, vendor_code: str | None = None,
+    purchase_order_id: int | None = None, received_at_iso: str | None = None,
+    reporter: str | None = None) -> dict[str, Any]:
+    """Show editable receipt approval card using SPPG Core. Vendor/PO first, N-3..N+2.
 
-    Uses the production multi-PO receiving resolver. Ambiguous matches, partial receipts,
-    rejects and over-receipt remain visible for operator review.
+    Does not save goods receipt or stock until the operator confirms the card.
     """
-    if not str(text or "").strip():
-        raise ValueError("text is required")
-    payload = HermesReceivingPreviewIn(
-        site=_site(site),
-        text=text,
-        vendor_code=(vendor_code or None),
-        purchase_order_id=purchase_order_id,
-        received_at=_datetime(received_at_iso),
-        reporter=reporter,
-    )
-    result = preview_receiving_multi_po(payload, None)
-    # Read-only MCP deliberately does not expose a write-capable confirmation token.
-    result.pop("confirmationToken", None)
-    result.pop("confirmationExpiresInSeconds", None)
-    return _safe({
-        **result,
-        "committed": False,
-        "mcpReadOnly": True,
-        "operationalMutation": False,
-    })
+    card=await prepare_change('RECORD_GOODS_RECEIPT', {
+        'text':text,'vendor_code':vendor_code,'purchase_order_id':purchase_order_id,
+        'received_at':received_at_iso,'reporter':reporter,
+    }, _site(site), 'Tinjau barang diterima, pilih barang dan tanggal, lalu konfirmasi')
+    return {**card.get('preview',{}),**card,'committed':False,'operationalMutation':False}
 
 
-@mcp.tool(annotations=READ_ONLY)
-def stock_opname_preview(
-    site: str,
-    text: str,
-    stock_date_iso: str | None = None,
-    reporter: str | None = None,
-) -> dict[str, Any]:
-    """Parse and normalize a pasted stock-opname report using the application's live master/aliases.
-
-    Returns canonical item names, units, mapping confidence, warnings, ambiguous items and
-    review-required rows. It never saves the stock opname.
-    """
-    if not str(text or "").strip():
-        raise ValueError("text is required")
-    payload = StockOpnameWhatsAppIn(
-        location=_site(site),
-        text=text,
-        stock_date=_date(stock_date_iso),
-        reporter=reporter,
-        actor="plugin_read_only",
-        commit=False,
-    )
-    result = stock_opname_whatsapp(payload)
-    return _safe({
-        **result,
-        "committed": False,
-        "mcpReadOnly": True,
-        "operationalMutation": False,
-    })
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False), meta=APPROVAL_META)
+async def stock_opname_preview(site: str, text: str, stock_date_iso: str | None = None,
+    reporter: str | None = None) -> dict[str, Any]:
+    """Show editable physical stock-opname approval card; no stock changes until confirmation."""
+    card=await prepare_change('RECORD_STOCK_OPNAME', {
+        'text':text,'stock_date':stock_date_iso,'reporter':reporter,
+    }, _site(site), 'Tinjau stok fisik dan tanggal SO sebelum mengganti baseline')
+    return {**card.get('preview',{}),**card,'committed':False,'operationalMutation':False}
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -394,6 +375,8 @@ async def health(_: Request) -> JSONResponse:
             "confirmSppgControlledChange",
             "getSppgControlledChange",
             "confirmSppgControlledChangeByText",
+            "updateSppgControlledChange",
+            "showSppgSelectionCard",
         ],
     })
 
@@ -480,3 +463,4 @@ def build_app() -> Any:
 
 
 app = build_app()
+

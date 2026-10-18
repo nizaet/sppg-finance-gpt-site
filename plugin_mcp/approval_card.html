@@ -1,202 +1,37 @@
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Konfirmasi SPPG</title>
+<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Konfirmasi SPPG</title>
 <style>
-:root {color-scheme:light dark; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
-* {box-sizing:border-box}
-body {margin:0;padding:16px;color:var(--color-text-primary,#20252b);background:var(--color-background-primary,#fff)}
-.card {border:1px solid var(--color-border-secondary,#d9dee5);border-radius:17px;padding:18px;max-width:660px}
-.header {display:flex;align-items:center;gap:12px;margin-bottom:14px}
-.icon {display:grid;place-items:center;background:#eef4ff;color:#2253a4;border-radius:14px;width:45px;height:45px;font-size:23px;flex-shrink:0}
-h2 {font-size:17px;line-height:1.25;margin:0 0 5px}
-.small {color:var(--color-text-secondary,#646e79);font-size:12px}
-.pill {display:inline-block;background:var(--color-background-secondary,#f1f3f6);border:1px solid #d5dbe4;border-radius:999px;padding:4px 10px;font-size:11px}
-.pills {display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 14px}
-.grid {display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
-.box {border:1px solid var(--color-border-tertiary,#e4e7ee);border-radius:12px;padding:12px;min-width:0}
-.label {font-size:11px;opacity:.75;margin-bottom:5px}
-.value {font-size:14px;font-weight:650;overflow-wrap:anywhere}
-.notice {border-left:3px solid #bd7d12;padding:10px 12px;background:var(--color-background-secondary,#f8f9fb);font-size:12px;line-height:1.55;margin:12px 0;border-radius:3px 10px 10px 3px}
-.details {font-size:12px;line-height:1.5}
-details {border-top:1px solid #dce0e6;padding:10px 0}
-summary {cursor:pointer;font-weight:600}
-pre {white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 ui-monospace,Consolas,monospace;margin:8px 0}
-.actions {display:flex;gap:10px;margin-top:18px}
-button {flex:1;border:1px solid #c9cdd4;border-radius:10px;padding:12px 9px;font-size:13px;font-weight:650;cursor:pointer;background:var(--color-background-primary,#fff);color:inherit}
-button.primary {background:#1c55a0;color:white;border-color:#1c55a0}
-button:disabled {opacity:.48;cursor:not-allowed}
-.edit {background:transparent;border:0;color:#2461a2;text-decoration:underline;font-size:12px;cursor:pointer;padding:8px 0;margin-top:4px}
-#status {font-size:13px;margin-top:11px;line-height:1.5}
-.danger {color:#b83831}
-.ok {color:#16734e}
-@media(max-width:390px){.card{padding:13px}.grid{grid-template-columns:1fr}.actions{flex-direction:column}}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="header"><div class="icon">🧾</div><div>
-  <h2 id="title">Konfirmasi Perubahan SPPG</h2>
-  <div class="small" id="subtitle">Memuat rincian persetujuan…</div>
-  </div></div>
-  <div class="pills"><span class="pill" id="site">SITE</span><span class="pill" id="action">ACTION</span><span class="pill" id="expiry">10 menit</span></div>
-  <div class="grid">
-    <div class="box"><div class="label">Sebelum</div><div class="value" id="before">Belum ada data</div></div>
-    <div class="box"><div class="label">Sesudah</div><div class="value" id="after">Pratinjau</div></div>
-  </div>
-  <div class="box">
-    <div class="label">Dampak stok dan keuangan</div>
-    <div id="impact" class="details">Memeriksa dampak…</div>
-  </div>
-  <div class="notice" id="notice">Periksa dapur, vendor, tanggal, nilai dan status. Perubahan hanya dijalankan setelah kamu menekan Konfirmasi.</div>
-  <details><summary>Detail lengkap dan rincian item</summary><pre id="detail"></pre></details>
-  <div class="actions">
-    <button id="cancel">Batalkan</button>
-    <button class="primary" id="confirm">Konfirmasi dan simpan</button>
-  </div>
-  <button class="edit" id="edit">Ubah rincian sebelum menyimpan</button>
-  <div id="status" role="status" aria-live="polite"></div>
-</div>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:12px;background:Canvas;color:CanvasText}.card{max-width:760px;margin:auto;padding:6px}h2{font-size:17px;margin:12px 0}.muted,#status{font-size:13px;line-height:1.5;opacity:.75}.tags{display:none}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.field{display:flex;flex-direction:column;gap:6px;font-size:14px;min-width:0;margin:6px 0}input,select,textarea{width:100%;min-height:40px;border:1px solid color-mix(in srgb,CanvasText 22%,transparent);border-radius:8px;padding:8px;background:Canvas;color:CanvasText;font:14px system-ui}textarea{min-height:64px}input[type=checkbox],input[type=radio]{width:20px;min-height:20px;flex-shrink:0;accent-color:CanvasText}.choice{display:flex;align-items:center;gap:10px;font-size:15px;margin:10px 0;font-weight:400}.wide{grid-column:1/-1}.row{padding:8px 0;border-bottom:1px solid color-mix(in srgb,CanvasText 12%,transparent)}.row-head{margin:2px 0}.row-summary{font-size:14px;margin-left:30px;opacity:.75}.notice{font-size:13px;line-height:1.5;margin:12px 0;white-space:pre-line}.notice:empty,#summary:empty,#subtitle:empty{display:none}.actions{display:flex;gap:8px;margin-top:16px}button{min-height:44px;padding:10px 16px;border-radius:24px;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);background:Canvas;color:CanvasText;font:600 14px system-ui;cursor:pointer}button.primary{background:CanvasText;color:Canvas;flex:1}button:disabled{opacity:.4;cursor:not-allowed}#review{display:none}.ok{color:#168350}.bad{color:#bf4b42}details{margin:8px 0;font-size:13px}summary{cursor:pointer;opacity:.75}#technical{display:none}.summary{font-size:14px;line-height:1.5}.row.off{opacity:.4}fieldset{border:0;padding:0;margin:0}legend{font-size:15px;font-weight:600;padding:8px 0}@media(max-width:440px){body{padding:8px}.grid{grid-template-columns:1fr}}
+</style></head><body><section class="card"><h2 id="title">Konfirmasi Perubahan SPPG</h2><div class="muted" id="subtitle">Memuat kartu…</div><div class="tags" id="tags"></div><div class="summary" id="summary"></div><div id="fields" class="grid"></div><div id="rows"></div><div class="notice" id="notice"></div><details id="technical"><summary>Dampak dan detail lengkap</summary><div id="impact" class="impact"></div><pre id="detail"></pre></details><div class="actions"><button id="cancel">Batalkan</button><button id="review">Tinjau pilihan</button><button id="confirm" class="primary">Konfirmasi</button></div><div id="status" role="status" aria-live="polite"></div></section>
 <script>
-(function(){
-  "use strict";
-  const $=id=>document.getElementById(id);
-  const pending=new Map();
-  let sequence=0;
-  let proposal=null;
-  let operating=false;
-  const readable=(value,max=110)=> {
-    if(value===null || value===undefined || value==="") return "-";
-    const s=typeof value==="string"?value:JSON.stringify(value);
-    return s.length>max?s.slice(0,max)+"…":s;
-  };
-  function request(method,params){
-    const id=++sequence;
-    return new Promise((resolve,reject)=>{
-      const timeout=setTimeout(()=>{pending.delete(id);reject(new Error("Waktu tunggu habis"));},45000);
-      pending.set(id,{resolve,reject,timeout});
-      parent.postMessage({jsonrpc:"2.0",id,method,params:params||{}},"*");
-    });
-  }
-  function notify(method,params){
-    parent.postMessage({jsonrpc:"2.0",method,params:params||{}},"*");
-  }
-  function parseResult(message){
-    if(!message)return null;
-    const value=message.structuredContent || message.result?.structuredContent;
-    if(value && typeof value==="object")return value;
-    for(const item of message.content || []) {
-      if(item.type==="text") {
-        try {return JSON.parse(item.text);}catch(e){}
-      }
-    }
-    return null;
-  }
-  function render(value) {
-    if(!value || !value.approvalId)return;
-    proposal=value;
-    $("site").textContent=String(value.site||"SITE");
-    $("action").textContent=String(value.action||"CHANGE").replaceAll("_"," ");
-    $("subtitle").textContent=readable(value.reason,170);
-    $("expiry").textContent="Berlaku sampai "+String(value.expiresAt||"").replace("T"," ").slice(0,16)+" UTC";
-    $("title").textContent=value.isDestructive?"Konfirmasi perubahan penting":"Tinjau sebelum menyimpan";
-    const before=value.before||{};
-    const preview=value.preview||{};
-    $("before").textContent=readable(before.poCode||before.status||before.purchaseOrderId||"Belum tersimpan",125);
-    const amt=preview.netAmount||preview.grossAmount||preview.poCode||preview.normalizedPayload?.po_code;
-    $("after").textContent=readable(amt||preview.status||value.action,125);
-    $("impact").textContent=Object.entries(value.impact||{}).map(([k,v])=>k+": "+readable(v,260)).join("\n");
-    $("impact").style.whiteSpace="pre-line";
-    const warning=(preview.warnings||[]).map(x=>typeof x==="string"?x:readable(x,300));
-    const danger=value.isDestructive;
-    $("notice").textContent=warning.length?warning.join(" • "):(
-      danger?"Tindakan ini dapat membatalkan/menghapus catatan. Pastikan target dan dependensi benar.":
-      "Pastikan dapur, vendor, tanggal, nilai dan status sebelum menyetujui."
-    );
-    $("detail").textContent=JSON.stringify({preview:value.preview,before:value.before,impact:value.impact},null,2);
-    const disabled=value.status!=="PENDING" || !value.writeEnabled;
-    $("confirm").disabled=disabled;
-    $("cancel").disabled=value.status!=="PENDING";
-    if(!value.writeEnabled) {
-      $("status").textContent="Gerbang write masih ditutup sampai pengujian keamanan selesai.";
-    } else {
-      $("status").textContent="";
-    }
-    resize();
-  }
-  function resize(){
-    notify("ui/notifications/size-changed",{
-      width:document.documentElement.scrollWidth,
-      height:document.documentElement.scrollHeight
-    });
-  }
-  async function decide(choice){
-    if(!proposal||operating)return;
-    operating=true;
-    $("confirm").disabled=true;$("cancel").disabled=true;
-    $("status").textContent="Memproses pilihan…";
-    try{
-      const response=await request("tools/call",{
-        name:"confirmSppgControlledChange",
-        arguments:{approval_id:proposal.approvalId,choice}
-      });
-      const value=parseResult(response.result||response);
-      if(!value)throw new Error("Tidak ada status dari server");
-      if(value.status==="APPLIED"){
-        $("status").className="ok";
-        $("status").textContent="BERHASIL TERSIMPAN. ID persetujuan "+proposal.approvalId+". Periksa ID hasil pada detail.";
-      }else if(value.status==="DECLINED"){
-        $("status").textContent="Dibatalkan. Tidak ada perubahan operasional.";
-      }else{
-        $("status").className="danger";
-        $("status").textContent="BELUM TERSIMPAN: "+readable(value.message||value.status,350);
-      }
-      $("detail").textContent=JSON.stringify(value,null,2);
-    }catch(e){
-      $("status").className="danger";
-      $("status").textContent="Gagal memverifikasi hasil. Jangan ulangi commit; cek status dulu. "+String(e.message||e);
-    }finally{operating=false;resize();}
-  }
-  window.addEventListener("message",event=>{
-    if(event.source!==parent)return;
-    const data=event.data||{};
-    if(data.id!==undefined&&pending.has(data.id)){
-      const p=pending.get(data.id);pending.delete(data.id);clearTimeout(p.timeout);
-      if(data.error)p.reject(new Error(data.error.message||"Request failed"));
-      else p.resolve(data);
-      return;
-    }
-    if(data.method==="ui/notifications/tool-result"){
-      render(parseResult(data.params));
-    }
-    if(data.method==="ui/resource-teardown"&&data.id!==undefined){
-      parent.postMessage({jsonrpc:"2.0",id:data.id,result:{}},"*");
-    }
-  });
-  $("confirm").addEventListener("click",()=>decide("CONFIRM"));
-  $("cancel").addEventListener("click",()=>decide("CANCEL"));
-  $("edit").addEventListener("click",async()=>{
-    if(!proposal)return;
-    const msg="Ubah detail proposal "+proposal.approvalId+" ("+proposal.action+", "+proposal.site+"). Jangan commit. Buat preview dan kartu konfirmasi baru setelah saya memberi koreksi.";
-    try{await request("ui/message",{role:"user",content:{type:"text",text:msg}});}
-    catch(e){$("status").textContent="Tulis koreksi di chat, lalu minta preview baru.";}
-  });
-  (async()=>{
-    try{
-      await request("ui/initialize",{
-        protocolVersion:"2026-01-26",
-        appInfo:{name:"SPPG Control Room",version:"1.0.0"},
-        appCapabilities:{availableDisplayModes:["inline","fullscreen"]}
-      });
-      notify("ui/notifications/initialized",{});
-    }catch(e){
-      $("status").textContent="Tampilan belum didukung pada host ini. Gunakan teks preview; jangan commit tanpa kartu konfirmasi.";
-    }
-  })();
-  if(window.ResizeObserver)new ResizeObserver(resize).observe(document.body);
+(()=>{'use strict';const $=id=>document.getElementById(id);let proposal,seq=0,busy=false,dirty=false;const pending=new Map();
+function req(method,params){return new Promise((resolve,reject)=>{const id=++seq;const timer=setTimeout(()=>{pending.delete(id);reject(Error('Waktu tunggu habis; cek status sebelum mengulang.'))},45000);pending.set(id,{resolve,reject,timer});parent.postMessage({jsonrpc:'2.0',id,method,params},'*')})}
+function notify(method,params){parent.postMessage({jsonrpc:'2.0',method,params},'*')}
+function parse(m){if(m?.structuredContent)return m.structuredContent;if(m?.result?.structuredContent)return m.result.structuredContent;for(const c of m?.content||[])if(c.type==='text'){try{return JSON.parse(c.text)}catch{}}return null}
+function elem(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
+function status(s,bad=false){$('status').textContent=s;$('status').className=bad?'bad':'ok';resize()}
+function resize(){notify('ui/notifications/size-changed',{height:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth})}
+function markDirty(){dirty=true;buttons()}
+function buttons(){const choice=proposal?.kind==='SELECTION';const active=choice||['PENDING','DRAFT'].includes(proposal?.status);$('review').hidden=choice;$('review').disabled=busy||!active||!dirty;$('confirm').textContent=choice?'Konfirmasi':dirty?'Periksa pilihan':'Konfirmasi';$('confirm').disabled=busy||!active||(!choice&&(!dirty&&proposal?.status!=='PENDING'||!proposal?.writeEnabled));$('cancel').disabled=busy||!active}
+function input(f,prefix){if((f.type==='select'||f.type==='radio')&&(f.options||[]).length<=5){const group=elem('fieldset',undefined,'wide');group.id=prefix+f.key;group.dataset.key=f.key;group.dataset.radio='1';group.append(elem('legend',f.label||f.key));for(const o of f.options||[]){const lab=elem('label',undefined,'choice');const c=elem('input');c.type='radio';c.name=prefix+f.key;c.value=String(o.value);c.checked=String(f.value)===String(o.value);c.required=!!f.required;c.addEventListener('change',markDirty);lab.append(c,elem('span',o.label||o.value));group.append(lab)}return group}const wrap=elem('label',undefined,'field'+(['textarea','multiselect'].includes(f.type)?' wide':''));wrap.append(elem('span',f.label||f.key));const id=prefix+f.key;
+ if(f.type==='multiselect'){const group=elem('div');group.dataset.key=f.key;group.dataset.multi='1';group.id=id;for(const o of f.options||[]){const lab=elem('label',undefined,'choice');const c=elem('input');c.type='checkbox';c.value=String(o.value);c.checked=(f.value||[]).includes(o.value);c.addEventListener('change',markDirty);lab.append(c,elem('span',o.label||o.value));group.append(lab)}wrap.append(group);return wrap}
+ const e=elem(f.type==='select'?'select':f.type==='textarea'?'textarea':'input');e.id=id;e.dataset.key=f.key;e.dataset.kind=f.type||'text';if(e.tagName==='INPUT')e.type=f.type||'text';if(e.type==='number'){e.step='any';e.min='0'}if(f.required)e.required=true;
+ if(f.type==='select'){const empty=elem('option','Pilih…');empty.value='';e.append(empty);for(const o of f.options||[]){const opt=elem('option',o.label||o.value);opt.value=String(o.value);e.append(opt)}}
+ if(f.type==='checkbox')e.checked=!!f.value;else e.value=f.value??'';e.addEventListener('input',markDirty);e.addEventListener('change',markDirty);wrap.append(e);return wrap}
+function values(root){const out={};for(const e of root.querySelectorAll('[data-key]')){if(e.dataset.radio){out[e.dataset.key]=e.querySelector('input:checked')?.value||''}else if(e.dataset.multi){out[e.dataset.key]=[...e.querySelectorAll('input:checked')].map(x=>x.value)}else out[e.dataset.key]=e.type==='checkbox'?e.checked:e.value}return out}
+function render(v){if(!v||(!v.approvalId&&v.kind!=='SELECTION'))return;proposal=v;dirty=false;busy=false;$('fields').replaceChildren();$('rows').replaceChildren();$('tags').replaceChildren();const selection=v.kind==='SELECTION';$('title').textContent=selection?v.title:(v.status==='DRAFT'?'Lengkapi pilihan':'Konfirmasi pencatatan');$('subtitle').textContent=selection?v.context:[v.site,v.preview?.vendorCode,v.preview?.poCode].filter(Boolean).join(' · ');
+ if(!selection){for(const text of [v.site,String(v.action||'').replaceAll('_',' '),'WIB · Asia/Jakarta'])$('tags').append(elem('span',text,'tag'));$('summary').textContent=v.preview?.poCode||v.preview?.transactionId||''}
+ else $('summary').textContent='';
+ const form=selection?{fields:v.fields,rows:[]}:v.form||{fields:[],rows:[]};const extra=elem('details',undefined,'wide');extra.append(elem('summary','Ubah rincian'));const exgrid=elem('div',undefined,'grid');extra.append(exgrid);for(const f of form.fields||[]){const dest=['date','received_at','stock_date','paid_date','payment_status','invoice_date','due_date','distribution_date','amount'].includes(f.key)||selection?$('fields'):exgrid;dest.append(input(f,'top-'))}if(exgrid.children.length)$('fields').append(extra);
+ if(!selection&&v.action==='CREATE_ACCOUNTANT_TRANSACTIONS'){const bulk=input({key:'_bulk_payment',label:'Status pembayaran',type:'select',value:'per_item',options:[{value:'paid',label:'Semua lunas'},{value:'unpaid',label:'Semua belum dibayar (hutang)'},{value:'per_item',label:'Status berbeda per item'}]},'bulk-');bulk.addEventListener('change',e=>{if(e.target.value==='per_item')return;for(const group of $('rows').querySelectorAll('[data-key=payment_status]'))for(const r of group.querySelectorAll('input'))r.checked=r.value===e.target.value;markDirty()});$('fields').append(bulk)}
+ for(const r of form.rows||[]){const box=elem('section',undefined,'row');box.dataset.index=r.index;const lab=elem('label',undefined,'choice row-head');const c=elem('input');c.type='checkbox';c.checked=true;c.className='include';c.addEventListener('change',()=>{box.classList.toggle('off',!c.checked);markDirty()});lab.append(c,elem('span',r.label));box.append(lab);const vals=Object.fromEntries((r.fields||[]).map(f=>[f.key,f.value]));const brief=vals.amount!=null?'Rp'+Number(vals.amount).toLocaleString('id-ID'):[vals.received_qty??vals.qty,vals.unit].filter(x=>x!=null).join(' ');box.append(elem('div',brief,'row-summary'));const edit=elem('details');edit.append(elem('summary','Ubah'));const grid=elem('div',undefined,'grid');for(const f of r.fields||[])grid.append(input(f,'r'+r.index+'-'));edit.append(grid);box.append(edit);$('rows').append(box)}
+ const warnings=v.preview?.warnings||[];const over=(v.preview?.matches||[]).filter(r=>r.variance_qty>0).map(r=>`${r.po_item_name||r.reported_item_name}: kelebihan ${r.variance_qty} ${r.unit||''}`);
+ $('notice').textContent=v.preview?.validationError||[...warnings.map(x=>typeof x==='string'?x:JSON.stringify(x)),...over].join('\n')||(selection?'':({'RECORD_GOODS_RECEIPT':'Menambah stok sesuai barang yang dipilih.','RECORD_STOCK_OPNAME':'Mengganti hitungan fisik aktif dengan SO ini.','RECORD_VENDOR_PAYMENT':'Mencatat pembayaran dan pengeluaran Akuntan. Jangan catat pengeluaran yang sama dua kali.'}[v.action]||'Belum disimpan.'));
+ $('impact').textContent=Object.entries(v.impact||{}).map(([k,x])=>k+': '+x).join('\n');$('detail').textContent=JSON.stringify({approvalId:v.approvalId,status:v.status,preview:v.preview,before:v.before},null,2);status(!selection&&!v.writeEnabled?'Write belum aktif; belum ada perubahan.':'');buttons();resize()}
+async function call(name,args){const r=await req('tools/call',{name,arguments:args});const body=r.result||r;if(body.isError)throw Error((body.content||[]).map(x=>x.text||'').join(' '));const v=parse(body);if(!v)throw Error('Respons server tidak dapat dibaca');return v}
+$('review').onclick=async()=>{if(busy||!proposal)return;busy=true;buttons();status('Memeriksa ulang pilihan…');try{const fields=values($('fields'));delete fields._bulk_payment;const edits={fields};if($('rows').children.length)edits.rows=[...$('rows').children].filter(r=>r.querySelector('.include').checked).map(r=>({index:Number(r.dataset.index),fields:values(r.querySelector('.grid'))}));const v=await call('updateSppgControlledChange',{approval_id:proposal.approvalId,edits});render(v);status(v.status==='PENDING'?'Pilihan sudah diperiksa. Klik Konfirmasi.':'Lengkapi kolom yang masih diperlukan.',v.status!=='PENDING')}catch(e){status(e.message,true)}finally{busy=false;buttons()}};
+async function decide(choice){if(busy||!proposal)return;if(proposal.kind==='SELECTION'){if(choice==='CANCEL'){status('Pilihan dibatalkan.');proposal.status='DECLINED';$('confirm').disabled=true;$('cancel').disabled=true;return}for(const e of $('fields').querySelectorAll('[required]'))if(!e.reportValidity())return;busy=true;buttons();try{const selected=values($('fields'));await req('ui/message',{role:'user',content:[{type:'text',text:'Pilihan pada kartu '+proposal.title+': '+JSON.stringify(selected)+'. Konteks: '+proposal.context+'. Gunakan pilihan ini untuk melanjutkan; ini bukan persetujuan menyimpan transaksi.'}]});status('Pilihan terkirim. Melanjutkan…');$('confirm').disabled=true}catch(e){status('Pilihan belum terkirim: '+e.message,true);busy=false;buttons()}return}
+ busy=true;buttons();status('Memproses…');try{const v=await call('confirmSppgControlledChange',{approval_id:proposal.approvalId,choice});proposal.status=v.status;$('detail').textContent=JSON.stringify(v,null,2);status(v.status==='APPLIED'?'Berhasil tersimpan.':v.status==='DECLINED'?'Dibatalkan. Tidak ada perubahan operasional.':'BELUM TERSIMPAN: '+(v.message||v.reason||v.status),!['APPLIED','DECLINED'].includes(v.status));notify('ui/update-model-context',{structuredContent:v})}catch(e){status('Hasil belum terverifikasi. Jangan ulangi commit. '+e.message,true);proposal.status='FAILED_NEEDS_REVIEW'}finally{busy=false;buttons()}}
+$('confirm').onclick=()=>{if(dirty&&proposal?.kind!=='SELECTION')$('review').onclick();else decide('CONFIRM')};$('cancel').onclick=()=>decide('CANCEL');window.addEventListener('message',event=>{if(event.source!==parent)return;const d=event.data||{};if(d.id!==undefined&&pending.has(d.id)){const p=pending.get(d.id);pending.delete(d.id);clearTimeout(p.timer);d.error?p.reject(Error(d.error.message)):p.resolve(d);return}if(d.method==='ui/notifications/tool-result')render(parse(d.params));if(d.method==='ui/resource-teardown'&&d.id!==undefined)parent.postMessage({jsonrpc:'2.0',id:d.id,result:{}},'*')});
+(async()=>{try{await req('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'SPPG Control Room',version:'1.2.4'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});notify('ui/notifications/initialized',{})}catch(e){status('Kartu belum dimuat oleh host. Buka ulang respons kartu; belum ada transaksi disimpan.',true)}})();if(window.ResizeObserver)new ResizeObserver(resize).observe(document.body);
 })();
-</script>
-</body>
-</html>
+</script></body></html>

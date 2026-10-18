@@ -128,14 +128,14 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
         self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
-        self.assertEqual(len(names), len(focused) + 37 + 4)
+        self.assertEqual(len(names), len(focused) + 37 + 6)
 
         by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
             schemes = tool.get("securitySchemes", [])
             self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
 
-        for name in focused:
+        for name in focused - {"receiving_preview", "stock_opname_preview"}:
             self.assertTrue(by_name[name].get("annotations", {}).get("readOnlyHint"))
         self.assertFalse(by_name["learnSppgConversationTurn"].get("annotations", {}).get("readOnlyHint"))
         self.assertFalse(by_name["recordExplicitSppgKnowledge"].get("annotations", {}).get("readOnlyHint"))
@@ -153,6 +153,9 @@ class GatewayTests(unittest.TestCase):
             by_name["confirmSppgControlledChange"]["_meta"]["ui"]["visibility"], ["app"]
         )
         self.assertNotIn("resourceUri", by_name["confirmSppgControlledChange"]["_meta"]["ui"])
+        self.assertEqual(by_name["updateSppgControlledChange"]["_meta"]["ui"], {"visibility":["app"]})
+        for name in ("receiving_preview","stock_opname_preview","showSppgSelectionCard"):
+            self.assertEqual(by_name[name]["_meta"]["ui"]["resourceUri"],"ui://sppg-control-room/approval-card")
         self.assertEqual(
             by_name["prepareSppgControlledChange"]["_meta"]["ui"]["resourceUri"],
             "ui://sppg-control-room/approval-card",
@@ -256,5 +259,21 @@ class ReceiptTextTests(unittest.TestCase):
         from backend.operational_api import extract_receipt_items
         self.assertEqual(len(extract_receipt_items("Wortel 1.5 kg, Timun 2 kg")), 2)
 
+class ReceiptSearchTests(unittest.TestCase):
+    def test_default_search_stays_in_six_day_window_without_old_fallback(self):
+        from datetime import datetime,date
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from backend.receiving_multi_po_runtime_patch import _candidate_pos
+        cur=MagicMock();cur.fetchall.return_value=[]
+        payload=SimpleNamespace(site="MAJA",received_at=datetime(2026,10,18,2,35),purchase_order_id=None)
+        with patch("backend.operational_api.candidate_pos") as fallback:
+            self.assertEqual(_candidate_pos(cur,payload,"HOLIL"),[])
+        fallback.assert_not_called()
+        sql,params=cur.execute.call_args.args
+        self.assertEqual(params[2:6],[date(2026,10,15),date(2026,10,20)]*2)
+        self.assertIn("HOLIL",params);self.assertEqual(params[0],"MAJA")
+
 if __name__ == "__main__":
     unittest.main()
+

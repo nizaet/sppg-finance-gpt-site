@@ -153,14 +153,10 @@ async def previewSppgInventoryRequirement(
 
 
 async def previewOrRecordSppgGoodsReceiptFromMessage(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve current receiving text against live PO state. Forces commit=false."""
+    """Preview live receiving and display a compact approval card. Never commits."""
+    from plugin_mcp.approval_workflow import prepare_change
     body = preview_only(payload)
-    if "site" in body:
-        body["site"] = _clean_site(body["site"])
-    result = await core_request("POST", "/v1/receiving/whatsapp", json_body=body)
-    result.pop("confirmationToken", None)
-    result.pop("confirmationExpiresInSeconds", None)
-    return _preview_result(result)
+    return await prepare_change("RECORD_GOODS_RECEIPT",body,_clean_site(body.get("site","")),"Tinjau penerimaan barang")
 
 
 async def stageSuppliedSppgWhatsAppActivityForReview(
@@ -238,11 +234,10 @@ async def getFinalSppgPurchaseOrderWhatsAppMessage(
 
 
 async def previewOrRecordSppgStockOpnameFromWhatsApp(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview one physical SO baseline. Forces commit=false during migration."""
-    body = preview_only(payload)
-    return _preview_result(await core_request(
-        "POST", "/v1/inventory/stock-opname/whatsapp", json_body=body
-    ))
+    """Preview one physical SO baseline and display a compact approval card."""
+    from plugin_mcp.approval_workflow import prepare_change
+    body=preview_only(payload)
+    return await prepare_change("RECORD_STOCK_OPNAME",body,_clean_site(body.get("site") or body.get("location","")),"Tinjau stock opname")
 
 
 async def readSppgWarehouseStockAndPoProjection(
@@ -528,10 +523,14 @@ LEGACY_V0186_TOOLS = [
 def register_v0186_tools(mcp: Any) -> list[str]:
     names: list[str] = []
     for fn, annotations in LEGACY_V0186_TOOLS:
+        is_card=fn.__name__ in {"previewOrRecordSppgGoodsReceiptFromMessage","previewOrRecordSppgStockOpnameFromWhatsApp"}
+        if is_card: annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False)
         mcp.add_tool(
             fn,
             name=fn.__name__,
             annotations=annotations,
+            meta={"ui":{"resourceUri":"ui://sppg-control-room/approval-card","visibility":["model","app"]},"openai/outputTemplate":"ui://sppg-control-room/approval-card"} if is_card else None,
         )
         names.append(fn.__name__)
     return names
+

@@ -143,6 +143,14 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["status"], "APPLIED")
         self.assertEqual(execute.await_count, 1)
 
+    async def test_unresolved_draft_cannot_execute(self):
+        from datetime import datetime, timedelta, timezone
+        state={"id":"draft-ticket","status":"DRAFT","operator_sub":"SPPG_OWNER","site":"MAJA","expires_at":datetime.now(timezone.utc)+timedelta(minutes=9)}
+        with patch("plugin_mcp.approval_workflow._db_ready"), patch("plugin_mcp.approval_workflow._ensure_table"), patch("plugin_mcp.approval_workflow.connection",return_value=TicketConnection(state)), patch("plugin_mcp.approval_workflow._execute",new_callable=AsyncMock) as execute:
+            result=await confirm_change(state["id"],"CONFIRM")
+        self.assertFalse(result.get("committed",False))
+        execute.assert_not_called()
+
     async def test_legacy_direct_finance_write_always_blocked(self):
         with patch("plugin_mcp.core_proxy.operational_writes_enabled", return_value=True):
             result = await createSppgAccountantTransactions({
@@ -154,3 +162,4 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
