@@ -115,7 +115,7 @@ def list_goods_receipts_visible(
                        gri.po_qty_snapshot, gri.received_qty, gri.accepted_qty,
                        gri.rejected_qty, gri.variance_qty, gri.unit,
                        gri.quality_status, gri.match_confidence, gri.match_method,
-                       gri.notes
+                       gri.notes,gri.updated_at
                 from goods_receipt_items gri
                 left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
                 where gri.goods_receipt_id = any(%s)

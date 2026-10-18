@@ -20,6 +20,8 @@
 - [Koperasi Dry-Goods Flow](inventory/koperasi-flow.md)
 - [PO Reminder and Kitchen Warehouse Scope](inventory/po-reminder-stock-scope.md) — exact PO coverage, selected-kitchen stock, on-demand references, and reminder cache rules.
 
+- [Actual Goods Receipts and Corrections](inventory/goods-receipt-corrections.md) — partial arrivals, explicit quantities, corrections after confirmation, historical stock deltas and invoice review.
+
 ## People
 - [People & Roles](people/index.md)
 

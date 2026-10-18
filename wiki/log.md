@@ -122,3 +122,9 @@
 - The operator requested top tabs in Master Data and Data Harian, usable folded/unfolded phone layouts without horizontal input scrolling, and typed searches for large volunteer/item lists and operational invoice item selection in addition to dropdowns.
 - Keep unsaved parent form state across section switches and save all categories. Add responsive labelled input cards, wrapping tab/navigation buttons and scoped LPDH invoice/receipt cards; retain desktop columns and existing Operations layout.
 - Preserve original row indexes under searches. Filtering is display-only, not a reduction in finalization/save payloads or totals. FINAL-source financial inputs remain disabled while search is usable outside the lock. Update the [LPDH workflow](accounting/lpdh-document-workflow.md) and index; use synthetic/offline acceptance without changing production transactions.
+
+## 2026-10-18 - Actual arrival quantities and corrections after confirmation
+
+- Operator requested actual quantities per received item and correction after an accidental OK. Added quantity entry alongside the existing exact-as-PO shortcuts and receipt editing in the PO panel and receiving history.
+- Preserve PO/raw evidence/invoice/payment layers, append before/after audit records, apply only accepted-quantity stock deltas at the original effective time, and flag linked invoices for review. Newer physical SO remains the stock anchor.
+- Add request idempotency, PO/receipt locking, stale snapshot checks, decimal/reject validation and synthetic SQL/UI regressions. Document the [receiving correction workflow](inventory/goods-receipt-corrections.md) and update navigation; no production transaction is changed as a test.

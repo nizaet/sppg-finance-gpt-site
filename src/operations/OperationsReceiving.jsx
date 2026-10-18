@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, MessageSquareText, RefreshCw, Search } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import GoodsReceiptEditor from "./GoodsReceiptEditor";
 
 function pct(value){ return `${Math.round(Number(value || 0) * 100)}%`; }
 function fmtQty(value){ return value === null || value === undefined ? "-" : Number(value).toLocaleString("id-ID", { maximumFractionDigits: 4 }); }
@@ -26,6 +27,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
   const [preview,setPreview]=useState(null);
   const [saving,setSaving]=useState(false);
   const [message,setMessage]=useState("");
+  const [editing,setEditing]=useState(null);
   const [historyFrom,setHistoryFrom]=useState("");
   const [historyTo,setHistoryTo]=useState("");
   const [historyVendor,setHistoryVendor]=useState("");
@@ -103,7 +105,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
   return <section className="ops-module">
     <div className="ops-module-header">
       <div><span className="ops-kicker">RECEIVING / WHATSAPP</span><h3>Penerimaan Barang</h3><p>Input terkonfirmasi dari halaman ini maupun GPTS masuk ke riwayat PostgreSQL yang sama. Qty diterima yang disetujui otomatis menambah stok gudang; mengirim PO saja tidak menambah stok. Riwayat di bawah sekarang menampilkan detail item per receipt, PO, tanggal terima, dan tanggal distribusi.</p></div>
-      <div className="ops-inline-controls"><select value={activeSite} disabled={Boolean(fixedSite)} onChange={e=>{setSite(e.target.value);setPreview(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
+      <div className="ops-inline-controls"><select value={activeSite} disabled={Boolean(fixedSite)} onChange={e=>{setSite(e.target.value);setPreview(null);setEditing(null);}}><option value="MAJA">Maja</option><option value="CEMPLANG">Cemplang</option></select><button onClick={load} disabled={loading}><RefreshCw size={15}/> Refresh</button></div>
     </div>
 
     <div className="ops-parse-result">
@@ -142,6 +144,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
       <label>Cari barang / pelapor<input value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="Bidin, Jeruk, Sereh..." /></label>
       <label>Aksi<div className="ops-row-actions"><button onClick={load} disabled={loading}><RefreshCw size={15}/> Cari / Refresh</button></div></label>
     </div>
+    {editing && editing.site === activeSite && <GoodsReceiptEditor key={editing.id} receipt={editing} onCancel={() => setEditing(null)} onSaved={async result => { setEditing(null); setMessage(result.message + (result.invoiceReviewRequired ? ` Periksa invoice #${result.linkedInvoiceIds.join(", #")}.` : "")); await load(); }} />}
     <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Terima</th><th>PO</th><th>Distribusi</th><th>Vendor/Site</th><th>Pelapor</th><th>Item Diterima</th><th>Total</th><th>Status</th></tr></thead><tbody>{items.map(x=><tr key={x.id}>
       <td><strong>Receipt #{x.id}</strong><div className="ops-muted">{compactDateTime(x.received_at)}</div></td>
       <td><strong>{x.po_code||"-"}</strong><div className="ops-muted">PO ID {x.purchase_order_id || "-"} · {x.po_status || "-"}</div></td>
@@ -150,7 +153,7 @@ export default function OperationsReceiving({ fixedSite = "" }){
       <td>{x.reporter || "-"}<div className="ops-muted">{x.source_type || "-"}</div></td>
       <td><details open><summary><strong>{x.item_count}</strong> item · {(x.item_names || []).slice(0,4).join(", ")}{(x.item_names || []).length > 4 ? "..." : ""}</summary><div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Receipt Item</th><th>Item PO</th><th>Dari WA</th><th>Diterima</th><th>Diterima Bersih</th><th>Reject</th><th>Selisih</th><th>Match</th></tr></thead><tbody>{(x.items || []).map(line=><tr key={line.receipt_item_id}><td>#{line.receipt_item_id}</td><td>{line.po_item_name || "-"}</td><td>{line.reported_item_name || "-"}</td><td>{fmtQty(line.received_qty)} {line.unit || ""}</td><td>{fmtQty(line.accepted_qty)} {line.unit || ""}</td><td>{fmtQty(line.rejected_qty)} {line.unit || ""}</td><td>{Number(line.variance_qty||0)>0?"+":""}{fmtQty(line.variance_qty)}</td><td>{pct(line.match_confidence)}</td></tr>)}</tbody></table></div></details></td>
       <td>{fmtQty(x.received_qty_total)}<div className="ops-muted">Bersih {fmtQty(x.accepted_qty_total)} · Reject {fmtQty(x.rejected_qty_total)}</div></td>
-      <td>{x.match_status || "-"}<div className="ops-muted">{pct(x.match_confidence)}</div></td>
+      <td>{x.match_status || "-"}<div className="ops-muted">{pct(x.match_confidence)}</div><button type="button" disabled={Boolean(editing)} onClick={() => setEditing(x)}>Ubah penerimaan</button></td>
     </tr>)}{!loading&&items.length===0&&<tr><td colSpan="8" className="ops-empty-cell">Belum ada penerimaan yang cocok dengan filter. Coba kosongkan tanggal/filter, atau cari PO distribusi H+1 bila barang diterima sehari sebelumnya.</td></tr>}</tbody></table></div>
 
     <div className="ops-module-header"><div><span className="ops-kicker">VARIANCE</span><h3>PO vs Barang Diterima</h3><p>Selisih negatif berarti kurang kirim; positif berarti lebih kirim.</p></div></div>
