@@ -65,15 +65,17 @@ function ReceivingPanel({ poId, poCode = "PO", status = "", onChanged, inline = 
     if (savingRef.current || loading || !data) return;
     const selected = mode === "ALL"
       ? (data?.items || []).filter((item) => !item.complete)
-      : (data?.items || []).filter((item) => itemIds.includes(Number(item.id)));
+      : (data?.items || []).filter((item) => itemIds.length ? itemIds.includes(Number(item.id)) : mode === "ACTUAL" && String(actualQty[item.id] ?? "").trim() !== "");
     if (!selected.length) return;
-    const qty = mode === "ACTUAL" ? parseReceiptQty(actualQty[itemIds[0]]) : null;
-    if (mode === "ACTUAL" && (!Number.isFinite(qty) || qty <= 0)) { setError("Isi jumlah datang lebih dari 0, maksimal 4 desimal."); return; }
+    const actualLines = mode === "ACTUAL" ? selected.map(item => ({
+      purchase_order_item_id: Number(item.id), received_qty: parseReceiptQty(actualQty[item.id]), expected_received_qty: item.receivedQty,
+    })) : [];
+    if (mode === "ACTUAL" && actualLines.some(line => !Number.isFinite(line.received_qty) || line.received_qty <= 0)) { setError("Isi jumlah datang lebih dari 0, maksimal 4 desimal. Kosongkan barang yang belum datang."); return; }
     const label = mode === "ALL"
       ? `semua ${selected.length} item yang masih belum diterima`
       : selected.map((item) => item.item_name).join(", ");
     const question = mode === "ACTUAL"
-      ? `Catat ${label} datang ${fmtQty(qty)} ${selected[0].unit || ""}?\nJumlah ini MENAMBAH penerimaan sebelumnya (${fmtQty(selected[0].receivedQty)}). Total menjadi ${fmtQty(Number(selected[0].receivedQty || 0) + qty)}.\n${qty > selected[0].remainingQty ? "Jumlah melebihi sisa PO. Periksa kelebihan kirim.\n" : ""}Jika ingin memperbaiki jumlah lama, pilih Ubah penerimaan.`
+      ? `Catat jumlah aktual ${selected.length} barang pada ${poCode}?\n${selected.map((item, index) => `${item.item_name}: datang ${fmtQty(actualLines[index].received_qty)} ${item.unit || ""}; total menjadi ${fmtQty(Number(item.receivedQty || 0) + actualLines[index].received_qty)}.${actualLines[index].received_qty > item.remainingQty ? " Jumlah melebihi sisa PO; periksa kelebihan kirim." : ""}`).join("\n")}\n\nJumlah ini MENAMBAH penerimaan sebelumnya. Jika ingin memperbaiki jumlah lama, pilih Ubah penerimaan.`
       : `Konfirmasi ${label} pada ${poCode} datang SESUAI PO?\n\nQty penerimaan akan diisi sebesar sisa PO dan langsung masuk stok gudang.`;
     if (!window.confirm(question)) return;
 
@@ -83,20 +85,20 @@ function ReceivingPanel({ poId, poCode = "PO", status = "", onChanged, inline = 
     setError("");
     setMessage("");
     try {
-      const signature = JSON.stringify({ mode, itemIds, qty, received: selected.map(item => item.receivedQty) });
+      const signature = JSON.stringify({ mode, itemIds, actualLines, received: selected.map(item => item.receivedQty) });
       if (actualRequest.current?.signature !== signature) actualRequest.current = { signature, id: crypto.randomUUID() };
       const result = await operationsApi.confirmPoReceiving(poId, {
         mode,
         purchase_order_item_ids: itemIds,
         request_id: actualRequest.current.id,
         ...(mode === "ACTUAL" ? {
-          items: [{ purchase_order_item_id: itemIds[0], received_qty: qty, expected_received_qty: selected[0].receivedQty }],
+          items: actualLines,
         } : {}),
         reporter: "operations-ui",
         note: mode === "ACTUAL" ? "Input jumlah aktual barang datang" : mode === "ALL" ? "Konfirmasi semua barang sesuai PO" : "Konfirmasi item barang sesuai PO",
       });
       actualRequest.current = null;
-      if (mounted.current) { setMessage(result?.message || "Penerimaan tersimpan."); setActualQty({}); setReceipts(null); }
+      if (mounted.current) { setMessage(result?.message || "Penerimaan tersimpan."); setActualQty(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => !selected.some(item => Number(item.id) === Number(id))))); setReceipts(null); }
       window.dispatchEvent(new CustomEvent("sppg:goods-receipt-saved", {
         detail: { site: data?.site, purchaseOrderId: poId, receiptId: result?.receiptId || null },
       }));
@@ -163,7 +165,7 @@ function ReceivingPanel({ poId, poCode = "PO", status = "", onChanged, inline = 
           </div>
         )}
 
-        <div className="ops-row-actions" style={{ margin: "10px 0" }}><button type="button" onClick={showCorrections} disabled={loading || Boolean(saving)}>Ubah penerimaan</button></div>
+        <div className="ops-row-actions" style={{ margin: "10px 0" }}><button type="button" onClick={() => confirmReceipt("ACTUAL")} disabled={loading || Boolean(saving) || !Object.values(actualQty).some(value => String(value).trim() !== "")}>Simpan jumlah aktual</button><button type="button" onClick={showCorrections} disabled={loading || Boolean(saving)}>Ubah penerimaan</button></div>
         {receipts && <div className="ops-parse-result"><strong>Pilih penerimaan yang akan dikoreksi</strong>{receipts.length === 0 && <p>Belum ada penerimaan tersimpan.</p>}{receipts.map(receipt => <div key={receipt.id}><button type="button" disabled={Boolean(editing)} onClick={() => setEditing(receipt)}>Receipt #{receipt.id} · {new Date(receipt.received_at).toLocaleString("id-ID")} · Ubah jumlah</button></div>)}</div>}
         {editing && <GoodsReceiptEditor key={editing.id} receipt={editing} onCancel={() => setEditing(null)} onSaved={async result => { setEditing(null); setReceipts(null); setMessage(result.message + (result.invoiceReviewRequired ? ` Periksa invoice #${result.linkedInvoiceIds.join(", #")}.` : "")); await load(); await onChanged?.(result); }} />}
         <div className="ops-table-wrap">
