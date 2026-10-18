@@ -10,7 +10,7 @@ from plugin_mcp.oauth_server import (
     DCR_CLIENT_ID,
     issue_access_token,
 )
-from plugin_mcp.server import app
+from plugin_mcp.server import app, LEGACY_V0186_TOOL_NAMES
 
 
 ISSUER = "https://mcp.example.test"
@@ -44,7 +44,11 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["oauthReady"])
-        self.assertEqual(body["mode"], "read-only")
+        self.assertEqual(body["mode"], "v0186-parity-operational-preview")
+        self.assertTrue(body["legacyV0186Parity"])
+        self.assertEqual(body["legacyV0186ToolCount"], 30)
+        self.assertTrue(body["knowledgeLearningEnabled"])
+        self.assertFalse(body["operationalWritesEnabled"])
 
     def test_protected_resource_metadata(self):
         response = self.client.get("/.well-known/oauth-protected-resource")
@@ -112,21 +116,29 @@ class GatewayTests(unittest.TestCase):
         payload = listed.json()
         tools = payload["result"]["tools"]
         names = {tool["name"] for tool in tools}
-        self.assertEqual(
-            names,
-            {
-                "po_action_queue",
-                "receiving_preview",
-                "stock_opname_preview",
-                "vendor_invoice_parse_preview",
-                "vendor_payable_preview",
-                "vendor_payables_list",
-            },
-        )
+        focused = {
+            "po_action_queue",
+            "receiving_preview",
+            "stock_opname_preview",
+            "vendor_invoice_parse_preview",
+            "vendor_payable_preview",
+            "vendor_payables_list",
+        }
+        self.assertTrue(focused.issubset(names))
+        self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
+        self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 30)
+        self.assertEqual(len(names), len(focused) + 30)
+
+        by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
-            self.assertTrue(tool.get("annotations", {}).get("readOnlyHint"))
             schemes = tool.get("securitySchemes", [])
             self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
+
+        for name in focused:
+            self.assertTrue(by_name[name].get("annotations", {}).get("readOnlyHint"))
+        self.assertFalse(by_name["learnSppgConversationTurn"].get("annotations", {}).get("readOnlyHint"))
+        self.assertFalse(by_name["recordExplicitSppgKnowledge"].get("annotations", {}).get("readOnlyHint"))
+        self.assertFalse(by_name["createSppgAccountantTransactions"].get("annotations", {}).get("readOnlyHint"))
 
     def test_authorization_error_redirect_includes_issuer(self):
         params = {
