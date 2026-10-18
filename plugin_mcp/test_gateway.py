@@ -46,7 +46,8 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(body["oauthReady"])
         self.assertEqual(body["mode"], "v0186-parity-operational-preview")
         self.assertTrue(body["legacyV0186Parity"])
-        self.assertEqual(body["legacyV0186ToolCount"], 37)
+        self.assertEqual(body["legacyV0186ActionCount"], 30)
+        self.assertEqual(body["parityPlusToolCount"], 37)
         self.assertTrue(body["knowledgeLearningEnabled"])
         self.assertFalse(body["operationalWritesEnabled"])
 
