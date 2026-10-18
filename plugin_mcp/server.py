@@ -100,10 +100,15 @@ async def prepareSppgControlledChange(
     """Prepare and display a 10-minute before/after confirmation card.
 
     This never mutates PO, warehouse, finance, invoice or payment records.
-    Allowed action names: CREATE_PO, EDIT_DRAFT_PO, REVISE_PO, CANCEL_PO,
-    FINALIZE_PO, MARK_PO_SENT, DELETE_DRAFT_PO, IMPORT_WHATSAPP_PO,
-    CREATE_NO_PO_PAYABLE. The actual commit is performed exclusively by
-    an app-visible confirmation tool after the operator clicks Confirm.
+    Actions: CREATE_PO, EDIT_DRAFT_PO, REVISE_PO, CANCEL_PO, FINALIZE_PO,
+    MARK_PO_SENT, DELETE_DRAFT_PO, IMPORT_WHATSAPP_PO, CREATE_NO_PO_PAYABLE,
+    RECORD_GOODS_RECEIPT, RECORD_STOCK_OPNAME, CREATE_PAYABLE_FROM_RECEIPT,
+    RECORD_VENDOR_PAYMENT, RECONCILE_VENDOR_PAYMENT,
+    CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION.
+    Receiving supports explicit OWNER review of unambiguous over-receipt.
+    Confirm via the card or confirmSppgControlledChangeByText after the user
+    approves the displayed proposal. Never use the read-only Hermes token gate
+    as a substitute for this controlled operational workflow.
     """
     return await prepare_change(action, payload, site, reason)
 
