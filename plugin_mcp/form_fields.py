@@ -1,5 +1,6 @@
 """Allowlisted operational form editing; never commits domain data."""
 from copy import deepcopy
+from decimal import Decimal
 import math
 from datetime import datetime
 from typing import Any
@@ -105,7 +106,12 @@ def apply_form(action,payload,preview,edits):
         if schema['receiptRows']:
             # Preserve the original evidence separately, and parse only operator-selected rows.
             data.setdefault('source_raw_text',payload.get('source_raw_text') or payload.get('text',''))
-            target['text']='\n'.join(f"{r['item_name']} - {r['received_qty']} {r['unit']}" for r in selected)
+            target['text']='\n'.join(f"{r['item_name']} - {r.get('received_qty',r.get('qty'))} {r['unit']}" for r in selected)
+            normalized=[{'item_name':r['item_name'],'received_qty':r.get('received_qty',r.get('qty')),'unit':r['unit']} for r in selected]
+            summary={'itemCount':len(normalized),'items':normalized,'operatorEdited':True}
+            if len({r['unit'] for r in normalized})==1:
+                summary.update(actualQty=float(sum((Decimal(str(r['received_qty'])) for r in normalized),Decimal(0))),unit=normalized[0]['unit'])
+            target['receipt_input_summary']=summary
         elif schema['stockRows']:
             original_items=preview.get('items',[])
             target['reviewed_items']=[]

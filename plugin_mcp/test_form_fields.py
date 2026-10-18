@@ -49,6 +49,8 @@ class FormTests(unittest.TestCase):
         self.assertEqual(len(changed['text'].splitlines()),7)
         self.assertIn('Melon - 7 kg',changed['text']);self.assertIn('Bawang Merah - 4.06 kg',changed['text'])
         self.assertEqual(changed['source_raw_text'],'original report')
+        self.assertAlmostEqual(changed['receipt_input_summary']['actualQty'],27.06)
+        self.assertEqual(changed['receipt_input_summary']['itemCount'],7)
         po={'items':[{'item_name':name,'qty':1,'item_id':i+77} for i,name in enumerate(names)]}
         updated=apply_form('CREATE_PO',po,{}, {'rows':[{'index':1,'fields':{'qty':2}}]})
         self.assertEqual(len(updated['items']),7);self.assertEqual(updated['items'][6]['item_id'],83)
