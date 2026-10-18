@@ -128,7 +128,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
         self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
-        self.assertEqual(len(names), len(focused) + 37 + 3)
+        self.assertEqual(len(names), len(focused) + 37 + 4)
 
         by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
@@ -145,6 +145,8 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("prepareSppgControlledChange", names)
         self.assertIn("confirmSppgControlledChange", names)
         self.assertIn("getSppgControlledChange", names)
+        self.assertIn("confirmSppgControlledChangeByText", names)
+        self.assertTrue(by_name["confirmSppgControlledChangeByText"]["annotations"]["destructiveHint"])
         self.assertFalse(by_name["prepareSppgControlledChange"]["annotations"]["readOnlyHint"])
         self.assertTrue(by_name["confirmSppgControlledChange"]["annotations"]["destructiveHint"])
         self.assertEqual(
@@ -210,6 +212,29 @@ class GatewayTests(unittest.TestCase):
         )
         self.assertEqual(rejected.status_code, 400)
 
+
+
+class TextApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_phrases_use_existing_gate(self):
+        from plugin_mcp.server import confirmSppgControlledChangeByText
+        from unittest.mock import AsyncMock
+        for phrase in ("commit true", " COMMIT TRUE ", "commit", "masukkan", "masukan", "simpan", "konfirmasi"):
+            with self.subTest(phrase=phrase):
+                with patch("plugin_mcp.server.confirm_change", new_callable=AsyncMock) as gate:
+                    gate.return_value = {"status": "WRITE_GATE_CLOSED", "committed": False}
+                    result = await confirmSppgControlledChangeByText("ticket", phrase)
+                    gate.assert_awaited_once_with("ticket", "CONFIRM")
+                    self.assertFalse(result["committed"])
+
+    async def test_ambiguous_or_negative_text_never_reaches_gate(self):
+        from plugin_mcp.server import confirmSppgControlledChangeByText
+        from unittest.mock import AsyncMock
+        for phrase in ("", "jangan simpan", "belum commit true", "ya mungkin", "invoice: masukkan"):
+            with self.subTest(phrase=phrase):
+                with patch("plugin_mcp.server.confirm_change", new_callable=AsyncMock) as gate:
+                    with self.assertRaises(ValueError):
+                        await confirmSppgControlledChangeByText("ticket", phrase)
+                    gate.assert_not_awaited()
 
 if __name__ == "__main__":
     unittest.main()
