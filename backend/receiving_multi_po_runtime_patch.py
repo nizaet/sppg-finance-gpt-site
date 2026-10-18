@@ -36,7 +36,7 @@ def _candidate_pos(cur: Any, payload: op.WhatsAppReceiptIn, vendor: str | None) 
         return [po]
 
     target = _target_date(payload)
-    start, end = target - timedelta(days=4), target + timedelta(days=7)
+    start, end = target - timedelta(days=3), target + timedelta(days=2)
     sql = """
         select po.*,pc.distribution_date
         from purchase_orders po
@@ -65,7 +65,7 @@ def _candidate_pos(cur: Any, payload: op.WhatsAppReceiptIn, vendor: str | None) 
     params.append(target)
     cur.execute(sql, params)
     rows = cur.fetchall()
-    return rows or op.candidate_pos(cur, payload.site, vendor, 40)
+    return rows
 
 
 def _candidate_items(cur: Any, pos: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -90,14 +90,15 @@ def _candidate_items(cur: Any, pos: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _score(reported: dict[str, Any], item: dict[str, Any]) -> tuple[float, str]:
-    score, method = op.name_similarity(str(reported.get("reported_item_name") or ""), item)
     source = op.normalize_text(str(reported.get("reported_item_name") or ""))
     target = op.normalize_text(str(item.get("item_name") or ""))
     st, tt = set(source.split()), set(target.split())
     if source and source == target:
         score, method = 1.0, "exact_normalized_name"
-    elif st and tt and (st.issubset(tt) or tt.issubset(st)):
-        score, method = max(score, 0.82), "token_containment"
+    else:
+        score, method = op.name_similarity(str(reported.get("reported_item_name") or ""), item)
+        if st and tt and (st.issubset(tt) or tt.issubset(st)):
+            score, method = max(score, 0.82), "token_containment"
     ru, pu = op.canonical_unit(reported.get("unit")), op.canonical_unit(item.get("unit"))
     if ru and pu:
         score = min(1.0, score + 0.08) if ru == pu else max(0.0, score - 0.20)
@@ -216,6 +217,17 @@ def _update_po_status(cur: Any, po_id: int) -> str:
     return status
 
 
+def _preferred_vendor(reported: list[dict[str, Any]]) -> str | None:
+    # Only a search hint. Live PO matches, scoped by site, decide the supplier.
+    produce = {"jeruk", "timun", "wortel", "kunyit", "kentang", "tomat", "pisang", "semangka", "melon", "pepaya", "kol", "sawi", "bayam", "kangkung", "labu", "buncis", "terong", "bawang", "cabai", "cabe", "jahe", "lengkuas"}
+    names = [set(op.normalize_text(str(r.get("reported_item_name") or "")).split()) for r in reported]
+    if names and all("ayam" in n for n in names):
+        return "WIKIAN"
+    if names and any(n & produce for n in names) and all(n & produce or n <= {"gula", "merah", "kacang", "tanah"} for n in names):
+        return "HOLIL"
+    return None
+
+
 def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
     op.require_db()
     site = op.normalize_site(payload.site)
@@ -227,11 +239,17 @@ def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
 
     with op.connection() as conn:
         with conn.cursor() as cur:
-            pos = _candidate_pos(cur, payload, vendor)
+            hint = vendor or _preferred_vendor(reported)
+            pos = _candidate_pos(cur, payload, hint)
             items = _candidate_items(cur, pos)
             target = _target_date(payload)
             matches = [_resolve_line(row, items, target) for row in reported]
-            candidate_vendors = sorted({str(po.get("vendor_code") or "").upper().strip() for po in pos if str(po.get("vendor_code") or "").strip()})
+            if hint and not vendor and not payload.purchase_order_id and not all(row.get("matched") and not row.get("ambiguity") for row in matches):
+                pos = _candidate_pos(cur, payload, None)
+                items = _candidate_items(cur, pos)
+                matches = [_resolve_line(row, items, target) for row in reported]
+            matched_po_ids = {int(a["purchase_order_id"]) for row in matches for a in row.get("allocations", [])}
+            candidate_vendors = sorted({str(po.get("vendor_code") or "").upper().strip() for po in pos if int(po["id"]) in matched_po_ids and str(po.get("vendor_code") or "").strip()})
             vendor_clear = vendor is not None or len(candidate_vendors) == 1
             resolved_vendor = vendor or (candidate_vendors[0] if len(candidate_vendors) == 1 else None)
             all_resolved = bool(matches) and all(row.get("matched") and float(row.get("match_confidence") or 0) >= _MIN_SCORE and not row.get("ambiguity") for row in matches)
@@ -248,6 +266,7 @@ def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
                 "reportedItems": reported, "matches": matches,
                 "alternatives": [{"purchase_order_id": int(po["id"]), "po_code": po.get("po_code"), "vendor_code": po.get("vendor_code"), "distribution_date": po.get("distribution_date")} for po in pos[:10]],
                 "requiresConfirmation": not can_commit, "resolverVersion": "multi-po-v2",
+                "searchPolicy": {"daysBefore": 3, "daysAfter": 2, "vendorFirst": True, "preferredVendor": hint, "candidateCount": len(pos)},
             }
             if not payload.commit:
                 return result
@@ -325,3 +344,4 @@ def install() -> None:
         raise RuntimeError("receiving/whatsapp route not found; refusing unsafe patch install")
     op.receive_from_whatsapp = receive_from_whatsapp_v2
     _INSTALLED = True
+
