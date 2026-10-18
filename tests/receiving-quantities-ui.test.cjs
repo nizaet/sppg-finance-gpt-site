@@ -46,6 +46,17 @@ const input = label => view.root.findAllByType('input').find(node => node.props[
   assert.ok(questions.at(-1).includes('melebihi sisa PO'));
   assert.ok(questions.at(-1).includes('12,5'));
   await act(async () => view.unmount());
+  data.items.push({ id: 102, item_name: 'Timun', poQty: 5, receivedQty: 0, remainingQty: 5, complete: false, unit: 'kg' });
+  await act(async () => { view = create(h(Receiver, { poId: 10, status: 'RECEIVED', inline: true })); });
+  await act(async () => input('Jumlah datang Wortel').props.onChange({ target: { value: '3' } }));
+  await act(async () => input('Jumlah datang Timun').props.onChange({ target: { value: '4' } }));
+  await act(async () => button('Catat datang').props.onClick());
+  assert.equal(input('Jumlah datang Timun').props.value, '4', 'per-item save preserves unsaved quantities on other rows');
+  await act(async () => input('Jumlah datang Wortel').props.onChange({ target: { value: '2' } }));
+  await act(async () => button('Simpan jumlah aktual').props.onClick());
+  assert.equal(calls.at(-1).payload.items.length, 2, 'batch saves all explicitly entered arrivals in one request');
+  assert.deepEqual(calls.at(-1).payload.items.map(line => line.received_qty), [2,4]);
+  await act(async () => view.unmount());
   let saved = false;
   await act(async () => { view = create(h(Editor, { receipt, onSaved: () => { saved = true; } })); });
   await act(async () => input('Jumlah datang Wortel').props.onChange({ target: { value: '8,5' } }));

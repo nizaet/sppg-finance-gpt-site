@@ -168,3 +168,15 @@ def test_zero_original_row_posts_once_when_corrected_positive(database):
     with database.cursor() as cur:
         api.commit_receipt_stock(cur,rid,'MAJA')
     assert balance(database) == 12
+
+
+def test_actual_batch_creates_one_receipt_with_explicit_quantities(database):
+    database.execute("insert into purchase_order_items(id,purchase_order_id,item_name,po_qty,unit) values (12,1,'Timun',5,'kg')")
+    result=api.confirm_po_receiving(1,api.PoReceivingConfirmIn(mode='ACTUAL',items=[
+        dict(purchase_order_item_id=11,received_qty=6,expected_received_qty=0),
+        dict(purchase_order_item_id=12,received_qty=3,expected_received_qty=0),
+    ]))
+    assert result['purchaseOrderStatus']=='PARTIAL_RECEIVED'
+    assert database.execute('select count(*) as n from goods_receipts').fetchone()['n']==1
+    assert database.execute('select count(*) as n from goods_receipt_items').fetchone()['n']==2
+    assert balance(database)==9
