@@ -65,6 +65,11 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(body["client_id_metadata_document_supported"])
         self.assertIn("S256", body["code_challenge_methods_supported"])
 
+    def test_oidc_discovery_is_disabled(self):
+        response = self.client.get("/.well-known/openid-configuration")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "OpenID Connect is not enabled")
+
     def test_mcp_without_token_challenges_oauth(self):
         response = self.client.post(
             "/mcp",
