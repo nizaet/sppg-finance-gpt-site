@@ -333,7 +333,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
     async def knowledge_once():
         try:
             body=await asyncio.wait_for(core_request("GET","/v1/gpt/operational-context",params={
-                "site":site,"vendor":change.payload.get("vendor_code"),"q":action,"limit":3,
+                "site":site,"vendor":change.payload.get("vendor_code"),"q":"","limit":6,
+                "asOf":str(change.payload.get("received_at") or "")[:10] or None,
             }), timeout=2.0)
             return compact_knowledge(body)
         except Exception as exc:
