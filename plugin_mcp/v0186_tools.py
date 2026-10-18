@@ -211,25 +211,18 @@ async def searchSppgAccountantTransactions(
 
 
 async def createSppgAccountantTransactions(payload: dict[str, Any]) -> dict[str, Any]:
-    """Legacy Accountant create action. Installed but held behind the operational write gate."""
-    if not operational_writes_enabled():
-        return blocked_write("createSppgAccountantTransactions", payload)
-    return await core_request("POST", "/v1/gpt/finance-transactions", json_body=payload)
+    """Legacy Accountant command. A standalone call MUST NEVER bypass the approval card."""
+    return blocked_write("createSppgAccountantTransactions", payload)
 
 
 async def updateSppgAccountantTransaction(
     transaction_id: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Legacy Accountant correction action. Installed but held behind the operational write gate."""
-    if not operational_writes_enabled():
-        return blocked_write("updateSppgAccountantTransaction", {
-            "transaction_id": transaction_id, **payload,
-        })
-    return await core_request(
-        "PATCH", f"/v1/gpt/finance-transactions/{transaction_id}", json_body=payload
-    )
-
+    """Legacy Accountant correction. A standalone call MUST NEVER bypass the approval card."""
+    return blocked_write("updateSppgAccountantTransaction", {
+        "transaction_id": transaction_id, **payload,
+    })
 
 async def getFinalSppgPurchaseOrderWhatsAppMessage(
     purchaseOrderId: int | None = None,
