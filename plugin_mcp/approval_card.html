@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Konfirmasi SPPG</title>
+<style>
+:root {color-scheme:light dark; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+* {box-sizing:border-box}
+body {margin:0;padding:16px;color:var(--color-text-primary,#20252b);background:var(--color-background-primary,#fff)}
+.card {border:1px solid var(--color-border-secondary,#d9dee5);border-radius:17px;padding:18px;max-width:660px}
+.header {display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.icon {display:grid;place-items:center;background:#eef4ff;color:#2253a4;border-radius:14px;width:45px;height:45px;font-size:23px;flex-shrink:0}
+h2 {font-size:17px;line-height:1.25;margin:0 0 5px}
+.small {color:var(--color-text-secondary,#646e79);font-size:12px}
+.pill {display:inline-block;background:var(--color-background-secondary,#f1f3f6);border:1px solid #d5dbe4;border-radius:999px;padding:4px 10px;font-size:11px}
+.pills {display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 14px}
+.grid {display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.box {border:1px solid var(--color-border-tertiary,#e4e7ee);border-radius:12px;padding:12px;min-width:0}
+.label {font-size:11px;opacity:.75;margin-bottom:5px}
+.value {font-size:14px;font-weight:650;overflow-wrap:anywhere}
+.notice {border-left:3px solid #bd7d12;padding:10px 12px;background:var(--color-background-secondary,#f8f9fb);font-size:12px;line-height:1.55;margin:12px 0;border-radius:3px 10px 10px 3px}
+.details {font-size:12px;line-height:1.5}
+details {border-top:1px solid #dce0e6;padding:10px 0}
+summary {cursor:pointer;font-weight:600}
+pre {white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 ui-monospace,Consolas,monospace;margin:8px 0}
+.actions {display:flex;gap:10px;margin-top:18px}
+button {flex:1;border:1px solid #c9cdd4;border-radius:10px;padding:12px 9px;font-size:13px;font-weight:650;cursor:pointer;background:var(--color-background-primary,#fff);color:inherit}
+button.primary {background:#1c55a0;color:white;border-color:#1c55a0}
+button:disabled {opacity:.48;cursor:not-allowed}
+.edit {background:transparent;border:0;color:#2461a2;text-decoration:underline;font-size:12px;cursor:pointer;padding:8px 0;margin-top:4px}
+#status {font-size:13px;margin-top:11px;line-height:1.5}
+.danger {color:#b83831}
+.ok {color:#16734e}
+@media(max-width:390px){.card{padding:13px}.grid{grid-template-columns:1fr}.actions{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header"><div class="icon">🧾</div><div>
+  <h2 id="title">Konfirmasi Perubahan SPPG</h2>
+  <div class="small" id="subtitle">Memuat rincian persetujuan…</div>
+  </div></div>
+  <div class="pills"><span class="pill" id="site">SITE</span><span class="pill" id="action">ACTION</span><span class="pill" id="expiry">10 menit</span></div>
+  <div class="grid">
+    <div class="box"><div class="label">Sebelum</div><div class="value" id="before">Belum ada data</div></div>
+    <div class="box"><div class="label">Sesudah</div><div class="value" id="after">Pratinjau</div></div>
+  </div>
+  <div class="box">
+    <div class="label">Dampak stok dan keuangan</div>
+    <div id="impact" class="details">Memeriksa dampak…</div>
+  </div>
+  <div class="notice" id="notice">Periksa dapur, vendor, tanggal, nilai dan status. Perubahan hanya dijalankan setelah kamu menekan Konfirmasi.</div>
+  <details><summary>Detail lengkap dan rincian item</summary><pre id="detail"></pre></details>
+  <div class="actions">
+    <button id="cancel">Batalkan</button>
+    <button class="primary" id="confirm">Konfirmasi dan simpan</button>
+  </div>
+  <button class="edit" id="edit">Ubah rincian sebelum menyimpan</button>
+  <div id="status" role="status" aria-live="polite"></div>
+</div>
+<script>
+(function(){
+  "use strict";
+  const $=id=>document.getElementById(id);
+  const pending=new Map();
+  let sequence=0;
+  let proposal=null;
+  let operating=false;
+  const readable=(value,max=110)=> {
+    if(value===null || value===undefined || value==="") return "-";
+    const s=typeof value==="string"?value:JSON.stringify(value);
+    return s.length>max?s.slice(0,max)+"…":s;
+  };
+  function request(method,params){
+    const id=++sequence;
+    return new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{pending.delete(id);reject(new Error("Waktu tunggu habis"));},45000);
+      pending.set(id,{resolve,reject,timeout});
+      parent.postMessage({jsonrpc:"2.0",id,method,params:params||{}},"*");
+    });
+  }
+  function notify(method,params){
+    parent.postMessage({jsonrpc:"2.0",method,params:params||{}},"*");
+  }
+  function parseResult(message){
+    if(!message)return null;
+    const value=message.structuredContent || message.result?.structuredContent;
+    if(value && typeof value==="object")return value;
+    for(const item of message.content || []) {
+      if(item.type==="text") {
+        try {return JSON.parse(item.text);}catch(e){}
+      }
+    }
+    return null;
+  }
+  function render(value) {
+    if(!value || !value.approvalId)return;
+    proposal=value;
+    $("site").textContent=String(value.site||"SITE");
+    $("action").textContent=String(value.action||"CHANGE").replaceAll("_"," ");
+    $("subtitle").textContent=readable(value.reason,170);
+    $("expiry").textContent="Berlaku sampai "+String(value.expiresAt||"").replace("T"," ").slice(0,16)+" UTC";
+    $("title").textContent=value.isDestructive?"Konfirmasi perubahan penting":"Tinjau sebelum menyimpan";
+    const before=value.before||{};
+    const preview=value.preview||{};
+    $("before").textContent=readable(before.poCode||before.status||before.purchaseOrderId||"Belum tersimpan",125);
+    const amt=preview.netAmount||preview.grossAmount||preview.poCode||preview.normalizedPayload?.po_code;
+    $("after").textContent=readable(amt||preview.status||value.action,125);
+    $("impact").textContent=Object.entries(value.impact||{}).map(([k,v])=>k+": "+readable(v,260)).join("\n");
+    $("impact").style.whiteSpace="pre-line";
+    const warning=(preview.warnings||[]).map(x=>typeof x==="string"?x:readable(x,300));
+    const danger=value.isDestructive;
+    $("notice").textContent=warning.length?warning.join(" • "):(
+      danger?"Tindakan ini dapat membatalkan/menghapus catatan. Pastikan target dan dependensi benar.":
+      "Pastikan dapur, vendor, tanggal, nilai dan status sebelum menyetujui."
+    );
+    $("detail").textContent=JSON.stringify({preview:value.preview,before:value.before,impact:value.impact},null,2);
+    const disabled=value.status!=="PENDING" || !value.writeEnabled;
+    $("confirm").disabled=disabled;
+    $("cancel").disabled=value.status!=="PENDING";
+    if(!value.writeEnabled) {
+      $("status").textContent="Gerbang write masih ditutup sampai pengujian keamanan selesai.";
+    } else {
+      $("status").textContent="";
+    }
+    resize();
+  }
+  function resize(){
+    notify("ui/notifications/size-changed",{
+      width:document.documentElement.scrollWidth,
+      height:document.documentElement.scrollHeight
+    });
+  }
+  async function decide(choice){
+    if(!proposal||operating)return;
+    operating=true;
+    $("confirm").disabled=true;$("cancel").disabled=true;
+    $("status").textContent="Memproses pilihan…";
+    try{
+      const response=await request("tools/call",{
+        name:"confirmSppgControlledChange",
+        arguments:{approval_id:proposal.approvalId,choice}
+      });
+      const value=parseResult(response.result||response);
+      if(!value)throw new Error("Tidak ada status dari server");
+      if(value.status==="APPLIED"){
+        $("status").className="ok";
+        $("status").textContent="BERHASIL TERSIMPAN. ID persetujuan "+proposal.approvalId+". Periksa ID hasil pada detail.";
+      }else if(value.status==="DECLINED"){
+        $("status").textContent="Dibatalkan. Tidak ada perubahan operasional.";
+      }else{
+        $("status").className="danger";
+        $("status").textContent="BELUM TERSIMPAN: "+readable(value.message||value.status,350);
+      }
+      $("detail").textContent=JSON.stringify(value,null,2);
+    }catch(e){
+      $("status").className="danger";
+      $("status").textContent="Gagal memverifikasi hasil. Jangan ulangi commit; cek status dulu. "+String(e.message||e);
+    }finally{operating=false;resize();}
+  }
+  window.addEventListener("message",event=>{
+    if(event.source!==parent)return;
+    const data=event.data||{};
+    if(data.id!==undefined&&pending.has(data.id)){
+      const p=pending.get(data.id);pending.delete(data.id);clearTimeout(p.timeout);
+      if(data.error)p.reject(new Error(data.error.message||"Request failed"));
+      else p.resolve(data);
+      return;
+    }
+    if(data.method==="ui/notifications/tool-result"){
+      render(parseResult(data.params));
+    }
+    if(data.method==="ui/resource-teardown"&&data.id!==undefined){
+      parent.postMessage({jsonrpc:"2.0",id:data.id,result:{}},"*");
+    }
+  });
+  $("confirm").addEventListener("click",()=>decide("CONFIRM"));
+  $("cancel").addEventListener("click",()=>decide("CANCEL"));
+  $("edit").addEventListener("click",async()=>{
+    if(!proposal)return;
+    const msg="Ubah detail proposal "+proposal.approvalId+" ("+proposal.action+", "+proposal.site+"). Jangan commit. Buat preview dan kartu konfirmasi baru setelah saya memberi koreksi.";
+    try{await request("ui/message",{role:"user",content:{type:"text",text:msg}});}
+    catch(e){$("status").textContent="Tulis koreksi di chat, lalu minta preview baru.";}
+  });
+  (async()=>{
+    try{
+      await request("ui/initialize",{
+        protocolVersion:"2026-01-26",
+        appInfo:{name:"SPPG Control Room",version:"1.0.0"},
+        appCapabilities:{availableDisplayModes:["inline","fullscreen"]}
+      });
+      notify("ui/notifications/initialized",{});
+    }catch(e){
+      $("status").textContent="Tampilan belum didukung pada host ini. Gunakan teks preview; jangan commit tanpa kartu konfirmasi.";
+    }
+  })();
+  if(window.ResizeObserver)new ResizeObserver(resize).observe(document.body);
+})();
+</script>
+</body>
+</html>
