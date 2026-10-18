@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import time
+import logging
 from typing import Any
 
 import httpx
@@ -40,6 +42,7 @@ async def core_request(
         key: value for key, value in (params or {}).items()
         if value is not None and value != ""
     }
+    started=time.monotonic()
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         response = await client.request(
             method.upper(),
@@ -48,6 +51,7 @@ async def core_request(
             json=json_body,
             headers=_headers(),
         )
+    logging.getLogger("sppg_core_timing").info("core method=%s path=%s status=%s elapsedMs=%.1f",method.upper(),path,response.status_code,(time.monotonic()-started)*1000)
     try:
         body: Any = response.json()
     except Exception:
@@ -83,3 +87,4 @@ def blocked_write(operation: str, payload: dict[str, Any] | None = None) -> dict
         ),
         "requestedPayload": payload or {},
     }
+

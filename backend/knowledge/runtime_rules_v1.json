@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-21.v5",
+  "version": "2026-10-18.v6",
   "architecture": {
     "operationalSourceOfTruth": "PostgreSQL",
     "canonicalKnowledge": "Repository-shipped runtime rules plus effective-dated PostgreSQL reference rules, confirmed operational history, and confirmed GPT conversation knowledge",
@@ -7,16 +7,15 @@
     "evidenceArchive": "Google Drive is evidence/mirror/archive, not the operational source of truth"
   },
   "conversationLearningPolicy": [
-    "At the start of each operational turn, call getSppgOperationalRuntimeContext with q set to the user's current topic so relevant learned knowledge and prior conversation memory are available before reasoning.",
-    "After each meaningful user turn, call learnSppgConversationTurn and archive the user message plus a compact assistant summary.",
-    "Promote USER_CORRECTION, ACTION_CONFIRMED, and high-confidence USER_EXPLICIT facts into reusable knowledge. Assistant inference remains CANDIDATE and must not silently become truth.",
-    "Do not require the owner to repeat a confirmed operational convention, alias, unit conversion, vendor relationship, workflow preference, or correction that already exists in learned knowledge.",
-    "When later evidence conflicts with learned knowledge, prefer explicit newer user correction or verified database fact and preserve provenance instead of guessing.",
-    "Do not promote passwords, API keys, authentication secrets, private credentials, or unrelated sensitive personal information into learned operational knowledge."
+    "Load confirmed operational knowledge only when it changes a decision. Reuse confirmed rules within the same chat/site/topic; do not reload knowledge for unchanged confirmations.",
+    "SPPG Control Room prepare/receiving/stock-opname tools return compact confirmed runtime knowledge in the same call. Do not call operational-context first or repeat the same preview.",
+    "Archive meaningful durable corrections and facts. Do not call learn-conversation for routine receipt previews, repeated confirmations, unchanged transaction facts or tool outages.",
+    "Promote USER_CORRECTION, ACTION_CONFIRMED and high-confidence USER_EXPLICIT facts; assistant inference remains CANDIDATE. Preserve provenance and prefer newer explicit corrections or verified database facts.",
+    "Never store passwords, API keys, authentication secrets, private credentials or unrelated sensitive personal information in learned knowledge."
   ],
   "decisionPolicy": [
-    "When the data is sufficient and the user explicitly requests commit, execute the deterministic action.",
-    "After a stock-opname preview returns canCommit=true, an explicit 'commit', 'simpan', or equivalent means call the same stock-opname action immediately with commit=true and the exact reviewed item set from the latest preview. Do not preview again merely to ask for confirmation.",
+    "When data is sufficient, use the active client's explicit confirmed-write workflow. In SPPG Control Room prepare exactly one proposal; execute its same approvalId only after a NEW user confirmation through the one-time gate.",
+    "After a SPPG Control Room SO or receipt proposal, explicit approval confirms that same proposal. Do not rerun the preview or ask again for unchanged quantities; the server revalidates before execution.",
     "Ask for clarification only for a genuine business ambiguity, conflicting evidence, or a destructive action whose target is not uniquely determined.",
     "Do not treat WhatsApp formatting differences as business ambiguity.",
     "For stock opname, consult canonical item aliases, confirmed prior SO history, and learned conversation knowledge before asking the operator to classify a recurring spelling or shorthand again.",
@@ -24,7 +23,8 @@
     "One physical receiving report may be allocated across multiple open purchase orders for the same site/vendor when item, unit, date relevance, and outstanding quantities support that allocation.",
     "A verified transfer may be recorded immediately as PAID_UNRECONCILED; payable/invoice reconciliation may follow later without asking the user to enter the payment twice.",
     "When a transfer screenshot is available, extract the visible amount, date/time, beneficiary, beneficiary account, reference number, remarks, and masked source account where present. Do not guess unreadable digits.",
-    "Original transfer evidence is archived to Google Drive through the payment-evidence upload endpoint; extracted text alone is not a substitute for the original proof file."
+    "Original transfer evidence is archived to Google Drive through the payment-evidence upload endpoint; extracted text alone is not a substitute for the original proof file.",
+    "For receiving, send the original report to the fast receipt tool once. Grouped single-item weighings are summed deterministically on the server; total or count mismatches require clarification. Search vendor/site and PO within N-3..N+2, not unbounded history."
   ],
   "canonicalFacts": {
     "accountants": {
@@ -32,13 +32,30 @@
       "CEMPLANG": "UYA"
     },
     "vendors": {
-      "HOLIL": {"label": "Haji Holil", "role": "sayur/buah"},
-      "DEDE": {"label": "Dede", "role": "beras"},
-      "HAJI_BADRI": {"label": "Haji Badri", "role": "tahu Cemplang"}
+      "HOLIL": {
+        "label": "Haji Holil",
+        "role": "sayur/buah"
+      },
+      "DEDE": {
+        "label": "Dede",
+        "role": "beras"
+      },
+      "HAJI_BADRI": {
+        "label": "Haji Badri",
+        "role": "tahu Cemplang"
+      }
     },
     "paymentEvidenceConventions": {
-      "MAJA": {"bank": "BCA", "channel": "Mobile BCA", "status": "OWNER_CONFIRMED"},
-      "CEMPLANG": {"bank": "BCA", "channel": "myBCA", "status": "OWNER_CONFIRMED"}
+      "MAJA": {
+        "bank": "BCA",
+        "channel": "Mobile BCA",
+        "status": "OWNER_CONFIRMED"
+      },
+      "CEMPLANG": {
+        "bank": "BCA",
+        "channel": "myBCA",
+        "status": "OWNER_CONFIRMED"
+      }
     },
     "itemConventions": [
       "Sereh may be reported operationally in ikat. Preserve the reported unit/conversion evidence and resolve it against the PO instead of rejecting the receipt only because of the wording.",
@@ -47,9 +64,27 @@
       "For confirmed CEMPLANG SO convention, Sapu and Kain Pel/Pel use pcs when the report omits the unit."
     ],
     "stockOpnameConversions": [
-      {"itemFamily": "Beras", "fromUnit": "karung", "toUnit": "kg", "factor": 25, "status": "OWNER_CONFIRMED"},
-      {"itemFamily": "Minyak Goreng", "fromUnit": "dus", "toUnit": "liter", "factor": 12, "status": "OWNER_CONFIRMED"},
-      {"itemFamily": "Minyak Goreng", "fromUnit": "pcs", "toUnit": "liter", "factor": 2, "status": "OWNER_CONFIRMED"}
+      {
+        "itemFamily": "Beras",
+        "fromUnit": "karung",
+        "toUnit": "kg",
+        "factor": 25,
+        "status": "OWNER_CONFIRMED"
+      },
+      {
+        "itemFamily": "Minyak Goreng",
+        "fromUnit": "dus",
+        "toUnit": "liter",
+        "factor": 12,
+        "status": "OWNER_CONFIRMED"
+      },
+      {
+        "itemFamily": "Minyak Goreng",
+        "fromUnit": "pcs",
+        "toUnit": "liter",
+        "factor": 2,
+        "status": "OWNER_CONFIRMED"
+      }
     ],
     "stockOpnameParsing": [
       "Ignore report-title/date lines such as 'SO BARANG CEMPLANG 2026-08-20' and weekday/date headings; they are not inventory items.",
@@ -67,3 +102,4 @@
     "PO lifecycle status"
   ]
 }
+

@@ -55,7 +55,7 @@ mcp = OpenAIFastMCP(
         "Existing confirmed SPPG knowledge and conversation memory are loaded from SPPG Core. "
         "Meaningful turns and explicit operator corrections may be written to the memory/knowledge layer. "
         "Production writes use one-time proposals and explicit native chat confirmation; legacy direct writes remain preview-only. "
-        "Check the operational write switch; never bypass user approval."
+        "For routine receipts call receiving_preview immediately with original text: it already loads knowledge and prepares one proposal. Do not chain runtime context, receipt preview and prepare. Check the operational write switch; never bypass user approval."
     ),
     host="0.0.0.0",
     streamable_http_path="/mcp",
@@ -83,6 +83,8 @@ async def prepareSppgControlledChange(
     RECORD_GOODS_RECEIPT, RECORD_STOCK_OPNAME, CREATE_PAYABLE_FROM_RECEIPT,
     RECORD_VENDOR_PAYMENT, RECONCILE_VENDOR_PAYMENT,
     CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION.
+    Input is a single proposal; knowledge is loaded in parallel inside this call.
+    For receipts prefer receiving_preview with original raw report text; never preview twice.
     Receiving supports explicit OWNER review of unambiguous over-receipt.
     Render native ChatGPT choices. Confirm via confirmSppgControlledChangeByText after the user
     approves the displayed proposal. Uses SPPG Core operational APIs directly.
@@ -188,16 +190,19 @@ def po_action_queue(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 async def receiving_preview(site: str, text: str, vendor_code: str | None = None,
     purchase_order_id: int | None = None, received_at_iso: str | None = None,
-    reporter: str | None = None) -> dict[str, Any]:
-    """Show editable receipt approval card using SPPG Core. Vendor/PO first, N-3..N+2.
+    reporter: str | None = None, received_date_iso: str | None = None) -> dict[str, Any]:
+    """FAST receipt path: send the ORIGINAL report unchanged, including bare weighing lines.
+    One call normalizes quantities/date, resolves vendor/PO N-3..N+2, loads confirmed
+    knowledge in parallel and creates the proposal. No prior context or separate preview needed.
+    Use received_date_iso YYYY-MM-DD if only a date is known; do not invent a time.
 
     Does not save goods receipt or stock until the operator confirms the card.
     """
     card=await prepare_change('RECORD_GOODS_RECEIPT', {
         'text':text,'vendor_code':vendor_code,'purchase_order_id':purchase_order_id,
-        'received_at':received_at_iso,'reporter':reporter,
+        'received_at':received_at_iso,'received_date':received_date_iso,'reporter':reporter,
     }, _site(site), 'Tinjau barang diterima, pilih barang dan tanggal, lalu konfirmasi')
-    return {**card.get('preview',{}),**card,'committed':False,'operationalMutation':False}
+    return {**card,'committed':False,'operationalMutation':False}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
@@ -207,7 +212,7 @@ async def stock_opname_preview(site: str, text: str, stock_date_iso: str | None 
     card=await prepare_change('RECORD_STOCK_OPNAME', {
         'text':text,'stock_date':stock_date_iso,'reporter':reporter,
     }, _site(site), 'Tinjau stok fisik dan tanggal SO sebelum mengganti baseline')
-    return {**card.get('preview',{}),**card,'committed':False,'operationalMutation':False}
+    return {**card,'committed':False,'operationalMutation':False}
 
 
 @mcp.tool(annotations=READ_ONLY)

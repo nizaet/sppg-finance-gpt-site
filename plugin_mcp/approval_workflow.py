@@ -7,6 +7,8 @@ an audit trail. The "commit=true" value is constructed server-side.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 import hashlib
 import json
 import uuid
@@ -23,6 +25,7 @@ from backend.vendor_payables_manual_api import (
 )
 from plugin_mcp.core_proxy import core_request, operational_writes_enabled
 from plugin_mcp.form_fields import describe_form, apply_form
+from plugin_mcp.receipt_fastpath import normalize_receipt_input, compact_knowledge
 
 
 OWNER = "SPPG_OWNER"
@@ -311,10 +314,32 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         raise ValueError("Action not in the confirmed-write allowlist")
     if payload.get("site",site) != site:
         raise ValueError("Cross-site payload and change.site mismatch")
-    try:
-        preview, before, impact = await _preview(change)
-    except Exception as exc:
-        preview, before, impact = {"canCommit": False, "validationError": str(exc)[:800]}, None, {}
+    started = time.monotonic()
+    normalization_error = None
+    if action == "RECORD_GOODS_RECEIPT":
+        try:
+            change.payload = normalize_receipt_input(change.payload)
+        except ValueError as exc:
+            normalization_error = str(exc)
+
+    async def preview_once():
+        if normalization_error:
+            return {"canCommit":False,"validationError":normalization_error},None,{}
+        try:
+            return await _preview(change)
+        except Exception as exc:
+            return {"canCommit":False,"validationError":str(exc)[:800]},None,{}
+
+    async def knowledge_once():
+        try:
+            body=await asyncio.wait_for(core_request("GET","/v1/gpt/operational-context",params={
+                "site":site,"vendor":change.payload.get("vendor_code"),"q":action,"limit":3,
+            }), timeout=2.0)
+            return compact_knowledge(body)
+        except Exception as exc:
+            return {"loaded":False,"error":str(exc)[:160]}
+
+    (preview,before,impact),knowledge = await asyncio.gather(preview_once(),knowledge_once())
     status = "DRAFT" if preview.get("canCommit") is False else "PENDING"
     _db_ready()
     proposal_id = uuid.uuid4()
@@ -352,6 +377,11 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "isDestructive": action in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
         "message": "Preview prepared; no operational record changed. Render native ChatGPT choices; wait for a NEW user confirmation before executing.",
+        "runtimeKnowledge":knowledge,
+        "receiptInput":change.payload.get("receipt_input_summary"),
+        "receivedTimePrecision":change.payload.get("received_time_precision"),
+        "timingMs":{"prepare":round((time.monotonic()-started)*1000)},
+        "nextStep":"Show this proposal now; do not preview or fetch runtime context again. Wait for explicit operator approval.",
     }
 
 
