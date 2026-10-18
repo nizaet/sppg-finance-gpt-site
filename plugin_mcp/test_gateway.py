@@ -152,6 +152,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(
             by_name["confirmSppgControlledChange"]["_meta"]["ui"]["visibility"], ["app"]
         )
+        self.assertNotIn("resourceUri", by_name["confirmSppgControlledChange"]["_meta"]["ui"])
         self.assertEqual(
             by_name["prepareSppgControlledChange"]["_meta"]["ui"]["resourceUri"],
             "ui://sppg-control-room/approval-card",
