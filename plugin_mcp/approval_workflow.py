@@ -1,0 +1,372 @@
+"""Server-enforced, one-time, UI-approved SPPG operational changes.
+
+All mutations are scoped to the existing OWNER OAuth bearer gate. Only an
+MCP Apps app-visible confirmation tool executes a prepared operation.
+Approvals and outcomes are persisted in PostgreSQL for replay protection and
+an audit trail. The "commit=true" value is constructed server-side.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
+
+from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, Field
+
+from backend.db import connection, database_ready
+from backend.vendor_payables_manual_api import (
+    ManualPayableIn, preview_manual_payable, commit_manual_payable,
+)
+from plugin_mcp.core_proxy import core_request, operational_writes_enabled
+
+
+OWNER = "SPPG_OWNER"
+TTL_MINUTES = 10
+# Only these specific workflows can be submitted for a destructive commit.
+ACTION_MAP = {
+    "CREATE_PO": "CREATE_PURCHASE_ORDER",
+    "EDIT_DRAFT_PO": "EDIT_DRAFT_PURCHASE_ORDER",
+    "REVISE_PO": "REVISE_PURCHASE_ORDER",
+    "CANCEL_PO": "CANCEL_PURCHASE_ORDER",
+    "FINALIZE_PO": "FINALIZE_PURCHASE_ORDER",
+    "MARK_PO_SENT": "MARK_PURCHASE_ORDER_SENT",
+}
+EXTRA_ACTIONS = {"DELETE_DRAFT_PO", "IMPORT_WHATSAPP_PO", "CREATE_NO_PO_PAYABLE"}
+CONTROL_ACTIONS = frozenset(ACTION_MAP) | EXTRA_ACTIONS
+DESTRUCTIVE_ACTIONS = frozenset({"DELETE_DRAFT_PO", "CANCEL_PO", "REVISE_PO"})
+PO_ACTIONS_WITH_SNAPSHOT = frozenset({
+    "EDIT_DRAFT_PO", "REVISE_PO", "CANCEL_PO", "FINALIZE_PO", "MARK_PO_SENT", "DELETE_DRAFT_PO",
+})
+
+
+class ChangeRequest(BaseModel):
+    action: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(min_length=3, max_length=1000)
+    site: Literal["MAJA", "CEMPLANG"]
+
+
+def _hash_json(value: Any) -> str:
+    clean = json.dumps(jsonable_encoder(value), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(clean.encode("utf-8")).hexdigest()
+
+
+def _db_ready() -> None:
+    if not database_ready():
+        raise RuntimeError("PostgreSQL unavailable; approval gate is closed")
+
+
+def _ensure_table(cur: Any) -> None:
+    cur.execute(
+        """
+        create table if not exists sppg_mcp_approvals (
+            id uuid primary key,
+            operator_sub text not null,
+            site text not null,
+            action text not null,
+            reason text not null,
+            proposed_payload jsonb not null,
+            before_state jsonb,
+            before_hash text,
+            preview_data jsonb not null,
+            impact_data jsonb not null,
+            status text not null default 'PENDING',
+            created_at timestamptz not null default now(),
+            expires_at timestamptz not null,
+            confirmed_at timestamptz,
+            executed_at timestamptz,
+            result_data jsonb,
+            error_message text
+        )
+        """
+    )
+
+
+async def _read_po(po_id: int) -> dict[str, Any]:
+    if po_id <= 0:
+        raise ValueError("purchase_order_id must be positive")
+    return await core_request("GET", f"/v1/purchase-orders/{po_id}")
+
+
+async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+    action, data = change.action, dict(change.payload)
+    if action not in CONTROL_ACTIONS:
+        raise ValueError("Action not in the confirmed-write allowlist")
+    if "site" in data and data["site"] != change.site:
+        raise ValueError("Cross-site payload and change.site mismatch")
+    data.pop("commit", None)
+
+    before = None
+    if action in PO_ACTIONS_WITH_SNAPSHOT:
+        po_id = int(data.get("purchase_order_id") or 0)
+        before = await _read_po(po_id)
+        po_site = str(before.get("site") or before.get("result", {}).get("site") or "").upper()
+        if po_site != change.site:
+            raise ValueError("PO site does not match the requested site")
+    if action == "CREATE_NO_PO_PAYABLE":
+        data["site"] = change.site
+        manual = ManualPayableIn.model_validate({**data, "commit": False})
+        result = preview_manual_payable(manual)
+        impact = {
+            "stock": "NONE", "finance": "NO LEDGER TRANSACTION",
+            "vendorPayable": "CREATE UNPAID", "noPoException": True,
+            "note": "Only a payable is created, no PO, receipt, or stock adjustment.",
+        }
+    elif action == "IMPORT_WHATSAPP_PO":
+        data["site"] = change.site
+        if not str(data.get("source_raw_text") or "").strip():
+            raise ValueError("Original WhatsApp evidence text is required")
+        body = {**data, "commit": False}
+        result = await core_request("POST", "/v1/operations/history/import", json_body=body)
+        impact = {
+            "purchaseOrder": "HISTORICAL IMPORT",
+            "stock": "NO AUTOMATIC INVENTORY POSTING",
+            "finance": "NONE",
+            "receipt": "Only if actual received_qty was explicitly documented.",
+        }
+    elif action == "DELETE_DRAFT_PO":
+        status = str(before.get("status") or before.get("result", {}).get("status") or "").upper()
+        if status != "DRAFT":
+            raise ValueError("Hard-delete is restricted to unsent DRAFT PO")
+        result = {
+            "canCommit": True,
+            "committed": False,
+            "purchaseOrderId": data["purchase_order_id"],
+            "statusBefore": status,
+            "operation": "DELETE_DRAFT_PO",
+        }
+        impact = {
+            "purchaseOrder": "DELETE DRAFT",
+            "stock": "NONE if no linked receipt",
+            "finance": "NONE",
+            "warning": "The backend rechecks that no goods receipt exists.",
+        }
+    else:
+        if action == "CREATE_PO":
+            data["site"] = change.site
+        result = await core_request(
+            "POST", "/v1/gpt/operations/execute",
+            json_body={"operation": ACTION_MAP[action], "payload": data, "commit": False},
+        )
+        impact = {
+            "purchaseOrder": action,
+            "stock": "NO DIRECT STOCK MUTATION FOR PO CHANGES",
+            "finance": "NONE",
+            "note": "Backend status, receiving, and revision constraints are checked again on commit.",
+        }
+    if result.get("canCommit") is False:
+        raise ValueError("Backend preview reports canCommit=false")
+    return result, before, impact
+
+
+def _render_pending(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "approvalId": str(row["id"]),
+        "status": row["status"],
+        "action": row["action"],
+        "site": row["site"],
+        "reason": row["reason"],
+        "preview": row["preview_data"],
+        "before": row.get("before_state"),
+        "impact": row["impact_data"],
+        "expiresAt": row["expires_at"].isoformat() if isinstance(row["expires_at"], datetime) else str(row["expires_at"]),
+        "approvalMethod": "MCP_APP_CARD",
+        "isDestructive": row["action"] in DESTRUCTIVE_ACTIONS,
+        "writeEnabled": operational_writes_enabled(),
+        "message": "Please check this card. Only a user click on Confirm may commit.",
+    }
+
+
+async def prepare_change(action: str, payload: dict[str, Any], site: str, reason: str) -> dict[str, Any]:
+    change = ChangeRequest.model_validate({
+        "action": action,
+        "payload": payload,
+        "site": site,
+        "reason": reason,
+    })
+    # Prepare is intentionally available before the production switch is on.
+    preview, before, impact = await _preview(change)
+    _db_ready()
+    proposal_id = uuid.uuid4()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=TTL_MINUTES)
+    before_hash = _hash_json(before) if before is not None else None
+    with connection() as conn:
+        with conn.cursor() as cur:
+            _ensure_table(cur)
+            cur.execute(
+                """insert into sppg_mcp_approvals(
+                    id,operator_sub,site,action,reason,proposed_payload,before_state,before_hash,
+                    preview_data,impact_data,expires_at
+                   ) values (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,%s::jsonb,%s)""",
+                (
+                    proposal_id, OWNER, change.site, change.action, change.reason,
+                    json.dumps(change.payload, ensure_ascii=False, default=str),
+                    json.dumps(before, ensure_ascii=False, default=str) if before is not None else None,
+                    before_hash, json.dumps(preview, ensure_ascii=False, default=str),
+                    json.dumps(impact, ensure_ascii=False, default=str), expires_at,
+                ),
+            )
+            conn.commit()
+    return {
+        "approvalId": str(proposal_id),
+        "status": "PENDING",
+        "action": action,
+        "site": change.site,
+        "reason": reason,
+        "preview": preview,
+        "before": before,
+        "impact": impact,
+        "expiresAt": expires_at.isoformat(),
+        "approvalMethod": "MCP_APP_CARD",
+        "isDestructive": action in DESTRUCTIVE_ACTIONS,
+        "writeEnabled": operational_writes_enabled(),
+        "message": "Preview prepared; no operational record changed. Confirm on the card to execute.",
+    }
+
+
+def read_change(approval_id: str) -> dict[str, Any]:
+    _db_ready()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            _ensure_table(cur)
+            cur.execute("select * from sppg_mcp_approvals where id=%s and operator_sub=%s", (approval_id, OWNER))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Approval request not found")
+            return {**_render_pending(row), "result": row.get("result_data"), "error": row.get("error_message")}
+
+
+async def _execute(change: ChangeRequest) -> dict[str, Any]:
+    data = dict(change.payload)
+    data.pop("commit", None)
+    if change.action == "CREATE_NO_PO_PAYABLE":
+        model = ManualPayableIn.model_validate({**data, "site": change.site, "commit": False})
+        return commit_manual_payable(model)
+    if change.action == "IMPORT_WHATSAPP_PO":
+        return await core_request("POST", "/v1/operations/history/import", json_body={
+            **data, "site": change.site, "commit": True,
+        })
+    if change.action == "DELETE_DRAFT_PO":
+        return await core_request("DELETE", f"/v1/purchase-orders/{int(data['purchase_order_id'])}")
+    if change.action in ACTION_MAP:
+        if change.action == "CREATE_PO":
+            data["site"] = change.site
+        return await core_request("POST", "/v1/gpt/operations/execute", json_body={
+            "operation": ACTION_MAP[change.action], "payload": data, "commit": True,
+        })
+    raise ValueError("Unrecognized write action")
+
+
+async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"]) -> dict[str, Any]:
+    """App-visible only. Never register as model-visible tool."""
+    _db_ready()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            _ensure_table(cur)
+            cur.execute(
+                "select * from sppg_mcp_approvals where id=%s and operator_sub=%s for update",
+                (approval_id, OWNER),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Approval request not found")
+            if row["status"] != "PENDING":
+                return {
+                    "approvalId": approval_id, "status": row["status"],
+                    "result": row.get("result_data"), "message": "Already decided; will not execute twice.",
+                }
+            if choice == "CANCEL":
+                cur.execute(
+                    "update sppg_mcp_approvals set status='DECLINED',confirmed_at=now() where id=%s",
+                    (approval_id,),
+                )
+                conn.commit()
+                return {"approvalId": approval_id, "status": "DECLINED", "committed": False}
+            if not operational_writes_enabled():
+                return {
+                    "approvalId": approval_id, "status": "WRITE_GATE_CLOSED",
+                    "committed": False,
+                    "message": "Production write gate has not been enabled.",
+                }
+            if row["expires_at"] < datetime.now(timezone.utc):
+                cur.execute(
+                    "update sppg_mcp_approvals set status='EXPIRED' where id=%s", (approval_id,)
+                )
+                conn.commit()
+                return {"approvalId": approval_id, "status": "EXPIRED", "committed": False}
+
+    change = ChangeRequest(
+        action=row["action"], payload=row["proposed_payload"],
+        site=row["site"], reason=row["reason"],
+    )
+    # Revalidate against current live state, not only old preview text.
+    try:
+        fresh_preview, current, impact = await _preview(change)
+        if row["before_hash"] and _hash_json(current) != row["before_hash"]:
+            with connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "update sppg_mcp_approvals set status='STALE',error_message=%s where id=%s and status='PENDING'",
+                        ("Live record changed since preview; prepare a fresh card.", approval_id),
+                    )
+                    conn.commit()
+            return {"approvalId": approval_id, "status": "STALE", "committed": False}
+        if _hash_json(fresh_preview) != _hash_json(row["preview_data"]):
+            with connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "update sppg_mcp_approvals set status='STALE',error_message=%s where id=%s and status='PENDING'",
+                        ("Preview changed since the card was prepared.", approval_id),
+                    )
+                    conn.commit()
+            return {"approvalId": approval_id, "status": "STALE", "committed": False}
+    except Exception as exc:
+        return {"approvalId": approval_id, "status": "REVALIDATION_FAILED", "committed": False,
+                "reason": str(exc)[:600]}
+
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """update sppg_mcp_approvals
+                   set status='EXECUTING',confirmed_at=now()
+                   where id=%s and operator_sub=%s and status='PENDING' and expires_at>now()
+                   returning id""",
+                (approval_id, OWNER),
+            )
+            claimed = cur.fetchone()
+            conn.commit()
+            if not claimed:
+                return {"approvalId": approval_id, "status": "NOT_CLAIMED", "committed": False}
+
+    try:
+        result = await _execute(change)
+        state = "APPLIED" if result.get("committed", True) else "FAILED_NEEDS_REVIEW"
+        error_message = None
+    except Exception as exc:
+        result = {"detail": "Execution failed. Verify current records before creating a new approval."}
+        state = "FAILED_NEEDS_REVIEW"
+        error_message = str(exc)[:1200]
+
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """update sppg_mcp_approvals
+                   set status=%s,executed_at=now(),result_data=%s::jsonb,error_message=%s
+                   where id=%s and operator_sub=%s and status='EXECUTING'""",
+                (state, json.dumps(result, default=str, ensure_ascii=False), error_message, approval_id, OWNER),
+            )
+            conn.commit()
+    return {
+        "approvalId": approval_id, "status": state,
+        "committed": bool(state == "APPLIED"),
+        "result": result,
+        "message": (
+            "Operation executed once and audit result stored."
+            if state == "APPLIED" else
+            "Execution uncertain/failed. Do not retry automatically; inspect current state."
+        ),
+    }
