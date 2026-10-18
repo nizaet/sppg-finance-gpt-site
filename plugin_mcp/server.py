@@ -322,8 +322,12 @@ class BearerGate:
             await response(scope, receive, send)
             return
 
-        if path in ("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"):
+        if path == "/.well-known/oauth-authorization-server":
             response = JSONResponse(oauth_metadata(issuer))
+            await response(scope, receive, send)
+            return
+        if path == "/.well-known/openid-configuration":
+            response = JSONResponse({"detail": "OpenID Connect is not enabled"}, status_code=404)
             await response(scope, receive, send)
             return
         request = Request(scope, receive=receive)
