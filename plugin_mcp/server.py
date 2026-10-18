@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
 from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, issue_access_token as oauth_issue_access_token, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 from plugin_mcp.v0186_tools import register_v0186_tools
+from plugin_mcp.core_proxy import operational_writes_enabled
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -294,8 +295,9 @@ async def health(_: Request) -> JSONResponse:
         "mode": "v0186-parity-operational-preview",
         "oauthReady": True,
         "legacyV0186Parity": True,
-        "legacyV0186ToolCount": len(LEGACY_V0186_TOOL_NAMES),
-        "operationalWritesEnabled": False,
+        "legacyV0186ActionCount": 30,
+        "parityPlusToolCount": len(LEGACY_V0186_TOOL_NAMES),
+        "operationalWritesEnabled": operational_writes_enabled(),
         "knowledgeLearningEnabled": True,
         "tools": [
             "po_action_queue",
