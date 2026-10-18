@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+from pathlib import Path
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -15,6 +16,7 @@ from plugin_mcp.oauth_resource import settings as oauth_settings, validate_acces
 from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, issue_access_token as oauth_issue_access_token, authorize_get, authorize_post, token as oauth_token, register as oauth_register
 from plugin_mcp.v0186_tools import register_v0186_tools
 from plugin_mcp.core_proxy import operational_writes_enabled
+from plugin_mcp.approval_workflow import prepare_change, confirm_change, read_change
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -67,6 +69,61 @@ mcp = OpenAIFastMCP(
 
 
 LEGACY_V0186_TOOL_NAMES = register_v0186_tools(mcp)
+
+APPROVAL_UI_URI = "ui://sppg-control-room/approval-card"
+APPROVAL_META = {
+    "ui": {"resourceUri": APPROVAL_UI_URI, "visibility": ["model", "app"]},
+    "openai/outputTemplate": APPROVAL_UI_URI,
+}
+
+
+@mcp.resource(
+    APPROVAL_UI_URI,
+    name="SPPG approval card",
+    mime_type="text/html;profile=mcp-app",
+)
+def sppg_approval_card() -> str:
+    """Native ChatGPT MCP Apps card for inspecting before/after and clicking confirm."""
+    return (Path(__file__).parent / "approval_card.html").read_text(encoding="utf-8")
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False),
+    meta=APPROVAL_META,
+)
+async def prepareSppgControlledChange(
+    action: str,
+    payload: dict[str, Any],
+    site: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Prepare and display a 10-minute before/after confirmation card.
+
+    This never mutates PO, warehouse, finance, invoice or payment records.
+    Allowed action names: CREATE_PO, EDIT_DRAFT_PO, REVISE_PO, CANCEL_PO,
+    FINALIZE_PO, MARK_PO_SENT, DELETE_DRAFT_PO, IMPORT_WHATSAPP_PO,
+    CREATE_NO_PO_PAYABLE. The actual commit is performed exclusively by
+    an app-visible confirmation tool after the operator clicks Confirm.
+    """
+    return await prepare_change(action, payload, site, reason)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False),
+    meta={"ui": {"resourceUri": APPROVAL_UI_URI, "visibility": ["app"]}},
+)
+async def confirmSppgControlledChange(
+    approval_id: str,
+    choice: Literal["CONFIRM", "CANCEL"],
+) -> dict[str, Any]:
+    """App-only click handler. Rechecks backend state, claims the ticket once and commits."""
+    return await confirm_change(approval_id, choice)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def getSppgControlledChange(approval_id: str) -> dict[str, Any]:
+    """Read status and audit outcome of one SPPG approval card."""
+    return read_change(approval_id)
 
 
 def _site(value: str) -> Site:
@@ -307,6 +364,9 @@ async def health(_: Request) -> JSONResponse:
             "vendor_payable_preview",
             "vendor_payables_list",
             *LEGACY_V0186_TOOL_NAMES,
+            "prepareSppgControlledChange",
+            "confirmSppgControlledChange",
+            "getSppgControlledChange",
         ],
     })
 
