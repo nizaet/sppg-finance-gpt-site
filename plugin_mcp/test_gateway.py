@@ -46,7 +46,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(body["oauthReady"])
         self.assertEqual(body["mode"], "v0186-parity-operational-preview")
         self.assertTrue(body["legacyV0186Parity"])
-        self.assertEqual(body["legacyV0186ToolCount"], 30)
+        self.assertEqual(body["legacyV0186ToolCount"], 37)
         self.assertTrue(body["knowledgeLearningEnabled"])
         self.assertFalse(body["operationalWritesEnabled"])
 
@@ -126,8 +126,8 @@ class GatewayTests(unittest.TestCase):
         }
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
-        self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 30)
-        self.assertEqual(len(names), len(focused) + 30)
+        self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
+        self.assertEqual(len(names), len(focused) + 37)
 
         by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
@@ -138,6 +138,9 @@ class GatewayTests(unittest.TestCase):
             self.assertTrue(by_name[name].get("annotations", {}).get("readOnlyHint"))
         self.assertFalse(by_name["learnSppgConversationTurn"].get("annotations", {}).get("readOnlyHint"))
         self.assertFalse(by_name["recordExplicitSppgKnowledge"].get("annotations", {}).get("readOnlyHint"))
+        self.assertIn("previewOrImportSelectedSppgCalculatorData", names)
+        self.assertIn("previewSppgCalculatorDailyPlanImport", names)
+        self.assertIn("previewOrGenerateSppgAccountantExcel", names)
         self.assertFalse(by_name["createSppgAccountantTransactions"].get("annotations", {}).get("readOnlyHint"))
 
     def test_authorization_error_redirect_includes_issuer(self):
