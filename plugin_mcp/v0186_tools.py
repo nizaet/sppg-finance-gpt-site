@@ -417,6 +417,78 @@ async def confirmSppgBgnMakerPaid(
     ))
 
 
+
+async def previewOrImportSppgHistoricalOperations(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview verified historical PO/receiving reconstruction. Forces commit=false."""
+    body = preview_only(payload)
+    if body.get("site"):
+        body["site"] = _clean_site(body["site"])
+    return _preview_result(await core_request(
+        "POST", "/v1/operations/history/import", json_body=body
+    ))
+
+
+async def previewOrBackfillSppgAccountantFirestoreHistory(
+    site: str,
+    batch_size: int = 200,
+    start_after_id: str | None = None,
+    actor: str = "sppg-control-room",
+) -> dict[str, Any]:
+    """Dry-run the Accountant Firestore history backfill. Never imports during this phase."""
+    return _preview_result(await core_request(
+        "POST", "/v1/gpt/backfill-firestore",
+        json_body={
+            "site": _clean_site(site),
+            "dry_run": True,
+            "batch_size": batch_size,
+            "start_after_id": start_after_id,
+            "actor": actor,
+        },
+    ))
+
+
+async def searchSppgInventoryItemMaster(search: str | None = None) -> dict[str, Any]:
+    """Search canonical inventory item types and aliases."""
+    return await core_request("GET", "/v1/inventory/items", params={"search": search})
+
+
+async def previewOrSaveSppgInventoryItemMaster(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview a canonical inventory item or alias update. Forces commit=false."""
+    return _preview_result(await core_request(
+        "POST", "/v1/inventory/items", json_body=preview_only(payload)
+    ))
+
+
+async def previewSppgCalculatorDailyPlanImport(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview selectable calculator daily-plan restore candidates."""
+    body = dict(payload)
+    if body.get("site"):
+        body["site"] = _clean_site(body["site"])
+    return _preview_result(await core_request(
+        "POST", "/v1/calculator-data/plan-preview", json_body=body
+    ))
+
+
+async def previewOrImportSelectedSppgCalculatorData(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview calculator master/daily-plan import. Forces commit=false."""
+    body = preview_only(payload)
+    if body.get("site"):
+        body["site"] = _clean_site(body["site"])
+    return _preview_result(await core_request(
+        "POST", "/v1/calculator-data/import", json_body=body
+    ))
+
+
+async def previewOrGenerateSppgAccountantExcel(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview Accountant Excel generation from planning. Forces commit=false."""
+    body = preview_only(payload)
+    if body.get("site"):
+        body["site"] = _clean_site(body["site"])
+    return _preview_result(await core_request(
+        "POST", "/v1/accountant-excel/from-planning", json_body=body
+    ))
+
+
 LEGACY_V0186_TOOLS = [
     (parseOnlySuppliedSppgVendorInvoiceText, READ_ONLY),
     (searchSppgPurchaseOrdersForReconciliation, READ_ONLY),
@@ -448,6 +520,15 @@ LEGACY_V0186_TOOLS = [
     (listSppgPaidUnreconciledVendorPayments, READ_ONLY),
     (confirmSppgBgnMakerApproved, READ_ONLY),
     (confirmSppgBgnMakerPaid, READ_ONLY),
+    # MCP is not constrained by the old GPT Builder 30-operation ceiling, so also
+    # expose workflows that v0.18.6 had to omit from its imported Action schema.
+    (previewOrImportSppgHistoricalOperations, READ_ONLY),
+    (previewOrBackfillSppgAccountantFirestoreHistory, READ_ONLY),
+    (searchSppgInventoryItemMaster, READ_ONLY),
+    (previewOrSaveSppgInventoryItemMaster, READ_ONLY),
+    (previewSppgCalculatorDailyPlanImport, READ_ONLY),
+    (previewOrImportSelectedSppgCalculatorData, READ_ONLY),
+    (previewOrGenerateSppgAccountantExcel, READ_ONLY),
 ]
 
 
