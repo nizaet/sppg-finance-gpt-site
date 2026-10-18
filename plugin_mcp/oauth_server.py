@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import base64
 import hashlib
 import html
@@ -12,6 +14,7 @@ import httpx
 import jwt
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from plugin_mcp.oauth_refresh import create_refresh, rotate_refresh
 
 _CODES: dict[str, dict] = {}
 CORE = os.getenv(
@@ -79,7 +82,7 @@ def metadata(issuer: str) -> dict:
         "token_endpoint": issuer + "/token",
         "registration_endpoint": issuer + "/register",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": [REQUIRED_SCOPE],
@@ -310,6 +313,28 @@ async def token(
     expected_resource: str,
 ) -> JSONResponse:
     form = await request.form()
+    grant=str(form.get("grant_type") or "")
+    if grant=="refresh_token":
+        client=str(form.get("client_id") or "")
+        resource=str(form.get("resource") or expected_resource)
+        scope=str(form.get("scope") or REQUIRED_SCOPE)
+        if client not in {CHATGPT_CIMD_CLIENT_ID,DCR_CLIENT_ID}:
+            return _oauth_error("invalid_client","Unrecognized ChatGPT OAuth client.")
+        if not _resource_allowed(resource,expected_resource):
+            return _oauth_error("invalid_target","Refresh resource mismatch.")
+        if set(scope.split())!={REQUIRED_SCOPE}:
+            return _oauth_error("invalid_scope","Refresh cannot expand the authorized scope.")
+        allowed={x.strip() for x in os.getenv("SPPG_OAUTH_ALLOWED_SUBJECTS","").split(",") if x.strip()}
+        try:
+            renewed=await asyncio.to_thread(rotate_refresh,str(form.get("refresh_token") or ""),client,resource,audience,REQUIRED_SCOPE,allowed)
+        except ValueError:
+            return _oauth_error("invalid_grant","Refresh session is invalid, expired, revoked or already used.")
+        except Exception:
+            logging.getLogger("sppg_oauth").warning("Refresh store unavailable")
+            return _oauth_error("temporarily_unavailable","Session renewal unavailable; retry later.",503)
+        return JSONResponse({"access_token":issue_access_token(issuer,audience,subject=renewed["subject"],scope=renewed["scope"]),"refresh_token":renewed["refresh_token"],"token_type":"Bearer","expires_in":3600,"scope":REQUIRED_SCOPE},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
+    if grant!="authorization_code":
+        return _oauth_error("unsupported_grant_type","Only authorization_code and refresh_token are supported.")
     code = str(form.get("code") or "")
     code_key = hashlib.sha256(code.encode("ascii")).hexdigest()
     record = _CODES.pop(code_key, None)
@@ -337,10 +362,16 @@ async def token(
     if _b64(hashlib.sha256(verifier.encode("ascii")).digest()) != record["challenge"]:
         return _oauth_error("invalid_grant", "PKCE verification failed.")
 
+    try:
+        refresh=await asyncio.to_thread(create_refresh,client_id,expected_resource,audience,"SPPG_OWNER",REQUIRED_SCOPE)
+    except Exception:
+        logging.getLogger("sppg_oauth").warning("Refresh session creation unavailable")
+        return _oauth_error("temporarily_unavailable","Session creation unavailable; retry authorization.",503)
     access_token = issue_access_token(issuer, audience)
     return JSONResponse(
         {
             "access_token": access_token,
+            "refresh_token": refresh,
             "token_type": "Bearer",
             "expires_in": 3600,
             "scope": REQUIRED_SCOPE,
@@ -374,9 +405,10 @@ async def register(request: Request, issuer: str) -> JSONResponse:
             "client_id_issued_at": int(time.time()),
             "redirect_uris": [CHATGPT_STABLE_REDIRECT],
             "token_endpoint_auth_method": "none",
-            "grant_types": ["authorization_code"],
+            "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
         },
         status_code=201,
         headers={"Cache-Control": "no-store"},
     )
+
