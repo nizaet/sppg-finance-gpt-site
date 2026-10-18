@@ -281,7 +281,7 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
     cur.execute(
         """select gr.id,gr.received_at,po.site,po.vendor_code,po.production_cycle_id,po.po_code
            from goods_receipts gr join purchase_orders po on po.id=gr.purchase_order_id
-           where gr.id=%s""",
+           where gr.id=%s for update of gr""",
         (goods_receipt_id,),
     )
     receipt = cur.fetchone()

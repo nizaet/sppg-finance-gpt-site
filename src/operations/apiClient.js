@@ -151,6 +151,7 @@ export const operationsApi = {
   parseMessage: (payload) => request("/v1/parse-message", { method: "POST", body: JSON.stringify(payload) }),
   getGoodsReceipts: ({ site = "", vendor = "", poId = "", poCode = "", fromDate = "", toDate = "", distributionDate = "", search = "", limit = 150 } = {}) => { const q = new URLSearchParams({ limit: String(limit) }); if (site) q.set("site", site); if (vendor) q.set("vendor", vendor); if (poId) q.set("poId", String(poId)); if (poCode) q.set("poCode", poCode); if (fromDate) q.set("fromDate", fromDate); if (toDate) q.set("toDate", toDate); if (distributionDate) q.set("distributionDate", distributionDate); if (search) q.set("search", search); return request(`/v1/goods-receipts-visible?${q}`); },
   createGoodsReceipt: (payload) => request("/v1/goods-receipts", { method: "POST", body: JSON.stringify(payload) }),
+  correctGoodsReceipt: (receiptId, payload) => request(`/v1/goods-receipts/${receiptId}/quantities`, { method: "PATCH", body: JSON.stringify(payload) }),
   getActualUsage: (id) => request(`/v1/actual-usage?productionCycleId=${encodeURIComponent(id)}`),
   saveActualUsage: (payload) => request("/v1/actual-usage", { method: "POST", body: JSON.stringify(payload) }),
   generateAccountantExcel: (payload, commit = false) => request("/v1/accountant-excel/from-planning", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
