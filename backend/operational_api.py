@@ -85,9 +85,10 @@ def extract_receipt_items(text: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     # Split on message/list separators. A sentence prefix may still be captured by the item regex,
     # therefore we also keep only the final sentence fragment of the captured name below.
-    segments = re.split(r"[\n;,]+", text)
+    segments = re.split(r"\n+|;+|(?<!\d),|,(?!\d)", text)
     for segment in segments:
-        clean_segment = re.sub(r"^[\-•*\s]+", "", segment.strip())
+        clean_segment = re.sub(r"[*`]", "", segment)
+        clean_segment = re.sub(r"^[\-•\s]+", "", clean_segment.strip())
         if not clean_segment:
             continue
         for match in RECEIPT_ITEM_PATTERN.finditer(clean_segment):
