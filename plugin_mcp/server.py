@@ -190,17 +190,17 @@ def po_action_queue(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 async def receiving_preview(site: str, text: str, vendor_code: str | None = None,
     purchase_order_id: int | None = None, received_at_iso: str | None = None,
-    reporter: str | None = None, received_date_iso: str | None = None) -> dict[str, Any]:
+    reporter: str | None = None) -> dict[str, Any]:
     """FAST receipt path: send the ORIGINAL report unchanged, including bare weighing lines.
     One call normalizes quantities/date, resolves vendor/PO N-3..N+2, loads confirmed
     knowledge in parallel and creates the proposal. No prior context or separate preview needed.
-    Use received_date_iso YYYY-MM-DD if only a date is known; do not invent a time.
+    received_at_iso accepts YYYY-MM-DD when only a date is known; no invented arrival time.
 
     Does not save goods receipt or stock until the operator confirms the card.
     """
     card=await prepare_change('RECORD_GOODS_RECEIPT', {
         'text':text,'vendor_code':vendor_code,'purchase_order_id':purchase_order_id,
-        'received_at':received_at_iso,'received_date':received_date_iso,'reporter':reporter,
+        'received_at':received_at_iso,'reporter':reporter,
     }, _site(site), 'Tinjau barang diterima, pilih barang dan tanggal, lalu konfirmasi')
     return {**card,'committed':False,'operationalMutation':False}
 
