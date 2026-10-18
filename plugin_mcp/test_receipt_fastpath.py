@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from plugin_mcp.receipt_fastpath import normalize_receipt_input, compact_knowledge
 
 REPORT='''barang datang ke cemplang Rekap Kedatangan Ayam Filet
@@ -14,6 +15,18 @@ Jumlah kedatangan: 7 data
 Total berat: 407,52 kg'''
 
 class ReceiptInputTests(unittest.TestCase):
+    def test_original_holil_numbered_report_preserves_all_seven_items(self):
+        raw=(Path(__file__).parent/'fixtures/holil_cemplang_sections.txt').read_text().strip()
+        out=normalize_receipt_input({'text':raw})
+        self.assertEqual(out['text'].splitlines(),['Jagung Manis - 55.68 kg','Labu Siam - 63.72 kg','Gula Merah - 5.04 kg','Wijen - 1 kg','Bawang Merah - 4.06 kg','Bawang Putih - 3.06 kg','Melon - 212.12 kg'])
+        self.assertEqual(out['source_raw_text'],raw)
+        self.assertEqual(out['receipt_input_summary']['itemCount'],7)
+        self.assertEqual(out['receipt_input_summary']['weighingCount'],12)
+        self.assertEqual(out['receipt_input_summary']['actualQty'],344.68)
+        self.assertEqual(out['received_time_precision'],'DATE')
+        for bad in [raw.replace('55,68 kg','55,69 kg'),raw.replace('28,50 kg','-28,50 kg'),raw+'\n8. Kentang',raw.replace('28,50 kg','Wortel 28,50 kg')]:
+            with self.subTest(bad=bad),self.assertRaises(ValueError): normalize_receipt_input({'text':bad})
+
     def test_original_report_becomes_one_exact_weight_with_source_preserved(self):
         original={'text':REPORT}
         out=normalize_receipt_input(original)

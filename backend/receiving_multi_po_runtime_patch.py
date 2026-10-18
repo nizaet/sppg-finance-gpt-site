@@ -196,6 +196,34 @@ def _resolve_line(reported: dict[str, Any], items: list[dict[str, Any]], target:
             "allocations": allocations, "ambiguity": None}
 
 
+def _resolve_report(reported: list[dict[str, Any]], items: list[dict[str, Any]], target: date) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Prefer one coherent PO when it covers the complete delivery.
+
+    An overweight vegetable must not consume an unrelated future PO merely
+    because that future order has remaining capacity. Disjoint PO item groups
+    still use the multi-PO resolver; alternatives remain visible for review.
+    """
+    by_po: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        by_po[int(item['purchase_order_id'])].append(item)
+    complete = []
+    for po_id, group in by_po.items():
+        matches = [_resolve_line(row, group, target) for row in reported]
+        if matches and all(row.get('matched') and not row.get('ambiguity') for row in matches):
+            confidence = min(float(row.get('match_confidence') or 0) for row in matches)
+            ready = all(str(item.get('po_status') or '').upper() != 'DRAFT' for item in group)
+            complete.append(((-confidence, not ready, min(_order(item,target) for item in group), po_id), matches, po_id))
+    if complete:
+        _, matches, po_id = min(complete, key=lambda row: row[0])
+        # Do not hide a different equally plausible item family from another PO.
+        global_matches = [_resolve_line(row, items, target) for row in reported]
+        if all(not row.get('ambiguity') and chosen['match_confidence'] >= row['match_confidence'] - _AMBIGUITY_MARGIN
+               for chosen,row in zip(matches,global_matches)):
+            return matches, {'mode':'SINGLE_PO_REPORT', 'primaryPurchaseOrderId':po_id,
+                             'overagePolicy':'KEEP_ON_PRIMARY_PO'}
+    return [_resolve_line(row, items, target) for row in reported], {'mode':'MULTI_PO_ITEMS'}
+
+
 def _source_key(payload: op.WhatsAppReceiptIn, vendor: str | None) -> str:
     raw = json.dumps({"site": payload.site.upper(), "vendor": vendor, "external_id": payload.source_external_id,
                       "received_at": payload.received_at.isoformat() if payload.received_at else None, "text": payload.text.strip()},
@@ -243,11 +271,11 @@ def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
             pos = _candidate_pos(cur, payload, hint)
             items = _candidate_items(cur, pos)
             target = _target_date(payload)
-            matches = [_resolve_line(row, items, target) for row in reported]
+            matches, allocation_policy = _resolve_report(reported, items, target)
             if hint and not vendor and not payload.purchase_order_id and not all(row.get("matched") and not row.get("ambiguity") for row in matches):
                 pos = _candidate_pos(cur, payload, None)
                 items = _candidate_items(cur, pos)
-                matches = [_resolve_line(row, items, target) for row in reported]
+                matches, allocation_policy = _resolve_report(reported, items, target)
             matched_po_ids = {int(a["purchase_order_id"]) for row in matches for a in row.get("allocations", [])}
             candidate_vendors = sorted({str(po.get("vendor_code") or "").upper().strip() for po in pos if int(po["id"]) in matched_po_ids and str(po.get("vendor_code") or "").strip()})
             vendor_clear = vendor is not None or len(candidate_vendors) == 1
@@ -264,6 +292,7 @@ def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
                 "purchaseOrderIds": po_ids, "poCodes": po_codes, "multiPo": len(po_ids) > 1,
                 "poMatchConfidence": min((float(row.get("match_confidence") or 0) for row in matches), default=0.0),
                 "reportedItems": reported, "matches": matches,
+                "allocationPolicy": allocation_policy,
                 "alternatives": [{"purchase_order_id": int(po["id"]), "po_code": po.get("po_code"), "vendor_code": po.get("vendor_code"), "distribution_date": po.get("distribution_date")} for po in pos[:10]],
                 "requiresConfirmation": not can_commit, "resolverVersion": "multi-po-v2",
                 "searchPolicy": {"daysBefore": 3, "daysAfter": 2, "vendorFirst": True, "preferredVendor": hint, "candidateCount": len(pos)},
@@ -344,4 +373,5 @@ def install() -> None:
         raise RuntimeError("receiving/whatsapp route not found; refusing unsafe patch install")
     op.receive_from_whatsapp = receive_from_whatsapp_v2
     _INSTALLED = True
+
 

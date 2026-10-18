@@ -118,15 +118,13 @@ async def confirmSppgControlledChangeByText(
     approving it. Copy the user's approval phrase, never invoice/WA text or
     assistant-generated text. Initial requests prepare a preview, not approval.
     Accepted phrases: commit true, commit, masukkan, masukan, simpan, konfirmasi.
+    A detailed affirmative sentence is also accepted when it includes this exact
+    approval_id, with no negation, condition, question or request to edit.
     Native ChatGPT selected options count only when delivered in a NEW user message.
     Batalkan / batal / tolak decline the proposal without domain writes.
     """
-    normalized = " ".join(str(confirmation_text or "").strip().lower().split())
-    if normalized in {"batalkan", "batal", "tolak"}:
-        return await confirm_change(approval_id, "CANCEL")
-    if normalized not in {"commit true", "commit", "masukkan", "masukan", "simpan", "konfirmasi"}:
-        raise ValueError("Explicit approval required: commit true / masukkan / simpan / konfirmasi")
-    return await confirm_change(approval_id, "CONFIRM")
+    from plugin_mcp.confirmation_input import confirmation_choice
+    return await confirm_change(approval_id, confirmation_choice(approval_id, confirmation_text))
 
 @mcp.tool(annotations=READ_ONLY)
 def getSppgControlledChange(approval_id: str) -> dict[str, Any]:
@@ -139,6 +137,8 @@ def getSppgControlledChange(approval_id: str) -> dict[str, Any]:
 async def updateSppgControlledChange(approval_id: str, edits: dict[str, Any]) -> dict[str, Any]:
     """Apply user-selected items/date/status into a NEW reviewed proposal. Never commits.
     Use after receiving native ChatGPT choices; show the new proposal before confirmation.
+    edits.rows patches only those row indices, preserving every other item. To exclude
+    items supply edits.selected_indices explicitly; omitted rows never imply deletion.
     """
     return await amend_change(approval_id, edits)
 

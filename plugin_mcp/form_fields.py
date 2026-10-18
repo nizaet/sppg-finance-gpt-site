@@ -1,5 +1,6 @@
 """Allowlisted operational form editing; never commits domain data."""
 from copy import deepcopy
+import math
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -47,7 +48,7 @@ def describe_form(action, payload, preview):
 def _value(key,value):
     if key in NUMBERS:
         number=float(str(value).replace(',','.'))
-        if number<0: raise ValueError('Nilai tidak boleh negatif')
+        if not math.isfinite(number) or number<0: raise ValueError('Nilai harus angka nonnegatif yang valid')
         if key.endswith('_id'):
             if number<=0 or not number.is_integer(): raise ValueError('ID tidak valid')
             return int(number)
@@ -68,13 +69,24 @@ def apply_form(action,payload,preview,edits):
         if value in ('',None): target.pop(key,None)
         else: target[key]=_value(key,value)
     rows=edits.get('rows')
-    if rows is not None:
-        if not isinstance(rows,list) or not rows: raise ValueError('Pilih minimal satu barang')
+    selection=edits.get('selected_indices')
+    if rows is not None or selection is not None:
+        if rows is not None and (not isinstance(rows,list) or not rows): raise ValueError('Perubahan barang harus berisi baris yang diubah')
         originals={r['index']:r for r in schema['rows']}; selected=[]; seen=set()
-        for change in rows:
+        changes={}
+        for change in rows or []:
             index=change.get('index')
-            if index not in originals or index in seen: raise ValueError('Baris barang tidak valid')
-            seen.add(index); original=originals[index]
+            if type(index) is not int or index not in originals or index in seen: raise ValueError('Baris barang tidak valid')
+            seen.add(index); changes[index]=change
+        indices=list(originals)
+        if selection is not None:
+            if not isinstance(selection,list) or not selection or any(type(i) is not int or i not in originals for i in selection) or len(set(selection))!=len(selection):
+                raise ValueError('Pilih minimal satu barang dengan indeks yang valid dan unik')
+            indices=[i for i in originals if i in selection]
+            if not set(changes)<=set(indices): raise ValueError('Tidak boleh mengedit barang yang dikeluarkan')
+        for index in indices:
+            change=changes.get(index,{})
+            original=originals[index]
             allowed={f['key'] for f in original['fields']}
             updates=change.get('fields') or {}
             if not set(updates)<=allowed: raise ValueError('Kolom barang tidak diizinkan')
@@ -90,16 +102,16 @@ def apply_form(action,payload,preview,edits):
                 elif not 0<=float(row.get('paid_amount') or 0)<amount: raise ValueError('Pembayaran sebagian harus kurang dari nilai tagihan')
             selected.append(row)
         if schema['rowPath']: target[schema['rowPath']]=selected
-        elif schema['receiptRows']:
+        if schema['receiptRows']:
             # Preserve the original evidence separately, and parse only operator-selected rows.
             data.setdefault('source_raw_text',payload.get('source_raw_text') or payload.get('text',''))
             target['text']='\n'.join(f"{r['item_name']} - {r['received_qty']} {r['unit']}" for r in selected)
         elif schema['stockRows']:
             original_items=preview.get('items',[])
             target['reviewed_items']=[]
-            for change,row in zip(rows,selected):
-                original=original_items[change['index']]
+            for index,row in zip(indices,selected):
+                original=original_items[index]
                 keep_name=row['item_name']==original.get('itemName')
                 target['reviewed_items'].append({'client_key':original.get('clientKey'),'include':True,'raw_item_name':row['item_name'],'canonical_item_name':original.get('canonicalItemName') if keep_name else row['item_name'],'inventory_item_code':original.get('inventoryItemCode') if keep_name else None,'area_code':original.get('areaCode'),'qty':row['qty'],'unit':row.get('unit')})
-        else: raise ValueError('Action ini tidak memiliki barang pilihan')
+        elif not schema['rowPath']: raise ValueError('Action ini tidak memiliki barang pilihan')
     return data
