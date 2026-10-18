@@ -110,7 +110,7 @@ async def prepareSppgControlledChange(
 
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False),
-    meta={"ui": {"resourceUri": APPROVAL_UI_URI, "visibility": ["app"]}},
+    meta={"ui": {"visibility": ["app"]}},
 )
 async def confirmSppgControlledChange(
     approval_id: str,
