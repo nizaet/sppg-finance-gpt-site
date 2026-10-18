@@ -128,7 +128,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
         self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
-        self.assertEqual(len(names), len(focused) + 37)
+        self.assertEqual(len(names), len(focused) + 37 + 3)
 
         by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
@@ -142,7 +142,37 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("previewOrImportSelectedSppgCalculatorData", names)
         self.assertIn("previewSppgCalculatorDailyPlanImport", names)
         self.assertIn("previewOrGenerateSppgAccountantExcel", names)
+        self.assertIn("prepareSppgControlledChange", names)
+        self.assertIn("confirmSppgControlledChange", names)
+        self.assertIn("getSppgControlledChange", names)
+        self.assertFalse(by_name["prepareSppgControlledChange"]["annotations"]["readOnlyHint"])
+        self.assertTrue(by_name["confirmSppgControlledChange"]["annotations"]["destructiveHint"])
+        self.assertEqual(
+            by_name["confirmSppgControlledChange"]["_meta"]["ui"]["visibility"], ["app"]
+        )
+        self.assertEqual(
+            by_name["prepareSppgControlledChange"]["_meta"]["ui"]["resourceUri"],
+            "ui://sppg-control-room/approval-card",
+        )
         self.assertFalse(by_name["createSppgAccountantTransactions"].get("annotations", {}).get("readOnlyHint"))
+
+    def test_approval_card_html_resource_is_readable(self):
+        token = issue_access_token(ISSUER, RESOURCE, ttl_seconds=60)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-06-18",
+        }
+        response = self.client.post(
+            "/mcp", headers=headers,
+            json={"jsonrpc": "2.0", "id": 3, "method": "resources/read",
+                  "params": {"uri": "ui://sppg-control-room/approval-card"}},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        resource = response.json()["result"]["contents"][0]
+        self.assertEqual(resource["mimeType"], "text/html;profile=mcp-app")
+        self.assertIn("Konfirmasi Perubahan SPPG", resource["text"])
+        self.assertIn("confirmSppgControlledChange", resource["text"])
 
     def test_authorization_error_redirect_includes_issuer(self):
         params = {
