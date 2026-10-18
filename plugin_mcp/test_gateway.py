@@ -128,7 +128,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
         self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
-        self.assertEqual(len(names), len(focused) + 37 + 6)
+        self.assertEqual(len(names), len(focused) + 37 + 5)
 
         by_name = {tool["name"]: tool for tool in tools}
         for tool in tools:
@@ -153,32 +153,16 @@ class GatewayTests(unittest.TestCase):
             by_name["confirmSppgControlledChange"]["_meta"]["ui"]["visibility"], ["app"]
         )
         self.assertNotIn("resourceUri", by_name["confirmSppgControlledChange"]["_meta"]["ui"])
-        self.assertEqual(by_name["updateSppgControlledChange"]["_meta"]["ui"], {"visibility":["app"]})
-        for name in ("receiving_preview","stock_opname_preview","showSppgSelectionCard"):
-            self.assertEqual(by_name[name]["_meta"]["ui"]["resourceUri"],"ui://sppg-control-room/approval-card")
-        self.assertEqual(
-            by_name["prepareSppgControlledChange"]["_meta"]["ui"]["resourceUri"],
-            "ui://sppg-control-room/approval-card",
-        )
+        for name in ("prepareSppgControlledChange","receiving_preview","stock_opname_preview","getSppgControlledChange","updateSppgControlledChange"):
+            self.assertNotIn("resourceUri",by_name[name].get("_meta",{}).get("ui",{}))
+        self.assertNotIn("showSppgSelectionCard",names)
         self.assertFalse(by_name["createSppgAccountantTransactions"].get("annotations", {}).get("readOnlyHint"))
 
-    def test_approval_card_html_resource_is_readable(self):
-        token = issue_access_token(ISSUER, RESOURCE, ttl_seconds=60)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json, text/event-stream",
-            "MCP-Protocol-Version": "2025-06-18",
-        }
-        response = self.client.post(
-            "/mcp", headers=headers,
-            json={"jsonrpc": "2.0", "id": 3, "method": "resources/read",
-                  "params": {"uri": "ui://sppg-control-room/approval-card"}},
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        resource = response.json()["result"]["contents"][0]
-        self.assertEqual(resource["mimeType"], "text/html;profile=mcp-app")
-        self.assertIn("Konfirmasi Perubahan SPPG", resource["text"])
-        self.assertIn("confirmSppgControlledChange", resource["text"])
+    def test_no_custom_html_resources_are_served(self):
+        token = issue_access_token(ISSUER,RESOURCE,ttl_seconds=60)
+        response=self.client.post("/mcp",headers={"Authorization":f"Bearer {token}","Accept":"application/json, text/event-stream","MCP-Protocol-Version":"2025-06-18"},json={"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()["result"]["resources"],[])
 
     def test_authorization_error_redirect_includes_issuer(self):
         params = {
@@ -229,6 +213,15 @@ class TextApprovalTests(unittest.IsolatedAsyncioTestCase):
                     result = await confirmSppgControlledChangeByText("ticket", phrase)
                     gate.assert_awaited_once_with("ticket", "CONFIRM")
                     self.assertFalse(result["committed"])
+
+    async def test_native_cancel_declines_without_execution(self):
+        from plugin_mcp.server import confirmSppgControlledChangeByText
+        from unittest.mock import AsyncMock
+        with patch("plugin_mcp.server.confirm_change",new_callable=AsyncMock) as gate:
+            gate.return_value={"status":"DECLINED","committed":False}
+            result=await confirmSppgControlledChangeByText("ticket","Batalkan")
+        gate.assert_awaited_once_with("ticket","CANCEL")
+        self.assertFalse(result["committed"])
 
     async def test_ambiguous_or_negative_text_never_reaches_gate(self):
         from plugin_mcp.server import confirmSppgControlledChangeByText

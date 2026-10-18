@@ -291,11 +291,11 @@ def _render_pending(row: dict[str, Any]) -> dict[str, Any]:
         "before": row.get("before_state"),
         "impact": row["impact_data"],
         "expiresAt": row["expires_at"].isoformat() if isinstance(row["expires_at"], datetime) else str(row["expires_at"]),
-        "approvalMethod": "MCP_APP_CARD_OR_TEXT",
+        "approvalMethod": "NATIVE_CHAT_CHOICE_OR_TEXT",
         "form": describe_form(row["action"], row["proposed_payload"], row["preview_data"]),
         "isDestructive": row["action"] in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
-        "message": "Please check this card. Only a user click on Confirm may commit.",
+        "message": "Please check this card. Only explicit operator confirmation may commit.",
     }
 
 
@@ -347,11 +347,11 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "before": before,
         "impact": impact,
         "expiresAt": expires_at.isoformat(),
-        "approvalMethod": "MCP_APP_CARD_OR_TEXT",
+        "approvalMethod": "NATIVE_CHAT_CHOICE_OR_TEXT",
         "form": describe_form(action, change.payload, preview),
         "isDestructive": action in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
-        "message": "Preview prepared; no operational record changed. Confirm on the card to execute.",
+        "message": "Preview prepared; no operational record changed. Render native ChatGPT choices; wait for a NEW user confirmation before executing.",
     }
 
 

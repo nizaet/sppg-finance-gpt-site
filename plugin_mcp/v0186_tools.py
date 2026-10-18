@@ -153,7 +153,7 @@ async def previewSppgInventoryRequirement(
 
 
 async def previewOrRecordSppgGoodsReceiptFromMessage(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview live receiving and display a compact approval card. Never commits."""
+    """Preview live receiving and return a proposal for native ChatGPT confirmation. Never commits."""
     from plugin_mcp.approval_workflow import prepare_change
     body = preview_only(payload)
     return await prepare_change("RECORD_GOODS_RECEIPT",body,_clean_site(body.get("site","")),"Tinjau penerimaan barang")
@@ -234,7 +234,7 @@ async def getFinalSppgPurchaseOrderWhatsAppMessage(
 
 
 async def previewOrRecordSppgStockOpnameFromWhatsApp(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview one physical SO baseline and display a compact approval card."""
+    """Preview one physical SO baseline and return a proposal for native ChatGPT confirmation."""
     from plugin_mcp.approval_workflow import prepare_change
     body=preview_only(payload)
     return await prepare_change("RECORD_STOCK_OPNAME",body,_clean_site(body.get("site") or body.get("location","")),"Tinjau stock opname")
@@ -529,7 +529,6 @@ def register_v0186_tools(mcp: Any) -> list[str]:
             fn,
             name=fn.__name__,
             annotations=annotations,
-            meta={"ui":{"resourceUri":"ui://sppg-control-room/approval-card","visibility":["model","app"]},"openai/outputTemplate":"ui://sppg-control-room/approval-card"} if is_card else None,
         )
         names.append(fn.__name__)
     return names

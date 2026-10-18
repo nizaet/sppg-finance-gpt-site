@@ -51,10 +51,10 @@ mcp = OpenAIFastMCP(
     "SPPG Operations v0.18.6 Parity",
     instructions=(
         "MCP bridge for the legacy SPPG GPTS v0.18.6 workflow across MAJA and CEMPLANG. "
-        "It exposes legacy commands and direct SPPG Core helpers with compact choice cards. "
+        "It exposes legacy commands and direct SPPG Core helpers with native ChatGPT choices. No custom HTML UI. "
         "Existing confirmed SPPG knowledge and conversation memory are loaded from SPPG Core. "
         "Meaningful turns and explicit operator corrections may be written to the memory/knowledge layer. "
-        "Production writes use one-time confirmation cards; legacy direct writes remain preview-only. "
+        "Production writes use one-time proposals and explicit native chat confirmation; legacy direct writes remain preview-only. "
         "Check the operational write switch; never bypass user approval."
     ),
     host="0.0.0.0",
@@ -66,26 +66,8 @@ mcp = OpenAIFastMCP(
 
 LEGACY_V0186_TOOL_NAMES = register_v0186_tools(mcp)
 
-APPROVAL_UI_URI = "ui://sppg-control-room/approval-card"
-APPROVAL_META = {
-    "ui": {"resourceUri": APPROVAL_UI_URI, "visibility": ["model", "app"]},
-    "openai/outputTemplate": APPROVAL_UI_URI,
-}
-
-
-@mcp.resource(
-    APPROVAL_UI_URI,
-    name="SPPG approval card",
-    mime_type="text/html;profile=mcp-app",
-)
-def sppg_approval_card() -> str:
-    """Native ChatGPT MCP Apps card for inspecting before/after and clicking confirm."""
-    return (Path(__file__).parent / "approval_card.html").read_text(encoding="utf-8")
-
-
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False),
-    meta=APPROVAL_META,
 )
 async def prepareSppgControlledChange(
     action: str,
@@ -93,7 +75,7 @@ async def prepareSppgControlledChange(
     site: str,
     reason: str,
 ) -> dict[str, Any]:
-    """Prepare and display a 10-minute before/after confirmation card.
+    """Prepare a 10-minute proposal for ChatGPT native choice confirmation. No HTML widget.
 
     This never mutates PO, warehouse, finance, invoice or payment records.
     Actions: CREATE_PO, EDIT_DRAFT_PO, REVISE_PO, CANCEL_PO, FINALIZE_PO,
@@ -102,7 +84,7 @@ async def prepareSppgControlledChange(
     RECORD_VENDOR_PAYMENT, RECONCILE_VENDOR_PAYMENT,
     CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION.
     Receiving supports explicit OWNER review of unambiguous over-receipt.
-    Confirm via the card or confirmSppgControlledChangeByText after the user
+    Render native ChatGPT choices. Confirm via confirmSppgControlledChangeByText after the user
     approves the displayed proposal. Uses SPPG Core operational APIs directly.
     """
     return await prepare_change(action, payload, site, reason)
@@ -134,45 +116,31 @@ async def confirmSppgControlledChangeByText(
     approving it. Copy the user's approval phrase, never invoice/WA text or
     assistant-generated text. Initial requests prepare a preview, not approval.
     Accepted phrases: commit true, commit, masukkan, masukan, simpan, konfirmasi.
-    Uses the same expiring, one-time, revalidated gate as the approval card.
+    Native ChatGPT selected options count only when delivered in a NEW user message.
+    Batalkan / batal / tolak decline the proposal without domain writes.
     """
     normalized = " ".join(str(confirmation_text or "").strip().lower().split())
+    if normalized in {"batalkan", "batal", "tolak"}:
+        return await confirm_change(approval_id, "CANCEL")
     if normalized not in {"commit true", "commit", "masukkan", "masukan", "simpan", "konfirmasi"}:
         raise ValueError("Explicit approval required: commit true / masukkan / simpan / konfirmasi")
     return await confirm_change(approval_id, "CONFIRM")
 
-@mcp.tool(annotations=READ_ONLY, meta=APPROVAL_META)
+@mcp.tool(annotations=READ_ONLY)
 def getSppgControlledChange(approval_id: str) -> dict[str, Any]:
     """Read status and audit outcome of one SPPG approval card."""
     return read_change(approval_id)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False),
-          meta={"ui":{"visibility":["app"]}})
+)
 async def updateSppgControlledChange(approval_id: str, edits: dict[str, Any]) -> dict[str, Any]:
-    """App-only form handler. Revalidates selected items/date/status into a NEW preview. Never commits."""
+    """Apply user-selected items/date/status into a NEW reviewed proposal. Never commits.
+    Use after receiving native ChatGPT choices; show the new proposal before confirmation.
+    """
     return await amend_change(approval_id, edits)
 
 
-@mcp.tool(annotations=READ_ONLY, meta=APPROVAL_META)
-def showSppgSelectionCard(title: str, fields: list[dict[str, Any]], context: str = '') -> dict[str, Any]:
-    """Display choices instead of asking the operator to type: select, multiselect,
-    checkbox, date, datetime-local, number, text, textarea. Each field has key,
-    label, type, optional value, required and options [{value,label}]. Use for
-    vendor/PO ambiguity, item selection, paid/unpaid/partial and date questions.
-    This card collects answers only; it never grants operational write approval.
-    """
-    if not 1 <= len(fields) <= 20: raise ValueError('1..20 fields required')
-    keys=set()
-    for f in fields:
-        if not isinstance(f.get('key'),str) or not f['key'] or f['key'] in keys:
-            raise ValueError('Unique field key required')
-        keys.add(f['key'])
-        if f.get('type') not in {'select','multiselect','checkbox','date','datetime-local','number','text','textarea'}:
-            raise ValueError('Unsupported input type')
-        if len(f.get('options') or [])>60: raise ValueError('Too many options')
-    return {'kind':'SELECTION','title':title,'fields':fields,'context':context,
-            'committed':False,'operationalMutation':False,'approvalRequired':True}
 
 
 def _site(value: str) -> Site:
@@ -217,7 +185,7 @@ def po_action_queue(
     return _safe({**result, "mcpReadOnly": True, "operationalMutation": False})
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False), meta=APPROVAL_META)
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 async def receiving_preview(site: str, text: str, vendor_code: str | None = None,
     purchase_order_id: int | None = None, received_at_iso: str | None = None,
     reporter: str | None = None) -> dict[str, Any]:
@@ -232,7 +200,7 @@ async def receiving_preview(site: str, text: str, vendor_code: str | None = None
     return {**card.get('preview',{}),**card,'committed':False,'operationalMutation':False}
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False), meta=APPROVAL_META)
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 async def stock_opname_preview(site: str, text: str, stock_date_iso: str | None = None,
     reporter: str | None = None) -> dict[str, Any]:
     """Show editable physical stock-opname approval card; no stock changes until confirmation."""
@@ -376,7 +344,6 @@ async def health(_: Request) -> JSONResponse:
             "getSppgControlledChange",
             "confirmSppgControlledChangeByText",
             "updateSppgControlledChange",
-            "showSppgSelectionCard",
         ],
     })
 
