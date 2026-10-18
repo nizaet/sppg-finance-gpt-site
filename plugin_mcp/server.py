@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from plugin_mcp.oauth_resource import settings as oauth_settings, validate_access_token, unauthorized, protected_resource_metadata
 from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jwks, signing_secret as oauth_signing_secret, issue_access_token as oauth_issue_access_token, authorize_get, authorize_post, token as oauth_token, register as oauth_register
+from plugin_mcp.v0186_tools import register_v0186_tools
 
 from backend.hermes_receiving_preview_api import (
     HermesReceivingPreviewIn,
@@ -48,19 +49,23 @@ class OpenAIFastMCP(FastMCP):
 
 
 mcp = OpenAIFastMCP(
-    "SPPG Operations Read Only",
+    "SPPG Operations v0.18.6 Parity",
     instructions=(
-        "Read-only operational tools for SPPG MAJA and CEMPLANG. "
-        "Use these tools to inspect PO requirements, reconcile incoming-goods text, "
-        "preview stock opname normalization, parse supplied vendor invoices, and preview payables. "
-        "These tools must never mutate operational data. All business rules come from the existing "
-        "SPPG backend functions, not from a second MCP-specific calculation engine."
+        "MCP bridge for the legacy SPPG GPTS v0.18.6 workflow across MAJA and CEMPLANG. "
+        "It exposes the original Action names plus focused read-only helpers. "
+        "Existing confirmed SPPG knowledge and conversation memory are loaded from SPPG Core. "
+        "Meaningful turns and explicit operator corrections may be written to the memory/knowledge layer. "
+        "Production operational writes remain gated; preview-capable operations force commit=false until "
+        "the confirmation-gated write rollout is explicitly enabled."
     ),
     host="0.0.0.0",
     streamable_http_path="/mcp",
     json_response=True,
     stateless_http=True,
 )
+
+
+LEGACY_V0186_TOOL_NAMES = register_v0186_tools(mcp)
 
 
 def _site(value: str) -> Site:
@@ -286,8 +291,12 @@ async def health(_: Request) -> JSONResponse:
     return JSONResponse({
         "status": "ok",
         "service": "sppg-plugin-mcp",
-        "mode": "read-only",
+        "mode": "v0186-parity-operational-preview",
         "oauthReady": True,
+        "legacyV0186Parity": True,
+        "legacyV0186ToolCount": len(LEGACY_V0186_TOOL_NAMES),
+        "operationalWritesEnabled": False,
+        "knowledgeLearningEnabled": True,
         "tools": [
             "po_action_queue",
             "receiving_preview",
@@ -295,6 +304,7 @@ async def health(_: Request) -> JSONResponse:
             "vendor_invoice_parse_preview",
             "vendor_payable_preview",
             "vendor_payables_list",
+            *LEGACY_V0186_TOOL_NAMES,
         ],
     })
 
