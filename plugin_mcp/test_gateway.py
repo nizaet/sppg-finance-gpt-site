@@ -237,5 +237,24 @@ class TextApprovalTests(unittest.IsolatedAsyncioTestCase):
                         await confirmSppgControlledChangeByText("ticket", phrase)
                     gate.assert_not_awaited()
 
+
+class ReceiptTextTests(unittest.TestCase):
+    def test_original_whatsapp_decimal_quantities_are_preserved(self):
+        from backend.operational_api import extract_receipt_items
+        text = """• *Gula Merah* - 5,04 kg
+• *Jeruk Medan* - 186,88 kg (berat bersih)
+• *Kacang Tanah* - 10,14 kg
+• *Kunyit* - 2,08 kg
+• *Timun* - 66,76 kg
+• *Wortel* - 50,68 kg"""
+        rows = extract_receipt_items(text)
+        self.assertEqual(len(rows), 6)
+        self.assertEqual([r["received_qty"] for r in rows], [5.04, 186.88, 10.14, 2.08, 66.76, 50.68])
+        self.assertAlmostEqual(sum(r["received_qty"] for r in rows), 321.58)
+
+    def test_list_commas_still_split_items(self):
+        from backend.operational_api import extract_receipt_items
+        self.assertEqual(len(extract_receipt_items("Wortel 1.5 kg, Timun 2 kg")), 2)
+
 if __name__ == "__main__":
     unittest.main()
