@@ -4,6 +4,14 @@ from unittest.mock import AsyncMock,MagicMock,patch
 from plugin_mcp.approval_workflow import prepare_change
 
 class PrepareFastPathTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_receipt_is_not_an_unmatched_draft_or_another_confirmation(self):
+        with patch('plugin_mcp.approval_workflow._preview',new_callable=AsyncMock,return_value=({'canCommit':False,'receiptState':'POSSIBLE_DUPLICATE','existingReceiptId':495},None,{'stock':'NONE'})),patch('plugin_mcp.approval_workflow.core_request',new_callable=AsyncMock,return_value={'databaseReady':True}),patch('plugin_mcp.approval_workflow._db_ready'),patch('plugin_mcp.approval_workflow._ensure_table'),patch('plugin_mcp.approval_workflow.connection',return_value=MagicMock()):
+            result=await prepare_change('RECORD_GOODS_RECEIPT',{'text':'Tahu - 22 papan'},'CEMPLANG','Read-only repeat-report regression')
+        self.assertEqual(result['status'],'POSSIBLE_DUPLICATE')
+        self.assertEqual(result['preview']['existingReceiptId'],495)
+        self.assertIn('do not ask to commit',result['message'])
+        self.assertEqual(result['impact']['stock'],'NONE')
+
     async def test_preview_and_knowledge_run_in_parallel_once_and_keep_gate(self):
         preview_entered=asyncio.Event();knowledge_entered=asyncio.Event()
         async def preview(change):

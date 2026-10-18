@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 
 from backend import operational_api as op
+from backend.receipt_identity import jakarta_day_bounds, receipt_signature
 
 _INSTALLED = False
 _MIN_SCORE = 0.62
@@ -256,6 +257,55 @@ def _preferred_vendor(reported: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _existing_receipts(cur, payload, reported, vendor):
+    """Read same-day receiving independently of the PO's current open/closed status.
+
+    Equal quantities are a review signal, not proof of a unique delivery. Block
+    another automatic write and return the actual receiving IDs for inspection.
+    """
+    signature=receipt_signature(reported,op.normalize_text,op.canonical_unit)
+    if signature is None:
+        return []
+    start,end=jakarta_day_bounds(_target_date(payload))
+    sql='''select gr.id as receipt_id,gr.purchase_order_id,gr.received_at,
+                  gr.source_external_id,po.po_code,po.vendor_code,po.status as po_status,
+                  jsonb_agg(jsonb_build_object(
+                    'reported_item_name',coalesce(gri.reported_item_name,poi.item_name),
+                    'received_qty',gri.received_qty,'unit',gri.unit)) as receipt_items
+           from goods_receipts gr
+           join purchase_orders po on po.id=gr.purchase_order_id
+           join goods_receipt_items gri on gri.goods_receipt_id=gr.id
+           left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
+           where upper(po.site)=upper(%s) and gr.received_at>=%s and gr.received_at<%s
+             and gr.match_status='CONFIRMED' '''
+    params=[payload.site,start,end]
+    if vendor:
+        sql+=' and upper(po.vendor_code)=upper(%s)';params.append(vendor)
+    if payload.purchase_order_id:
+        sql+=' and po.id=%s';params.append(payload.purchase_order_id)
+    sql+=' group by gr.id,po.id order by gr.id desc limit 30'
+    cur.execute(sql,params)
+    matches=[]
+    for row in cur.fetchall():
+        if receipt_signature(row['receipt_items'],op.normalize_text,op.canonical_unit)==signature:
+            matches.append({'receiptId':int(row['receipt_id']), 'purchaseOrderId':int(row['purchase_order_id']),
+                            'poCode':row['po_code'],'purchaseOrderStatus':row['po_status'],
+                            'vendorCode':row['vendor_code'],'receivedAt':row['received_at'],
+                            'receivedDate':_target_date(payload).isoformat()})
+    return matches
+
+
+def _existing_preview(site, vendor, reported, existing):
+    po_ids=sorted({row['purchaseOrderId'] for row in existing})
+    return {'committed':False,'canCommit':False,'site':site,'vendorCode':vendor or existing[0]['vendorCode'],
+            'receiptState':'POSSIBLE_DUPLICATE','existingReceipts':existing,
+            'existingReceiptId':existing[0]['receiptId'] if len(existing)==1 else None,
+            'purchaseOrderId':po_ids[0] if len(po_ids)==1 else None,'purchaseOrderIds':po_ids,
+            'reportedItems':reported,'matches':[],'requiresConfirmation':False,
+            'reason':'Receiving with the same items and quantities already exists on this Jakarta date. Review the existing receipt; do not record it again.',
+            'resolverVersion':'multi-po-v2'}
+
+
 def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
     op.require_db()
     site = op.normalize_site(payload.site)
@@ -268,6 +318,12 @@ def receive_from_whatsapp_v2(payload: op.WhatsAppReceiptIn) -> dict[str, Any]:
     with op.connection() as conn:
         with conn.cursor() as cur:
             hint = vendor or _preferred_vendor(reported)
+            existing=_existing_receipts(cur,payload,reported,hint)
+            if existing:
+                result=_existing_preview(site,vendor,reported,existing)
+                if payload.commit:
+                    raise HTTPException(409,detail={'message':'Existing receiving requires review; no new stock written',**result})
+                return result
             pos = _candidate_pos(cur, payload, hint)
             items = _candidate_items(cur, pos)
             target = _target_date(payload)
@@ -373,5 +429,6 @@ def install() -> None:
         raise RuntimeError("receiving/whatsapp route not found; refusing unsafe patch install")
     op.receive_from_whatsapp = receive_from_whatsapp_v2
     _INSTALLED = True
+
 
 

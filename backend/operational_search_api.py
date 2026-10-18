@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.db import connection, database_ready
+from backend.receipt_identity import jakarta_day_bounds
 
 router = APIRouter(tags=["operational-search"])
 
@@ -19,6 +20,7 @@ def require_db() -> None:
 def search_purchase_orders(
     site: str = "",
     vendor: str = "",
+    po_code: str = Query(default="", alias="poCode"),
     distribution_date: date | None = Query(default=None, alias="distributionDate"),
     date_from: date | None = Query(default=None, alias="dateFrom"),
     date_to: date | None = Query(default=None, alias="dateTo"),
@@ -46,6 +48,9 @@ def search_purchase_orders(
     if vendor:
         sql += " and upper(po.vendor_code)=upper(%s)"
         params.append(vendor)
+    if po_code:
+        sql += " and upper(po.po_code)=upper(%s)"
+        params.append(po_code)
     if distribution_date is not None:
         sql += " and pc.distribution_date=%s"
         params.append(distribution_date)
@@ -89,7 +94,8 @@ def search_goods_receipts(
     require_db()
     sql = """
         select gr.id as goods_receipt_id, gr.purchase_order_id, gr.receipt_code,
-               gr.received_at, gr.source_type, gr.source_external_id, gr.reporter,
+               gr.received_at, (gr.received_at at time zone 'Asia/Jakarta')::date as received_date,
+               gr.source_type, gr.source_external_id, gr.reporter,
                gr.match_status, gr.match_confidence, po.po_code, po.site,
                po.vendor_code, po.status as purchase_order_status, pc.distribution_date
         from goods_receipts gr
@@ -111,8 +117,10 @@ def search_goods_receipts(
         sql += " and pc.distribution_date=%s"
         params.append(distribution_date)
     if received_date is not None:
-        sql += " and date(gr.received_at)=%s"
-        params.append(received_date)
+        # UI/operator dates are Jakarta dates, including midnight stored as 17:00Z.
+        start,end=jakarta_day_bounds(received_date)
+        sql += " and gr.received_at>=%s and gr.received_at<%s"
+        params.extend([start,end])
     sql += " order by gr.received_at desc nulls last,gr.id desc limit %s"
     params.append(limit)
 
@@ -135,3 +143,4 @@ def search_goods_receipts(
                 )
                 row["items"] = cur.fetchall()
     return {"items": rows, "count": len(rows)}
+

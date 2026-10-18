@@ -178,6 +178,8 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
             "finance": "NONE",
             "caution": "Do not double-post receipts already entered manually.",
         }
+        if result.get('receiptState')=='POSSIBLE_DUPLICATE':
+            impact={'goodsReceipt':'NONE: REVIEW EXISTING RECEIPT','stock':'NONE','finance':'NONE'}
     elif action == "RECORD_STOCK_OPNAME":
         data["location"] = change.site
         result = await core_request(
@@ -341,7 +343,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
             return {"loaded":False,"error":str(exc)[:160]}
 
     (preview,before,impact),knowledge = await asyncio.gather(preview_once(),knowledge_once())
-    status = "DRAFT" if preview.get("canCommit") is False else "PENDING"
+    duplicate_review=preview.get('receiptState')=='POSSIBLE_DUPLICATE'
+    status = "POSSIBLE_DUPLICATE" if duplicate_review else ("DRAFT" if preview.get("canCommit") is False else "PENDING")
     _db_ready()
     proposal_id = uuid.uuid4()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=TTL_MINUTES)
@@ -377,12 +380,12 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "form": describe_form(action, change.payload, preview),
         "isDestructive": action in DESTRUCTIVE_ACTIONS,
         "writeEnabled": operational_writes_enabled(),
-        "message": "Preview prepared; no operational record changed. Render native ChatGPT choices; wait for a NEW user confirmation before executing.",
+        "message": ("Existing receiving found. Show its receipt ID and details; do not ask to commit this report again. No operational record changed." if duplicate_review else "Preview prepared; no operational record changed. Render native ChatGPT choices; wait for a NEW user confirmation before executing."),
         "runtimeKnowledge":knowledge,
         "receiptInput":change.payload.get("receipt_input_summary"),
         "receivedTimePrecision":change.payload.get("received_time_precision"),
         "timingMs":{"prepare":round((time.monotonic()-started)*1000)},
-        "nextStep":"Show this proposal now; do not preview or fetch runtime context again. Wait for explicit operator approval.",
+        "nextStep":("Show existing receipt ID(s), not a missing PO error or another save confirmation. A genuinely additional delivery needs distinct operator-supplied evidence." if duplicate_review else "Show this proposal now; do not preview or fetch runtime context again. Wait for explicit operator approval."),
     }
 
 
