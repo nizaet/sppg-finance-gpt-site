@@ -35,7 +35,13 @@ ACTION_MAP = {
     "FINALIZE_PO": "FINALIZE_PURCHASE_ORDER",
     "MARK_PO_SENT": "MARK_PURCHASE_ORDER_SENT",
 }
-EXTRA_ACTIONS = {"DELETE_DRAFT_PO", "IMPORT_WHATSAPP_PO", "CREATE_NO_PO_PAYABLE"}
+EXTRA_ACTIONS = {
+    "DELETE_DRAFT_PO", "IMPORT_WHATSAPP_PO", "CREATE_NO_PO_PAYABLE",
+    "CREATE_ACCOUNTANT_TRANSACTIONS", "UPDATE_ACCOUNTANT_TRANSACTION",
+    "RECORD_GOODS_RECEIPT", "RECORD_STOCK_OPNAME",
+    "CREATE_PAYABLE_FROM_RECEIPT", "RECORD_VENDOR_PAYMENT",
+    "RECONCILE_VENDOR_PAYMENT",
+}
 CONTROL_ACTIONS = frozenset(ACTION_MAP) | EXTRA_ACTIONS
 DESTRUCTIVE_ACTIONS = frozenset({"DELETE_DRAFT_PO", "CANCEL_PO", "REVISE_PO"})
 PO_ACTIONS_WITH_SNAPSHOT = frozenset({
@@ -107,7 +113,117 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         po_site = str(before.get("site") or before.get("result", {}).get("site") or "").upper()
         if po_site != change.site:
             raise ValueError("PO site does not match the requested site")
-    if action == "CREATE_NO_PO_PAYABLE":
+    if action == "CREATE_ACCOUNTANT_TRANSACTIONS":
+        from backend.gpt_bridge_api import FinanceTransactionBatchIn
+        data["site"] = change.site
+        batch = FinanceTransactionBatchIn.model_validate(data)
+        totals = {"income": 0.0, "expense": 0.0, "unpaidExpense": 0.0}
+        for line in batch.items:
+            totals[line.type] += float(line.amount)
+            if line.type == "expense" and (line.is_debt or line.payment_status in {"unpaid", "partial"}):
+                totals["unpaidExpense"] += float(line.amount) - float(line.paid_amount or 0)
+        result = {
+            "canCommit": True, "committed": False, "site": change.site,
+            "sourceRef": batch.source_ref, "itemCount": len(batch.items),
+            "items": [item.model_dump(mode="json") for item in batch.items],
+            "totals": {key: round(value, 2) for key, value in totals.items()},
+            "note": "Commit may write PostgreSQL and separately synchronize Firestore.",
+        }
+        impact = {
+            "accountant": f"CREATE {len(batch.items)} FINANCE TRANSACTIONS",
+            "firestore": "SYNC ATTEMPT; response status must be checked",
+            "stock": "NONE",
+            "duplicate": "Source_ref and canonical item data provide idempotency.",
+        }
+    elif action == "UPDATE_ACCOUNTANT_TRANSACTION":
+        from backend.gpt_bridge_api import FinanceTransactionPatchIn
+        tx_id = str(data.get("transaction_id") or "").strip()
+        if not tx_id:
+            raise ValueError("transaction_id required")
+        patch = dict(data.get("patch") or {})
+        if not patch:
+            raise ValueError("nonempty patch required")
+        validated = FinanceTransactionPatchIn.model_validate(patch)
+        found = await core_request("GET", "/v1/gpt/finance-transactions", params={
+            "site": change.site, "q": tx_id, "limit": 100,
+        })
+        matches = [r for r in found.get("items", []) if str(r.get("transaction_id")) == tx_id]
+        if len(matches) != 1:
+            raise ValueError("Target Accountant transaction must exist exactly once in the selected site")
+        before = matches[0]
+        result = {
+            "canCommit": True, "committed": False, "site": change.site,
+            "transactionId": tx_id, "fieldsChanged": validated.model_dump(exclude_unset=True, mode="json"),
+        }
+        impact = {
+            "accountant": f"UPDATE TRANSACTION {tx_id}",
+            "firestore": "MAY RESYNC THE SAME DOCUMENT",
+            "stock": "NONE",
+            "beforeAmount": before.get("amount"),
+            "afterAmount": patch.get("amount", before.get("amount")),
+        }
+    elif action == "RECORD_GOODS_RECEIPT":
+        data["site"] = change.site
+        result = await core_request("POST", "/v1/receiving/whatsapp", json_body={**data, "commit": False})
+        result.pop("confirmationToken", None)
+        impact = {
+            "goodsReceipt": "CREATE/UPDATE RECEIVING",
+            "stock": "ACCEPTED QUANTITIES MAY BE POSTED TO WAREHOUSE",
+            "finance": "NONE",
+            "caution": "Do not double-post receipts already entered manually.",
+        }
+    elif action == "RECORD_STOCK_OPNAME":
+        data["location"] = change.site
+        result = await core_request(
+            "POST", "/v1/inventory/stock-opname/whatsapp", json_body={**data, "commit": False},
+        )
+        impact = {
+            "stock": "NEW PHYSICAL BASELINE replaces the previous SO baseline",
+            "finance": "NONE", "po": "Future stock projections and PO recommendations may change.",
+        }
+    elif action == "CREATE_PAYABLE_FROM_RECEIPT":
+        data["site"] = change.site
+        result = await core_request(
+            "POST", "/v1/vendor-payables/from-receipt", json_body={**data, "commit": False},
+        )
+        impact = {
+            "vendorPayable": "CREATE UNPAID INVOICE",
+            "stock": "NONE", "finance": "NONE",
+            "note": "PO and goods receipt IDs must exist and match the site.",
+        }
+    elif action == "RECORD_VENDOR_PAYMENT":
+        data["site"] = change.site
+        result = await core_request(
+            "POST", "/v1/vendor-payments/record-evidence", json_body={**data, "commit": False},
+        )
+        impact = {
+            "vendorPayment": "RECORD PAID TRANSFER",
+            "finance": "IMPORTANT: AUTO CREATES AN ACCOUNTANT EXPENSE",
+            "firestore": "SYNC ATTEMPT TO ACCOUNTANT; inspect final status",
+            "stock": "NONE",
+            "warning": "Do not also create another manual Accountant expense for this transfer.",
+        }
+    elif action == "RECONCILE_VENDOR_PAYMENT":
+        payment_id = int(data.get("payment_id") or 0)
+        if payment_id <= 0:
+            raise ValueError("payment_id must be positive")
+        result = await core_request(
+            "POST", f"/v1/vendor-payments/{payment_id}/reconcile",
+            json_body={
+                "vendor_invoice_id": data.get("vendor_invoice_id"),
+                "note": data.get("note", ""),
+                "actor": "sppg-control-room",
+                "commit": False,
+            },
+        )
+        if str(result.get("site") or "").upper() != change.site:
+            raise ValueError("Payment does not belong to selected site")
+        impact = {
+            "vendorPayment": "RECONCILE EXISTING PAID TRANSFER",
+            "finance": "DO NOT CREATE A SECOND PAYMENT OR EXPENSE",
+            "stock": "NONE",
+        }
+    elif action == "CREATE_NO_PO_PAYABLE":
         data["site"] = change.site
         manual = ManualPayableIn.model_validate({**data, "commit": False})
         result = preview_manual_payable(manual)
@@ -243,6 +359,44 @@ def read_change(approval_id: str) -> dict[str, Any]:
 async def _execute(change: ChangeRequest) -> dict[str, Any]:
     data = dict(change.payload)
     data.pop("commit", None)
+    if change.action == "CREATE_ACCOUNTANT_TRANSACTIONS":
+        return await core_request("POST", "/v1/gpt/finance-transactions", json_body={
+            **data, "site": change.site,
+        })
+    if change.action == "UPDATE_ACCOUNTANT_TRANSACTION":
+        tx_id = str(data.pop("transaction_id"))
+        patch = dict(data.get("patch") or {})
+        patch["actor"] = "sppg-control-room"
+        return await core_request(
+            "PATCH", f"/v1/gpt/finance-transactions/{tx_id}", json_body=patch,
+        )
+    if change.action == "RECORD_GOODS_RECEIPT":
+        return await core_request("POST", "/v1/receiving/whatsapp", json_body={
+            **data, "site": change.site, "commit": True,
+        })
+    if change.action == "RECORD_STOCK_OPNAME":
+        return await core_request("POST", "/v1/inventory/stock-opname/whatsapp", json_body={
+            **data, "location": change.site, "commit": True,
+        })
+    if change.action == "CREATE_PAYABLE_FROM_RECEIPT":
+        return await core_request("POST", "/v1/vendor-payables/from-receipt", json_body={
+            **data, "site": change.site, "commit": True,
+        })
+    if change.action == "RECORD_VENDOR_PAYMENT":
+        return await core_request("POST", "/v1/vendor-payments/record-evidence", json_body={
+            **data, "site": change.site, "commit": True,
+        })
+    if change.action == "RECONCILE_VENDOR_PAYMENT":
+        payment_id = int(data.pop("payment_id"))
+        return await core_request(
+            "POST", f"/v1/vendor-payments/{payment_id}/reconcile",
+            json_body={
+                "vendor_invoice_id": data.get("vendor_invoice_id"),
+                "note": data.get("note", ""),
+                "actor": "sppg-control-room",
+                "commit": True,
+            },
+        )
     if change.action == "CREATE_NO_PO_PAYABLE":
         model = ManualPayableIn.model_validate({**data, "site": change.site, "commit": False})
         return commit_manual_payable(model)
