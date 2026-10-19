@@ -82,7 +82,9 @@ async def prepareSppgControlledChange(
     MARK_PO_SENT, DELETE_DRAFT_PO, IMPORT_WHATSAPP_PO, CREATE_NO_PO_PAYABLE,
     RECORD_GOODS_RECEIPT, RECORD_STOCK_OPNAME, CREATE_PAYABLE_FROM_RECEIPT,
     RECORD_VENDOR_PAYMENT, RECONCILE_VENDOR_PAYMENT,
-    CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION.
+    CREATE_ACCOUNTANT_TRANSACTIONS, UPDATE_ACCOUNTANT_TRANSACTION,
+    UPSERT_INVENTORY_ITEM_MASTER (shared inventory master and additive aliases;
+    site may be GLOBAL for this action only).
     Input is a single proposal; knowledge is loaded in parallel inside this call.
     For receipts prefer receiving_preview with original raw report text; never preview twice.
     Receiving supports explicit OWNER review of unambiguous over-receipt.
@@ -435,4 +437,5 @@ def build_app() -> Any:
 
 
 app = build_app()
+
 

@@ -45,6 +45,7 @@ EXTRA_ACTIONS = {
     "RECORD_GOODS_RECEIPT", "RECORD_STOCK_OPNAME",
     "CREATE_PAYABLE_FROM_RECEIPT", "RECORD_VENDOR_PAYMENT",
     "RECONCILE_VENDOR_PAYMENT",
+    "UPSERT_INVENTORY_ITEM_MASTER",
 }
 CONTROL_ACTIONS = frozenset(ACTION_MAP) | EXTRA_ACTIONS
 DESTRUCTIVE_ACTIONS = frozenset({"DELETE_DRAFT_PO", "CANCEL_PO", "REVISE_PO"})
@@ -57,7 +58,7 @@ class ChangeRequest(BaseModel):
     action: str
     payload: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=3, max_length=1000)
-    site: Literal["MAJA", "CEMPLANG"]
+    site: Literal["MAJA", "CEMPLANG", "GLOBAL"]
 
 
 def _hash_json(value: Any) -> str:
@@ -106,6 +107,8 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
     action, data = change.action, dict(change.payload)
     if action not in CONTROL_ACTIONS:
         raise ValueError("Action not in the confirmed-write allowlist")
+    if change.site=='GLOBAL' and action!='UPSERT_INVENTORY_ITEM_MASTER':
+        raise ValueError('GLOBAL is only allowed for the shared inventory master')
     if "site" in data and data["site"] != change.site:
         raise ValueError("Cross-site payload and change.site mismatch")
     data.pop("commit", None)
@@ -117,7 +120,16 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         po_site = str(before.get("site") or before.get("result", {}).get("site") or "").upper()
         if po_site != change.site:
             raise ValueError("PO site does not match the requested site")
-    if action == "CREATE_ACCOUNTANT_TRANSACTIONS":
+    if action == "UPSERT_INVENTORY_ITEM_MASTER":
+        data.pop('site',None)
+        allowed={'code','canonical_name','category_code','base_unit','aliases','metadata','active','expected_before_hash','require_unchanged','require_unit'}
+        if set(data)-allowed:
+            raise ValueError('Unknown inventory master fields: '+', '.join(sorted(set(data)-allowed)))
+        result=await core_request('POST','/v1/inventory/items',json_body={**data,'commit':False,'require_unit':True})
+        before=result.get('before')
+        impact={'master':'GLOBAL_SHARED_MAJA_CEMPLANG','aliases':'ADD/PRESERVE; CONFLICTS REJECTED',
+                'stock':'NONE','finance':'NONE','note':'Master defaults are shared across both sites. Existing SO/receiving quantities are not rewritten.'}
+    elif action == "CREATE_ACCOUNTANT_TRANSACTIONS":
         from backend.gpt_bridge_api import FinanceTransactionBatchIn
         data["site"] = change.site
         unknown_payment = any("payment_status" not in row and "is_debt" not in row for row in data.get("items",[]))
@@ -314,6 +326,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
     # Prepare is intentionally available before the production switch is on.
     if action not in CONTROL_ACTIONS:
         raise ValueError("Action not in the confirmed-write allowlist")
+    if site=='GLOBAL' and action!='UPSERT_INVENTORY_ITEM_MASTER':
+        raise ValueError('GLOBAL is only allowed for the shared inventory master')
     if payload.get("site",site) != site:
         raise ValueError("Cross-site payload and change.site mismatch")
     started = time.monotonic()
@@ -335,7 +349,7 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
     async def knowledge_once():
         try:
             body=await asyncio.wait_for(core_request("GET","/v1/gpt/operational-context",params={
-                "site":site,"vendor":change.payload.get("vendor_code"),"q":"","limit":6,
+                "site":None if action=='UPSERT_INVENTORY_ITEM_MASTER' else site,"vendor":change.payload.get("vendor_code"),"q":"","limit":6,
                 "asOf":str(change.payload.get("received_at") or "")[:10] or None,
             }), timeout=2.0)
             return compact_knowledge(body)
@@ -343,6 +357,10 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
             return {"loaded":False,"error":str(exc)[:160]}
 
     (preview,before,impact),knowledge = await asyncio.gather(preview_once(),knowledge_once())
+    if action=='UPSERT_INVENTORY_ITEM_MASTER' and preview.get('expectedBeforeHash'):
+        change.payload['expected_before_hash']=preview['expectedBeforeHash']
+        change.payload['require_unchanged']=True
+        change.payload['require_unit']=True
     duplicate_review=preview.get('receiptState')=='POSSIBLE_DUPLICATE'
     status = "POSSIBLE_DUPLICATE" if duplicate_review else ("DRAFT" if preview.get("canCommit") is False else "PENDING")
     _db_ready()
@@ -404,6 +422,11 @@ def read_change(approval_id: str) -> dict[str, Any]:
 async def _execute(change: ChangeRequest) -> dict[str, Any]:
     data = dict(change.payload)
     data.pop("commit", None)
+    if change.action=='UPSERT_INVENTORY_ITEM_MASTER':
+        data.pop('site',None)
+        if not data.get('expected_before_hash'):
+            raise ValueError('A reviewed master snapshot is required before commit')
+        return await core_request('POST','/v1/inventory/items',json_body={**data,'commit':True,'require_unchanged':True,'require_unit':True})
     if change.action == "CREATE_ACCOUNTANT_TRANSACTIONS":
         return await core_request("POST", "/v1/gpt/finance-transactions", json_body={
             **data, "site": change.site,
@@ -594,3 +617,4 @@ async def amend_change(approval_id: str, edits: dict[str, Any]) -> dict[str, Any
             cur.execute("update sppg_mcp_approvals set status='SUPERSEDED',confirmed_at=now() where id=%s",(approval_id,))
             conn.commit()
     return await prepare_change(row['action'],data,row['site'],row['reason'])
+

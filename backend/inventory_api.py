@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import json
 import re
 from datetime import date, datetime, timezone
@@ -11,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.db import connection, database_ready
+from backend.item_taxonomy import stock_type
 from backend.stock_opname_parser import canonical_unit, normalize_name, parse_stock_opname_text
 
 router = APIRouter(prefix="/v1", tags=["inventory"])
@@ -45,10 +47,18 @@ SOURCE_PRIORITY = {
 }
 
 
+class RequestItemMatchers(list):
+    """Classification memoization belongs to this DB snapshot, never a global cache."""
+    def __init__(self, values):
+        super().__init__(values)
+        self.classification_cache = {}
+        self.candidate_patterns = {}
+
+
 def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
     cur.execute(
         """
-        select m.code,m.canonical_name,m.normalized_canonical_name,m.category_code,m.base_unit,
+        select m.code,m.canonical_name,m.normalized_canonical_name,m.category_code,m.base_unit,m.metadata,
                coalesce(json_agg(a.normalized_alias) filter (where a.id is not null),'[]'::json) as aliases
         from inventory_item_master m
         left join inventory_item_aliases a on a.inventory_item_code=m.code
@@ -129,11 +139,34 @@ def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
             "source_refs": row.get("source_refs") or [],
             "priority": SOURCE_PRIORITY["PLANNING_SNAPSHOT"],
         })
-    return masters
+    return RequestItemMatchers(masters)
 
 
 def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(masters, RequestItemMatchers):
+        return _classify_item(raw_name, masters)
+    cache = masters.classification_cache
+    if raw_name not in cache:
+        result = _classify_item(raw_name, masters)
+        if len(cache) < 2048:
+            cache[raw_name] = deepcopy(result)
+        return deepcopy(result)
+    return deepcopy(cache[raw_name])
+
+
+def _candidate_contains(candidate, normalized, masters):
+    pattern = rf"(?:^| ){re.escape(candidate)}(?: |$)"
+    if not isinstance(masters, RequestItemMatchers):
+        return re.search(pattern, normalized)
+    compiled = masters.candidate_patterns.get(candidate)
+    if compiled is None:
+        compiled = masters.candidate_patterns[candidate] = re.compile(pattern)
+    return compiled.search(normalized)
+
+
+def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
     normalized = normalize_name(raw_name)
+    raw_type = stock_type(raw_name)
     exact: list[tuple[dict[str, Any], str, str]] = []
     contained: list[tuple[int, dict[str, Any], str, str]] = []
     for master in masters:
@@ -147,7 +180,12 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             elif (
                 str(master.get("source_type") or "") != "GRAMASI"
                 and len(candidate) >= 4
-                and re.search(rf"(?:^| ){re.escape(candidate)}(?: |$)", normalized)
+                and _candidate_contains(candidate, normalized, masters)
+                and not (
+                    raw_type["method"] == "ITEM_TYPE_RULE"
+                    and stock_type(master.get("canonical_name") or candidate)["method"] == "ITEM_TYPE_RULE"
+                    and raw_type["code"] != stock_type(master.get("canonical_name") or candidate)["code"]
+                )
             ):
                 contained.append((len(candidate), master, "TYPE_IN_RAW_NAME", candidate))
 
@@ -186,6 +224,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "knownAliases": master.get("aliases") or [],
             "categoryCode": master.get("category_code"),
             "baseUnit": master.get("base_unit"),
+            "metadata": master.get("metadata") or {},
             "classificationStatus": "MATCHED",
             "classificationMethod": method if source_type == "INVENTORY_MASTER" else f"{source_type}_{method}",
             "classificationConfidence": 1.0 if exact else 0.9,
@@ -198,6 +237,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
             "knownAliases": [],
             "categoryCode": None,
             "baseUnit": None,
+            "metadata": {},
             "classificationStatus": "AMBIGUOUS",
             "classificationMethod": "MULTIPLE_TYPE_MATCHES",
             "classificationConfidence": 0.0,
@@ -209,6 +249,7 @@ def classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any
         "knownAliases": [],
         "categoryCode": None,
         "baseUnit": None,
+        "metadata": {},
         "classificationStatus": "UNMAPPED",
         "classificationMethod": "RAW_NAME_FALLBACK",
         "classificationConfidence": 0.5,
@@ -240,7 +281,7 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
     cur.execute(
         """select gr.id,gr.received_at,po.site,po.vendor_code,po.production_cycle_id,po.po_code
            from goods_receipts gr join purchase_orders po on po.id=gr.purchase_order_id
-           where gr.id=%s""",
+           where gr.id=%s for update of gr""",
         (goods_receipt_id,),
     )
     receipt = cur.fetchone()
@@ -266,13 +307,15 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
         if amount <= 0:
             continue
         key = f"goods-receipt-stock:{goods_receipt_id}:{row['receipt_item_id']}"
+        is_koperasi_transfer = str(receipt["vendor_code"]).upper() == "KOPERASI"
         item = {
             "sourceKey": key,
             "itemName": row["item_name"],
             "qty": amount,
             "unit": row["unit"],
-            "fromLocation": "KOPERASI" if str(receipt["vendor_code"]).upper() == "KOPERASI" else f"VENDOR:{receipt['vendor_code']}",
+            "fromLocation": "KOPERASI" if is_koperasi_transfer else f"VENDOR:{receipt['vendor_code']}",
             "toLocation": site,
+            "movementType": "KOPERASI_STOCK_TRANSFER" if is_koperasi_transfer else "PURCHASE_RECEIPT",
         }
         preview.append(item)
         cur.execute("select id from inventory_movements where source_key=%s", (key,))
@@ -283,11 +326,11 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
             """insert into inventory_movements(
                  movement_type,item_code,item_name,qty,unit,from_location,to_location,production_cycle_id,
                  occurred_at,source_type,source_key,source_ref,notes
-               ) values ('PURCHASE_RECEIPT',%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
+               ) values (%s,%s,%s,%s,%s,%s,%s,%s,coalesce(%s,now()),'GOODS_RECEIPT',%s,%s,%s)""",
             (
-                row["item_code"], row["item_name"], row["qty"], row["unit"], item["fromLocation"], site,
+                item["movementType"], row["item_code"], row["item_name"], row["qty"], row["unit"], item["fromLocation"], site,
                 receipt["production_cycle_id"], receipt["received_at"], key,
-                f"receipt:{goods_receipt_id}", f"PO {receipt['po_code']}",
+                f"receipt:{goods_receipt_id}", f"Pengiriman Gudang Koperasi → {site}; PO {receipt['po_code']}" if is_koperasi_transfer else f"PO {receipt['po_code']}",
             ),
         )
         inserted += 1
@@ -353,13 +396,69 @@ def inventory_from_receipt(payload: ReceiptToStockIn) -> dict[str, Any]:
             }
 
 
+@router.get("/inventory/koperasi-transfers")
+def koperasi_transfer_history(
+    from_date: date | None = Query(default=None, alias="fromDate"),
+    to_date: date | None = Query(default=None, alias="toDate"),
+    destination: str = "",
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> dict[str, Any]:
+    """Read-only delivery ledger from Gudang Koperasi to each kitchen.
+
+    A KOPERASI receipt is a physical inter-warehouse transfer, not an expense.
+    The same movement is negative in KOPERASI stock and positive in the target
+    kitchen. Old rows used PURCHASE_RECEIPT; retain them in the history.
+    """
+    require_db()
+    target = destination.upper().strip()
+    if target and target not in {"MAJA", "CEMPLANG"}:
+        raise HTTPException(400, "destination must be MAJA or CEMPLANG")
+    sql = """
+        select im.id as movement_id,im.movement_type,im.item_code,im.item_name,im.qty,im.unit,
+               im.from_location,im.to_location,im.occurred_at,im.created_at,im.source_key,im.source_ref,im.notes,
+               gr.id as goods_receipt_id,gr.receipt_code,gr.reporter,
+               po.id as purchase_order_id,po.po_code,po.site as po_site,po.vendor_code
+        from inventory_movements im
+        left join goods_receipts gr
+          on im.source_type='GOODS_RECEIPT' and im.source_ref=('receipt:' || gr.id::text)
+        left join purchase_orders po on po.id=gr.purchase_order_id
+        where upper(coalesce(im.from_location,''))='KOPERASI'
+          and upper(coalesce(im.to_location,'')) in ('MAJA','CEMPLANG')
+          and upper(coalesce(im.movement_type,'')) in ('KOPERASI_STOCK_TRANSFER','PURCHASE_RECEIPT')
+    """
+    params: list[Any] = []
+    if from_date:
+        sql += " and date(coalesce(im.occurred_at,im.created_at)) >= %s"
+        params.append(from_date)
+    if to_date:
+        sql += " and date(coalesce(im.occurred_at,im.created_at)) <= %s"
+        params.append(to_date)
+    if target:
+        sql += " and upper(im.to_location)=%s"
+        params.append(target)
+    sql += " order by coalesce(im.occurred_at,im.created_at) desc,im.id desc limit %s"
+    params.append(limit)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            items = [dict(row) for row in cur.fetchall()]
+    for item in items:
+        occurred = item.get("occurred_at") or item.get("created_at")
+        item["transfer_date"] = occurred.date().isoformat() if occurred else None
+    return {"fromLocation": "KOPERASI", "items": items, "count": len(items)}
+
+
 class InventoryMasterItemIn(BaseModel):
     code: str | None = None
-    canonical_name: str = Field(min_length=1)
+    canonical_name: str | None = Field(default=None,min_length=1)
     category_code: str | None = None
     base_unit: str | None = None
     aliases: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    active: bool | None = None
+    expected_before_hash: str | None = None
+    require_unchanged: bool = False
+    require_unit: bool = False
     commit: bool = False
 
 
@@ -382,8 +481,8 @@ def inventory_items(search: str = "", limit: int = Query(default=500, ge=1, le=1
             """
             params: list[Any] = []
             if search.strip():
-                sql += " and (m.canonical_name ilike %s or a.alias_text ilike %s)"
-                params.extend([f"%{search.strip()}%", f"%{search.strip()}%"])
+                sql += " and (m.code ilike %s or m.canonical_name ilike %s or exists (select 1 from inventory_item_aliases seek where seek.inventory_item_code=m.code and seek.alias_text ilike %s))"
+                params.extend([f"%{search.strip()}%"]*3)
             sql += " group by m.code order by m.canonical_name limit %s"
             params.append(limit)
             cur.execute(sql, params)
@@ -394,20 +493,34 @@ def inventory_items(search: str = "", limit: int = Query(default=500, ge=1, le=1
 @router.post("/inventory/items")
 def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
     require_db()
-    code = (payload.code or default_item_code(payload.canonical_name)).upper().strip()
-    aliases = list(dict.fromkeys([payload.canonical_name.strip(), *[x.strip() for x in payload.aliases if x.strip()]]))
-    preview = {
-        "committed": False,
-        "code": code,
-        "canonicalName": payload.canonical_name.strip(),
-        "categoryCode": payload.category_code,
-        "baseUnit": canonical_unit(payload.base_unit),
-        "aliases": aliases,
-    }
-    if not payload.commit:
-        return preview
+    from backend.inventory_master_guard import build_master_plan, snapshot_hash
+    fields=payload.model_dump(exclude_unset=True)
+    code=(payload.code or default_item_code(payload.canonical_name or '')).upper().strip()
     with connection() as conn:
         with conn.cursor() as cur:
+            if payload.commit:
+                cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))",('inventory-master:'+code,))
+            cur.execute('''select m.code,m.canonical_name,m.category_code,m.base_unit,m.active,m.metadata,
+                           coalesce(json_agg(a.alias_text order by a.alias_text) filter (where a.id is not null),'[]'::json) as aliases
+                           from inventory_item_master m
+                           left join inventory_item_aliases a on a.inventory_item_code=m.code
+                           where m.code=%s group by m.code''',(code,))
+            before=cur.fetchone()
+            before=dict(before) if before else None
+            try:
+                plan=build_master_plan(fields,before,normalize_name,canonical_unit,default_item_code)
+            except ValueError as exc:
+                raise HTTPException(422,str(exc)) from exc
+            proposed=plan['proposed'];aliases=proposed['aliases'];code=proposed['code']
+            if payload.commit and payload.require_unchanged and payload.expected_before_hash!=snapshot_hash(before):
+                raise HTTPException(409,'Master changed since approval preview; prepare a fresh proposal')
+            preview={'committed':False,**plan,'code':code,'canonicalName':proposed['canonical_name'],
+                     'categoryCode':proposed['category_code'],'baseUnit':proposed['base_unit'],'aliases':aliases,
+                     'scope':'GLOBAL_SHARED_MAJA_CEMPLANG','stockMutation':False,
+                     'operation':'CREATE' if before is None else 'UPDATE'}
+            if payload.commit:
+                for alias in sorted(aliases,key=normalize_name):
+                    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))",('inventory-alias:'+normalize_name(alias),))
             for alias in aliases:
                 cur.execute(
                     "select inventory_item_code from inventory_item_aliases where normalized_alias=%s and inventory_item_code<>%s",
@@ -416,26 +529,33 @@ def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
                 conflict = cur.fetchone()
                 if conflict:
                     raise HTTPException(409, f"alias '{alias}' already belongs to {conflict['inventory_item_code']}")
+            if not payload.commit or not plan['canCommit']:
+                if payload.commit: preview.update(committed=True,noChange=True)
+                return preview
             cur.execute(
                 """
-                insert into inventory_item_master(code,canonical_name,normalized_canonical_name,category_code,base_unit,metadata)
-                values (%s,%s,%s,%s,%s,%s::jsonb)
+                insert into inventory_item_master(code,canonical_name,normalized_canonical_name,category_code,base_unit,metadata,active)
+                values (%s,%s,%s,%s,%s,%s::jsonb,%s)
                 on conflict (code) do update set canonical_name=excluded.canonical_name,
                   normalized_canonical_name=excluded.normalized_canonical_name,category_code=excluded.category_code,
-                  base_unit=excluded.base_unit,metadata=excluded.metadata,active=true,updated_at=now()
+                  base_unit=excluded.base_unit,metadata=excluded.metadata,active=excluded.active,updated_at=now()
                 """,
-                (code, payload.canonical_name.strip(), normalize_name(payload.canonical_name), payload.category_code,
-                 canonical_unit(payload.base_unit), json.dumps(payload.metadata, ensure_ascii=False)),
+                (code, proposed['canonical_name'], normalize_name(proposed['canonical_name']), proposed['category_code'],
+                 proposed['base_unit'], json.dumps(proposed['metadata'], ensure_ascii=False),proposed['active']),
             )
             for alias in aliases:
                 cur.execute(
                     """
                     insert into inventory_item_aliases(inventory_item_code,alias_text,normalized_alias)
                     values (%s,%s,%s) on conflict (normalized_alias) do update set
-                      alias_text=excluded.alias_text,inventory_item_code=excluded.inventory_item_code
+                      alias_text=excluded.alias_text
+                    where inventory_item_aliases.inventory_item_code=excluded.inventory_item_code
+                    returning id
                     """,
                     (code, alias, normalize_name(alias)),
                 )
+                if not cur.fetchone():
+                    raise HTTPException(409,f"Alias '{alias}' changed ownership; no master changes saved")
             conn.commit()
     preview["committed"] = True
     return preview
@@ -482,12 +602,7 @@ def _replacement_source_ids(source_external_id: str | None) -> list[int]:
 
 
 def _compact_stock_opname_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep GPT Action previews below the response-size limit.
-
-    Classification internals can contain every known alias/source in the
-    master.  They remain in the database workflow but are not useful in the
-    chat preview.
-    """
+    """Keep GPT Action previews below the response-size limit."""
     return [
         {
             "clientKey": item.get("clientKey"),
@@ -898,3 +1013,4 @@ def inventory_requirement_preview(
         "unit": unit,
         "financeTransactionCreated": False,
     }
+

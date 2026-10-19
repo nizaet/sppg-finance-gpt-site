@@ -441,10 +441,17 @@ async def searchSppgInventoryItemMaster(search: str | None = None) -> dict[str, 
 
 
 async def previewOrSaveSppgInventoryItemMaster(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview a canonical inventory item or alias update. Forces commit=false."""
-    return _preview_result(await core_request(
-        "POST", "/v1/inventory/items", json_body=preview_only(payload)
-    ))
+    """Prepare a confirmed master/alias change. A later explicit approval may save it.
+
+    New item: code, canonical_name, base_unit, optional aliases/category_code.
+    Add aliases: existing code + aliases; preserves name/unit/category/metadata.
+    Master is shared across MAJA/CEMPLANG; this never changes stock quantities.
+    commit=true in this initial call is not approval and cannot save the master.
+    """
+    from plugin_mcp.approval_workflow import prepare_change
+    body=preview_only(payload)
+    site=str(body.pop('site',body.pop('location','GLOBAL')) or 'GLOBAL').upper().strip()
+    return await prepare_change('UPSERT_INVENTORY_ITEM_MASTER',body,site,'Tinjau master barang dan alias bersama MAJA/CEMPLANG')
 
 
 async def previewSppgCalculatorDailyPlanImport(payload: dict[str, Any]) -> dict[str, Any]:
@@ -523,7 +530,7 @@ LEGACY_V0186_TOOLS = [
 def register_v0186_tools(mcp: Any) -> list[str]:
     names: list[str] = []
     for fn, annotations in LEGACY_V0186_TOOLS:
-        is_card=fn.__name__ in {"previewOrRecordSppgGoodsReceiptFromMessage","previewOrRecordSppgStockOpnameFromWhatsApp"}
+        is_card=fn.__name__ in {"previewOrRecordSppgGoodsReceiptFromMessage","previewOrRecordSppgStockOpnameFromWhatsApp","previewOrSaveSppgInventoryItemMaster"}
         if is_card: annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,openWorldHint=False)
         mcp.add_tool(
             fn,
@@ -532,4 +539,5 @@ def register_v0186_tools(mcp: Any) -> list[str]:
         )
         names.append(fn.__name__)
     return names
+
 
