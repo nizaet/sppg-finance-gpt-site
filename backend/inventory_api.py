@@ -450,11 +450,15 @@ def koperasi_transfer_history(
 
 class InventoryMasterItemIn(BaseModel):
     code: str | None = None
-    canonical_name: str = Field(min_length=1)
+    canonical_name: str | None = Field(default=None,min_length=1)
     category_code: str | None = None
     base_unit: str | None = None
     aliases: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    active: bool | None = None
+    expected_before_hash: str | None = None
+    require_unchanged: bool = False
+    require_unit: bool = False
     commit: bool = False
 
 
@@ -477,8 +481,8 @@ def inventory_items(search: str = "", limit: int = Query(default=500, ge=1, le=1
             """
             params: list[Any] = []
             if search.strip():
-                sql += " and (m.canonical_name ilike %s or a.alias_text ilike %s)"
-                params.extend([f"%{search.strip()}%", f"%{search.strip()}%"])
+                sql += " and (m.code ilike %s or m.canonical_name ilike %s or exists (select 1 from inventory_item_aliases seek where seek.inventory_item_code=m.code and seek.alias_text ilike %s))"
+                params.extend([f"%{search.strip()}%"]*3)
             sql += " group by m.code order by m.canonical_name limit %s"
             params.append(limit)
             cur.execute(sql, params)
@@ -489,20 +493,34 @@ def inventory_items(search: str = "", limit: int = Query(default=500, ge=1, le=1
 @router.post("/inventory/items")
 def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
     require_db()
-    code = (payload.code or default_item_code(payload.canonical_name)).upper().strip()
-    aliases = list(dict.fromkeys([payload.canonical_name.strip(), *[x.strip() for x in payload.aliases if x.strip()]]))
-    preview = {
-        "committed": False,
-        "code": code,
-        "canonicalName": payload.canonical_name.strip(),
-        "categoryCode": payload.category_code,
-        "baseUnit": canonical_unit(payload.base_unit),
-        "aliases": aliases,
-    }
-    if not payload.commit:
-        return preview
+    from backend.inventory_master_guard import build_master_plan, snapshot_hash
+    fields=payload.model_dump(exclude_unset=True)
+    code=(payload.code or default_item_code(payload.canonical_name or '')).upper().strip()
     with connection() as conn:
         with conn.cursor() as cur:
+            if payload.commit:
+                cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))",('inventory-master:'+code,))
+            cur.execute('''select m.code,m.canonical_name,m.category_code,m.base_unit,m.active,m.metadata,
+                           coalesce(json_agg(a.alias_text order by a.alias_text) filter (where a.id is not null),'[]'::json) as aliases
+                           from inventory_item_master m
+                           left join inventory_item_aliases a on a.inventory_item_code=m.code
+                           where m.code=%s group by m.code''',(code,))
+            before=cur.fetchone()
+            before=dict(before) if before else None
+            try:
+                plan=build_master_plan(fields,before,normalize_name,canonical_unit,default_item_code)
+            except ValueError as exc:
+                raise HTTPException(422,str(exc)) from exc
+            proposed=plan['proposed'];aliases=proposed['aliases'];code=proposed['code']
+            if payload.commit and payload.require_unchanged and payload.expected_before_hash!=snapshot_hash(before):
+                raise HTTPException(409,'Master changed since approval preview; prepare a fresh proposal')
+            preview={'committed':False,**plan,'code':code,'canonicalName':proposed['canonical_name'],
+                     'categoryCode':proposed['category_code'],'baseUnit':proposed['base_unit'],'aliases':aliases,
+                     'scope':'GLOBAL_SHARED_MAJA_CEMPLANG','stockMutation':False,
+                     'operation':'CREATE' if before is None else 'UPDATE'}
+            if payload.commit:
+                for alias in sorted(aliases,key=normalize_name):
+                    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))",('inventory-alias:'+normalize_name(alias),))
             for alias in aliases:
                 cur.execute(
                     "select inventory_item_code from inventory_item_aliases where normalized_alias=%s and inventory_item_code<>%s",
@@ -511,26 +529,33 @@ def upsert_inventory_item(payload: InventoryMasterItemIn) -> dict[str, Any]:
                 conflict = cur.fetchone()
                 if conflict:
                     raise HTTPException(409, f"alias '{alias}' already belongs to {conflict['inventory_item_code']}")
+            if not payload.commit or not plan['canCommit']:
+                if payload.commit: preview.update(committed=True,noChange=True)
+                return preview
             cur.execute(
                 """
-                insert into inventory_item_master(code,canonical_name,normalized_canonical_name,category_code,base_unit,metadata)
-                values (%s,%s,%s,%s,%s,%s::jsonb)
+                insert into inventory_item_master(code,canonical_name,normalized_canonical_name,category_code,base_unit,metadata,active)
+                values (%s,%s,%s,%s,%s,%s::jsonb,%s)
                 on conflict (code) do update set canonical_name=excluded.canonical_name,
                   normalized_canonical_name=excluded.normalized_canonical_name,category_code=excluded.category_code,
-                  base_unit=excluded.base_unit,metadata=excluded.metadata,active=true,updated_at=now()
+                  base_unit=excluded.base_unit,metadata=excluded.metadata,active=excluded.active,updated_at=now()
                 """,
-                (code, payload.canonical_name.strip(), normalize_name(payload.canonical_name), payload.category_code,
-                 canonical_unit(payload.base_unit), json.dumps(payload.metadata, ensure_ascii=False)),
+                (code, proposed['canonical_name'], normalize_name(proposed['canonical_name']), proposed['category_code'],
+                 proposed['base_unit'], json.dumps(proposed['metadata'], ensure_ascii=False),proposed['active']),
             )
             for alias in aliases:
                 cur.execute(
                     """
                     insert into inventory_item_aliases(inventory_item_code,alias_text,normalized_alias)
                     values (%s,%s,%s) on conflict (normalized_alias) do update set
-                      alias_text=excluded.alias_text,inventory_item_code=excluded.inventory_item_code
+                      alias_text=excluded.alias_text
+                    where inventory_item_aliases.inventory_item_code=excluded.inventory_item_code
+                    returning id
                     """,
                     (code, alias, normalize_name(alias)),
                 )
+                if not cur.fetchone():
+                    raise HTTPException(409,f"Alias '{alias}' changed ownership; no master changes saved")
             conn.commit()
     preview["committed"] = True
     return preview
@@ -988,3 +1013,4 @@ def inventory_requirement_preview(
         "unit": unit,
         "financeTransactionCreated": False,
     }
+
