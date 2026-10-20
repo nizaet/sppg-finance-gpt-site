@@ -110,10 +110,11 @@ const runtimeTransform = fs.readFileSync(path.resolve("vite.runtime.config.js"),
 if (!runtimeTransform.includes('helperBlock.replace(\n        "confirmShortageStock(item)",\n        "openShortageStockCheck(item)"')) {
   throw new Error("Production PO actions still bypass the warehouse stock-reference dialog");
 }
-if (!runtimeTransform.includes("MANUAL_UI_STOCK_OVERRIDE_MINUS_PRIOR_COOKING") ||
-    !runtimeTransform.includes("stockQty - plannedDepletion + expectedSupply") ||
+if (!runtimeTransform.includes("data-persisted-po-stock") ||
+    !plannerSource.includes("operationsApi.confirmPoWarehouseStock") ||
+    !plannerSource.includes("refreshDraftWarehouseStock") ||
     !runtimeTransform.includes("Sisa setelah masak hari ini")) {
-  throw new Error("Editable PO stock must subtract today's cooking plan before recalculating recommendation");
+  throw new Error("PO stock must persist to the warehouse and reload the server cooking projection");
 }
 
 const siteTabsSource = fs.readFileSync(

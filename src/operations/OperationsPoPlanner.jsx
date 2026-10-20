@@ -4,7 +4,7 @@ import { BellRing, CalendarDays, CheckCircle2, ChevronDown, ClipboardCopy, Eye, 
 import { operationsApi } from "./apiClient";
 import PoQtyMath from "./PoQtyMath.jsx";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const money = (v) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(v || 0));
 const qty = (v) => Number(v || 0).toLocaleString("id-ID", { maximumFractionDigits: 4 });
 
@@ -89,6 +89,7 @@ function safeVendorForPlanningItem(item, site) {
 function stockTypeCode(value) {
   const text = normalize(value);
   const patterns = [
+    ["JERUK_MEDAN", /^jeruk(?:\s+medan)?$/],
     ["TEPUNG_TAPIOKA", /\b(tepung tapioka|tapioka)\b/],
     ["TEPUNG_TERIGU", /\b(tepung terigu|terigu)\b/],
     ["TEPUNG_MAIZENA", /\b(tepung maizena|maizena)\b/],
@@ -111,6 +112,7 @@ function stockTypeCode(value) {
     ["BAWANG_PUTIH", /\bbawang putih\b/],
     ["BAWANG_MERAH", /\bbawang merah\b/],
     ["CABAI_RAWIT", /\b(cabai|cabe) rawit\b/],
+    ["CABAI_MERAH_KERING", /\b(cabai|cabe) merah kering\b/],
     ["CABAI_MERAH", /\b(cabai|cabe) merah\b/],
     ["GARAM", /\bgaram\b/],
     ["KETUMBAR", /\bketumbar\b/],
@@ -174,7 +176,10 @@ function operationalPlanningUnit(item) {
 function buildStockLookup(items = []) {
   // Exactly one entry per physical row: aliases are names, not extra stock.
   return items.map((item) => ({
-    names: Array.from(new Set([item.item_name, ...(item.raw_item_names || [])].map(normalize).filter(Boolean))),
+    names: Array.from(new Set([item.item_name, ...(item.raw_item_names || []), ...(item.item_aliases || [])].map(normalize).filter(Boolean))),
+    inventoryItemCode: item.inventory_item_code || null,
+    identity: item.inventory_item_code || item.stock_type_code || normalize(item.item_name),
+    displayName: item.item_name,
     unit: normalizeUnit(item.unit),
     typeCode: item.stock_type_code || stockTypeCode(item.item_name),
     balance: Math.max(0, Number(item.available_for_po ?? item.projected_available_for_po ?? item.projected_balance ?? item.balance ?? 0)),
@@ -193,10 +198,12 @@ function stockForItem(item, lookup) {
   const name = normalize(item.item_name);
   const unit = normalizeUnit(item.unit);
   const typeCode = stockTypeCode(item.item_name);
-  const candidates = lookup.filter(row => typeCode
-    ? row.typeCode === typeCode
-    : row.names.includes(name));
-  const matched = candidates.filter(row => convertKnownStockQty(row.balance, row.unit, unit, typeCode) != null);
+  const itemCode = item.inventory_item_code || item.item_code;
+  const byCode = itemCode ? lookup.filter(row => row.inventoryItemCode === itemCode) : [];
+  const byName = lookup.filter(row => row.names.includes(name));
+  const candidates = byCode.length ? byCode : byName.length ? byName : lookup.filter(row => typeCode && row.typeCode === typeCode);
+  const ambiguousAlias = !typeCode && !byCode.length && new Set(byName.map(row => row.inventoryItemCode).filter(Boolean)).size > 1;
+  const matched = (ambiguousAlias ? [] : candidates).filter(row => convertKnownStockQty(row.balance, row.unit, unit, typeCode) != null);
   const unconverted = candidates.filter(row => !matched.includes(row) && row.actualBalance > 0);
   const sum = field => Number(matched.reduce((total, row) => total + convertKnownStockQty(row[field], row.unit, unit, typeCode), 0).toFixed(4));
   return {
@@ -207,13 +214,31 @@ function stockForItem(item, lookup) {
     lastStockCheckAt: matched.map(row => row.lastStockCheckAt).filter(Boolean).sort().at(-1) || null,
     conversionNotes: Array.from(new Set(matched.flatMap(row => row.conversionNotes))),
     basis: matched.length ? "CONFIRMED_NAME_TYPE_AND_UNIT" : "NO_MATCHING_STOCK",
-    allocationKey: `${typeCode || name}|${unit}`,
+    allocationKey: `${matched.length ? [...new Set(matched.map(row => row.identity))].sort().join("+") : typeCode || name}|${unit}`,
+    matchedNames: [...new Set(matched.map(row => row.displayName))],
     confidence: matched.length && matched.every(row => row.confidence !== "LOW") ? "HIGH" : "LOW",
-    requiresReview: unconverted.length > 0,
+    requiresReview: ambiguousAlias || unconverted.length > 0,
     unconvertedStock: unconverted.map(row => ({ name: row.names[0], unit: row.unit, quantity: row.actualBalance })),
-    unitWarning: candidates.some(row => !matched.includes(row))
+    unitWarning: ambiguousAlias ? "Alias merujuk ke beberapa master. Periksa master barang di Gudang." : candidates.some(row => !matched.includes(row))
       ? `Stok ${[...new Set(candidates.filter(row => !matched.includes(row)).map(row => row.unit))].join(", ")} berbeda satuan dari ${unit}; sesuaikan satuan dan qty di Gudang.` : "",
   };
+}
+
+
+function refreshDraftWarehouseStock(snapshot, current, inventory, cooperative, site, changedId) {
+  const previous = new Map(current.map(item => [item.planning_snapshot_item_id, item]));
+  const fresh = draftItemsForSnapshot(snapshot, inventory, cooperative, site);
+  const changedKey = fresh.find(item => item.planning_snapshot_item_id === changedId)?.stock_identity_key;
+  return fresh.map(item => {
+    const old = previous.get(item.planning_snapshot_item_id);
+    if (!old) return item;
+    const affected = item.stock_identity_key === changedKey;
+    const manual = Number(old.po_qty) !== Number(old.recommended_po_qty);
+    return { ...old, ...item, vendor_code: old.vendor_code, excluded: old.excluded, notes: old.notes,
+      planning_price: old.planning_price, pending_stock_qty: affected ? undefined : old.pending_stock_qty,
+      po_qty: affected || !manual ? item.recommended_po_qty : old.po_qty,
+      stock_manual_resolution: affected ? false : old.stock_manual_resolution };
+  });
 }
 
 function dateRange(from, to, maxDays = 7) {
@@ -261,6 +286,8 @@ function draftItemsForSnapshot(snapshot, inventoryItems, cooperativeItems, site)
       // separate calculation input so an outstanding PO is never shown as
       // goods already sitting in the warehouse.
       stock_qty: stock.actualBalance,
+      stock_identity_key: stock.allocationKey,
+      stock_matched_names: stock.matchedNames,
       po_stock_qty: stock.balance,
       actual_stock_qty: stock.actualBalance,
       projected_stock_qty: stock.projectedBalance,
@@ -443,6 +470,11 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [planningSnapshot, setPlanningSnapshot] = useState(null);
   const [draftItems, setDraftItems] = useState([]);
+  const [warehouseStockSaving, setWarehouseStockSaving] = useState(false);
+  const [warehouseRefreshNeeded, setWarehouseRefreshNeeded] = useState(null);
+  const [rangeStockNeedsRefresh, setRangeStockNeedsRefresh] = useState(false);
+  const warehouseSaveRef = React.useRef(false);
+  const warehouseRequestRef = React.useRef(null);
   const [dailyPulled, setDailyPulled] = useState(false);
   const [vendorOptions, setVendorOptions] = useState(FALLBACK_VENDORS.map(([code, name]) => ({ code, name })));
   const [loading, setLoading] = useState(false);
@@ -500,6 +532,9 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   }, [phoneVendor, vendorPhones]);
 
   const activeSite = fixedSite || site;
+  const warehouseContext = `${activeSite}|${distributionDate}|${cookingDate}|${planningSnapshot?.id || ""}`;
+  const warehouseContextRef = React.useRef(warehouseContext);
+  warehouseContextRef.current = warehouseContext;
 
   const findActiveItemSplitPo = (item, forDate = distributionDate) => {
     const expected = itemSplitPoCode(activeSite, forDate, item);
@@ -691,7 +726,63 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
     setDraftItems((current) => current.map((item) => item.planning_snapshot_item_id === planningItemId ? { ...item, ...patch, ...(item.stock_requires_review && Object.hasOwn(patch, "po_qty") ? { stock_manual_resolution: true } : {}) } : item));
   };
 
+  const updateDraftStockQty = (planningItemId, plannedQty, value) => {
+    if (warehouseSaveRef.current) return;
+    const stockQty = Number(value);
+    if (!Number.isFinite(stockQty) || stockQty < 0) return;
+    updateDraftItem(planningItemId, { pending_stock_qty: stockQty });
+  };
+
+  const reloadDraftWarehouseStock = async (changedId, context = warehouseContext) => {
+    const [inventory, cooperative] = await Promise.all([
+      operationsApi.getInventoryBalances({ site: activeSite, search: "", limit: 1000, forDate: distributionDate, cookingDate, sameDayStockBeforeCooking: true }),
+      operationsApi.getInventoryBalances({ site: "KOPERASI", search: "", limit: 1000, forDate: distributionDate, cookingDate }),
+    ]);
+    if (warehouseContextRef.current !== context) return;
+    setDraftItems(current => refreshDraftWarehouseStock(planningSnapshot, current, inventory?.items || [], cooperative?.items || [], activeSite, changedId));
+    setWarehouseRefreshNeeded(null);
+  };
+
+  const saveDraftWarehouseStock = async (item) => {
+    if (warehouseSaveRef.current || !planningSnapshot || item.pending_stock_qty == null) return;
+    const context = warehouseContext;
+    if (!window.confirm(`Simpan stok fisik ${item.item_name} di Gudang ${activeSite}: ${qty(item.actual_stock_qty)} → ${qty(item.pending_stock_qty)} ${item.unit}?\n\nStok ini dihitung SEBELUM masak hari ini. Sistem akan mengurangi kebutuhan masak sebelum ${cookingDate}, lalu menghitung ulang jumlah pembelian draft PO. PO yang sudah tersimpan tetap perlu revisi tersendiri.`)) return;
+    warehouseSaveRef.current = true; setWarehouseStockSaving(true); setError(""); setMessage("");
+    let saved = false;
+    try {
+      const body = { site: activeSite, planning_snapshot_item_id: item.planning_snapshot_item_id,
+        distribution_date: distributionDate, cooking_date: cookingDate, unit: item.unit,
+        expected_actual_balance: item.actual_stock_qty, target_balance: item.pending_stock_qty };
+      const signature = JSON.stringify(body);
+      if (warehouseRequestRef.current?.signature !== signature) warehouseRequestRef.current = { signature, id: crypto.randomUUID() };
+      const result = await operationsApi.confirmPoWarehouseStock({ ...body, request_id: warehouseRequestRef.current.id });
+      if (!result?.committed) throw new Error("Koreksi stok belum terkonfirmasi tersimpan.");
+      saved = true;
+      if (warehouseContextRef.current !== context) return;
+      setRangeStockNeedsRefresh(true);
+      await reloadDraftWarehouseStock(item.planning_snapshot_item_id, context);
+      warehouseRequestRef.current = null;
+      setMessage(`Stok Gudang ${activeSite} tersimpan untuk ${result.itemName}; jumlah pembelian draft dihitung ulang setelah pemakaian masak sebelumnya. Movement #${result.movementId}.`);
+      window.dispatchEvent(new CustomEvent("sppg:inventory-stock-saved", { detail: { site: activeSite } }));
+    } catch (err) {
+      if (warehouseContextRef.current === context) {
+        if (saved) setWarehouseRefreshNeeded(item.planning_snapshot_item_id);
+        setError(saved ? `Stok sudah tersimpan, tetapi hitungan PO belum diperbarui. Tekan Tarik ulang stok & PO. ${err.message || ""}` : err.message || "Gagal menyimpan stok gudang");
+      }
+    } finally {
+      warehouseSaveRef.current = false; setWarehouseStockSaving(false);
+    }
+  };
+
+  const warehouseDraftBlocked = () => {
+    if (warehouseSaveRef.current || warehouseRefreshNeeded != null || draftItems.some(item => item.pending_stock_qty != null)) {
+      setError("Simpan perubahan stok dan tunggu hitungan PO terbaru sebelum membuat PO."); return true;
+    }
+    return false;
+  };
+
   const createVendorPo = async (vendor) => {
+    if (warehouseDraftBlocked()) return;
     setDraftVendorError(null);
     setError("");
     const showDraftError = (detail) => {
@@ -767,6 +858,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createSingleItemPo = async (item) => {
+    if (warehouseDraftBlocked()) return;
     if (!planningSnapshot?.id || !item?.vendor_code || Number(item.po_qty || 0) <= 0) return;
     const existingSplit = findActiveItemSplitPo(item, distributionDate);
     if (existingSplit) {
@@ -1276,6 +1368,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         return { date, snapshot: detail, items };
       })), refreshPurchaseOrders().catch(() => null)]);
       setRangeRows(rows);
+      setRangeStockNeedsRefresh(false);
       const count = rows.reduce((sum, row) => sum + row.items.length, 0);
       setMessage(`${count} item ${rangeVendor} ditarik dari ${rows.filter((row) => row.snapshot).length} tanggal planning. Qty masih dapat diedit sebelum dibuat menjadi PO.`);
     } catch (err) {
@@ -1293,6 +1386,8 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
   };
 
   const createRangeDrafts = async () => {
+    if (warehouseDraftBlocked()) return;
+    if (rangeStockNeedsRefresh) { setError("Stok gudang berubah. Tarik ulang rentang planning sebelum membuat PO gabungan."); return; }
     setRangeActionFeedback(null);
     setError("");
     const showRangeError = (detail) => {
@@ -1458,6 +1553,7 @@ export default function OperationsPoPlanner({ fixedSite = "" }) {
         </div>
 
         {error && <div className="ops-error">{error}</div>}
+        {warehouseRefreshNeeded != null && <button type="button" disabled={warehouseStockSaving} onClick={async () => { try { await reloadDraftWarehouseStock(warehouseRefreshNeeded); setError(""); } catch (err) { setError(err.message || "Gagal memperbarui stok"); } }}>Tarik ulang stok & PO</button>}
         {message && <div className="ops-success">{message}</div>}
 
         {!loading && !dailyPulled && (

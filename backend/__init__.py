@@ -118,3 +118,6 @@ operational_router.include_router(vendor_payment_evidence_router)
 operational_router.include_router(vendor_payment_evidence_compat_router)
 operational_router.include_router(inventory_router)
 operational_router.include_router(inventory_manual_router)
+
+from backend.po_warehouse_stock_api import router as po_warehouse_stock_router
+operational_router.include_router(po_warehouse_stock_router)

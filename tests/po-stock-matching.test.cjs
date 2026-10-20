@@ -78,3 +78,25 @@ assert.equal(env.poCoversItem(priorOrder,range[1].selected[0],'2026-10-06'),fals
 assert.equal(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,false),'PO-CEMPLANG-20261005-20261007-WIKIAN');
 assert.match(env.rangePoCode('CEMPLANG','2026-10-05','2026-10-07','WIKIAN',range,true),/-TAMBAHAN-/,'new items can use a separate draft without overwriting an existing PO');
 console.log('PASS production PO stock matching: identity, units, aliases and zero remainder');
+
+for (const [planning, warehouse] of [['Jeruk Medan','Jeruk'], ['Jeruk','Jeruk Medan']]) {
+  assert.equal(stock({item_name:planning,unit:'kg'}, [row(warehouse,'kg',8)]).balance,8,'orange shorthand matches both directions');
+}
+for (const name of ['Jeruk Nipis','Jeruk Lemon','Daun Jeruk','Jeruk Bali']) {
+  assert.equal(stock({item_name:'Jeruk Medan',unit:'kg'},[row(name,'kg',10)]).balance,0,`must not consume ${name}`);
+  assert.equal(stock({item_name:name,unit:'kg'},[row('Jeruk','kg',10)]).balance,0,`reverse must not consume oranges for ${name}`);
+}
+const aliasRows = [row('Buah Naga Merah','kg',9,{inventory_item_code:'NAGA',item_aliases:['Buah Naga','Buah Naga Merah']})];
+assert.equal(stock({item_name:'Buah Naga',unit:'kg'},aliasRows).balance,9,'confirmed master aliases survive projection');
+const aliasDraft=env.draftItemsForSnapshot({items:[{id:101,item_name:'Buah Naga',unit:'kg',planned_qty:7},{id:102,item_name:'Buah Naga Merah',unit:'kg',planned_qty:7}]},aliasRows,[],'MAJA');
+assert.deepEqual(aliasDraft.map(item=>item.recommended_po_qty),[0,5],'aliases allocate the same physical balance only once');
+const orangePlan={items:[{id:201,item_name:'Jeruk Medan',unit:'kg',planned_qty:12},{id:202,item_name:'Kentang',unit:'kg',planned_qty:20}]};
+const oldDraft=env.draftItemsForSnapshot(orangePlan,[row('Jeruk','kg',10,{available_for_po:6,planned_depletion:4}),row('Kentang','kg',2)],[],'CEMPLANG');
+oldDraft[0].po_qty=99;oldDraft[0].pending_stock_qty=15;oldDraft[1].po_qty=77;
+const changed=env.refreshDraftWarehouseStock(orangePlan,oldDraft,[row('Jeruk','kg',15,{available_for_po:11,planned_depletion:4}),row('Kentang','kg',2)],[],'CEMPLANG',201);
+assert.equal(changed[0].stock_qty,15);assert.equal(changed[0].recommended_po_qty,1);assert.equal(changed[0].po_qty,1,'saving physical stock recalculates purchase qty even if it was previously manually edited');
+assert.equal(changed[0].pending_stock_qty,undefined);assert.equal(changed[1].po_qty,77,'unrelated manual purchase edits stay');
+console.log('PASS orange alias isolation, confirmed master aliases, shared allocation and stock-driven PO recalculation');
+
+assert.equal(stock({item_name:'Cabai Merah Kering',unit:'kg'},[row('Cabai Merah','kg',8)]).balance,0,'dry chili must never borrow fresh chili stock');
+assert.equal(stock({item_name:'Cabai Merah',unit:'kg'},[row('Cabai Merah Kering','kg',8)]).balance,0);

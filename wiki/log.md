@@ -128,3 +128,10 @@
 - Operator requested actual quantities per received item and correction after an accidental OK. Added quantity entry alongside the existing exact-as-PO shortcuts and receipt editing in the PO panel and receiving history.
 - Preserve PO/raw evidence/invoice/payment layers, append before/after audit records, apply only accepted-quantity stock deltas at the original effective time, and flag linked invoices for review. Newer physical SO remains the stock anchor.
 - Add request idempotency, PO/receipt locking, stale snapshot checks, decimal/reject validation and synthetic SQL/UI regressions. Document the [receiving correction workflow](inventory/goods-receipt-corrections.md) and update navigation; no production transaction is changed as a test.
+
+## 2026-10-20 - Persist PO stock edits and recognize confirmed warehouse aliases
+
+- Operator reported that changing warehouse stock in a pulled PO did not update Gudang or purchase qty, and that Jeruk/Jeruk Medan names failed to match in both directions. The production JSX transform injected a browser-only override and retained earlier manual purchase qty.
+- Add explicit audited PO-screen physical-stock save, server projection reload, forced affected-ingredient purchase recalculation, unchanged unrelated edits, and stale/duplicate/site/plan guards. Block PO creation until pending edits and projection refresh are resolved.
+- The PO count explicitly precedes today's cooking; narrow the former general after-cooking recount rule for this workflow only. Keep stock facts, SO, planning, saved PO and invoice layers separate. Derive cooking dates in Jakarta.
+- Carry confirmed master aliases into PO matching, allocate each physical identity once, and recognize the operator's Jeruk/Jeruk Medan shorthand while preserving distinct citrus ingredients. Add backend and production-transform UI regressions without changing production transactions as tests. Update [stock scope](inventory/po-reminder-stock-scope.md) and navigation.

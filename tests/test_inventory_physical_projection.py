@@ -240,3 +240,32 @@ def test_po_pre_cooking_so_reserves_n0_for_n_plus_one(site, monkeypatch):
     assert row["actual_balance"] == 10
     assert row["planned_depletion"] == 4
     assert row["available_for_po"] == 6
+
+
+@pytest.mark.parametrize('site',['MAJA','CEMPLANG'])
+@pytest.mark.parametrize('before_cooking',[False,True])
+def test_po_physical_count_before_cooking_keeps_todays_consumption(site,before_cooking,monkeypatch):
+    today=datetime.now(ZoneInfo('Asia/Jakarta')).date()
+    checked=datetime.combine(today,datetime.min.time(),tzinfo=ZoneInfo('Asia/Jakarta'))
+    base={'latestStockOpnameDate':today,'forDate':today+timedelta(days=2),'items':[{
+        'item_name':'Jeruk','unit':'kg','so_qty':10,'movement_delta':5,
+        'actual_usage_depletion':0,'last_stock_check_at':checked,'stock_check_before_cooking':before_cooking,
+    }]}
+    monkeypatch.setattr(projection,'inventory_balances',lambda **kwargs:base)
+    monkeypatch.setattr(projection,'load_item_matchers',lambda *args:[])
+    plans=[{'item_name':'Jeruk Medan','unit':'kg','planned_qty':4,'cooking_date':today,'distribution_date':today+timedelta(days=1)},
+           {'item_name':'Jeruk Medan','unit':'kg','planned_qty':12,'cooking_date':today+timedelta(days=1),'distribution_date':today+timedelta(days=2)}]
+    monkeypatch.setattr(projection,'connection',connection_for([[],[],plans,[]]))
+    row=projection.inventory_balances_v2(site=site,limit=1000,for_date=today+timedelta(days=2),cooking_date=today+timedelta(days=1),same_day_stock_before_cooking=True)['items'][0]
+    assert row['stock_type_code']=='JERUK_MEDAN'
+    assert row['actual_balance']==15
+    assert row['planned_depletion']==(4 if before_cooking else 0)
+    assert row['available_for_po']==(11 if before_cooking else 15)
+
+
+def test_master_aliases_are_exposed_without_multiplying_stock():
+    master={'code':'NAGA','canonical_name':'Buah Naga Merah','normalized_canonical_name':'buah naga merah','aliases':['buah naga'],'source_type':'INVENTORY_MASTER','priority':100}
+    merged=projection._merge_base_rows([{'item_name':'Buah Naga Merah','unit':'kg','so_qty':9,'movement_delta':0,'actual_usage_depletion':0}], [master])
+    row=next(iter(merged.values()))
+    assert row['so_qty']==9
+    assert 'buah naga' in row['item_aliases']
