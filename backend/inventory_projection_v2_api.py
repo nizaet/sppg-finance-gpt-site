@@ -73,6 +73,8 @@ def _empty_row(label: str, unit: str, type_code: str, method: str) -> dict[str, 
         "stock_type_method": method,
         "last_movement_at": None,
         "last_stock_check_at": None,
+        "stock_check_before_cooking": False,
+        "item_aliases": [],
         "confidence": "LOW",
         "stock_as_of": None,
         "stock_age_days": None,
@@ -92,11 +94,16 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
         checked = item.get("last_stock_check_at")
         if checked and (row["last_stock_check_at"] is None or checked > row["last_stock_check_at"]):
             row["last_stock_check_at"] = checked
+            row["stock_check_before_cooking"] = bool(item.get("stock_check_before_cooking"))
         age = item.get("stock_age_days")
         if age is not None:
             row["stock_age_days"] = max(int(age), int(row.get("stock_age_days") or 0))
         if item.get("last_movement_at") and (row.get("last_movement_at") is None or item["last_movement_at"] > row["last_movement_at"]):
             row["last_movement_at"] = item["last_movement_at"]
+        match = classify_item(str(item.get("item_name") or ""), masters)
+        for alias in [match.get("canonicalItemName"), *(match.get("knownAliases") or [])]:
+            if alias and alias not in row["item_aliases"]:
+                row["item_aliases"].append(alias)
         for name in [item.get("item_name"), *(item.get("raw_item_names") or [])]:
             if name and name not in row["raw_item_names"]:
                 row["raw_item_names"].append(name)
@@ -119,7 +126,10 @@ def _merge_base_rows(base_items: list[dict[str, Any]], masters: list[dict[str, A
 
 def _before_physical_check(row: dict[str, Any], distribution_date: date) -> bool:
     checked = row.get("last_stock_check_at")
-    return bool(checked and distribution_date <= checked.astimezone(ZoneInfo("Asia/Jakarta")).date())
+    if not checked:
+        return False
+    checked_date = checked.astimezone(ZoneInfo("Asia/Jakarta")).date()
+    return distribution_date < checked_date if row.get("stock_check_before_cooking") else distribution_date <= checked_date
 
 
 def _available_for_next_po(
@@ -226,11 +236,11 @@ def inventory_balances_v2(
                           -- Do not restore stock simply because a completed
                           -- daily plan was later superseded by a newer snapshot.
                           select distinct on (site,distribution_date) id,site,distribution_date,
-                                 coalesce(date(cooking_at), distribution_date - 1) as cooking_date
+                                 coalesce((cooking_at at time zone 'Asia/Jakarta')::date, distribution_date - 1) as cooking_date
                           from planning_snapshots
                           where upper(site)=%s and status <> 'REJECTED'
-                            and coalesce(date(cooking_at), distribution_date - 1) >= %s
-                            and coalesce(date(cooking_at), distribution_date - 1) < %s
+                            and coalesce((cooking_at at time zone 'Asia/Jakarta')::date, distribution_date - 1) >= %s
+                            and coalesce((cooking_at at time zone 'Asia/Jakarta')::date, distribution_date - 1) < %s
                           order by site,distribution_date,created_at desc,id desc
                         ) ps
                         join planning_snapshot_items psi on psi.planning_snapshot_id=ps.id

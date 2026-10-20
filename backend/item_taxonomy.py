@@ -44,10 +44,13 @@ _STOCK_TYPE_PATTERNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("KUNYIT_BUBUK", "Kunyit Bubuk", (r"\bkunyit\s+bubuk\b",)),
     ("BAWANG_PUTIH_BUBUK", "Bawang Putih Bubuk", (r"\bbawang\s+putih\s+bubuk\b",)),
     ("BAWANG_BOMBAY", "Bawang Bombay", (r"\b(bawang\s+)?bombay\b",)),
+    # Operator-confirmed shorthand in SO/PO; citrus used as seasoning remains separate.
+    ("JERUK_MEDAN", "Jeruk Medan", (r"^jeruk(?:\s+medan)?$",)),
     ("ANGGUR", "Anggur", (r"\banggur\b", r"\bgrapes?\b")),
     ("BAWANG_MERAH", "Bawang Merah", (r"\bbawang\s+merah\b",)),
     ("BAWANG_PUTIH", "Bawang Putih", (r"\bbawang\s+putih\b",)),
     ("CABAI_RAWIT", "Cabai Rawit", (r"\b(cabai|cabe)\s+rawit\b",)),
+    ("CABAI_MERAH_KERING", "Cabai Merah Kering", (r"\b(cabai|cabe)\s+merah\s+kering\b",)),
     ("CABAI_MERAH", "Cabai Merah", (r"\b(cabai|cabe)\s+merah\b",)),
     ("TELUR", "Telur", (r"\btelur\b", r"\beggs?\b")),
     ("TEMPE", "Tempe", (r"\btempe\b",)),

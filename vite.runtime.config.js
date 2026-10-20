@@ -59,39 +59,16 @@ function poReminderActionsVisible() {
         "confirmShortageStock(item)",
         "openShortageStockCheck(item)",
       );
+      // Stock edits are persisted and repriced by the source planner. Never
+      // inject the former browser-only override into the production bundle.
       currentHelperBlock = currentHelperBlock.replace(
         /  const updateDraftStockQty = \(planningItemId, plannedQty, value\) => \{[\s\S]*?\n  \};/,
-        `  const updateDraftStockQty = (planningItemId, plannedQty, value) => {
-    const stockQty = Math.max(0, Number(value || 0));
-    const current = draftItems.find((row) => row.planning_snapshot_item_id === planningItemId);
-    const plannedDepletion = Math.max(0, Number(current?.planned_depletion_qty || 0));
-    const expectedSupply = Math.max(0, Number(current?.expected_supply_qty || 0));
-    // Today's physical cooking is paid from physical stock first. An
-    // unreceived PO can cover a later target, but must never erase a negative
-    // physical balance from today's cooking (4 - 6 + 5 is 5, not 3), instead
-    // of the old stockQty - plannedDepletion + expectedSupply calculation.
-    const availableAfterPlanning = Number((Math.max(0, stockQty - plannedDepletion) + expectedSupply).toFixed(4));
-    const recommended = Math.max(0, Number((Number(plannedQty || 0) - availableAfterPlanning).toFixed(4)));
-    const wasAuto = !current || Number(current.po_qty || 0) === Number(current.recommended_po_qty || 0);
-    updateDraftItem(planningItemId, {
-      stock_qty: stockQty,
-      actual_stock_qty: stockQty,
-      po_stock_qty: availableAfterPlanning,
-      projected_stock_qty: availableAfterPlanning,
-      stock_basis: "MANUAL_UI_STOCK_OVERRIDE_MINUS_PRIOR_COOKING",
-      stock_confidence: "MANUAL",
-      recommended_po_qty: recommended,
-      po_qty: wasAuto ? recommended : current.po_qty,
-    });
-  };`,
+        "",
       );
-      if (!currentHelperBlock.includes("MANUAL_UI_STOCK_OVERRIDE_MINUS_PRIOR_COOKING")) {
-        throw new Error("[po-runtime] Editable stock formula did not preserve prior cooking depletion");
-      }
       next = next.replace(returnAnchor, `${currentHelperBlock}${returnAnchor}`);
 
       const stockDisplay = `<strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong>`;
-      const editableStockDisplay = `<div data-editable-stock="v17"><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong><PoQtyMath value={item.stock_qty} title={"Stok gudang " + item.item_name} onChange={(value) => updateDraftStockQty(item.planning_snapshot_item_id, item.planned_qty, value)} />{Number(item.planned_depletion_qty || 0) > 0 && <div className="ops-muted"><strong>Sisa setelah masak hari ini {qty(Math.max(0, Number(item.stock_qty || 0) - Number(item.planned_depletion_qty || 0)))}</strong> · dikurangi {qty(item.planned_depletion_qty)}</div>}</div>`;
+      const editableStockDisplay = `<div data-editable-stock="v17" data-persisted-po-stock="v1"><strong className={Number(item.stock_qty || 0) > 0 ? "ops-stock-positive" : ""}>{qty(item.stock_qty)}</strong><PoQtyMath value={item.pending_stock_qty ?? item.stock_qty} disabled={warehouseStockSaving || item.stock_requires_review || warehouseRefreshNeeded != null} title={"Stok gudang " + item.item_name} onChange={(value) => updateDraftStockQty(item.planning_snapshot_item_id, item.planned_qty, value)} />{item.pending_stock_qty != null && <div><span className="ops-muted">Perubahan belum disimpan ke Gudang.</span><button type="button" disabled={warehouseStockSaving || warehouseRefreshNeeded != null} onClick={() => saveDraftWarehouseStock(item)}>Simpan stok & hitung PO</button><button type="button" disabled={warehouseStockSaving} onClick={() => updateDraftItem(item.planning_snapshot_item_id, { pending_stock_qty: undefined })}>Batal</button></div>}{item.stock_matched_names?.length > 0 && <div className="ops-muted">Barang Gudang: {item.stock_matched_names.join(", ")}</div>}{Number(item.planned_depletion_qty || 0) > 0 && <div className="ops-muted"><strong>Sisa setelah masak hari ini {qty(item.po_stock_qty)}</strong> · dikurangi {qty(item.planned_depletion_qty)}</div>}</div>`;
       replaceOnce(stockDisplay, editableStockDisplay, "editable daily stock qty");
 
       replaceOnce(

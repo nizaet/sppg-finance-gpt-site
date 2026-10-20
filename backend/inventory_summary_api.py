@@ -24,6 +24,11 @@ def require_db() -> None:
 def _key(name: str, unit: str | None, masters: list[dict[str, Any]]) -> tuple[str, str, dict[str, Any]]:
     match = {**classify_item(name, masters), "stockTypeCode": stock_type(name)["code"]}
     canonical_name = match["canonicalItemName"]
+    # One physical identity for the operator's Jeruk / Jeruk Medan shorthand.
+    # Keep the original names as evidence/aliases rather than duplicating stock rows.
+    if stock_type(canonical_name)["code"] == "JERUK_MEDAN":
+        match = {**match, "canonicalItemName": "Jeruk Medan"}
+        canonical_name = "Jeruk Medan"
     return normalize_name(canonical_name), canonical_unit(unit), match
 
 
@@ -43,6 +48,7 @@ def _new_row(name: str, unit: str, match: dict[str, Any]) -> dict[str, Any]:
         "planned_depletion": 0.0,
         "last_movement_at": None,
         "last_stock_check_at": None,
+        "stock_check_before_cooking": False,
         "unit_conversion_notes": [],
         "retired_by_unit_change": False,
     }
@@ -213,6 +219,7 @@ def inventory_balances(
                             checked = row["last_stock_check_at"]
                             if checked is None or occurred > checked:
                                 row["last_stock_check_at"] = occurred
+                                row["stock_check_before_cooking"] = notes.get("stock_check_timing") == "BEFORE_COOKING"
                         if (isinstance(notes, dict) and notes.get("unit_change") is True
                                 and str(movement["from_location"] or "").upper() == location
                                 and str(movement["to_location"] or "").upper() == "MANUAL_ADJUSTMENT"):
