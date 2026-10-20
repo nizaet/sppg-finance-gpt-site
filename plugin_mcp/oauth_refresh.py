@@ -15,9 +15,16 @@ from backend.db import connection, database_ready
 SESSION_DAYS = 7
 
 
+class RefreshRejected(ValueError):
+    """Stable diagnostic code, never containing credential material."""
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 def _hash(token: str) -> str:
     if not token or len(token) > 512:
-        raise ValueError('Invalid refresh token')
+        raise RefreshRejected('INVALID_TOKEN_FORMAT')
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
@@ -59,15 +66,16 @@ def rotate_refresh(token, client_id, resource, audience, scope, allowed_subjects
             cur.execute('select * from sppg_oauth_refresh_tokens where token_hash=%s for update',(key,))
             row=cur.fetchone()
             if not row or row['client_id']!=client_id or row['resource']!=resource.rstrip('/') or row['audience']!=audience or row['scope']!=scope or row['subject'] not in allowed_subjects:
-                raise ValueError('Invalid refresh session binding')
+                raise RefreshRejected('INVALID_SESSION_BINDING')
             now=datetime.now(timezone.utc)
             if row.get('consumed_at') or row.get('revoked_at'):
                 cur.execute('update sppg_oauth_refresh_tokens set revoked_at=coalesce(revoked_at,now()) where family_id=%s',(row['family_id'],))
                 conn.commit()
-                raise ValueError('Refresh token replay or revoked session')
-            if row['expires_at']<=now: raise ValueError('Refresh session expired')
+                raise RefreshRejected('REPLAY_OR_REVOKED')
+            if row['expires_at']<=now: raise RefreshRejected('SESSION_EXPIRED')
             new=secrets.token_urlsafe(48)
             cur.execute('update sppg_oauth_refresh_tokens set consumed_at=now() where token_hash=%s and consumed_at is null',(key,))
             _insert(cur,new,row['family_id'],client_id,resource,audience,row['subject'],scope,row['expires_at'])
         conn.commit()
     return {'refresh_token':new,'subject':row['subject'],'scope':scope}
+

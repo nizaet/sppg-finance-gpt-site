@@ -65,6 +65,24 @@ class Form:
     async def form(self):return self.data
 
 class RefreshEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_refresh_logs_safe_reason_without_token_or_exception_secret(self):
+        secret = 'SECRET-MUST-NOT-BE-LOGGED'
+        with patch('plugin_mcp.oauth_server.rotate_refresh', side_effect=ValueError(secret)), \
+             self.assertLogs('sppg_oauth', level='INFO') as captured:
+            result = await oauth.token(Form({'grant_type': 'refresh_token', 'client_id': oauth.DCR_CLIENT_ID,
+                                            'refresh_token': secret}), 'https://auth.test', 'aud', 'https://mcp.test/mcp')
+        self.assertEqual(result.status_code, 400)
+        self.assertNotIn(secret, str(captured.output))
+        self.assertIn('INVALID_REFRESH_SESSION', str(captured.output))
+
+    async def test_known_expired_session_has_specific_safe_reason(self):
+        with patch('plugin_mcp.oauth_server.rotate_refresh', side_effect=refresh.RefreshRejected('SESSION_EXPIRED')), \
+             self.assertLogs('sppg_oauth', level='INFO') as captured:
+            result = await oauth.token(Form({'grant_type': 'refresh_token', 'client_id': oauth.DCR_CLIENT_ID,
+                                            'refresh_token': 'not-a-live-token'}), 'https://auth.test', 'aud', 'https://mcp.test/mcp')
+        self.assertEqual(result.status_code, 400)
+        self.assertIn('SESSION_EXPIRED', str(captured.output))
+
     async def test_native_client_refresh_rotates_without_login_and_no_scope_expansion(self):
         with patch.dict('os.environ',{'SPPG_OAUTH_ALLOWED_SUBJECTS':'SPPG_OWNER'}),patch('plugin_mcp.oauth_server.rotate_refresh',return_value={'subject':'SPPG_OWNER','scope':'sppg:read','refresh_token':'new-refresh'}) as rotate,patch('plugin_mcp.oauth_server.issue_access_token',return_value='access'):
             result=await oauth.token(Form({'grant_type':'refresh_token','client_id':oauth.DCR_CLIENT_ID,'refresh_token':'old-refresh'}),'https://auth.test','aud','https://mcp.test/mcp')
@@ -88,3 +106,4 @@ class RefreshEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status_code,503);self.assertNotIn('access_token',json.loads(result.body))
 
 if __name__=='__main__':unittest.main()
+

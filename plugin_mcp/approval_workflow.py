@@ -11,6 +11,7 @@ import asyncio
 import time
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -26,6 +27,9 @@ from backend.vendor_payables_manual_api import (
 from plugin_mcp.core_proxy import core_request, operational_writes_enabled
 from plugin_mcp.form_fields import describe_form, apply_form
 from plugin_mcp.receipt_fastpath import normalize_receipt_input, compact_knowledge
+from plugin_mcp.confirmation_evidence import confirmation_evidence
+
+audit_logger = logging.getLogger('sppg_confirmation')
 
 
 OWNER = "SPPG_OWNER"
@@ -95,6 +99,27 @@ def _ensure_table(cur: Any) -> None:
         )
         """
     )
+    cur.execute('alter table sppg_mcp_approvals add column if not exists confirmation_received_at timestamptz')
+    cur.execute('alter table sppg_mcp_approvals add column if not exists last_confirmation_outcome jsonb')
+
+
+def _confirmation_outcome(cur, approval_id, status, reason=None):
+    """Persist only audit evidence; this never executes a domain mutation."""
+    value = {'status': status, 'recordedAt': datetime.now(timezone.utc).isoformat()}
+    if reason:
+        value['reason'] = str(reason)[:1200]
+    cur.execute('''update sppg_mcp_approvals
+        set confirmation_received_at=coalesce(confirmation_received_at,now()),
+            last_confirmation_outcome=%s::jsonb where id=%s and operator_sub=%s''',
+        (json.dumps(value), approval_id, OWNER))
+    audit_logger.info('confirmation approvalId=%s outcome=%s', approval_id, status)
+
+
+def _save_confirmation_outcome(approval_id, status, reason=None):
+    with connection() as conn:
+        with conn.cursor() as cur:
+            _confirmation_outcome(cur, approval_id, status, reason)
+        conn.commit()
 
 
 async def _read_po(po_id: int) -> dict[str, Any]:
@@ -416,7 +441,9 @@ def read_change(approval_id: str) -> dict[str, Any]:
             row = cur.fetchone()
             if not row:
                 raise ValueError("Approval request not found")
-            return {**_render_pending(row), "result": row.get("result_data"), "error": row.get("error_message")}
+            evidence = confirmation_evidence(row)
+            evidence['canConfirm'] = evidence['canConfirm'] and operational_writes_enabled()
+            return {**_render_pending(row), "result": row.get("result_data"), "error": row.get("error_message"), 'confirmationEvidence': evidence}
 
 
 async def _execute(change: ChangeRequest) -> dict[str, Any]:
@@ -496,11 +523,14 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
             row = cur.fetchone()
             if not row:
                 raise ValueError("Approval request not found")
+            if row['status'] in {'PENDING', 'DRAFT'}:
+                _confirmation_outcome(cur, approval_id, 'RECEIVED')
             if choice == "CANCEL" and row["status"] == "DRAFT":
                 cur.execute("update sppg_mcp_approvals set status='DECLINED',confirmed_at=now() where id=%s", (approval_id,))
                 conn.commit()
                 return {"approvalId": approval_id,"status":"DECLINED","committed":False}
             if row["status"] != "PENDING":
+                conn.commit()
                 return {
                     "approvalId": approval_id, "status": row["status"],
                     "result": row.get("result_data"), "message": "Already decided; will not execute twice.",
@@ -513,17 +543,21 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
                 conn.commit()
                 return {"approvalId": approval_id, "status": "DECLINED", "committed": False}
             if not operational_writes_enabled():
+                _confirmation_outcome(cur, approval_id, 'WRITE_GATE_CLOSED')
+                conn.commit()
                 return {
                     "approvalId": approval_id, "status": "WRITE_GATE_CLOSED",
                     "committed": False,
                     "message": "Production write gate has not been enabled.",
                 }
             if row["expires_at"] < datetime.now(timezone.utc):
+                _confirmation_outcome(cur, approval_id, 'EXPIRED')
                 cur.execute(
                     "update sppg_mcp_approvals set status='EXPIRED' where id=%s", (approval_id,)
                 )
                 conn.commit()
                 return {"approvalId": approval_id, "status": "EXPIRED", "committed": False}
+            conn.commit()
 
     change = ChangeRequest(
         action=row["action"], payload=row["proposed_payload"],
@@ -533,6 +567,7 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
     try:
         fresh_preview, current, impact = await _preview(change)
         if fresh_preview.get("canCommit") is False:
+            _save_confirmation_outcome(approval_id, 'REVALIDATION_FAILED', 'Current preview requires unresolved input')
             return {"approvalId":approval_id,"status":"REVALIDATION_FAILED","committed":False,"reason":"Current preview requires unresolved input"}
         if row["before_hash"] and _hash_json(current) != row["before_hash"]:
             with connection() as conn:
@@ -553,6 +588,7 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
                     conn.commit()
             return {"approvalId": approval_id, "status": "STALE", "committed": False}
     except Exception as exc:
+        _save_confirmation_outcome(approval_id, 'REVALIDATION_FAILED', str(exc))
         return {"approvalId": approval_id, "status": "REVALIDATION_FAILED", "committed": False,
                 "reason": str(exc)[:600]}
 
@@ -587,6 +623,7 @@ async def confirm_change(approval_id: str, choice: Literal["CONFIRM", "CANCEL"])
                    where id=%s and operator_sub=%s and status='EXECUTING'""",
                 (state, json.dumps(result, default=str, ensure_ascii=False), error_message, approval_id, OWNER),
             )
+            _confirmation_outcome(cur, approval_id, state, error_message)
             conn.commit()
     return {
         "approvalId": approval_id, "status": state,
@@ -617,4 +654,5 @@ async def amend_change(approval_id: str, edits: dict[str, Any]) -> dict[str, Any
             cur.execute("update sppg_mcp_approvals set status='SUPERSEDED',confirmed_at=now() where id=%s",(approval_id,))
             conn.commit()
     return await prepare_change(row['action'],data,row['site'],row['reason'])
+
 

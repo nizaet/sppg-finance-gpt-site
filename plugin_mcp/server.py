@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+from jwt import ExpiredSignatureError
 from pathlib import Path
 from datetime import date, datetime
 from typing import Any, Literal
@@ -124,6 +125,9 @@ async def confirmSppgControlledChangeByText(
     approval_id, with no negation, condition, question or request to edit.
     Native ChatGPT selected options count only when delivered in a NEW user message.
     Batalkan / batal / tolak decline the proposal without domain writes.
+    If the host explicitly says authentication was ACCEPTED and requests a retry,
+    retry these exact arguments once. An explicit platform rejection must not be
+    bypassed. If a domain response is uncertain, read this approval's audit status.
     """
     from plugin_mcp.confirmation_input import confirmation_choice
     return await confirm_change(approval_id, confirmation_choice(approval_id, confirmation_text))
@@ -333,6 +337,8 @@ async def health(_: Request) -> JSONResponse:
         "service": "sppg-plugin-mcp",
         "mode": "v0186-parity-operational-preview",
         "oauthReady": True,
+        "sessionRenewal": {"grant": "refresh_token", "accessTokenSeconds": 3600, "absoluteRefreshDays": 7},
+        "confirmationAuditVersion": 2,
         "legacyV0186Parity": True,
         "legacyV0186ActionCount": 30,
         "parityPlusToolCount": len(LEGACY_V0186_TOOL_NAMES),
@@ -423,7 +429,10 @@ class BearerGate:
             if not supplied:
                 raise ValueError("Missing token")
             validate_access_token(supplied)
-        except Exception:
+        except Exception as exc:
+            failure = 'MISSING_TOKEN' if not supplied else ('ACCESS_TOKEN_EXPIRED' if isinstance(exc, ExpiredSignatureError) else 'INVALID_ACCESS_TOKEN')
+            if path == '/mcp':
+                logger.info('oauth bearer path=/mcp status=401 reason=%s', failure)
             response = unauthorized(resource, required_scope)
             await response(scope, receive, send)
             return
@@ -437,5 +446,6 @@ def build_app() -> Any:
 
 
 app = build_app()
+
 
 

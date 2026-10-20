@@ -32,6 +32,10 @@ class TicketCursor:
             self.state["result_data"] = __import__("json").loads(params[1])
         elif "set status='declined'" in sql:
             self.state["status"] = "DECLINED"
+        elif 'set confirmation_received_at=' in sql:
+            from datetime import datetime, timezone
+            self.state.setdefault('confirmation_received_at', datetime.now(timezone.utc))
+            self.state['last_confirmation_outcome'] = __import__('json').loads(params[0])
 
     def fetchone(self):
         return self.next_row
@@ -115,6 +119,8 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
             response = await confirm_change(state["id"], "CONFIRM")
         self.assertEqual(response["status"], "WRITE_GATE_CLOSED")
         self.assertEqual(state["status"], "PENDING")
+        self.assertIsNotNone(state['confirmation_received_at'])
+        self.assertEqual(state['last_confirmation_outcome']['status'], 'WRITE_GATE_CLOSED')
         execute.assert_not_called()
 
     async def test_approved_change_claimed_once_then_replay_blocked(self):
@@ -142,6 +148,24 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first["committed"])
         self.assertEqual(second["status"], "APPLIED")
         self.assertEqual(execute.await_count, 1)
+        self.assertEqual(state['last_confirmation_outcome']['status'], 'APPLIED')
+
+    async def test_revalidation_failure_audited_without_executing(self):
+        from datetime import datetime, timedelta, timezone
+        state = {'id': 'revalidation-test', 'status': 'PENDING', 'operator_sub': 'SPPG_OWNER',
+                 'site': 'MAJA', 'action': 'CREATE_PO', 'reason': 'Regression test',
+                 'proposed_payload': {}, 'preview_data': {}, 'before_hash': None,
+                 'expires_at': datetime.now(timezone.utc) + timedelta(minutes=5)}
+        with patch('plugin_mcp.approval_workflow._db_ready'), patch('plugin_mcp.approval_workflow._ensure_table'), \
+             patch('plugin_mcp.approval_workflow.connection', return_value=TicketConnection(state)), \
+             patch('plugin_mcp.approval_workflow.operational_writes_enabled', return_value=True), \
+             patch('plugin_mcp.approval_workflow._preview', new_callable=AsyncMock, side_effect=RuntimeError('Core unavailable')), \
+             patch('plugin_mcp.approval_workflow._execute', new_callable=AsyncMock) as execute:
+            result = await confirm_change(state['id'], 'CONFIRM')
+        self.assertEqual(result['status'], 'REVALIDATION_FAILED')
+        self.assertEqual(state['last_confirmation_outcome']['reason'], 'Core unavailable')
+        self.assertEqual(state['status'], 'PENDING')
+        execute.assert_not_awaited()
 
     async def test_unresolved_draft_cannot_execute(self):
         from datetime import datetime, timedelta, timezone
@@ -162,4 +186,5 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

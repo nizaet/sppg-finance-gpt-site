@@ -1,0 +1,58 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "author": {
+    "email": "si.zaet@gmail.com",
+    "name": "zaet ragadena"
+  },
+  "description": "Private adaptive SPPG Control Room with confirmed change cards, legacy GPTS parity, and inherited knowledge for MAJA/CEMPLANG.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "brandColor": "#1F6FEB",
+        "capabilities": [
+          "GPTS v0.18.6 command parity",
+          "Read live MAJA and CEMPLANG operations",
+          "PO and warehouse projection",
+          "Receiving and stock-opname preview",
+          "Vendor invoice, payable and payment preview",
+          "Accountant and BGN workflows",
+          "Persistent SPPG knowledge and conversation learning",
+          "Dynamic workflow-skill improvement from confirmed corrections",
+          "Preview and approval cards for controlled operational changes"
+        ],
+        "category": "Productivity",
+        "defaultPrompt": [
+          "Cek apa yang perlu tindakan hari ini untuk MAJA dan CEMPLANG.",
+          "Cek pengingat PO CEMPLANG dan tampilkan yang belum tertutup saja.",
+          "Masukan pengeluaran Maja lunas sesuai data ini.",
+          "Preview penerimaan barang ini dan cocokkan dengan PO.",
+          "Catat aturan operasional ini untuk dipakai seterusnya."
+        ],
+        "developerName": "zaet ragadena",
+        "displayName": "SPPG Control Room",
+        "longDescription": "Ruang kendali privat MAJA/CEMPLANG: skill GPTS v0.18.6, knowledge lama dan adaptive learning, PO/receiving/SO/payable/Akuntan dengan review before-after serta tombol persetujuan. Write produksi bertahap, wajib konfirmasi dan audit.",
+        "shortDescription": "SPPG: PO, gudang, Akuntan, knowledge, approval cards"
+      },
+      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "requires_local_executor": false,
+      "apps": "./.app.json"
+    }
+  },
+  "keywords": [
+    "SPPG",
+    "MAJA",
+    "CEMPLANG",
+    "GPTS",
+    "PO",
+    "stock opname",
+    "receiving",
+    "vendor",
+    "accountant",
+    "BGN",
+    "knowledge",
+    "operations"
+  ],
+  "name": "sppg-control-room",
+  "version": "1.3.1"
+}
+

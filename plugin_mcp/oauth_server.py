@@ -14,7 +14,15 @@ import httpx
 import jwt
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
-from plugin_mcp.oauth_refresh import create_refresh, rotate_refresh
+from plugin_mcp.oauth_refresh import create_refresh, rotate_refresh, RefreshRejected
+
+oauth_logger = logging.getLogger('sppg_oauth')
+
+
+def token_response(grant, response, reason=None):
+    """Audit grant type and stable error codes only; never log form/body/tokens."""
+    oauth_logger.info('oauth grant=%s status=%s reason=%s', grant, response.status_code, reason or 'OK')
+    return response
 
 _CODES: dict[str, dict] = {}
 CORE = os.getenv(
@@ -218,9 +226,9 @@ small{{color:#555}}
 {fields}
 <input type="password" name="password" autocomplete="current-password"
        placeholder="Password OWNER" required>
-<button type="submit">Izinkan akses baca</button>
+<button type="submit">Hubungkan SPPG Operations</button>
 </form>
-<small>Akses: MAJA + CEMPLANG, read-only.</small>""",
+<small>Akses OWNER: MAJA + CEMPLANG. Perubahan operasional memerlukan konfirmasi.</small>""",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -319,20 +327,21 @@ async def token(
         resource=str(form.get("resource") or expected_resource)
         scope=str(form.get("scope") or REQUIRED_SCOPE)
         if client not in {CHATGPT_CIMD_CLIENT_ID,DCR_CLIENT_ID}:
-            return _oauth_error("invalid_client","Unrecognized ChatGPT OAuth client.")
+            return token_response(grant, _oauth_error("invalid_client","Unrecognized ChatGPT OAuth client."), 'INVALID_CLIENT')
         if not _resource_allowed(resource,expected_resource):
-            return _oauth_error("invalid_target","Refresh resource mismatch.")
+            return token_response(grant, _oauth_error("invalid_target","Refresh resource mismatch."), 'RESOURCE_MISMATCH')
         if set(scope.split())!={REQUIRED_SCOPE}:
-            return _oauth_error("invalid_scope","Refresh cannot expand the authorized scope.")
+            return token_response(grant, _oauth_error("invalid_scope","Refresh cannot expand the authorized scope."), 'SCOPE_MISMATCH')
         allowed={x.strip() for x in os.getenv("SPPG_OAUTH_ALLOWED_SUBJECTS","").split(",") if x.strip()}
         try:
             renewed=await asyncio.to_thread(rotate_refresh,str(form.get("refresh_token") or ""),client,resource,audience,REQUIRED_SCOPE,allowed)
-        except ValueError:
-            return _oauth_error("invalid_grant","Refresh session is invalid, expired, revoked or already used.")
+        except ValueError as exc:
+            reason = exc.code if isinstance(exc, RefreshRejected) else 'INVALID_REFRESH_SESSION'
+            return token_response(grant, _oauth_error("invalid_grant","Refresh session is invalid, expired, revoked or already used."), reason)
         except Exception:
             logging.getLogger("sppg_oauth").warning("Refresh store unavailable")
-            return _oauth_error("temporarily_unavailable","Session renewal unavailable; retry later.",503)
-        return JSONResponse({"access_token":issue_access_token(issuer,audience,subject=renewed["subject"],scope=renewed["scope"]),"refresh_token":renewed["refresh_token"],"token_type":"Bearer","expires_in":3600,"scope":REQUIRED_SCOPE},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
+            return token_response(grant, _oauth_error("temporarily_unavailable","Session renewal unavailable; retry later.",503), 'REFRESH_STORE_UNAVAILABLE')
+        return token_response(grant, JSONResponse({"access_token":issue_access_token(issuer,audience,subject=renewed["subject"],scope=renewed["scope"]),"refresh_token":renewed["refresh_token"],"token_type":"Bearer","expires_in":3600,"scope":REQUIRED_SCOPE},headers={"Cache-Control":"no-store","Pragma":"no-cache"}))
     if grant!="authorization_code":
         return _oauth_error("unsupported_grant_type","Only authorization_code and refresh_token are supported.")
     code = str(form.get("code") or "")
@@ -368,7 +377,7 @@ async def token(
         logging.getLogger("sppg_oauth").warning("Refresh session creation unavailable")
         return _oauth_error("temporarily_unavailable","Session creation unavailable; retry authorization.",503)
     access_token = issue_access_token(issuer, audience)
-    return JSONResponse(
+    return token_response(grant, JSONResponse(
         {
             "access_token": access_token,
             "refresh_token": refresh,
@@ -377,7 +386,7 @@ async def token(
             "scope": REQUIRED_SCOPE,
         },
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
-    )
+    ))
 
 
 async def register(request: Request, issuer: str) -> JSONResponse:
@@ -411,4 +420,5 @@ async def register(request: Request, issuer: str) -> JSONResponse:
         status_code=201,
         headers={"Cache-Control": "no-store"},
     )
+
 
