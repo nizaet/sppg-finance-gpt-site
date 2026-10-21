@@ -140,6 +140,7 @@ def list_purchase_orders_active(
                  from purchase_order_items poi
                  where poi.purchase_order_id=po.id
                    and poi.planning_snapshot_item_id is not null
+                   and coalesce(poi.po_qty,0)>0
                ), array[]::bigint[]) as planning_item_ids,
                coalesce((
                  select array_agg(distinct lower(trim(coalesce(poi.item_name,''))) || '|' || lower(trim(coalesce(poi.unit,''))))
