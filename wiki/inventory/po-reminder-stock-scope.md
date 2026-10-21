@@ -33,3 +33,15 @@ The stock input in the pulled daily PO working set was a browser-only override. 
 - Confirmed master aliases are carried to the PO matcher, with one allocation per physical stock identity. Operator shorthand **Jeruk ↔ Jeruk Medan** is recognized in both directions and grouped as one orange stock identity. Jeruk Nipis, Jeruk Lemon, Jeruk Bali and Daun Jeruk remain distinct. Other shorthand needs a confirmed master alias rather than broad substring/fuzzy merging.
 
 Evidence: operator bug report in APP OPERASIONAL SPPG, 2026-10-20; `tests/po-warehouse-stock-ui.test.cjs`, `tests/test_po_warehouse_stock.py`, `tests/po-stock-matching.test.cjs`, and `tests/test_inventory_physical_projection.py`. Related: [receiving corrections](goods-receipt-corrections.md), [Koperasi flow](koperasi-flow.md).
+
+## Pantry ingredient identity — operator correction, 2026-10-21
+
+- **Gula**, **Gula Putih**, **Gula Pasir**, and branded white sugar such as **Gula Pasir Gulaku/Gmp** share the white-sugar stock type. Brown/palm/icing/liquid sugars remain separate. Brands qualify the saved display name; they do not prevent a known interchangeable ingredient from matching warehouse stock or saved PO coverage.
+- **Garam Refina ↔ Garam**, **Kecap Asin Hati Angsa ↔ Kecap Asin**, and **Saus Tiram Saori ↔ Saus Tiram** share their respective ingredient identities. Kecap Manis and Kecap Jamur remain distinct from Kecap Asin.
+- **Kaldu Jamur/Totole**, **Jamur**, **Jamur Kuping**, **Jamur Tiram**, and **Kecap Jamur** are separate identities. A broad substring, recipe note, stale planning identifier or contradictory alias must not substitute a different known ingredient.
+- Saved PO detection uses actual saved item references for the selected site/vendor/date, with compatible units. A new planning snapshot or added brand does not make an already ordered ingredient new. Canceled orders and zero-quantity lines do not provide coverage.
+- Read-only inspection of MAJA KOPERASI PO **#457**, distribution 2026-10-21, confirms a real Kaldu Jamur Totole line: its “sudah PO” badge is legitimate and must remain. The same order also contains Garam, Kecap Asin and Saus Tiram; their branded planning names must not invite duplicate orders.
+- Ingredient equivalence does not establish packaging size. **Kaldu Jamur 5 bungkus** remains visible as unconverted stock against planning in **pack** until the bungkus-to-pack ratio is confirmed. The existing pouch-to-pack rule does not prove that every bungkus has the same contents.
+- Preserve the latest SO, prior cooking depletion and one allocation per physical balance. This correction changes matching, not production SO, quantities, receiving, sent POs or payments.
+
+Evidence: operator report and scoped read-only master/PO audit, 2026-10-21; shared `tests/fixtures/pantry-identities.json`, `tests/test_pantry_canonical_identity.py`, and production-transformed `tests/po-stock-matching.test.cjs`.

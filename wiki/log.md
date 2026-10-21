@@ -135,3 +135,9 @@
 - Add explicit audited PO-screen physical-stock save, server projection reload, forced affected-ingredient purchase recalculation, unchanged unrelated edits, and stale/duplicate/site/plan guards. Block PO creation until pending edits and projection refresh are resolved.
 - The PO count explicitly precedes today's cooking; narrow the former general after-cooking recount rule for this workflow only. Keep stock facts, SO, planning, saved PO and invoice layers separate. Derive cooking dates in Jakarta.
 - Carry confirmed master aliases into PO matching, allocate each physical identity once, and recognize the operator's Jeruk/Jeruk Medan shorthand while preserving distinct citrus ingredients. Add backend and production-transform UI regressions without changing production transactions as tests. Update [stock scope](inventory/po-reminder-stock-scope.md) and navigation.
+
+## 2026-10-21 - Pantry brand equivalence and strict saved-PO ingredient identity
+
+- Operator reported white sugar SO missing under Gula Pasir Gulaku and suspected Kaldu Jamur/Garam/Saus Tiram PO misclassification. Scoped read-only inspection confirms actual Kaldu Jamur Totole, Garam, Kecap Asin and Saus Tiram lines in MAJA KOPERASI PO #457; the kaldu badge is valid, while brand differences caused missed coverage for the other pantry lines.
+- Recognize confirmed Gula/Gula Putih/Gula Pasir equivalence, ignore known pantry brand suffixes in date/unit-compatible PO matching, and retain prior cooking depletion and physical-stock allocation. Protect distinct sugar types, mushroom/seasoning/sauce types, stale IDs/aliases, canceled orders and zero-quantity PO lines.
+- Keep unspecified bungkus-to-pack conversion unresolved rather than inventing package contents. No production SO, receiving, PO quantity or financial record is changed for testing. Add shared frontend/backend identity fixtures and regressions; update [stock scope](inventory/po-reminder-stock-scope.md) and navigation.

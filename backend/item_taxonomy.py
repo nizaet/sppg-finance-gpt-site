@@ -30,11 +30,14 @@ _STOCK_TYPE_PATTERNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("MINYAK_WIJEN", "Minyak Wijen", (r"\bminyak\s+wijen\b",)),
     ("KECAP_MANIS", "Kecap Manis", (r"\bkecap\s+manis\b",)),
     ("KECAP_ASIN", "Kecap Asin", (r"\bkecap\s+asin\b",)),
+    ("KECAP_JAMUR", "Kecap Jamur", (r"\bkecap\s+(hitam\s+)?jamur\b",)),
     ("KECAP_INGGRIS", "Kecap Inggris", (r"\bkecap\s+inggris\b", r"\bworcestershire\b")),
     ("SAUS_TOMAT", "Saus Tomat", (r"\bsaus\s+tomat\b", r"\bsaos\s+tomat\b")),
     ("SAUS_SAMBAL", "Saus Sambal", (r"\bsaus\s+sambal\b", r"\bsaos\s+sambal\b")),
     ("SAUS_TIRAM", "Saus Tiram", (r"\b(saus|saos)(\s+saori)?\s+tiram\b", r"\bsaori\b.*\btiram\b")),
-    ("GULA_PASIR", "Gula Pasir", (r"\bgula\s+pasir\b", r"\bgula\s+putih\b")),
+    # Owner-confirmed SO shorthand. Keep brown/palm/icing sugar distinct;
+    # a brand is ignored only after the ingredient type is established.
+    ("GULA_PASIR", "Gula Pasir", (r"\bgula\s+pasir\b", r"\bgula\s+putih\b", r"^gula(?:\s+(gulaku|gmp))?$", r"^gulaku$")),
     ("GARAM", "Garam", (r"\bgaram\b",)),
     ("BAKING_POWDER", "Baking Powder", (r"\bbaking\s+powder\b",)),
     ("CUKA", "Cuka", (r"\bcuka\b",)),
@@ -57,6 +60,10 @@ _STOCK_TYPE_PATTERNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("TAHU", "Tahu", (r"\btahu\b", r"\btofu\b")),
     ("BERAS", "Beras", (r"\bberas\b", r"\brice\b")),
     ("IKAN_DORI", "Ikan Dori", (r"\bdori\b",)),
+    # A fresh mushroom is never the seasoning or sauce containing its name.
+    ("JAMUR_KUPING", "Jamur Kuping", (r"^jamur\s+kuping\b",)),
+    ("JAMUR_TIRAM", "Jamur Tiram", (r"^jamur\s+tiram\b",)),
+    ("JAMUR", "Jamur", (r"^jamur(?:\s+segar)?$",)),
 )
 
 

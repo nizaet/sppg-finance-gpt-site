@@ -100,3 +100,38 @@ console.log('PASS orange alias isolation, confirmed master aliases, shared alloc
 
 assert.equal(stock({item_name:'Cabai Merah Kering',unit:'kg'},[row('Cabai Merah','kg',8)]).balance,0,'dry chili must never borrow fresh chili stock');
 assert.equal(stock({item_name:'Cabai Merah',unit:'kg'},[row('Cabai Merah Kering','kg',8)]).balance,0);
+
+for (const [name, code] of JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/pantry-identities.json'), 'utf8'))) {
+  assert.equal(env.stockTypeCode(name), code, `frontend/backend identity parity: ${name}`);
+}
+for (const name of ['Gula Merah','Gula Aren','Gula Jawa','Gula Halus','Gula Cair']) {
+  assert.equal(stock({item_name:'Gula Pasir Gulaku',unit:'kg'},[row(name,'kg',20)]).balance,0,`white sugar never borrows ${name}`);
+}
+const sugar = env.draftItemsForSnapshot({items:[{id:501,item_name:'Gula Pasir Gulaku',unit:'kg',planned_qty:4}]},[row('Gula','kg',5)],[],'MAJA')[0];
+assert.equal(sugar.stock_qty,5);
+assert.equal(sugar.recommended_po_qty,0,'4 kg planning is covered by the 5 kg sugar SO');
+const depletedSugar = env.draftItemsForSnapshot({items:[{id:501,item_name:'Gula Pasir Gulaku',unit:'kg',planned_qty:4}]},[row('Gula','kg',5,{available_for_po:2,planned_depletion:3})],[],'MAJA')[0];
+assert.equal(depletedSugar.recommended_po_qty,2,'brand equivalence preserves prior cooking depletion');
+const pantryPo = {status:'RECEIVED',coverage_dates:['2026-10-21'],item_refs:[
+  {item_name:'Garam',unit:'kg'}, {item_name:'Kaldu Jamur Totole',unit:'pack'},
+  {item_name:'Kecap Asin',unit:'liter'}, {item_name:'Saus Tiram',unit:'kg'},
+]};
+for (const [name, unit] of [['Garam Refina','kg'],['Kecap Asin Hati angsa','liter'],['Saus Tiram Saori','kg'],['Kaldu Jamur Totole','pack']]) {
+  assert.equal(env.poCoversItem(pantryPo,{item_name:name,unit},'2026-10-21'),true,`saved PO covers branded ${name}`);
+  assert.equal(env.poCoversItem(pantryPo,{item_name:name,unit},'2026-10-22'),false,'a different date is not covered');
+  assert.equal(env.poCoversItem({...pantryPo,status:'CANCELLED'},{item_name:name,unit},'2026-10-21'),false);
+}
+for (const [name, unit] of [['Jamur','kg'],['Jamur Kuping','kg'],['Jamur Tiram','kg'],['Kecap Jamur','liter'],['Kecap Manis','liter'],['Gula','kg']]) {
+  assert.equal(env.poCoversItem(pantryPo,{item_name:name,unit},'2026-10-21'),false,`the pantry PO does not cover ${name}`);
+}
+const aliasContamination=[row('Jamur','pack',8,{inventory_item_code:'MUSHROOM',item_aliases:['Kaldu Jamur Totole']})];
+assert.equal(stock({item_name:'Kaldu Jamur Totole',unit:'pack'},aliasContamination).balance,0,'a stale alias cannot turn fresh mushroom stock into seasoning');
+assert.equal(stock({item_name:'Kaldu Jamur Totole',unit:'pack'},[...aliasContamination,row('Kaldu Jamur','pack',2)]).balance,2,'a bad alias must not hide the valid seasoning stock');
+assert.equal(stock({item_name:'Kaldu Jamur Totole',unit:'pack'},[row('Kaldu Jamur','bungkus',5)]).balance,0,'bungkus size stays unresolved until its package conversion is confirmed');
+const sameIdWrongType = {status:'SENT',coverage_dates:['2026-10-21'],item_refs:[{planning_snapshot_item_id:88,item_name:'Jamur',unit:'pack'}]};
+assert.equal(env.poCoversItem(sameIdWrongType,{planning_snapshot_item_id:88,item_name:'Kaldu Jamur',unit:'pack'},'2026-10-21'),false,'a stale planning ID cannot override a conflicting ingredient type');
+const zeroLine={status:'SENT',coverage_dates:['2026-10-21'],item_refs:[{item_name:'Garam',unit:'kg',po_qty:0}]};
+assert.equal(env.poCoversItem(zeroLine,{item_name:'Garam Refina',unit:'kg'},'2026-10-21'),false,'a zero-quantity line does not cover a purchase');
+const resizedSnapshot={status:'SENT',coverage_dates:['2026-10-21'],coverage_item_refs:[{distribution_date:'2026-10-21',planning_snapshot_item_id:100,item_code:'OLD-SALT',item_name:'Garam',unit:'kg'}]};
+assert.equal(env.poCoversItem(resizedSnapshot,{planning_snapshot_item_id:101,item_code:'NEW-REFINA',item_name:'Garam Refina',unit:'kg'},'2026-10-21'),true,'refreshed planning IDs and brands preserve known type coverage');
+console.log('PASS pantry brands, white sugar SO, exact-date PO coverage and mushroom/seasoning isolation');

@@ -37,7 +37,7 @@ function normalize(value) {
 
 function normalizeUnit(value) {
   const unit = normalize(value);
-  const aliases = { kilogram: "kg", kilograms: "kg", kgs: "kg", gram: "gr", g: "gr", l: "liter", lt: "liter", ltr: "liter", liter: "liter", litre: "liter", pieces: "pcs", piece: "pcs", pc: "pcs" };
+  const aliases = { kilogram: "kg", kilograms: "kg", kgs: "kg", gram: "gr", g: "gr", l: "liter", lt: "liter", ltr: "liter", liter: "liter", litre: "liter", pieces: "pcs", piece: "pcs", pc: "pcs", pak: "pack", packs: "pack" };
   return aliases[unit] || unit;
 }
 
@@ -101,11 +101,12 @@ function stockTypeCode(value) {
     ["MINYAK_WIJEN", /\bminyak wijen\b/],
     ["KECAP_MANIS", /\bkecap manis\b/],
     ["KECAP_ASIN", /\bkecap asin\b/],
+    ["KECAP_JAMUR", /\bkecap (hitam )?jamur\b/],
     ["KECAP_INGGRIS", /\b(kecap inggris|worcestershire)\b/],
     ["SAUS_TOMAT", /\b(saus|saos) tomat\b/],
     ["SAUS_SAMBAL", /\b(saus|saos) sambal\b/],
     ["SAUS_TIRAM", /\b((saus|saos)( saori)? tiram|saori.*tiram)\b/],
-    ["GULA_PASIR", /\b(gula pasir|gula putih)\b/],
+    ["GULA_PASIR", /\b(gula pasir|gula putih)\b|^gula(?: (gulaku|gmp))?$|^gulaku$/],
     ["BAWANG_PUTIH_BUBUK", /\bbawang putih bubuk\b/],
     ["KUNYIT_BUBUK", /\bkunyit bubuk\b/],
     ["BAWANG_BOMBAY", /\b(bawang )?bombay\b/],
@@ -123,6 +124,9 @@ function stockTypeCode(value) {
     ["TEMPE", /\btempe\b/],
     ["TAHU", /\b(tahu|tofu)\b/],
     ["BERAS", /\b(beras|rice)\b/],
+    ["JAMUR_KUPING", /^jamur kuping\b/],
+    ["JAMUR_TIRAM", /^jamur tiram\b/],
+    ["JAMUR", /^jamur(?: segar)?$/],
   ];
   const matched = patterns.find(([, pattern]) => pattern.test(text));
   return matched ? matched[0] : null;
@@ -181,7 +185,7 @@ function buildStockLookup(items = []) {
     identity: item.inventory_item_code || item.stock_type_code || normalize(item.item_name),
     displayName: item.item_name,
     unit: normalizeUnit(item.unit),
-    typeCode: item.stock_type_code || stockTypeCode(item.item_name),
+    typeCode: stockTypeCode(item.item_name) || item.stock_type_code,
     balance: Math.max(0, Number(item.available_for_po ?? item.projected_available_for_po ?? item.projected_balance ?? item.balance ?? 0)),
     actualBalance: Number(item.actual_balance ?? item.balance ?? 0),
     projectedBalance: Number(item.projected_balance ?? item.balance ?? 0),
@@ -199,9 +203,10 @@ function stockForItem(item, lookup) {
   const unit = normalizeUnit(item.unit);
   const typeCode = stockTypeCode(item.item_name);
   const itemCode = item.inventory_item_code || item.item_code;
-  const byCode = itemCode ? lookup.filter(row => row.inventoryItemCode === itemCode) : [];
-  const byName = lookup.filter(row => row.names.includes(name));
-  const candidates = byCode.length ? byCode : byName.length ? byName : lookup.filter(row => typeCode && row.typeCode === typeCode);
+  const compatible = lookup.filter(row => !typeCode || !row.typeCode || typeCode === row.typeCode);
+  const byCode = itemCode ? compatible.filter(row => row.inventoryItemCode === itemCode) : [];
+  const byName = compatible.filter(row => row.names.includes(name));
+  const candidates = byCode.length ? byCode : byName.length ? byName : compatible.filter(row => typeCode && row.typeCode === typeCode);
   const ambiguousAlias = !typeCode && !byCode.length && new Set(byName.map(row => row.inventoryItemCode).filter(Boolean)).size > 1;
   const matched = (ambiguousAlias ? [] : candidates).filter(row => convertKnownStockQty(row.balance, row.unit, unit, typeCode) != null);
   const unconverted = candidates.filter(row => !matched.includes(row) && row.actualBalance > 0);
@@ -390,12 +395,26 @@ function poCoversItem(po, item, forDate) {
     ? datedRefs.filter((ref) => String(ref.distribution_date || "") === String(forDate))
     : (Array.isArray(po.item_refs) ? po.item_refs : []);
   return refs.some((ref) => {
-    if (item.planning_snapshot_item_id && ref.planning_snapshot_item_id) {
-      return String(item.planning_snapshot_item_id) === String(ref.planning_snapshot_item_id);
-    }
-    if (item.item_code && ref.item_code) return normalize(item.item_code) === normalize(ref.item_code);
-    return normalize(item.item_name) === normalize(ref.item_name)
-      && normalizeUnit(operationalPlanningUnit(item)) === normalizeUnit(operationalPlanningUnit(ref));
+    if (ref.po_qty != null && Number(ref.po_qty) <= 0) return false;
+    const typeCode = stockTypeCode(item.item_name);
+    const refType = stockTypeCode(ref.item_name);
+    if (typeCode && refType && typeCode !== refType) return false;
+    const unit = normalizeUnit(operationalPlanningUnit(item));
+    const refUnit = normalizeUnit(operationalPlanningUnit(ref));
+    const unitsMatch = unit && refUnit
+      ? convertKnownStockQty(1, refUnit, unit, typeCode) != null
+      : false;
+    const samePlanningId = item.planning_snapshot_item_id && ref.planning_snapshot_item_id
+      && String(item.planning_snapshot_item_id) === String(ref.planning_snapshot_item_id);
+    // Older listing refs may contain only an ID. When names/units exist,
+    // require those facts too instead of trusting a stale reused identifier.
+    if (samePlanningId && (!refUnit || !unit || unitsMatch)) return true;
+    if (!unitsMatch) return false;
+    const sameCode = item.item_code && ref.item_code && normalize(item.item_code) === normalize(ref.item_code);
+    const sameType = typeCode && refType && typeCode === refType;
+    if (sameCode || sameType) return true;
+    if (item.item_code && ref.item_code) return false;
+    return Boolean(normalize(item.item_name)) && normalize(item.item_name) === normalize(ref.item_name);
   });
 }
 

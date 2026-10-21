@@ -169,7 +169,19 @@ def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, An
     raw_type = stock_type(raw_name)
     exact: list[tuple[dict[str, Any], str, str]] = []
     contained: list[tuple[int, dict[str, Any], str, str]] = []
+    typed: list[tuple[dict[str, Any], str, str]] = []
+    raw_is_typed = raw_type["method"] == "ITEM_TYPE_RULE"
     for master in masters:
+        master_type = stock_type(master.get("canonical_name"))
+        # Even an old exact alias must not turn Kaldu Jamur into Jamur,
+        # Saus Tiram into Jamur Tiram, or powder into the fresh ingredient.
+        if raw_is_typed and master_type["method"] == "ITEM_TYPE_RULE" and raw_type["code"] != master_type["code"]:
+            continue
+        if (
+            raw_type["code"] == "GULA_PASIR" == master_type["code"]
+            and str(master.get("source_type") or "") != "GRAMASI"
+        ):
+            typed.append((master, "STOCK_TYPE", master["normalized_canonical_name"]))
         candidates = [(master["normalized_canonical_name"], "CANONICAL_EXACT")]
         candidates.extend((str(alias), "ALIAS_EXACT") for alias in (master.get("aliases") or []))
         for candidate, method in candidates:
@@ -182,9 +194,7 @@ def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, An
                 and len(candidate) >= 4
                 and _candidate_contains(candidate, normalized, masters)
                 and not (
-                    raw_type["method"] == "ITEM_TYPE_RULE"
-                    and stock_type(master.get("canonical_name") or candidate)["method"] == "ITEM_TYPE_RULE"
-                    and raw_type["code"] != stock_type(master.get("canonical_name") or candidate)["code"]
+                    raw_is_typed and raw_type["code"] != master_type["code"]
                 )
             ):
                 contained.append((len(candidate), master, "TYPE_IN_RAW_NAME", candidate))
@@ -195,7 +205,9 @@ def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, An
         longest = max(row[0] for row in contained)
         matches = [(master, method, candidate) for length, master, method, candidate in contained if length == longest]
     else:
-        matches = []
+        # Explicit white-sugar equivalence, not fuzzy similarity or a general
+        # rule to replace every unmapped ingredient with a vaguely related master.
+        matches = typed
 
     if matches:
         highest_priority = max(int(row[0].get("priority") or 0) for row in matches)
@@ -227,7 +239,7 @@ def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, An
             "metadata": master.get("metadata") or {},
             "classificationStatus": "MATCHED",
             "classificationMethod": method if source_type == "INVENTORY_MASTER" else f"{source_type}_{method}",
-            "classificationConfidence": 1.0 if exact else 0.9,
+            "classificationConfidence": 1.0 if exact else 0.85 if method == "STOCK_TYPE" else 0.9,
             "classificationSources": all_sources,
         }
     if len(unique) > 1:
