@@ -128,6 +128,10 @@ def apply_form(action,payload,preview,edits):
                 original=original_items[index]
                 keep_name=row['item_name']==original.get('itemName')
                 target['reviewed_items'].append({'client_key':original.get('clientKey'),'include':True,'raw_item_name':row['item_name'],'canonical_item_name':original.get('canonicalItemName') if keep_name else row['item_name'],'inventory_item_code':original.get('inventoryItemCode') if keep_name else None,'area_code':original.get('areaCode'),'qty':row['qty'],'unit':row.get('unit')})
+                source = next((item for item in payload.get('reviewed_items', []) if item.get('client_key') == original.get('clientKey')), {})
+                if source.get('raw_line'):
+                    target['reviewed_items'][-1]['raw_line'] = source['raw_line']
         elif not schema['rowPath']: raise ValueError('Action ini tidak memiliki barang pilihan')
     return data
+
 

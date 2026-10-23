@@ -28,6 +28,7 @@ from plugin_mcp.core_proxy import core_request, operational_writes_enabled
 from plugin_mcp.form_fields import describe_form, apply_form
 from plugin_mcp.receipt_fastpath import normalize_receipt_input, compact_knowledge
 from plugin_mcp.confirmation_evidence import confirmation_evidence
+from plugin_mcp.stock_opname_input import normalize_stock_input, stock_core_payload, validate_change_scope
 
 audit_logger = logging.getLogger('sppg_confirmation')
 
@@ -62,7 +63,7 @@ class ChangeRequest(BaseModel):
     action: str
     payload: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=3, max_length=1000)
-    site: Literal["MAJA", "CEMPLANG", "GLOBAL"]
+    site: Literal["MAJA", "CEMPLANG", "KOPERASI", "GLOBAL"]
 
 
 def _hash_json(value: Any) -> str:
@@ -132,10 +133,7 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
     action, data = change.action, dict(change.payload)
     if action not in CONTROL_ACTIONS:
         raise ValueError("Action not in the confirmed-write allowlist")
-    if change.site=='GLOBAL' and action!='UPSERT_INVENTORY_ITEM_MASTER':
-        raise ValueError('GLOBAL is only allowed for the shared inventory master')
-    if "site" in data and data["site"] != change.site:
-        raise ValueError("Cross-site payload and change.site mismatch")
+    validate_change_scope(action, change.site, data)
     data.pop("commit", None)
 
     before = None
@@ -218,11 +216,13 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         if result.get('receiptState')=='POSSIBLE_DUPLICATE':
             impact={'goodsReceipt':'NONE: REVIEW EXISTING RECEIPT','stock':'NONE','finance':'NONE'}
     elif action == "RECORD_STOCK_OPNAME":
-        data["location"] = change.site
         result = await core_request(
-            "POST", "/v1/inventory/stock-opname/whatsapp", json_body={**data, "commit": False},
+            "POST", "/v1/inventory/stock-opname/whatsapp", json_body=stock_core_payload(data, change.site, False),
         )
+        if data.get('stock_input_summary'):
+            result['stockInputSummary'] = data['stock_input_summary']
         impact = {
+            'location': change.site, 'otherLocations': 'NONE',
             "stock": "NEW PHYSICAL BASELINE replaces the previous SO baseline",
             "finance": "NONE", "po": "Future stock projections and PO recommendations may change.",
         }
@@ -351,15 +351,17 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
     # Prepare is intentionally available before the production switch is on.
     if action not in CONTROL_ACTIONS:
         raise ValueError("Action not in the confirmed-write allowlist")
-    if site=='GLOBAL' and action!='UPSERT_INVENTORY_ITEM_MASTER':
-        raise ValueError('GLOBAL is only allowed for the shared inventory master')
-    if payload.get("site",site) != site:
-        raise ValueError("Cross-site payload and change.site mismatch")
+    validate_change_scope(action, site, payload)
     started = time.monotonic()
     normalization_error = None
     if action == "RECORD_GOODS_RECEIPT":
         try:
             change.payload = normalize_receipt_input(change.payload)
+        except ValueError as exc:
+            normalization_error = str(exc)
+    elif action == 'RECORD_STOCK_OPNAME':
+        try:
+            change.payload = normalize_stock_input(change.payload)
         except ValueError as exc:
             normalization_error = str(exc)
 
@@ -374,7 +376,7 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
     async def knowledge_once():
         try:
             body=await asyncio.wait_for(core_request("GET","/v1/gpt/operational-context",params={
-                "site":None if action=='UPSERT_INVENTORY_ITEM_MASTER' else site,"vendor":change.payload.get("vendor_code"),"q":"","limit":6,
+                "site":None if site in {'GLOBAL','KOPERASI'} else site,"vendor":change.payload.get("vendor_code"),"q":"Gudang Koperasi stock opname" if site=='KOPERASI' else "","limit":6,
                 "asOf":str(change.payload.get("received_at") or "")[:10] or None,
             }), timeout=2.0)
             return compact_knowledge(body)
@@ -426,6 +428,7 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         "message": ("Existing receiving found. Show its receipt ID and details; do not ask to commit this report again. No operational record changed." if duplicate_review else "Preview prepared; no operational record changed. Render native ChatGPT choices; wait for a NEW user confirmation before executing."),
         "runtimeKnowledge":knowledge,
         "receiptInput":change.payload.get("receipt_input_summary"),
+        "stockInputSummary":change.payload.get("stock_input_summary"),
         "receivedTimePrecision":change.payload.get("received_time_precision"),
         "timingMs":{"prepare":round((time.monotonic()-started)*1000)},
         "nextStep":("Show existing receipt ID(s), not a missing PO error or another save confirmation. A genuinely additional delivery needs distinct operator-supplied evidence." if duplicate_review else "Show this proposal now; do not preview or fetch runtime context again. Wait for explicit operator approval."),
@@ -448,6 +451,7 @@ def read_change(approval_id: str) -> dict[str, Any]:
 
 async def _execute(change: ChangeRequest) -> dict[str, Any]:
     data = dict(change.payload)
+    validate_change_scope(change.action, change.site, data)
     data.pop("commit", None)
     if change.action=='UPSERT_INVENTORY_ITEM_MASTER':
         data.pop('site',None)
@@ -470,9 +474,8 @@ async def _execute(change: ChangeRequest) -> dict[str, Any]:
             **data, "site": change.site, "commit": True,
         })
     if change.action == "RECORD_STOCK_OPNAME":
-        return await core_request("POST", "/v1/inventory/stock-opname/whatsapp", json_body={
-            **data, "location": change.site, "commit": True,
-        })
+        return await core_request("POST", "/v1/inventory/stock-opname/whatsapp",
+                                  json_body=stock_core_payload(data, change.site, True))
     if change.action == "CREATE_PAYABLE_FROM_RECEIPT":
         return await core_request("POST", "/v1/vendor-payables/from-receipt", json_body={
             **data, "site": change.site, "commit": True,
@@ -654,5 +657,6 @@ async def amend_change(approval_id: str, edits: dict[str, Any]) -> dict[str, Any
             cur.execute("update sppg_mcp_approvals set status='SUPERSEDED',confirmed_at=now() where id=%s",(approval_id,))
             conn.commit()
     return await prepare_change(row['action'],data,row['site'],row['reason'])
+
 
 

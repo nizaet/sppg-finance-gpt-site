@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from mcp.types import ToolAnnotations
+from plugin_mcp.stock_opname_input import stock_location
 
 from plugin_mcp.core_proxy import (
     blocked_write,
@@ -234,10 +235,13 @@ async def getFinalSppgPurchaseOrderWhatsAppMessage(
 
 
 async def previewOrRecordSppgStockOpnameFromWhatsApp(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview one physical SO baseline and return a proposal for native ChatGPT confirmation."""
+    """Prepare physical SO for KOPERASI/MAJA/CEMPLANG; preserve SKU tables and reviewed quantities."""
     from plugin_mcp.approval_workflow import prepare_change
     body=preview_only(payload)
-    return await prepare_change("RECORD_STOCK_OPNAME",body,_clean_site(body.get("site") or body.get("location","")),"Tinjau stock opname")
+    for key in ('site', 'location'):
+        if body.get(key):
+            body[key] = stock_location(body[key])
+    return await prepare_change("RECORD_STOCK_OPNAME",body,stock_location(body.get("site") or body.get("location","")),"Tinjau stock opname")
 
 
 async def readSppgWarehouseStockAndPoProjection(
@@ -539,5 +543,6 @@ def register_v0186_tools(mcp: Any) -> list[str]:
         )
         names.append(fn.__name__)
     return names
+
 
 

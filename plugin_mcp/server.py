@@ -18,6 +18,7 @@ from plugin_mcp.oauth_server import metadata as oauth_metadata, jwks as oauth_jw
 from plugin_mcp.v0186_tools import register_v0186_tools
 from plugin_mcp.core_proxy import operational_writes_enabled
 from plugin_mcp.approval_workflow import prepare_change, confirm_change, read_change, amend_change
+from plugin_mcp.stock_opname_input import stock_location
 
 from backend.inventory_api import StockOpnameWhatsAppIn, stock_opname_whatsapp
 from backend.po_reminder_v4_api import po_reminders_v4
@@ -213,11 +214,15 @@ async def receiving_preview(site: str, text: str, vendor_code: str | None = None
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
 async def stock_opname_preview(site: str, text: str, stock_date_iso: str | None = None,
-    reporter: str | None = None) -> dict[str, Any]:
-    """Show editable physical stock-opname approval card; no stock changes until confirmation."""
+    reporter: str | None = None, zero_negative_quantities: bool = False) -> dict[str, Any]:
+    """Prepare physical SO for KOPERASI, MAJA or CEMPLANG through the existing approval gate.
+    Accept the original SKU/name/stock/unit Markdown table. Set zero_negative_quantities
+    only when the operator explicitly requested negative counts be reviewed as zero.
+    Preview preserves original evidence and lists every correction; it never changes stock.
+    """
     card=await prepare_change('RECORD_STOCK_OPNAME', {
-        'text':text,'stock_date':stock_date_iso,'reporter':reporter,
-    }, _site(site), 'Tinjau stok fisik dan tanggal SO sebelum mengganti baseline')
+        'text':text,'stock_date':stock_date_iso,'reporter':reporter,'zero_negative_quantities':zero_negative_quantities,
+    }, stock_location(site), 'Tinjau stok fisik dan tanggal SO sebelum mengganti baseline')
     return {**card,'committed':False,'operationalMutation':False}
 
 
@@ -446,6 +451,7 @@ def build_app() -> Any:
 
 
 app = build_app()
+
 
 
 
