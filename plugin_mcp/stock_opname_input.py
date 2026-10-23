@@ -3,6 +3,7 @@ from copy import deepcopy
 from decimal import Decimal
 import re
 import math
+from backend.stock_opname_parser import canonical_unit
 
 STOCK_LOCATIONS = frozenset({'MAJA', 'CEMPLANG', 'KOPERASI'})
 
@@ -108,3 +109,24 @@ def stock_core_payload(payload, location, commit):
     data.pop('zero_negative_quantities', None)
     data.update(location=stock_location(location), commit=commit)
     return data
+
+
+def validated_stock_result(result, payload):
+    """Verify every table row before discarding obsolete free-text parser warnings."""
+    if payload.get('stock_input_summary', {}).get('format') != 'SKU_TABLE':
+        return result
+    expected = [row for row in payload['reviewed_items'] if row.get('include', True)]
+    actual = result.get('items', [])
+    if result.get('itemCount') != len(expected) or len(actual) != len(expected):
+        raise ValueError('Core stock preview did not preserve every selected SKU row')
+    for source, item in zip(expected, actual):
+        if (item.get('clientKey') != source['client_key']
+                or item.get('itemName') != source['raw_item_name'].strip()
+                or Decimal(str(item.get('qty'))) != Decimal(str(source['qty']))
+                or item.get('unit') != canonical_unit(source['unit'])):
+            raise ValueError('Core stock preview differs from reviewed SKU ' + source['client_key'])
+    result = dict(result)
+    result['warnings'] = [warning for warning in result.get('warnings', [])
+                          if not warning.startswith(('Satuan tidak tertulis;', 'Duplikat '))]
+    result['stockInputSummary'] = payload['stock_input_summary']
+    return result

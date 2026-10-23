@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from plugin_mcp.stock_opname_input import normalize_stock_input, stock_location, stock_core_payload, validate_change_scope
+from plugin_mcp.stock_opname_input import normalize_stock_input, stock_location, stock_core_payload, validate_change_scope, validated_stock_result
 
 
 def sku_table():
@@ -74,6 +74,22 @@ class StockInputTests(unittest.TestCase):
         self.assertNotIn('stock_input_summary', body)
         self.assertNotIn('site', body)
 
+    def test_table_validation_removes_only_obsolete_free_text_warnings(self):
+        data = normalize_stock_input({'text': sku_table(), 'zero_negative_quantities': True})
+        items = [{'clientKey': r['client_key'], 'itemName': r['raw_item_name'], 'qty': r['qty'], 'unit': r['unit']} for r in data['reviewed_items']]
+        result = validated_stock_result({'items': items, 'itemCount': 105, 'warnings': ['Satuan tidak tertulis; parser lama', 'Duplikat brg dari parser lama', 'Tanggal input berbeda']}, data)
+        self.assertEqual(result['warnings'], ['Tanggal input berbeda'])
+        self.assertEqual(result['stockInputSummary']['rowCount'], 105)
+
+    def test_table_validation_rejects_missing_or_changed_core_rows(self):
+        data = normalize_stock_input({'text': sku_table(), 'zero_negative_quantities': True})
+        items = [{'clientKey': r['client_key'], 'itemName': r['raw_item_name'], 'qty': r['qty'], 'unit': r['unit']} for r in data['reviewed_items']]
+        with self.assertRaises(ValueError):
+            validated_stock_result({'items': items[:-1], 'itemCount': 104}, data)
+        items[1]['qty'] = 999
+        with self.assertRaises(ValueError):
+            validated_stock_result({'items': items, 'itemCount': 105}, data)
+
 
 class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
     async def test_both_tools_prepare_in_koperasi_without_writing(self):
@@ -97,7 +113,8 @@ class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
             body = kwargs['json_body']
             requests.append(body)
             return {'canCommit': True, 'committed': body['commit'], 'location': body['location'],
-                    'site': None, 'itemCount': len(body['reviewed_items']), 'items': []}
+                    'site': None, 'itemCount': len(body['reviewed_items']),
+                    'items': [{'clientKey': r['client_key'], 'itemName': r['raw_item_name'], 'qty': r['qty'], 'unit': r['unit']} for r in body['reviewed_items']]}
         conn = MagicMock()
         with patch('plugin_mcp.approval_workflow.core_request', new_callable=AsyncMock, side_effect=core), \
              patch('plugin_mcp.approval_workflow._db_ready'), patch('plugin_mcp.approval_workflow._ensure_table'), \

@@ -28,7 +28,7 @@ from plugin_mcp.core_proxy import core_request, operational_writes_enabled
 from plugin_mcp.form_fields import describe_form, apply_form
 from plugin_mcp.receipt_fastpath import normalize_receipt_input, compact_knowledge
 from plugin_mcp.confirmation_evidence import confirmation_evidence
-from plugin_mcp.stock_opname_input import normalize_stock_input, stock_core_payload, validate_change_scope
+from plugin_mcp.stock_opname_input import normalize_stock_input, stock_core_payload, validate_change_scope, validated_stock_result
 
 audit_logger = logging.getLogger('sppg_confirmation')
 
@@ -219,8 +219,7 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         result = await core_request(
             "POST", "/v1/inventory/stock-opname/whatsapp", json_body=stock_core_payload(data, change.site, False),
         )
-        if data.get('stock_input_summary'):
-            result['stockInputSummary'] = data['stock_input_summary']
+        result = validated_stock_result(result, data)
         impact = {
             'location': change.site, 'otherLocations': 'NONE',
             "stock": "NEW PHYSICAL BASELINE replaces the previous SO baseline",
