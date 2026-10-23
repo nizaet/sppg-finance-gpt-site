@@ -141,3 +141,9 @@
 - Operator reported white sugar SO missing under Gula Pasir Gulaku and suspected Kaldu Jamur/Garam/Saus Tiram PO misclassification. Scoped read-only inspection confirms actual Kaldu Jamur Totole, Garam, Kecap Asin and Saus Tiram lines in MAJA KOPERASI PO #457; the kaldu badge is valid, while brand differences caused missed coverage for the other pantry lines.
 - Recognize confirmed Gula/Gula Putih/Gula Pasir equivalence, ignore known pantry brand suffixes in date/unit-compatible PO matching, and retain prior cooking depletion and physical-stock allocation. Protect distinct sugar types, mushroom/seasoning/sauce types, stale IDs/aliases, canceled orders and zero-quantity PO lines.
 - Keep unspecified bungkus-to-pack conversion unresolved rather than inventing package contents. No production SO, receiving, PO quantity or financial record is changed for testing. Add shared frontend/backend identity fixtures and regressions; update [stock scope](inventory/po-reminder-stock-scope.md) and navigation.
+
+## 2026-10-23 - Cache repeated canonical master type work after measured regression
+
+- Operator reported that the latest deployment made pulling PO and saving Gudang much slower than the two preceding releases. Read-only HTTP history confirms long inventory projection reloads while manual adjustment writes remain short. Deployment region and repository build/start configuration are unchanged across the compared revisions.
+- A same-process synthetic comparison reproduces the regression in the new canonical guard: every input recomputes every master's type. Memoize master types within the request's DB snapshot, preserve all identity/ambiguity/stock rules, and avoid global or physical-stock caches.
+- Add a scaling regression asserting additive rather than multiplicative taxonomy resolutions and fresh caches across snapshots. Update [stock scope](inventory/po-reminder-stock-scope.md) and navigation. Validate without creating production stock movements.

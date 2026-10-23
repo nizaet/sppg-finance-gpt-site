@@ -18,7 +18,7 @@
 
 ## Inventory
 - [Koperasi Dry-Goods Flow](inventory/koperasi-flow.md)
-- [PO Reminder and Kitchen Warehouse Scope](inventory/po-reminder-stock-scope.md) — pantry brand/type identities, mushroom/seasoning isolation, exact PO coverage, persisted PO-screen stock edits, before-cooking projection, master aliases, selected-kitchen stock, and reminder cache rules.
+- [PO Reminder and Kitchen Warehouse Scope](inventory/po-reminder-stock-scope.md) — canonical matching performance and request-local caches, pantry brand/type identities, mushroom/seasoning isolation, exact PO coverage, persisted PO-screen stock edits, before-cooking projection, master aliases, selected-kitchen stock, and reminder cache rules.
 
 - [Actual Goods Receipts and Corrections](inventory/goods-receipt-corrections.md) — partial arrivals, explicit quantities, corrections after confirmation, historical stock deltas and invoice review.
 

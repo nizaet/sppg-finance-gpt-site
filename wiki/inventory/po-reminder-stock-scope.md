@@ -17,6 +17,7 @@ Operational performance:
 - The action queue covers overdue items from the previous seven days, today, and tomorrow; it is not a 21-day forecast.
 - Projection reads use a short, per-site/per-date single-flight cache. The production site-only cooking-day projection must remain behind this cache when the server starts.
 - A reminder refresh preserves MAJA/CEMPLANG isolation and never borrows stock from the other kitchen.
+- Canonical master stock types are resolved once per request's master snapshot, not again for every input/master pair. Keep this cache scoped to the DB snapshot; new requests, kitchens and edited master names must remain fresh. Cache classification work rather than physical quantities or unconfirmed stock corrections.
 
 Related: [Koperasi Dry-Goods Flow](koperasi-flow.md), [SPPG Maja](../sites/maja.md), [SPPG Cemplang](../sites/cemplang.md).
 
@@ -45,3 +46,11 @@ Evidence: operator bug report in APP OPERASIONAL SPPG, 2026-10-20; `tests/po-war
 - Preserve the latest SO, prior cooking depletion and one allocation per physical balance. This correction changes matching, not production SO, quantities, receiving, sent POs or payments.
 
 Evidence: operator report and scoped read-only master/PO audit, 2026-10-21; shared `tests/fixtures/pantry-identities.json`, `tests/test_pantry_canonical_identity.py`, and production-transformed `tests/po-stock-matching.test.cjs`.
+
+## Canonical matching performance regression — 2026-10-23
+
+The operator reported slow PO pulls and warehouse saves after the latest deployment. Bounded production log samples show inventory projection responses reaching 14–49 seconds, compared with roughly 0.4–1.6 seconds in the two preceding deployments. Manual warehouse adjustment writes in the current sample still complete in 78–123 milliseconds; the following projection reload accounts for the visible delay. Historical samples are different traffic windows and are not a controlled latency benchmark.
+
+The deployment region remains US West, and `railway.json`, `backend/Dockerfile` and `backend/server.py` do not change across the three revisions. The new canonical guard recomputed every master type for every distinct input name. A synthetic, same-process comparison with 510 masters and 100 distinct inputs shows about 0.10 seconds before the change versus 2.08 seconds after it (100 vs 51,100 taxonomy calls). Request-local master-type memoization reduces the latter to about 0.15 seconds and 610 calls while preserving canonical matching, ambiguity and stock rules. These measurements isolate classifier cost; they do not promise an identical whole-request production speedup.
+
+Evidence: operator report; Railway deployment and HTTP logs for revisions `1f78b14`, `4d29dc5`, `eaae058`; `tests/test_inventory_matcher_cache.py`. No production stock movement is created for timing tests.

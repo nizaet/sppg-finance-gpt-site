@@ -33,4 +33,31 @@ class MatcherCacheTests(unittest.TestCase):
             self.assertTrue(api._candidate_contains('beras','beras medium',masters))
             self.assertEqual(compile.call_count,1)
 
+    def test_distinct_item_names_do_not_reclassify_every_master_type(self):
+        rows = self.masters() + [
+            {**self.masters()[0], 'code':f'ITEM_{i}', 'canonical_name':f'Bahan {i}',
+             'normalized_canonical_name':f'bahan {i}', 'aliases':[]}
+            for i in range(80)
+        ]
+        names = ['Beras', 'Gula Putih', 'Kaldu Jamur Totole'] + [f'Nama baru {i}' for i in range(40)]
+        masters = api.RequestItemMatchers(rows)
+        with patch.object(api, 'stock_type', wraps=api.stock_type) as resolve:
+            results = [api.classify_item(name, masters) for name in names]
+            self.assertEqual(resolve.call_count, len(rows) + len(names),
+                             'resolve each master once, not once per distinct input name')
+            for name in names:
+                api.classify_item(name, masters)
+            self.assertEqual(resolve.call_count, len(rows) + len(names))
+        self.assertEqual(results, [api.classify_item(name, rows) for name in names],
+                         'memoization must not change canonical matches or ambiguity')
+
+    def test_master_type_cache_does_not_survive_a_new_snapshot(self):
+        old = api.RequestItemMatchers(self.masters())
+        new = api.RequestItemMatchers(self.masters('Kaldu Jamur'))
+        api.classify_item('Beras', old)
+        self.assertEqual(new.master_stock_types, {})
+        api.classify_item('Kaldu Jamur', new)
+        self.assertEqual(old.master_stock_types['Beras']['code'], 'BERAS')
+        self.assertEqual(new.master_stock_types['Kaldu Jamur']['code'], 'KALDU_JAMUR')
+
 if __name__=='__main__':unittest.main()

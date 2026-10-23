@@ -53,6 +53,7 @@ class RequestItemMatchers(list):
         super().__init__(values)
         self.classification_cache = {}
         self.candidate_patterns = {}
+        self.master_stock_types = {}
 
 
 def load_item_matchers(cur, site: str | None = None) -> list[dict[str, Any]]:
@@ -164,6 +165,19 @@ def _candidate_contains(candidate, normalized, masters):
     return compiled.search(normalized)
 
 
+def _master_stock_type(master: dict[str, Any], masters: list[dict[str, Any]]) -> dict[str, str]:
+    name = master.get("canonical_name")
+    if not isinstance(masters, RequestItemMatchers):
+        return stock_type(name)
+    # A projection resolves many different item names against the same master
+    # snapshot. Re-running every taxonomy regex for every item/master pair
+    # turned this into N*M expensive type resolutions. Cache only within this
+    # request's DB snapshot so a new master or another kitchen stays fresh.
+    if name not in masters.master_stock_types:
+        masters.master_stock_types[name] = stock_type(name)
+    return masters.master_stock_types[name]
+
+
 def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, Any]:
     normalized = normalize_name(raw_name)
     raw_type = stock_type(raw_name)
@@ -172,7 +186,7 @@ def _classify_item(raw_name: str, masters: list[dict[str, Any]]) -> dict[str, An
     typed: list[tuple[dict[str, Any], str, str]] = []
     raw_is_typed = raw_type["method"] == "ITEM_TYPE_RULE"
     for master in masters:
-        master_type = stock_type(master.get("canonical_name"))
+        master_type = _master_stock_type(master, masters)
         # Even an old exact alias must not turn Kaldu Jamur into Jamur,
         # Saus Tiram into Jamur Tiram, or powder into the fresh ingredient.
         if raw_is_typed and master_type["method"] == "ITEM_TYPE_RULE" and raw_type["code"] != master_type["code"]:
