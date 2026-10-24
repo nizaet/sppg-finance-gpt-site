@@ -45,7 +45,7 @@ function capture(message){
  const old=db.prepare('SELECT payload FROM inbox WHERE id=?').get(item.id);
  if(old){
   const prior=JSON.parse(old.payload);
-  if(prior.contentHash!==item.contentHash){prior.revisions=[...(prior.revisions||[]),{text:item.text,at:new Date().toISOString()}];prior.status='REVISION_REVIEW';db.prepare('UPDATE inbox SET payload=? WHERE id=?').run(JSON.stringify(prior),item.id);}
+  if(prior.contentHash!==item.contentHash){prior.revisions=[...(prior.revisions||[]),{text:item.text,at:new Date().toISOString()}];prior.status='REVISION_REVIEW';db.prepare('DELETE FROM report_resolutions WHERE id=?').run(item.id);db.prepare('UPDATE inbox SET payload=? WHERE id=?').run(JSON.stringify(prior),item.id);}
   return;
  }
  const duplicate=db.prepare('SELECT id FROM inbox WHERE content_hash=? LIMIT 1').get(item.contentHash);
