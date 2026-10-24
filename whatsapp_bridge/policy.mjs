@@ -23,7 +23,7 @@ export function normalizeIncoming(message, mappings) {
   if (!type) return null;
   const trigger=triggerInfo(text);
   const report = trigger?.type || 'OTHER';
-  if(message.key.fromMe && report!=='STOCK_OPNAME')return null;
+  if(message.key.fromMe && !['STOCK_OPNAME','RECEIVING'].includes(report))return null;
   if(report==='OTHER' || (group.mode==='STOCK_OPNAME' && report!=='STOCK_OPNAME') || (group.mode==='RECEIVING' && report!=='RECEIVING'))return null;
   const id = digest(jid + ':' + message.key.id);
   const timestamp = Number(message.messageTimestamp);
@@ -50,4 +50,4 @@ export function validateMappings(rows, groups) {
   return {jid:row.jid,site:row.site,mode,name:groups[row.jid].subject};
  });
 }
-export function safeForAutoStage(item) { return item.status==='PENDING' && item.reportType==='RECEIVING' && !item.duplicateOf; }
+export function safeForAutoStage(item) { return !item.fromMe && item.status==='PENDING' && item.reportType==='RECEIVING' && !item.duplicateOf; }
