@@ -665,7 +665,7 @@ def receive_from_whatsapp(payload: WhatsAppReceiptIn) -> dict[str, Any]:
 
             # Determine status from cumulative accepted receipts; PO quantity itself is never overwritten.
             cur.execute(
-                """select poi.id,poi.po_qty,coalesce(sum(gri.accepted_qty),0) as received_total
+                """select poi.id,poi.po_qty,coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as received_total
                    from purchase_order_items poi
                    left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
                    where poi.purchase_order_id=%s
