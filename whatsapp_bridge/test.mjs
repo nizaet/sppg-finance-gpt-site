@@ -22,7 +22,9 @@ test('personal SO allowlist: only selected sender, SO keyword, inbound and corre
  assert.equal(item.reportType,'STOCK_OPNAME');assert.equal(item.sender,jid);assert.equal(item.groupName,'Arya');assert.equal(safeForAutoStage(item),false);
  for(const text of ['Halo','#TERIMA MAJA\nGula 5 kg','Ini contoh\n#SO MAJA'])assert.equal(normalizeIncoming(make(text),rows),null);
  assert.equal(normalizeIncoming(make('#SO MAJA\nGula 5 kg'),[]),null);
- assert.equal(normalizeIncoming({...make('#SO MAJA'),key:{remoteJid:jid,id:'X',fromMe:true}},rows),null);
+ const own=normalizeIncoming({...make('#SO MAJA'),key:{remoteJid:jid,id:'X',fromMe:true}},rows);assert.equal(own.fromMe,true);assert.equal(own.requiresOwnerReview,true);
+ assert.equal(normalizeIncoming({...make('#SO MAJA'),key:{remoteJid:'other@s.whatsapp.net',id:'X',fromMe:true}},rows),null);
+ assert.equal(normalizeIncoming({...make('kang nanti\n#SO MAJA'),key:{remoteJid:jid,id:'X',fromMe:true}},rows),null);
  assert.equal(normalizeIncoming(make('#SO CEMPLANG\nGula 5 kg'),rows).status,'SITE_REVIEW');
  assert.equal(validateMappings(rows,{[jid]:{subject:'Arya'}})[0].mode,'STOCK_OPNAME');
  assert.throws(()=>validateMappings([{...rows[0],mode:'RECEIVING'}],{[jid]:{subject:'Arya'}}));

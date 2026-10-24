@@ -10,7 +10,7 @@ export function reportType(text) { return triggerInfo(text)?.type || 'OTHER'; }
 export function normalizeIncoming(message, mappings) {
   const jid = message?.key?.remoteJid;
   const group = mappings.find(g => g.jid === jid);
-  if (!group || (!jid.endsWith('@g.us') && !(group.mode==='STOCK_OPNAME' && /@(s.whatsapp.net|lid)$/.test(jid))) || !message.key.id || message.key.fromMe) return null;
+  if (!group || (!jid.endsWith('@g.us') && !(group.mode==='STOCK_OPNAME' && /@(s.whatsapp.net|lid)$/.test(jid))) || !message.key.id) return null;
   let body = message.message;
   const isRevision = Boolean(body?.editedMessage);
   if (isRevision) body = body.editedMessage.message;
@@ -23,11 +23,12 @@ export function normalizeIncoming(message, mappings) {
   if (!type) return null;
   const trigger=triggerInfo(text);
   const report = trigger?.type || 'OTHER';
+  if(message.key.fromMe && report!=='STOCK_OPNAME')return null;
   if(report==='OTHER' || (group.mode==='STOCK_OPNAME' && report!=='STOCK_OPNAME') || (group.mode==='RECEIVING' && report!=='RECEIVING'))return null;
   const id = digest(jid + ':' + message.key.id);
   const timestamp = Number(message.messageTimestamp);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
-  return {id, reportType:report, messageId:message.key.id, jid, groupName:group.name, site:group.site,
+  return {id, reportType:report,fromMe:!!message.key.fromMe,requiresOwnerReview:!!message.key.fromMe, messageId:message.key.id, jid, groupName:group.name, site:group.site,
     sender:message.key.participant || jid, senderName:message.pushName || '',
     text:text.slice(0,20000), type, timestamp:new Date(timestamp*1000).toISOString(),
     contentHash:digest(jid+':'+type+':'+text), status:trigger.site!==group.site ? 'SITE_REVIEW' : isRevision ? 'REVISION_REVIEW' : type==='text' || text.trim() ? 'PENDING' : 'MEDIA_REVIEW'};
