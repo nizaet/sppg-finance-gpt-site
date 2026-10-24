@@ -50,7 +50,7 @@ EXTRA_ACTIONS = {
     "RECORD_GOODS_RECEIPT", "RECORD_STOCK_OPNAME",
     "CREATE_PAYABLE_FROM_RECEIPT", "RECORD_VENDOR_PAYMENT",
     "RECONCILE_VENDOR_PAYMENT",
-    "UPSERT_INVENTORY_ITEM_MASTER",
+    "UPSERT_INVENTORY_ITEM_MASTER", "RECORD_RECEIPT_SUBSTITUTION",
 }
 CONTROL_ACTIONS = frozenset(ACTION_MAP) | EXTRA_ACTIONS
 DESTRUCTIVE_ACTIONS = frozenset({"DELETE_DRAFT_PO", "CANCEL_PO", "REVISE_PO"})
@@ -152,6 +152,13 @@ async def _preview(change: ChangeRequest) -> tuple[dict[str, Any], dict[str, Any
         before=result.get('before')
         impact={'master':'GLOBAL_SHARED_MAJA_CEMPLANG','aliases':'ADD/PRESERVE; CONFLICTS REJECTED',
                 'stock':'NONE','finance':'NONE','note':'Master defaults are shared across both sites. Existing SO/receiving quantities are not rewritten.'}
+    elif action == "RECORD_RECEIPT_SUBSTITUTION":
+        po_id = int(data.pop('purchase_order_id'))
+        result = await core_request('POST', f'/v1/purchase-orders/{po_id}/receiving-substitution',
+            json_body={**data, 'site': change.site, 'commit': False})
+        impact = {'stock': 'Actual replacement item and quantity only',
+                  'purchaseOrder': 'Original quantities/prices preserved; replaces_qty closes only the reviewed original remainder',
+                  'vendorPayable': 'Not created automatically; use this receipt and actual price for payable'}
     elif action == "CREATE_ACCOUNTANT_TRANSACTIONS":
         from backend.gpt_bridge_api import FinanceTransactionBatchIn
         data["site"] = change.site
@@ -352,6 +359,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         raise ValueError("Action not in the confirmed-write allowlist")
     validate_change_scope(action, site, payload)
     started = time.monotonic()
+    if action == 'RECORD_RECEIPT_SUBSTITUTION':
+        change.payload.setdefault('request_id', str(uuid.uuid4()))
     normalization_error = None
     if action == "RECORD_GOODS_RECEIPT":
         try:
@@ -387,6 +396,8 @@ async def prepare_change(action: str, payload: dict[str, Any], site: str, reason
         change.payload['expected_before_hash']=preview['expectedBeforeHash']
         change.payload['require_unchanged']=True
         change.payload['require_unit']=True
+    if action == 'RECORD_RECEIPT_SUBSTITUTION' and preview.get('normalizedPayload'):
+        change.payload = {**preview['normalizedPayload'], 'purchase_order_id': change.payload['purchase_order_id']}
     duplicate_review=preview.get('receiptState')=='POSSIBLE_DUPLICATE'
     status = "POSSIBLE_DUPLICATE" if duplicate_review else ("DRAFT" if preview.get("canCommit") is False else "PENDING")
     _db_ready()
@@ -457,6 +468,10 @@ async def _execute(change: ChangeRequest) -> dict[str, Any]:
         if not data.get('expected_before_hash'):
             raise ValueError('A reviewed master snapshot is required before commit')
         return await core_request('POST','/v1/inventory/items',json_body={**data,'commit':True,'require_unchanged':True,'require_unit':True})
+    if change.action == "RECORD_RECEIPT_SUBSTITUTION":
+        po_id = int(data.pop('purchase_order_id'))
+        return await core_request('POST', f'/v1/purchase-orders/{po_id}/receiving-substitution',
+            json_body={**data, 'site': change.site, 'commit': True})
     if change.action == "CREATE_ACCOUNTANT_TRANSACTIONS":
         return await core_request("POST", "/v1/gpt/finance-transactions", json_body={
             **data, "site": change.site,
