@@ -37,7 +37,7 @@ def database(monkeypatch):
         for name in ['staging_v05.sql', 'core_domain_v05.sql', 'inventory_ledger_v014.sql']:
             conn.execute((root / 'schema' / name).read_text())
         conn.execute('create table planning_snapshots (id bigserial primary key); create table planning_snapshot_items (id bigserial primary key)')
-        for name in ['operational_receiving_v012.sql', 'vendor_payables_v013.sql']:
+        for name in ['operational_receiving_v012.sql', 'vendor_payables_v013.sql', 'receiving_substitution_v055.sql']:
             conn.execute((root / 'schema' / name).read_text())
         conn.execute("insert into purchase_orders(id,po_code,site,vendor_code,status) values (1,'TEST','MAJA','HOLIL','SENT')")
         conn.execute("insert into purchase_order_items(id,purchase_order_id,item_name,po_qty,unit) values (11,1,'Wortel',10,'kg')")
@@ -180,3 +180,96 @@ def test_actual_batch_creates_one_receipt_with_explicit_quantities(database):
     assert database.execute('select count(*) as n from goods_receipts').fetchone()['n']==1
     assert database.execute('select count(*) as n from goods_receipt_items').fetchone()['n']==2
     assert balance(database)==9
+
+@pytest.fixture
+def substitution_database(database):
+    database.execute('create table inventory_item_master(code text primary key,canonical_name text,base_unit text,active boolean)')
+    database.execute("insert into inventory_item_master values('KACANG_PANJANG','Kacang Panjang','kg',true)")
+    return database
+
+
+def substitution_payload(**overrides):
+    values = dict(site='MAJA', purchase_order_item_id=11, replacement_item_code='KACANG_PANJANG',
+        replaces_qty=10, received_qty=8, vendor_cost_price=12000, expected_fulfilled_qty=0,
+        reason='Wortel tidak tersedia', request_id=uuid4(), received_at='2026-10-24T08:00:00+07:00')
+    values.update(overrides)
+    return api.ReceiptSubstitutionIn(**values)
+
+
+def save_substitution(payload):
+    preview = api.receive_substitution(1, payload)
+    assert not preview['committed']
+    return api.receive_substitution(1, api.ReceiptSubstitutionIn(**preview['normalizedPayload'], commit=True))
+
+
+def test_substitution_actual_stock_original_po_and_retry(substitution_database):
+    db = substitution_database
+    payload = substitution_payload()
+    preview = api.receive_substitution(1, payload)
+    assert db.execute('select count(*) n from goods_receipts').fetchone()['n'] == 0
+    assert preview['actualValue'] == 96000
+    result = save_substitution(payload)
+    assert result['purchaseOrderStatus'] == 'RECEIVED'
+    movement = db.execute('select * from inventory_movements').fetchone()
+    assert movement['item_name'] == 'Kacang Panjang'
+    assert movement['item_code'] == 'KACANG_PANJANG'
+    assert movement['qty'] == Decimal(8)
+    assert db.execute('select po_qty from purchase_order_items').fetchone()['po_qty'] == 10
+    replay = api.ReceiptSubstitutionIn(**preview['normalizedPayload'], commit=True)
+    assert api.receive_substitution(1,replay)['duplicate']
+    assert balance(db) == 8
+    with pytest.raises(HTTPException) as exc:
+        api.receive_substitution(1,replay.model_copy(update={'received_qty':Decimal(9)}))
+    assert exc.value.status_code == 409
+
+
+def test_partial_original_and_partial_substitution(substitution_database):
+    receive(3)
+    result = save_substitution(substitution_payload(replaces_qty=4,received_qty=2,expected_fulfilled_qty=3))
+    assert result['purchaseOrderStatus'] == 'PARTIAL_RECEIVED'
+    assert result['items'][0]['remainingQty'] == 3
+    assert result['items'][0]['replacedQty'] == 4
+    assert balance(substitution_database) == 5
+    assert receive(3,expected=7)['purchaseOrderStatus'] == 'RECEIVED'
+
+
+@pytest.mark.parametrize('patch,status', [({'site':'CEMPLANG'},400),({'purchase_order_item_id':999},400),({'replaces_qty':11},409),({'expected_fulfilled_qty':1},409),({'replacement_item_code':'MISSING'},422)])
+def test_substitution_rejects_unsafe_input(substitution_database,patch,status):
+    with pytest.raises(HTTPException) as exc: api.receive_substitution(1,substitution_payload(**patch))
+    assert exc.value.status_code == status
+    assert balance(substitution_database) == 0
+
+
+def test_substitution_master_changed_after_preview(substitution_database):
+    preview=api.receive_substitution(1,substitution_payload())
+    substitution_database.execute("update inventory_item_master set base_unit='pcs'")
+    with pytest.raises(HTTPException) as exc:
+        api.receive_substitution(1,api.ReceiptSubstitutionIn(**preview['normalizedPayload'],commit=True))
+    assert exc.value.status_code == 409
+    assert balance(substitution_database) == 0
+
+
+def test_substitution_payable_uses_actual_identity(substitution_database):
+    from backend.vendor_payables_api import load_receipt_context, resolve_lines, VendorPayableFromReceiptIn
+    result=save_substitution(substitution_payload())
+    payload=VendorPayableFromReceiptIn(site='MAJA',purchase_order_id=1,goods_receipt_id=result['receiptId'],lines=[{'item_name':'Kacang Panjang','vendor_cost_price':12000}])
+    with substitution_database.cursor() as cur:
+        _,items=load_receipt_context(cur,payload)
+    assert items[0]['item_name']=='Kacang Panjang'
+    assert items[0]['item_code']=='KACANG_PANJANG'
+    assert items[0]['accepted_qty']==8
+
+    lines=resolve_lines(payload,items)
+    assert lines[0]['line_total']==96000
+    assert lines[0]['invoice_vs_po_variance'] is None
+
+
+def test_cemplang_substitution_uses_replacement_units(substitution_database):
+    db=substitution_database
+    db.execute("update purchase_orders set site='CEMPLANG'")
+    db.execute("update inventory_item_master set base_unit='pcs'")
+    result=save_substitution(substitution_payload(site='CEMPLANG',received_qty=80))
+    assert result['purchaseOrderStatus']=='RECEIVED'
+    movement=db.execute('select * from inventory_movements').fetchone()
+    assert movement['unit']=='pcs' and movement['qty']==80 and movement['to_location']=='CEMPLANG'
+    assert result['items'][0]['remainingQty']==0
