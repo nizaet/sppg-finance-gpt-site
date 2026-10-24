@@ -87,7 +87,7 @@ def po_delivery_alerts(
         select pb.id purchase_order_id,pb.po_code,pb.site,pb.vendor_code,pb.status,pb.sent_at,pb.created_at,
                pb.distribution_date,pb.cooking_date,
                poi.id purchase_order_item_id,poi.item_name,poi.po_qty,poi.unit,
-               coalesce(sum(gri.accepted_qty),0) as accepted_qty
+               coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as accepted_qty
         from po_base pb
         join purchase_order_items poi on poi.purchase_order_id=pb.id
         left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
@@ -193,7 +193,7 @@ def _remaining_items(cur: Any, purchase_order_id: int) -> list[dict[str, Any]]:
     cur.execute(
         """
         select poi.id purchase_order_item_id,poi.item_name,poi.po_qty,poi.unit,
-               coalesce(sum(gri.accepted_qty),0) as accepted_qty
+               coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as accepted_qty
         from purchase_order_items poi
         left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
         where poi.purchase_order_id=%s
@@ -375,7 +375,7 @@ def confirm_po_delivery_alert(payload: DeliveryAlertConfirmIn) -> dict[str, Any]
 
                 cur.execute(
                     """
-                    select poi.id,poi.po_qty,coalesce(sum(gri.accepted_qty),0) as received_total
+                    select poi.id,poi.po_qty,coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as received_total
                     from purchase_order_items poi
                     left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
                     where poi.purchase_order_id=%s
