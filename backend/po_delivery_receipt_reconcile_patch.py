@@ -99,7 +99,7 @@ def _arrival_evidence(po_rows: list[dict[str, Any]], target: date) -> set[int]:
                        rpo.site,rpo.vendor_code,
                        gri.purchase_order_item_id as linked_po_item_id,
                        lpoi.planning_snapshot_item_id as linked_planning_item_id,
-                       coalesce(lpoi.item_name,gri.reported_item_name) as receipt_item_name,
+                       coalesce(gri.replacement_item_name,lpoi.item_name,gri.reported_item_name) as receipt_item_name,
                        gri.reported_item_name,gri.unit,
                        coalesce(gri.accepted_qty,gri.received_qty,0) as accepted_qty
                 from goods_receipts gr
