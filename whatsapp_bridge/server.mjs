@@ -33,7 +33,7 @@ async function coreCall(route,body,token=process.env.SPPG_GPT_API_KEY){
  return data;
 }
 async function notify(item){
- const text=JSON.stringify({title:'Laporan penerimaan '+item.site,body:'Laporan baru perlu diperiksa. Stok belum berubah.',url:'/'});
+ const text=JSON.stringify({title:(item.reportType==='STOCK_OPNAME'?'Laporan SO ':'Laporan barang datang ')+item.site,body:'Laporan baru perlu diperiksa. Stok belum berubah.',url:'/'});
  for(const row of db.prepare('SELECT * FROM subscriptions').all()){
   try{await webpush.sendNotification(JSON.parse(row.payload),text,{TTL:3600});}
   catch(e){if([404,410].includes(e.statusCode))db.prepare('DELETE FROM subscriptions WHERE id=?').run(row.id);}
@@ -112,7 +112,7 @@ app.get('/api/status',async(_req,res)=>res.json({connection:waStatus,qr:qr?await
 app.post('/api/reset',async(req,res)=>{if(req.body.confirmation!=='RESET_LINK')return res.status(422).json({error:'Konfirmasi putuskan perangkat diperlukan.'});stopped=true;clearTimeout(retry);const previous=socket;socket=null;try{await previous?.logout();}catch{}await queue;rmSync(path.join(dataDir,'auth'),{recursive:true,force:true});qr=null;waStatus='DISCONNECTED';res.json({ok:true});});
 app.post('/api/connect',async(_req,res)=>{stopped=false;await connect();res.json({ok:true});});
 app.get('/api/groups',async(_req,res)=>{if(waStatus!=='CONNECTED'||!socket)return res.status(409).json({error:'Hubungkan WhatsApp terlebih dahulu.'});try{const groups=await socket.groupFetchAllParticipating();res.json({items:Object.values(groups).map(g=>({jid:g.id,name:g.subject}))});}catch{res.status(502).json({error:'Daftar grup belum dapat dibaca.'});}});
-app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();mappings=validateMappings(req.body.groups,groups);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup yang diikuti nomor ini, maksimal satu per dapur.'});}});
+app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();mappings=validateMappings(req.body.groups,groups);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup yang diikuti nomor ini, maksimal empat grup laporan.'});}});
 app.get('/api/inbox',(_req,res)=>res.json({items:db.prepare('SELECT payload,staged FROM inbox ORDER BY rowid DESC LIMIT 100').all().map(row=>({...JSON.parse(row.payload),staged:!!row.staged}))}));
 app.post('/api/push', (req,res)=>{const sub=req.body;try{const url=new URL(sub.endpoint);const hosts=['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com'];if(url.protocol!=='https:'||!hosts.includes(url.hostname)||!sub.keys?.p256dh||!sub.keys?.auth)throw new Error();db.prepare('INSERT OR REPLACE INTO subscriptions VALUES(?,?)').run(digest(sub.endpoint),JSON.stringify(sub));res.json({ok:true});}catch{res.status(422).json({error:'Langganan notifikasi tidak valid.'});}});
 app.use(express.static(new URL('./public/',import.meta.url).pathname,{etag:false}));
