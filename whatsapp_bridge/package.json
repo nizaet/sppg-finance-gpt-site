@@ -1,0 +1,1 @@
+{"name":"sppg-whatsapp-receiving-bridge","version":"0.1.0","private":true,"type":"module","engines":{"node":">=22.13"},"scripts":{"start":"node server.mjs","test":"node --test test.mjs integration.test.mjs"},"dependencies":{"@whiskeysockets/baileys":"6.7.23","express":"5.1.0","pino":"9.9.4","qrcode":"1.5.4","web-push":"3.6.7"}}
