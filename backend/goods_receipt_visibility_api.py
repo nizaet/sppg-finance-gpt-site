@@ -115,7 +115,7 @@ def list_goods_receipts_visible(
                        gri.po_qty_snapshot, gri.received_qty, gri.accepted_qty,
                        gri.rejected_qty, gri.variance_qty, gri.unit,
                        gri.quality_status, gri.match_confidence, gri.match_method,
-                       gri.notes,gri.updated_at
+                       gri.notes,gri.updated_at,gri.replacement_item_code,gri.replacement_item_name,gri.replaces_qty,gri.replacement_vendor_cost_price
                 from goods_receipt_items gri
                 left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
                 where gri.goods_receipt_id = any(%s)
@@ -130,8 +130,8 @@ def list_goods_receipts_visible(
     for row in rows:
         row["items"] = grouped.get(int(row["id"]), [])
         row["item_names"] = [
-            item.get("po_item_name") or item.get("reported_item_name")
+            item.get("replacement_item_name") or item.get("po_item_name") or item.get("reported_item_name")
             for item in row["items"]
-            if item.get("po_item_name") or item.get("reported_item_name")
+            if item.get("replacement_item_name") or item.get("po_item_name") or item.get("reported_item_name")
         ]
     return {"items": rows, "count": len(rows)}
