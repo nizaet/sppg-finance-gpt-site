@@ -11,3 +11,7 @@ Only receiving and SO reports are in scope. A mandatory standalone first nonempt
 Known trial limits: Baileys is unofficial; session/account restrictions and protocol changes can interrupt capture. Reports sent while disconnected are not guaranteed to replay; keep manual reporting until live tests pass. Revisions already staged in Core need human review there; no automated reversal. No stock confirmation is provided on the bridge UI: use existing SPPG receiving/Control Room confirmation. Notifications are on this bridge origin, not yet embedded into the main SPPG app. End-to-end verification requires owner QR pairing and selected groups.
 
 Run `npm ci && npm test`. Health `/health`; control page `/`.
+
+
+## ChatGPT review queue
+New reports remain in the bridge inbox. No automatic Core ingestion, receiving preview, or stock write runs. The OWNER-gated MCP reads original evidence through the authenticated /internal/reports endpoint. listSppgPendingOperationalReviews includes whatsappReports. ChatGPT uses the normal runtime-knowledge + preview + NEW user confirmation flow. Only an APPLIED approval with a real domain ID and matching original text/site/action may finish a report. Changed/revised reports remain held for review. Push notifications open ChatGPT; they cannot inject a message into a ChatGPT conversation.
