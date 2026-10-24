@@ -85,7 +85,7 @@ def create_goods_receipt(payload: GoodsReceiptIn) -> dict[str, Any]:
                 )
             stock = commit_receipt_stock(cur, receipt_id, str(po["site"]))
             cur.execute(
-                """select poi.po_qty,coalesce(sum(gri.accepted_qty),0) as accepted_total
+                """select poi.po_qty,coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as accepted_total
                    from purchase_order_items poi
                    left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
                    where poi.purchase_order_id=%s group by poi.id order by poi.id""",

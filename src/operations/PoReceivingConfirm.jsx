@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, PackageCheck, RefreshCw, XCircle } from "lucide-react";
 import { operationsApi } from "./apiClient";
+import ReceiptSubstitution from "./ReceiptSubstitution";
 import GoodsReceiptEditor, { parseReceiptQty } from "./GoodsReceiptEditor";
 
 const RECEIVABLE = new Set(["FINALIZED", "SENT", "ACKNOWLEDGED", "PARTIAL_RECEIVED", "RECEIVED"]);
@@ -20,6 +21,7 @@ function ReceivingPanel({ poId, poCode = "PO", status = "", onChanged, inline = 
   const [actualQty, setActualQty] = useState({});
   const [receipts, setReceipts] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [substituting, setSubstituting] = useState(null);
   const actualRequest = useRef(null);
 
   const requestVersion = useRef(0);
@@ -166,21 +168,22 @@ function ReceivingPanel({ poId, poCode = "PO", status = "", onChanged, inline = 
         )}
 
         <div className="ops-row-actions" style={{ margin: "10px 0" }}><button type="button" onClick={() => confirmReceipt("ACTUAL")} disabled={loading || Boolean(saving) || !Object.values(actualQty).some(value => String(value).trim() !== "")}>Simpan jumlah aktual</button><button type="button" onClick={showCorrections} disabled={loading || Boolean(saving)}>Ubah penerimaan</button></div>
+        {substituting && <ReceiptSubstitution key={substituting.id} poId={poId} site={data.site} item={substituting} onCancel={() => setSubstituting(null)} onSaved={async result => { setSubstituting(null); setMessage(result.message); window.dispatchEvent(new CustomEvent("sppg:goods-receipt-saved", {detail: {site: data.site, purchaseOrderId: poId, receiptId: result.receiptId}})); await load(); await onChanged?.(result); }} />}
         {receipts && <div className="ops-parse-result"><strong>Pilih penerimaan yang akan dikoreksi</strong>{receipts.length === 0 && <p>Belum ada penerimaan tersimpan.</p>}{receipts.map(receipt => <div key={receipt.id}><button type="button" disabled={Boolean(editing)} onClick={() => setEditing(receipt)}>Receipt #{receipt.id} · {new Date(receipt.received_at).toLocaleString("id-ID")} · Ubah jumlah</button></div>)}</div>}
         {editing && <GoodsReceiptEditor key={editing.id} receipt={editing} onCancel={() => setEditing(null)} onSaved={async result => { setEditing(null); setReceipts(null); setMessage(result.message + (result.invoiceReviewRequired ? ` Periksa invoice #${result.linkedInvoiceIds.join(", #")}.` : "")); await load(); await onChanged?.(result); }} />}
         <div className="ops-table-wrap">
           <table className="ops-table">
-            <thead><tr><th>Barang</th><th>Qty PO</th><th>Sudah diterima</th><th>Sisa</th><th>Status</th><th>Jumlah datang kali ini</th><th>Aksi</th></tr></thead>
+            <thead><tr><th>Barang</th><th>Qty PO</th><th>Diterima / diganti</th><th>Sisa</th><th>Status</th><th>Jumlah datang kali ini</th><th>Aksi</th></tr></thead>
             <tbody>
               {(data.items || []).map((item) => (
                 <tr key={item.id}>
                   <td><strong>{item.item_name}</strong></td>
                   <td>{fmtQty(item.poQty)} {item.unit || ""}</td>
-                  <td>{fmtQty(item.receivedQty)} {item.unit || ""}</td>
+                  <td>{fmtQty(item.receivedQty)} {item.unit || ""}{item.replacedQty > 0 && <div className="ops-muted">Termasuk diganti {fmtQty(item.replacedQty)} {item.unit}</div>}</td>
                   <td>{fmtQty(item.remainingQty)} {item.unit || ""}</td>
                   <td>{item.complete ? <span className="ops-stock-badge ops-stock-covered">✓ Diterima</span> : <span className="ops-muted">Belum lengkap</span>}</td>
                   <td><input aria-label={`Jumlah datang ${item.item_name}`} inputMode="decimal" value={actualQty[item.id] ?? ""} onChange={e => { actualRequest.current = null; setActualQty(prev => ({ ...prev, [item.id]: e.target.value })); }} disabled={loading || Boolean(saving)} placeholder="Isi aktual" style={{ width: 105 }} /><button type="button" onClick={() => confirmReceipt("ACTUAL", [Number(item.id)])} disabled={loading || Boolean(saving) || !(parseReceiptQty(actualQty[item.id]) > 0)}>Catat datang</button></td>
-                  <td>{item.complete ? "✓" : <button className="ops-button-success" type="button" onClick={() => confirmReceipt("SELECTED", [Number(item.id)])} disabled={loading || Boolean(saving)}><CheckCircle2 size={13} /> {saving === String(item.id) ? "Menyimpan…" : "Sesuai"}</button>}</td>
+                  <td>{!item.complete && <button type="button" disabled={loading || Boolean(saving) || Boolean(substituting)} onClick={() => setSubstituting(item)}>Ganti barang</button>}{item.complete ? "✓" : <button className="ops-button-success" type="button" onClick={() => confirmReceipt("SELECTED", [Number(item.id)])} disabled={loading || Boolean(saving)}><CheckCircle2 size={13} /> {saving === String(item.id) ? "Menyimpan…" : "Sesuai"}</button>}</td>
                 </tr>
               ))}
             </tbody>

@@ -76,7 +76,7 @@ def _candidate_items(cur: Any, pos: list[dict[str, Any]]) -> list[dict[str, Any]
     cur.execute(
         """
         select poi.*,po.po_code,po.vendor_code,po.status as po_status,pc.distribution_date,
-               coalesce(sum(gri.accepted_qty),0) as received_total
+               coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as received_total
         from purchase_order_items poi
         join purchase_orders po on po.id=poi.purchase_order_id
         left join production_cycles pc on pc.id=po.production_cycle_id
@@ -234,7 +234,7 @@ def _source_key(payload: op.WhatsAppReceiptIn, vendor: str | None) -> str:
 
 def _update_po_status(cur: Any, po_id: int) -> str:
     cur.execute("""
-        select poi.id,poi.po_qty,coalesce(sum(gri.accepted_qty),0) as received_total
+        select poi.id,poi.po_qty,coalesce(sum(coalesce(gri.replaces_qty,gri.accepted_qty)),0) as received_total
         from purchase_order_items poi
         left join goods_receipt_items gri on gri.purchase_order_item_id=poi.id
         where poi.purchase_order_id=%s group by poi.id order by poi.id

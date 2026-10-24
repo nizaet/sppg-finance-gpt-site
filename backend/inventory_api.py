@@ -318,7 +318,7 @@ def commit_receipt_stock(cur, goods_receipt_id: int, expected_site: str | None =
         raise HTTPException(400, "site does not match goods receipt")
     cur.execute(
         """select gri.id as receipt_item_id,coalesce(gri.accepted_qty,gri.received_qty,0) as qty,
-                  gri.unit,poi.item_code,coalesce(poi.item_name,gri.reported_item_name) as item_name
+                  gri.unit,coalesce(gri.replacement_item_code,poi.item_code) as item_code,coalesce(gri.replacement_item_name,poi.item_name,gri.reported_item_name) as item_name
            from goods_receipt_items gri
            left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
            where gri.goods_receipt_id=%s order by gri.id""",
@@ -393,7 +393,7 @@ def inventory_from_receipt(payload: ReceiptToStockIn) -> dict[str, Any]:
                 raise HTTPException(400, "site does not match goods receipt")
             cur.execute(
                 """select gri.id as receipt_item_id,coalesce(gri.accepted_qty,gri.received_qty,0) as qty,
-                          gri.unit,poi.item_code,coalesce(poi.item_name,gri.reported_item_name) as item_name
+                          gri.unit,coalesce(gri.replacement_item_code,poi.item_code) as item_code,coalesce(gri.replacement_item_name,poi.item_name,gri.reported_item_name) as item_name
                    from goods_receipt_items gri
                    left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
                    where gri.goods_receipt_id=%s order by gri.id""",

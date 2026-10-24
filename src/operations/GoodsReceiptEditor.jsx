@@ -20,7 +20,7 @@ export default function GoodsReceiptEditor({ receipt, onSaved, onCancel }) {
   const valid = lines.every(line => Number.isFinite(parseReceiptQty(line.received)) && Number.isFinite(parseReceiptQty(line.rejected)) && parseReceiptQty(line.rejected) <= parseReceiptQty(line.received));
   const save = async () => {
     if (busy.current || !valid || !changed.length || reason.trim().length < 3) return;
-    const summary = changed.map(line => `${line.po_item_name || line.reported_item_name}: datang ${fmt(line.received_qty)} → ${fmt(parseReceiptQty(line.received))}; reject ${fmt(line.rejected_qty)} → ${fmt(parseReceiptQty(line.rejected))} ${line.unit || ""}`).join("\n");
+    const summary = changed.map(line => `${line.replacement_item_name || line.po_item_name || line.reported_item_name}: datang ${fmt(line.received_qty)} → ${fmt(parseReceiptQty(line.received))}; reject ${fmt(line.rejected_qty)} → ${fmt(parseReceiptQty(line.rejected))} ${line.unit || ""}`).join("\n");
     if (!window.confirm(`Simpan koreksi Receipt #${receipt.id}?\n${summary}\n\nStok disesuaikan sebesar selisih pada tanggal penerimaan asli. SO yang lebih baru tetap menjadi acuan. Invoice dan pembayaran tidak ikut berubah; periksa ulang jika sudah ada tagihan.\n\nAlasan: ${reason.trim()}`)) return;
     busy.current = true; setSaving(true); setError("");
     try {
@@ -37,9 +37,9 @@ export default function GoodsReceiptEditor({ receipt, onSaved, onCancel }) {
     <strong>Ubah penerimaan · Receipt #{receipt.id} · {receipt.vendor_code}</strong>
     <p>Isi jumlah datang dan reject yang benar untuk penerimaan ini. Gunakan 0 jika sebelumnya terlanjur ditandai datang. Jumlah PO tetap.</p>
     <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Barang</th><th>Sebelumnya</th><th>Jumlah datang</th><th>Reject</th><th>Diterima bersih</th></tr></thead><tbody>{lines.map(line => <tr key={line.receipt_item_id}>
-      <td>{line.po_item_name || line.reported_item_name} ({line.unit})</td><td>{fmt(line.received_qty)} · reject {fmt(line.rejected_qty)}</td>
-      <td><input aria-label={`Jumlah datang ${line.po_item_name || line.reported_item_name}`} inputMode="decimal" value={line.received} disabled={saving} onChange={e => change(line.receipt_item_id, "received", e.target.value)} style={{ width: 110 }} /></td>
-      <td><input aria-label={`Reject ${line.po_item_name || line.reported_item_name}`} inputMode="decimal" value={line.rejected} disabled={saving} onChange={e => change(line.receipt_item_id, "rejected", e.target.value)} style={{ width: 100 }} /></td>
+      <td>{line.replacement_item_name || line.po_item_name || line.reported_item_name} ({line.unit})</td><td>{fmt(line.received_qty)} · reject {fmt(line.rejected_qty)}</td>
+      <td><input aria-label={`Jumlah datang ${line.replacement_item_name || line.po_item_name || line.reported_item_name}`} inputMode="decimal" value={line.received} disabled={saving} onChange={e => change(line.receipt_item_id, "received", e.target.value)} style={{ width: 110 }} /></td>
+      <td><input aria-label={`Reject ${line.replacement_item_name || line.po_item_name || line.reported_item_name}`} inputMode="decimal" value={line.rejected} disabled={saving} onChange={e => change(line.receipt_item_id, "rejected", e.target.value)} style={{ width: 100 }} /></td>
       <td>{Number.isFinite(parseReceiptQty(line.received)) && Number.isFinite(parseReceiptQty(line.rejected)) ? fmt(parseReceiptQty(line.received) - parseReceiptQty(line.rejected)) : "—"}</td>
     </tr>)}</tbody></table></div>
     <label>Alasan koreksi<input value={reason} onChange={e => { requestId.current = crypto.randomUUID(); setReason(e.target.value); }} disabled={saving} placeholder="Contoh: terlanjur klik sesuai, aktual hanya 8 kg" maxLength={1000} /></label>
