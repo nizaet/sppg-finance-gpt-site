@@ -29,3 +29,5 @@ test('personal SO allowlist: only selected sender, SO keyword, inbound and corre
  assert.equal(validateMappings(rows,{[jid]:{subject:'Arya'}})[0].mode,'STOCK_OPNAME');
  assert.throws(()=>validateMappings([{...rows[0],mode:'RECEIVING'}],{[jid]:{subject:'Arya'}}));
 });
+
+test('selected personal SO also matches verified WhatsApp LID alias',()=>{const jid='628123456789@s.whatsapp.net',lid='123456789@lid';const rows=[{jid,aliases:[lid],site:'MAJA',mode:'STOCK_OPNAME',name:'Arya'}];const message={...msg('#SO MAJA\nGula 5 kg'),key:{id:'LID',remoteJid:lid,fromMe:true}};assert.equal(normalizeIncoming(message,rows).site,'MAJA');assert.equal(normalizeIncoming({...message,key:{...message.key,remoteJid:'unknown@lid'}},rows),null);});

@@ -55,6 +55,11 @@ function capture(message){
  db.prepare('INSERT INTO inbox(id,content_hash,payload) VALUES(?,?,?)').run(item.id,item.contentHash,JSON.stringify(item));
  status.lastMessageAt=item.timestamp;status.lastCapturedAt=new Date().toISOString();console.info('WhatsApp report captured',JSON.stringify({reportType:item.reportType,site:item.site,fromMe:item.fromMe}));void notify(item);
 }
+async function refreshPersonalAliases(sock){
+ for(const row of mappings.filter(g=>g.mode==='STOCK_OPNAME' && g.jid.endsWith('@s.whatsapp.net'))){
+  try{const [found]=await sock.onWhatsApp(row.jid);if(socket!==sock)return;if(found?.lid){const current=mappings.find(g=>g.jid===row.jid);if(current){current.aliases=[found.lid];save('groups',mappings);}}}catch{console.warn('WhatsApp personal identity lookup pending');}
+ }
+}
 async function connect(){
  if(connecting || socket || stopped)return;connecting=true;waStatus='CONNECTING';qr=null;
  try{
@@ -69,7 +74,7 @@ async function connect(){
  sock.ev.on('connection.update',update=>{
   if(socket!==sock)return;
   if(update.qr){qr=update.qr;waStatus='SCAN_QR';console.info('WhatsApp QR ready');}
-  if(update.connection==='open'){qr=null;waStatus='CONNECTED';attempt=0;status.lastConnectedAt=new Date().toISOString();console.info('WhatsApp connected');}
+  if(update.connection==='open'){qr=null;waStatus='CONNECTED';attempt=0;status.lastConnectedAt=new Date().toISOString();console.info('WhatsApp connected');void refreshPersonalAliases(sock);}
   if(update.connection==='close'){
    socket=null;qr=null;connecting=false;
    const code=update.lastDisconnect?.error?.output?.statusCode;
@@ -130,7 +135,7 @@ app.post('/api/connect',async(_req,res)=>{stopped=false;clearTimeout(retry);awai
 app.get('/api/groups',async(_req,res)=>{if(waStatus!=='CONNECTED'||!socket)return res.status(409).json({error:'Hubungkan WhatsApp terlebih dahulu.'});try{const groups=await socket.groupFetchAllParticipating();res.json({items:Object.values(groups).map(g=>({jid:g.id,name:g.subject}))});}catch{res.status(502).json({error:'Daftar grup belum dapat dibaca.'});}});
 app.get('/api/contacts',(_req,res)=>res.json({items:[...contacts.values()].map(c=>({jid:c.id,name:c.name||c.notify||c.verifiedName||c.id.split('@')[0]}))}));
 app.post('/api/contact',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{let number=String(req.body.number||'').replace(/[^0-9]/g,'');if(number.startsWith('0'))number='62'+number.slice(1);if(!/^[1-9][0-9]{7,14}$/.test(number))throw new Error();const [found]=await socket.onWhatsApp(number);if(!found?.exists)throw new Error();const contact={id:found.jid,name:number};contacts.set(contact.id,contact);save('contacts',[...contacts.values()]);res.json({jid:contact.id,name:contact.name});}catch{res.status(422).json({error:'Nomor WhatsApp tidak ditemukan. Gunakan nomor dengan kode negara, misalnya 62812…'});}});
-app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();const available={...groups};for(const c of contacts.values())available[c.id]={subject:c.name||c.notify||c.verifiedName||c.id.split('@')[0]};mappings=validateMappings(req.body.groups,available);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup atau chat personal SO yang valid, maksimal empat sumber laporan.'});}});
+app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();const available={...groups};for(const c of contacts.values())available[c.id]={subject:c.name||c.notify||c.verifiedName||c.id.split('@')[0]};mappings=validateMappings(req.body.groups,available);save('groups',mappings);await refreshPersonalAliases(socket);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup atau chat personal SO yang valid, maksimal empat sumber laporan.'});}});
 app.get('/api/inbox',(_req,res)=>res.json({items:db.prepare('SELECT i.payload,i.staged,r.approval_id FROM inbox i LEFT JOIN report_resolutions r ON r.id=i.id ORDER BY i.rowid DESC LIMIT 100').all().map(row=>({...JSON.parse(row.payload),staged:!!row.staged,resolvedApprovalId:row.approval_id||null}))}));
 app.post('/api/push', (req,res)=>{const sub=req.body;try{const url=new URL(sub.endpoint);const hosts=['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com'];if(url.protocol!=='https:'||!hosts.includes(url.hostname)||!sub.keys?.p256dh||!sub.keys?.auth)throw new Error();db.prepare('INSERT OR REPLACE INTO subscriptions VALUES(?,?)').run(digest(sub.endpoint),JSON.stringify(sub));res.json({ok:true});}catch{res.status(422).json({error:'Langganan notifikasi tidak valid.'});}});
 app.use(express.static(new URL('./public/',import.meta.url).pathname,{etag:false}));

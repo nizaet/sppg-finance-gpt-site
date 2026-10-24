@@ -9,7 +9,7 @@ export function triggerInfo(text) {
 export function reportType(text) { return triggerInfo(text)?.type || 'OTHER'; }
 export function normalizeIncoming(message, mappings) {
   const jid = message?.key?.remoteJid;
-  const group = mappings.find(g => g.jid === jid);
+  const group = mappings.find(g => g.jid === jid || g.aliases?.includes(jid));
   if (!group || (!jid.endsWith('@g.us') && !(group.mode==='STOCK_OPNAME' && /@(s.whatsapp.net|lid)$/.test(jid))) || !message.key.id) return null;
   let body = message.message;
   const isRevision = Boolean(body?.editedMessage);
