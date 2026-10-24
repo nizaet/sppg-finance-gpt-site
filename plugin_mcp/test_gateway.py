@@ -128,9 +128,10 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(focused.issubset(names))
         self.assertTrue(set(LEGACY_V0186_TOOL_NAMES).issubset(names))
         self.assertEqual(len(LEGACY_V0186_TOOL_NAMES), 37)
-        self.assertEqual(len(names), len(focused) + 37 + 5)
+        self.assertEqual(len(names), len(focused) + 37 + 6)
 
         by_name = {tool["name"]: tool for tool in tools}
+        self.assertIn("receiving_substitution_preview", by_name)
         for tool in tools:
             schemes = tool.get("securitySchemes", [])
             self.assertIn({"type": "oauth2", "scopes": ["sppg:read"]}, schemes)
