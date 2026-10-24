@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import webpush from 'web-push';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import { digest, normalizeIncoming, coreEvidence, validateMappings, safeForAutoStage } from './policy.mjs';
 
 process.umask(0o077);
@@ -66,24 +66,27 @@ async function connect(){
  if(connecting || socket || stopped)return;connecting=true;waStatus='CONNECTING';qr=null;
  try{
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'auth'));
- const sock=makeWASocket({auth:state,logger:pino({level:'silent'}),printQRInTerminal:false,
+ const {version}=await fetchLatestBaileysVersion({timeout:10000});
+ console.info('WhatsApp connecting',JSON.stringify({version}));
+ const sock=makeWASocket({version,connectTimeoutMs:20000,auth:state,logger:pino({level:'silent'}),printQRInTerminal:false,
   markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false,
   getMessage:async()=>undefined,browser:['SPPG Receiving','Chrome','1.0.0']});socket=sock;
  sock.ev.on('creds.update',()=>{if(socket!==sock)return;queue=queue.then(saveCreds).catch(()=>{waStatus='SESSION_SAVE_ERROR';});});
  sock.ev.on('connection.update',update=>{
   if(socket!==sock)return;
-  if(update.qr){qr=update.qr;waStatus='SCAN_QR';}
+  if(update.qr){qr=update.qr;waStatus='SCAN_QR';console.info('WhatsApp QR ready');}
   if(update.connection==='open'){qr=null;waStatus='CONNECTED';attempt=0;}
   if(update.connection==='close'){
    socket=null;qr=null;connecting=false;
    const code=update.lastDisconnect?.error?.output?.statusCode;
+   console.warn('WhatsApp connection closed',JSON.stringify({code,reason:update.lastDisconnect?.error?.message}));
    if(code===DisconnectReason.loggedOut){waStatus='LOGGED_OUT';return;}
    waStatus='RECONNECTING';if(!stopped)retry=setTimeout(()=>void connect(),Math.min(60000,2000*2**Math.min(attempt++,5)));
   }
  });
  sock.ev.on('messages.update',updates=>{for(const change of updates){if(change.update?.message?.editedMessage)capture({key:change.key,...change.update});}});
  sock.ev.on('messages.upsert',({messages,type})=>{if(type!=='notify')return;for(const message of messages)capture(message);});
- }catch{socket=null;waStatus='CONNECTION_ERROR';}finally{connecting=false;}
+ }catch(e){socket=null;waStatus='CONNECTION_ERROR';console.warn('WhatsApp connection failed',e.message);}finally{connecting=false;}
 }
 app.disable('x-powered-by');app.set('trust proxy',1);
 app.use((req,res,next)=>{res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"});next();});
@@ -110,7 +113,7 @@ app.use('/api',async(req,res,next)=>{
 app.post('/api/logout',(req,res)=>{authCache.delete(digest(cookie(req)||''));res.clearCookie('bridge_session',{path:'/',secure:true,sameSite:'strict'});res.json({ok:true});});
 app.get('/api/status',async(_req,res)=>res.json({connection:waStatus,qr:qr?await QRCode.toDataURL(qr):null,groups:mappings,...status,coreUrl:core,mode:'STAGE_ONLY',vapidPublicKey:vapid.publicKey}));
 app.post('/api/reset',async(req,res)=>{if(req.body.confirmation!=='RESET_LINK')return res.status(422).json({error:'Konfirmasi putuskan perangkat diperlukan.'});stopped=true;clearTimeout(retry);const previous=socket;socket=null;try{await previous?.logout();}catch{}await queue;rmSync(path.join(dataDir,'auth'),{recursive:true,force:true});qr=null;waStatus='DISCONNECTED';res.json({ok:true});});
-app.post('/api/connect',async(_req,res)=>{stopped=false;await connect();res.json({ok:true});});
+app.post('/api/connect',async(_req,res)=>{stopped=false;clearTimeout(retry);await connect();res.json({ok:true,connection:waStatus});});
 app.get('/api/groups',async(_req,res)=>{if(waStatus!=='CONNECTED'||!socket)return res.status(409).json({error:'Hubungkan WhatsApp terlebih dahulu.'});try{const groups=await socket.groupFetchAllParticipating();res.json({items:Object.values(groups).map(g=>({jid:g.id,name:g.subject}))});}catch{res.status(502).json({error:'Daftar grup belum dapat dibaca.'});}});
 app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();mappings=validateMappings(req.body.groups,groups);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup yang diikuti nomor ini, maksimal empat grup laporan.'});}});
 app.get('/api/inbox',(_req,res)=>res.json({items:db.prepare('SELECT payload,staged FROM inbox ORDER BY rowid DESC LIMIT 100').all().map(row=>({...JSON.parse(row.payload),staged:!!row.staged}))}));
