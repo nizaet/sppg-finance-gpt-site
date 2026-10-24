@@ -98,8 +98,9 @@ def load_receipt_context(cur, payload: VendorPayableFromReceiptIn) -> tuple[dict
     cur.execute(
         """select gri.id as goods_receipt_item_id, gri.purchase_order_item_id,
                   coalesce(gri.accepted_qty,gri.received_qty,0) as accepted_qty,
-                  gri.unit, gri.reported_item_name, poi.item_code, poi.item_name,
-                  poi.planned_qty, poi.po_qty, poi.planning_price, poi.po_price
+                  gri.unit, gri.reported_item_name, coalesce(gri.replacement_item_code,poi.item_code) as item_code,
+                  coalesce(gri.replacement_item_name,poi.item_name) as item_name,
+                  poi.planned_qty, poi.po_qty, poi.planning_price, poi.po_price, gri.replaces_qty, gri.replacement_vendor_cost_price
            from goods_receipt_items gri
            left join purchase_order_items poi on poi.id=gri.purchase_order_item_id
            where gri.goods_receipt_id=%s order by gri.id""",
@@ -144,7 +145,7 @@ def resolve_lines(payload: VendorPayableFromReceiptIn, receipt_items: list[dict[
         line_total = round(payable_qty * price, 2)
 
         warnings: list[str] = []
-        if po_qty is not None and abs(invoiced_qty - po_qty) > 0.0001:
+        if item.get("replaces_qty") is None and po_qty is not None and abs(invoiced_qty - po_qty) > 0.0001:
             warnings.append(f"invoice_qty differs from po_qty by {round(invoiced_qty - po_qty, 4):g}")
         if abs(invoiced_qty - accepted_qty) > 0.0001:
             warnings.append(f"invoice_qty differs from received/accepted qty by {round(invoiced_qty - accepted_qty, 4):g}")
@@ -169,7 +170,7 @@ def resolve_lines(payload: VendorPayableFromReceiptIn, receipt_items: list[dict[
             "gross_line_total": gross_line_total,
             "reject_amount": reject_amount,
             "line_total": line_total,
-            "invoice_vs_po_variance": round(invoiced_qty - po_qty, 4) if po_qty is not None else None,
+            "invoice_vs_po_variance": round(invoiced_qty - po_qty, 4) if po_qty is not None and item.get("replaces_qty") is None else None,
             "invoice_vs_receipt_variance": round(invoiced_qty - accepted_qty, 4),
             "warnings": warnings,
         })
