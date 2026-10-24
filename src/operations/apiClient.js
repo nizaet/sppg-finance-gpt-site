@@ -111,6 +111,7 @@ export const operationsApi = {
   confirmPoWarehouseStock: (payload) => request("/v1/inventory/po-stock-confirmation", { method: "POST", body: JSON.stringify(payload) }),
   manualStockAdjustment: (payload, commit = true) => request("/v1/inventory/manual-adjustment", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   receiveSubstitution: (poId, payload) => request(`/v1/purchase-orders/${poId}/receiving-substitution`, { method: "POST", body: JSON.stringify(payload) }),
+  syncCalculatorInventoryMaster: () => request("/v1/inventory/items/sync-calculator-master", {method:"POST",body:JSON.stringify({})}),
   getInventoryItems: (search = "") => { const q = new URLSearchParams(); if (search) q.set("search", search); return request(`/v1/inventory/items${q.toString() ? `?${q}` : ""}`); },
   saveInventoryItem: (payload, commit = false) => request("/v1/inventory/items", { method: "POST", body: JSON.stringify({ ...payload, commit }) }),
   previewCalculatorPlans: (payload) => request("/v1/calculator-data/plan-preview", { method: "POST", body: JSON.stringify(payload) }),

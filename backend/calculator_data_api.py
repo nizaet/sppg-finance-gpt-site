@@ -505,8 +505,21 @@ def sync_shared_calculator_master(payload: SharedMasterSyncIn, request: Request)
                 except Exception:
                     pass
             raise HTTPException(502, f"sinkronisasi master {target_site} gagal: {exc}") from exc
+    inventory_sync = None
+    if database_ready():
+        try:
+            from backend.shared_inventory_master import sync_sources
+            with connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("select canonical_name as name,unit,concat(site,':',source_type,':',record_key) as source from calculator_master_catalog where active=true and source_type in ('PRICE','GRAMASI','RECIPE_INGREDIENT','BUMBU')")
+                    sources = [dict(row) for row in cur.fetchall()]
+                    inventory_sync = sync_sources(cur, sources)
+                conn.commit()
+        except Exception as exc:
+            audit_warnings.append({"stage":"inventory_master_sync","message":str(exc)[:300]})
     return {
         "committed": True,
+        "inventoryMasterSync": inventory_sync,
         "sourceSite": payload.source_site,
         "dataType": payload.data_type,
         "operation": payload.operation,
