@@ -5,6 +5,8 @@ export function normalizeIncoming(message, mappings) {
   const group = mappings.find(g => g.jid === jid);
   if (!group || !jid.endsWith('@g.us') || !message.key.id || message.key.fromMe) return null;
   let body = message.message;
+  const isRevision = Boolean(body?.editedMessage);
+  if (isRevision) body = body.editedMessage.message;
   for (let i=0;i<5;i++) {
     const nested = body?.ephemeralMessage?.message || body?.viewOnceMessage?.message || body?.viewOnceMessageV2?.message;
     if (!nested) break; body = nested;
@@ -18,7 +20,7 @@ export function normalizeIncoming(message, mappings) {
   return {id, messageId:message.key.id, jid, groupName:group.name, site:group.site,
     sender:message.key.participant || '', senderName:message.pushName || '',
     text:text.slice(0,20000), type, timestamp:new Date(timestamp*1000).toISOString(),
-    contentHash:digest(jid+':'+type+':'+text), status:type==='text' || text.trim() ? 'PENDING' : 'MEDIA_REVIEW'};
+    contentHash:digest(jid+':'+type+':'+text), status:isRevision ? 'REVISION_REVIEW' : type==='text' || text.trim() ? 'PENDING' : 'MEDIA_REVIEW'};
 }
 export function coreEvidence(item) {
  return {provider:'SPPG_BAILEYS',message_id:item.id,source_key:item.site+'_RECEIVING_GROUP',
