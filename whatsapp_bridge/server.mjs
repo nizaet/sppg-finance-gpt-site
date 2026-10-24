@@ -69,7 +69,7 @@ async function connect(){
  const sock=makeWASocket({auth:state,logger:pino({level:'silent'}),printQRInTerminal:false,
   markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false,
   getMessage:async()=>undefined,browser:['SPPG Receiving','Chrome','1.0.0']});socket=sock;
- sock.ev.on('creds.update',()=>{queue=queue.then(saveCreds).catch(()=>{waStatus='SESSION_SAVE_ERROR';});});
+ sock.ev.on('creds.update',()=>{if(socket!==sock)return;queue=queue.then(saveCreds).catch(()=>{waStatus='SESSION_SAVE_ERROR';});});
  sock.ev.on('connection.update',update=>{
   if(socket!==sock)return;
   if(update.qr){qr=update.qr;waStatus='SCAN_QR';}
@@ -81,6 +81,7 @@ async function connect(){
    waStatus='RECONNECTING';if(!stopped)retry=setTimeout(()=>void connect(),Math.min(60000,2000*2**Math.min(attempt++,5)));
   }
  });
+ sock.ev.on('messages.update',updates=>{for(const change of updates){if(change.update?.message?.editedMessage)capture({key:change.key,...change.update});}});
  sock.ev.on('messages.upsert',({messages,type})=>{if(type!=='notify')return;for(const message of messages)capture(message);});
  }catch{socket=null;waStatus='CONNECTION_ERROR';}finally{connecting=false;}
 }
