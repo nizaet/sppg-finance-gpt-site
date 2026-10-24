@@ -14,3 +14,16 @@ test('edited message preserves original ID and is held for manual review',()=>{c
 
 test('only first-line explicit triggers; casual chat and quoted mentions ignored',()=>{assert.equal(reportType('#SO MAJA\nGula 5 kg'),'STOCK_OPNAME');assert.equal(reportType('#TERIMA MAJA\nBuncis 60 kg'),'RECEIVING');for(const text of ['Terima kasih','SO BARANG\nGula 5 kg','Barang datang buncis 60 kg','Gula 5 kg','Tolong cek #SO MAJA','Ini laporan\n#SO MAJA','SO sudah dicek 5 kg'])assert.equal(reportType(text),'OTHER',text);assert.equal(reportType('*#so maja*\nGula 5 kg'),'STOCK_OPNAME');assert.equal(safeForAutoStage({status:'PENDING',reportType:'STOCK_OPNAME'}),false);});
 test('cross-site trigger is held, never silently assigned to the group kitchen',()=>{const item=normalizeIncoming(msg('#TERIMA CEMPLANG\nBuncis 60 kg'),groups);assert.equal(item.status,'SITE_REVIEW');assert.equal(safeForAutoStage(item),false);});
+
+test('personal SO allowlist: only selected sender, SO keyword, inbound and correct site',()=>{
+ const jid='628123456789@s.whatsapp.net',rows=[{jid,name:'Arya',site:'MAJA',mode:'STOCK_OPNAME'}];
+ const make=text=>({...msg(text),key:{remoteJid:jid,id:'PERSONAL'},pushName:'Arya'});
+ const item=normalizeIncoming(make('#SO MAJA\nGula 5 kg'),rows);
+ assert.equal(item.reportType,'STOCK_OPNAME');assert.equal(item.sender,jid);assert.equal(item.groupName,'Arya');assert.equal(safeForAutoStage(item),false);
+ for(const text of ['Halo','#TERIMA MAJA\nGula 5 kg','Ini contoh\n#SO MAJA'])assert.equal(normalizeIncoming(make(text),rows),null);
+ assert.equal(normalizeIncoming(make('#SO MAJA\nGula 5 kg'),[]),null);
+ assert.equal(normalizeIncoming({...make('#SO MAJA'),key:{remoteJid:jid,id:'X',fromMe:true}},rows),null);
+ assert.equal(normalizeIncoming(make('#SO CEMPLANG\nGula 5 kg'),rows).status,'SITE_REVIEW');
+ assert.equal(validateMappings(rows,{[jid]:{subject:'Arya'}})[0].mode,'STOCK_OPNAME');
+ assert.throws(()=>validateMappings([{...rows[0],mode:'RECEIVING'}],{[jid]:{subject:'Arya'}}));
+});

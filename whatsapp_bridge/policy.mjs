@@ -10,7 +10,7 @@ export function reportType(text) { return triggerInfo(text)?.type || 'OTHER'; }
 export function normalizeIncoming(message, mappings) {
   const jid = message?.key?.remoteJid;
   const group = mappings.find(g => g.jid === jid);
-  if (!group || !jid.endsWith('@g.us') || !message.key.id || message.key.fromMe) return null;
+  if (!group || (!jid.endsWith('@g.us') && !(group.mode==='STOCK_OPNAME' && /@(s.whatsapp.net|lid)$/.test(jid))) || !message.key.id || message.key.fromMe) return null;
   let body = message.message;
   const isRevision = Boolean(body?.editedMessage);
   if (isRevision) body = body.editedMessage.message;
@@ -23,12 +23,12 @@ export function normalizeIncoming(message, mappings) {
   if (!type) return null;
   const trigger=triggerInfo(text);
   const report = trigger?.type || 'OTHER';
-  if(report==='OTHER')return null;
+  if(report==='OTHER' || (group.mode==='STOCK_OPNAME' && report!=='STOCK_OPNAME') || (group.mode==='RECEIVING' && report!=='RECEIVING'))return null;
   const id = digest(jid + ':' + message.key.id);
   const timestamp = Number(message.messageTimestamp);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
   return {id, reportType:report, messageId:message.key.id, jid, groupName:group.name, site:group.site,
-    sender:message.key.participant || '', senderName:message.pushName || '',
+    sender:message.key.participant || jid, senderName:message.pushName || '',
     text:text.slice(0,20000), type, timestamp:new Date(timestamp*1000).toISOString(),
     contentHash:digest(jid+':'+type+':'+text), status:trigger.site!==group.site ? 'SITE_REVIEW' : isRevision ? 'REVISION_REVIEW' : type==='text' || text.trim() ? 'PENDING' : 'MEDIA_REVIEW'};
 }
@@ -44,7 +44,7 @@ export function validateMappings(rows, groups) {
  return rows.map(row=>{
   const mode=row.mode || 'MIXED';
   const role=row.site+':'+mode;
-  if (!['MAJA','CEMPLANG'].includes(row.site) || !['RECEIVING','STOCK_OPNAME','MIXED'].includes(mode) || jids.has(row.jid) || roles.has(role) || !groups[row.jid]) throw new Error('Grup atau dapur tidak valid / ganda.');
+  if (!['MAJA','CEMPLANG'].includes(row.site) || !['RECEIVING','STOCK_OPNAME','MIXED'].includes(mode) || jids.has(row.jid) || roles.has(role) || !groups[row.jid] || (!row.jid.endsWith('@g.us') && !(mode==='STOCK_OPNAME' && /@(s.whatsapp.net|lid)$/.test(row.jid)))) throw new Error('Grup atau dapur tidak valid / ganda.');
   jids.add(row.jid);roles.add(role);
   return {jid:row.jid,site:row.site,mode,name:groups[row.jid].subject};
  });

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, payload TEXT NOT N
 const setting=(key,fallback)=>{const row=db.prepare('SELECT value FROM settings WHERE key=?').get(key);return row?JSON.parse(row.value):fallback;};
 const save=(key,value)=>db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run(key,JSON.stringify(value));
 let mappings=setting('groups',[]), socket, connecting=false, qr=null, waStatus='DISCONNECTED', retry, attempt=0, stopped=false;
+const contacts=new Map(setting('contacts',[]).map(c=>[c.id,c]));
 let queue=Promise.resolve(), flushing=false;
 const status={lastMessageAt:null,lastStageAt:null,stageError:false};
 let vapid=setting('vapid',null);
@@ -71,6 +72,7 @@ async function connect(){
  const sock=makeWASocket({version,connectTimeoutMs:20000,auth:state,logger:pino({level:'silent'}),printQRInTerminal:false,
   markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false,
   getMessage:async()=>undefined,browser:['SPPG Receiving','Chrome','1.0.0']});socket=sock;
+ for(const event of ['contacts.upsert','contacts.update'])sock.ev.on(event,rows=>{for(const c of rows){if(c.id && /@(s.whatsapp.net|lid)$/.test(c.id))contacts.set(c.id,{...contacts.get(c.id),...c});}save('contacts',[...contacts.values()].map(c=>({id:c.id,name:c.name,notify:c.notify,verifiedName:c.verifiedName})));});
  sock.ev.on('creds.update',()=>{if(socket!==sock)return;queue=queue.then(saveCreds).catch(()=>{waStatus='SESSION_SAVE_ERROR';});});
  sock.ev.on('connection.update',update=>{
   if(socket!==sock)return;
@@ -115,7 +117,9 @@ app.get('/api/status',async(_req,res)=>res.json({connection:waStatus,qr:qr?await
 app.post('/api/reset',async(req,res)=>{if(req.body.confirmation!=='RESET_LINK')return res.status(422).json({error:'Konfirmasi putuskan perangkat diperlukan.'});stopped=true;clearTimeout(retry);const previous=socket;socket=null;try{await previous?.logout();}catch{}await queue;rmSync(path.join(dataDir,'auth'),{recursive:true,force:true});qr=null;waStatus='DISCONNECTED';res.json({ok:true});});
 app.post('/api/connect',async(_req,res)=>{stopped=false;clearTimeout(retry);await connect();res.json({ok:true,connection:waStatus});});
 app.get('/api/groups',async(_req,res)=>{if(waStatus!=='CONNECTED'||!socket)return res.status(409).json({error:'Hubungkan WhatsApp terlebih dahulu.'});try{const groups=await socket.groupFetchAllParticipating();res.json({items:Object.values(groups).map(g=>({jid:g.id,name:g.subject}))});}catch{res.status(502).json({error:'Daftar grup belum dapat dibaca.'});}});
-app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();mappings=validateMappings(req.body.groups,groups);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup yang diikuti nomor ini, maksimal empat grup laporan.'});}});
+app.get('/api/contacts',(_req,res)=>res.json({items:[...contacts.values()].map(c=>({jid:c.id,name:c.name||c.notify||c.verifiedName||c.id.split('@')[0]}))}));
+app.post('/api/contact',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{let number=String(req.body.number||'').replace(/[^0-9]/g,'');if(number.startsWith('0'))number='62'+number.slice(1);if(!/^[1-9][0-9]{7,14}$/.test(number))throw new Error();const [found]=await socket.onWhatsApp(number);if(!found?.exists)throw new Error();const contact={id:found.jid,name:number};contacts.set(contact.id,contact);save('contacts',[...contacts.values()]);res.json({jid:contact.id,name:contact.name});}catch{res.status(422).json({error:'Nomor WhatsApp tidak ditemukan. Gunakan nomor dengan kode negara, misalnya 62812…'});}});
+app.post('/api/groups',async(req,res)=>{if(!socket||waStatus!=='CONNECTED')return res.status(409).json({error:'WhatsApp belum tersambung.'});try{const groups=await socket.groupFetchAllParticipating();const available={...groups};for(const c of contacts.values())available[c.id]={subject:c.name||c.notify||c.verifiedName||c.id.split('@')[0]};mappings=validateMappings(req.body.groups,available);save('groups',mappings);res.json({groups:mappings});}catch{res.status(422).json({error:'Pilih grup atau chat personal SO yang valid, maksimal empat sumber laporan.'});}});
 app.get('/api/inbox',(_req,res)=>res.json({items:db.prepare('SELECT payload,staged FROM inbox ORDER BY rowid DESC LIMIT 100').all().map(row=>({...JSON.parse(row.payload),staged:!!row.staged}))}));
 app.post('/api/push', (req,res)=>{const sub=req.body;try{const url=new URL(sub.endpoint);const hosts=['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com'];if(url.protocol!=='https:'||!hosts.includes(url.hostname)||!sub.keys?.p256dh||!sub.keys?.auth)throw new Error();db.prepare('INSERT OR REPLACE INTO subscriptions VALUES(?,?)').run(digest(sub.endpoint),JSON.stringify(sub));res.json({ok:true});}catch{res.status(422).json({error:'Langganan notifikasi tidak valid.'});}});
 app.use(express.static(new URL('./public/',import.meta.url).pathname,{etag:false}));
