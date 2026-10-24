@@ -493,6 +493,18 @@ def default_item_code(name: str) -> str:
     return (value or "ITEM")[:80]
 
 
+@router.post('/inventory/items/sync-calculator-master')
+def sync_calculator_inventory_master() -> dict[str, Any]:
+    require_db()
+    from backend.shared_inventory_master import calculator_sources, sync_sources
+    sources=calculator_sources()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            result=sync_sources(cur,sources)
+        conn.commit()
+    return result
+
+
 @router.get("/inventory/items")
 def inventory_items(search: str = "", limit: int = Query(default=500, ge=1, le=1000)) -> dict[str, Any]:
     require_db()
