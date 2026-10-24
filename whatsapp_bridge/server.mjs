@@ -142,5 +142,5 @@ app.use(express.static(new URL('./public/',import.meta.url).pathname,{etag:false
 app.use((error,_req,res,_next)=>res.status(500).json({error:'Permintaan gagal. Data belum dikonfirmasi.'}));
 const server=app.listen(Number(process.env.PORT||8080),'0.0.0.0',()=>console.log('SPPG WhatsApp bridge ready (chatgpt-review) port='+server.address().port));
 
-try{const creds=JSON.parse(readFileSync(path.join(dataDir,'auth/creds.json'),'utf8'));if(creds.registered)void connect();}catch{}
+try{const creds=JSON.parse(readFileSync(path.join(dataDir,'auth/creds.json'),'utf8'));if(creds.me?.id || creds.registered)void connect();}catch{}
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{stopped=true;clearTimeout(retry);socket?.end(undefined);queue.finally(()=>{db.close();process.exit(0);});});
